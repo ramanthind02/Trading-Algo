@@ -1,8 +1,0 @@
-{
-    "python.defaultInterpreterPath": "${workspaceFolder}/cpython-env/bin/python",
-    "python.pythonPath": "${workspaceFolder}/cpython-env/bin/python",
-    "python.analysis.extraPaths": [
-        "${workspaceFolder}"
-    ],
-    "jupyter.notebookFileRoot": "${workspaceFolder}"
-}
