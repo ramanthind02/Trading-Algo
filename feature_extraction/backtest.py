@@ -6,7 +6,7 @@ sys.path.append(parent_dir)
 
 import numpy as np
 from typing import List, Optional
-from ml_manager import MLManager
+from feature_extraction.ml_manager import MLManager
 from utils.enums import TimeFrame
 from utils.candle_fetcher import CandleFetcher
 from utils.models import Candle
@@ -27,7 +27,7 @@ class Backtest:
         data: np.ndarray,
         ml_manager: MLManager,
         candle_fetcher: CandleFetcher,
-        evaluate_tf: TimeFrame = TimeFrame.M1,
+        evaluate_tf: TimeFrame = TimeFrame.D,
     ):
         """
         Initializes a backtest with a strategy

@@ -1,12 +1,11 @@
-from datetime import datetime
+
 import utils.helpers as helpers
 from utils.models import Candle
 from utils.logger import get_logger
-from order.market import MarketOrder
-from typing import List, Dict, Tuple, Optional
-from machine_learning.artifact.enigma import EnigmaArtifact
-from utils.enums import BiasStrategy, TimeFrame, Bias, Ticker, ModelType, TradeType
-from machine_learning.preprocessing.type_conversion.list_to_polars import ListToPolars
+from typing import List, Dict, Tuple
+from utils.enums import TimeFrame, Bias, Ticker
+import pandas as pd
+import numpy as np
 
 
 logger = get_logger(__name__)
@@ -18,7 +17,7 @@ class MLManager:
 
     def __init__(
         self,
-        bias_strategies: Dict[BiasStrategy, Tuple[List[TimeFrame], Dict]],
+        bias_strategies: Dict[Tuple[str, TimeFrame], Tuple[List[TimeFrame], Dict]],
         ticker: Ticker,
         base_tf: TimeFrame,
         build_matrix: bool = False, 
@@ -30,7 +29,6 @@ class MLManager:
         - bias_strategies (Dict): Defines all the bias nodes for the ML manager
         - ticker (Ticker): The ticker of data being fed
         - base_tf (TimeFrame): Base timeframe for the ML model
-        - model_type (ModelType): Classification or Regression
         - build_matrix (bool): Whether or not to construct a matrix for training
         
         Returns: None
@@ -41,8 +39,11 @@ class MLManager:
         self.build_matrix = build_matrix
         self.bias_nodes = []
         self.bias_values = []
-        # Main matrix for all data
-        self.matrix = []
+        # Main matrix for all data - now a pandas DataFrame
+        self.matrix = None  # Will be initialized in prepare_bias_nodes
+        # Buffer for efficient DataFrame operations
+        self.matrix_buffer = []
+        self.buffer_size = 100  # Flush buffer when it reaches this size
         # Matrix organized by timeframe, with only relevant columns
         self.tf_matrix = {}
         # Track which columns belong to each timeframe
@@ -53,7 +54,7 @@ class MLManager:
         self.bias = Bias.NEUTRAL.value
         self.prepare_bias_nodes()
 
-    def add_candle(self, candle: Candle, tf: TimeFrame, is_historical: bool, stacked_inputs: List[Tuple[str, float]]) -> float:
+    def add_candle(self, candle: Candle, tf: TimeFrame) -> float:
         """
         Adds candle to all bias nodes and predicts bias with pre-trained ML model
 
@@ -66,18 +67,15 @@ class MLManager:
         Returns:
         - float: Ranges between 0 and 1 -> 0 being bearish, 1 being bullish
         """
-        if not is_historical:
-            if self.build_matrix and tf == self.base_tf:
-                self.matrix.append((candle.datetime, self.bias_values.copy()))
+
+        if self.build_matrix and tf == self.base_tf:
+            # Add to buffer instead of immediately appending to DataFrame
+            self.matrix_buffer.append((candle.datetime, self.bias_values.copy()))
             
-            if tf in self.tf_indices:
-                tf_values = [self.bias_values[i] for i in self.tf_indices[tf]]
-                self.tf_matrix[tf].append((candle.datetime, tf_values))
-                if self.build_matrix:
-                    self.vector_matrix[tf].append((candle.datetime, tf_values))
-                if len(self.tf_matrix[tf]) > self.DEFAULT_LOOKBACK:
-                    self.tf_matrix[tf] = self.tf_matrix[tf][1:]
-                logger.debug(f"Updated tf_matrix[{tf.name}]: {len(self.tf_matrix[tf])} entries, {len(tf_values)} features")
+            # Flush buffer when it reaches the threshold size
+            if len(self.matrix_buffer) >= self.buffer_size:
+                self._flush_matrix_buffer()
+        
         
         column_index = 0
         # Update all bias nodes and bias_values array
@@ -97,19 +95,46 @@ class MLManager:
                 else:
                     val = vals[j]
 
-                self.bias_values[column_index] = val if not is_historical else self.bias_values[column_index]
+                self.bias_values[column_index] = val
                 column_index += 1
        
-        if tf == self.base_tf and not is_historical:
-            # Predict bias if model exists
-            if self.ml_model is not None:
-                self.predict()
-                
         return self.bias
     
 
 
 
+    def _flush_matrix_buffer(self) -> None:
+        """
+        Flushes the matrix buffer to the DataFrame for efficient batch processing
+        """
+        if not self.matrix_buffer:
+            return
+            
+        # Create a DataFrame from the buffer
+        buffer_df = pd.DataFrame(
+            [values for _, values in self.matrix_buffer],
+            columns=self.columns,
+            index=[dt for dt, _ in self.matrix_buffer]
+        )
+        
+        # Append to the main DataFrame
+        self.matrix = pd.concat([self.matrix, buffer_df])
+        
+        # Clear the buffer
+        self.matrix_buffer = []
+        
+    @property
+    def matrix_df(self):
+        """
+        Property that ensures buffer is flushed before returning the matrix DataFrame
+        
+        Returns:
+            pd.DataFrame: The complete matrix DataFrame with all buffered data
+        """
+        # Ensure all buffered data is in the DataFrame
+        self._flush_matrix_buffer()
+        return self.matrix
+        
     def prepare_bias_nodes(self) -> None:
         """
         Sets up the bias_nodes and bias_values arrays and lookup dictionary
@@ -134,13 +159,16 @@ class MLManager:
                 self.bias_nodes.append((tf, bias_node))
 
                 for column in bias_node.columns:
-                    column_name = f"{bias_strategy.name}_{tf.name}_{column}"
+                    column_name = f"{bias_strategy}_{tf.name}_{column}"
                     self.columns.append(column_name)
                     self.tf_columns[tf].append(column_name)
                     self.tf_indices[tf].append(column_index)
                     column_index += 1
                     self.bias_values.append(Bias.NEUTRAL.value)
         
+        # Initialize an empty DataFrame with the correct columns
+        self.matrix = pd.DataFrame(columns=self.columns)
+        self.matrix_buffer = []  # Initialize buffer
+        
         logger.info(f"MLManager: Prepared {len(self.bias_nodes)} bias nodes with {len(self.columns)} total columns")
         logger.info(f"MLManager: Timeframes configured: {list(self.tf_columns.keys())}")
-        

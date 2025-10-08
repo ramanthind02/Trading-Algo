@@ -1,5 +1,5 @@
 from typing import List, Tuple
-from utils.enums import Bias, TimeFrame, Ticker, BiasStrategy
+from utils.enums import TimeFrame, Ticker
 from nodes.bias_nodes import BiasNode
 from utils.models import Candle
 import collections
@@ -30,7 +30,7 @@ class BollingerBand(BiasNode):
 
         Returns: None
         """
-        super().__init__(BiasStrategy.BollingerBand, ticker, tf)
+        super().__init__(ticker, tf)
 
         if not (ma_length > 0):
             raise ValueError("Moving average length must be a positive integer.")

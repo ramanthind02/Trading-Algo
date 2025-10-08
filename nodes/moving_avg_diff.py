@@ -1,5 +1,5 @@
 from typing import List
-from utils.enums import Bias, TimeFrame, Ticker, BiasStrategy
+from utils.enums import TimeFrame, Ticker
 from nodes.bias_nodes import BiasNode
 from utils.models import Candle
 import collections
@@ -25,7 +25,7 @@ class MovingAverageDifference(BiasNode):
 
         Returns: None
         """
-        super().__init__(BiasStrategy.MovingAverageDifference, ticker, tf)
+        super().__init__(ticker, tf)
 
         if not (short_lookback > 0 and long_lookback > 0):
             raise ValueError("Lookback periods must be positive integers.")
@@ -47,7 +47,7 @@ class MovingAverageDifference(BiasNode):
         self.required_history_len = self.long_lookback + self.lag + 2
         self.candles_history = collections.deque(maxlen=self.required_history_len)
 
-        self.columns = [f'ma_difference_{short_lookback}_{long_lookback}_{lag}']
+        self.columns = [f'ma_difference_{short_lookback}_{long_lookback}_{self.lag}']
 
     @staticmethod
     def _normal_cdf(x: float) -> float:

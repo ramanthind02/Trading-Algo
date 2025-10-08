@@ -1,117 +1,178 @@
-import polars as pl
-from typing import Dict, List
-from datetime import datetime
-from machine_learning.data_collection.feature_extraction import FeatureExtractor
-from utils.helpers import load_numpy_data
-from utils.enums import TimeFrame
-import numpy as np
-import gc
-from backtest import Backtest
-from utils.enums import TimeFrame 
+
+from datetime import datetime, timezone
+from utils.enums import TimeFrame, Ticker
+from feature_extraction.backtest import Backtest
 import utils.helpers as helpers
-import traceback
+from utils.candle_fetcher import CandleFetcher
+import pandas as pd
+import numpy as np
+from typing import List
 
-class BiasFeatureExtractor(FeatureExtractor):
+
+def get_backtester(name: str, start: datetime, end: datetime, middleman):
     """
-    Specialized extractor for bias features.
+    Create a backtester instance with the specified parameters.
     
-    Handles the extraction of features related to market bias across multiple timeframes.
+    Parameters
+    ----------
+    name : str
+        Name identifier for the backtest
+    start : datetime
+        Start date for the data
+    end : datetime
+        End date for the data
+    middleman : object
+        Middleman object for the backtest
+        
+    Returns
+    -------
+    Backtest
+        Configured backtest instance
     """
+    data = helpers.load_numpy_data(middleman.ticker, TimeFrame.D, start=start, end=end)
+    candle_fetcher = CandleFetcher(
+        ticker=middleman.ticker, 
+        tfs=[TimeFrame.W, TimeFrame.M]
+    )
+    return Backtest(name, data, middleman, candle_fetcher)
+
+
+def extract_bias(
+        ticker: Ticker,
+        start: datetime = datetime(1990, 1, 1),
+        end: datetime = datetime.now()
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Process a single timeframe for bias feature extraction.
     
-    def extract_bias(
-            self,
-            timeframes: List[TimeFrame],
-            name: str = ""
-    ) -> Dict[TimeFrame, Dict]:
-        """
-        Extract bias features across multiple timeframes.
+    Parameters
+    ----------
+    ticker : Ticker
+        Ticker symbol to process
+    start : datetime
+        Start date for the data
+    end : datetime
+        End date for the data
         
-        Parameters
-        ----------
-        timeframes : List[TimeFrame]
-            List of timeframes to process
-        name : str
-            Name identifier for the features
-            
-        Returns
-        -------
-        Dict[TimeFrame, Dict]
-            Dictionary with keys:
-            - 'features': Processed features DataFrame
-            - 'lambdas': Feature lambdas for normalization
-            - 'pipeline': Scikit-learn pipeline for future transformations
-        """
-        bias_map = {}
-        start_time = datetime.now()
-
-        for tf in timeframes:
-            print(f"Processing timeframe {tf}")
-            tf_start_time = datetime.now()
-
-            data = load_numpy_data(self.ticker, tf, start=self.DEFAULT_START_DATE, end=self.DEFAULT_END_DATE)
-            
-            try:
-                bias_map[tf] = {}
-                # Process one timeframe at a time
-                features_df, lambdas, pipeline = self._process_single_timeframe(tf, data, name)
-                if features_df is not None:
-                    bias_map[tf]['features'] = features_df
-                    bias_map[tf]['lambdas'] = lambdas
-                    bias_map[tf]['pipeline'] = pipeline
-                    print(f"Created pipeline for timeframe {tf}")
-                
-                tf_duration = (datetime.now() - tf_start_time).total_seconds()
-                print(f"Completed timeframe {tf} in {tf_duration:.2f} seconds")
-                
-            except Exception as e:
-                error_traceback = traceback.format_exc()
-                print(f"\nError processing timeframe {tf}: {e}")
-                print(f"\nDetailed error traceback:\n{error_traceback}")
-                continue
-            finally:
-                gc.collect()
-
-        total_duration = (datetime.now() - start_time).total_seconds()
-        print(f"Total bias feature extraction completed in {total_duration:.2f} seconds")
-        return bias_map
+    Returns
+    -------
+    tuple[pd.DataFrame, dict]
+        Tuple containing:
+        - Processed and normalized features dataframe
+        - Columns dictionary for feature identification
+    """
+    # Build middleman and run backtest
+    ml_manager = helpers.create_ml_manager(ticker)
     
-    def _process_single_timeframe(
-            self, 
-            tf: TimeFrame, 
-            data: np.ndarray, 
-            name: str 
-    ) -> tuple[pl.DataFrame, dict, object]:
-        """
-        Process a single timeframe for bias feature extraction.
-        
-        Parameters
-        ----------
-        tf : TimeFrame
-            Timeframe to process
-        data : np.ndarray
-            Numpy data for the timeframe
-        name : str
-            Name identifier for the features
-            
-        Returns
-        -------
-        tuple[pl.DataFrame, dict, object]
-            Tuple containing:
-            - Processed and normalized features dataframe
-            - Lambdas dictionary for feature normalization
-            - Complete scikit-learn pipeline for future use
-        """
-        # Build middleman and run backtest
+    # Use the get_backtester function to create the backtest instance
+    features_backtest = get_backtester("features", start, end, ml_manager)
+    features_backtest.run()
+    
+    # Extract features and clear middleman
+    # Use matrix_df property to ensure buffer is flushed
+    features = ml_manager.matrix_df
+    columns = ml_manager.columns
+    
+    return features, columns
 
-        middleman = helpers.build_bias_middleman(self.ticker, tf)
-        middleman.bias_manager.ml_managers[0].build_matrix = True
-        features_backtest = Backtest("features", data, middleman, self.candle_fetcher, tf)
-        features_backtest.run()
+
+def extract_feature(
+        ticker: Ticker,
+        start: datetime = datetime(2000, 1, 1),
+        end: datetime = datetime.now()
+) -> pd.DataFrame:
+    """
+    Extract and combine price data with bias features.
+    
+    Parameters
+    ----------
+    ticker : Ticker
+        Ticker symbol to process
+    start : datetime
+        Start date for the data
+    end : datetime
+        End date for the data
         
-        # Extract features and clear middleman
-        features = middleman.bias_manager.ml_managers[0].matrix
-        columns = middleman.bias_manager.ml_managers[0].columns
-        del middleman, features_backtest
-        gc.collect()
+    Returns
+    -------
+    pd.DataFrame
+        Combined DataFrame with price data, log return target, and bias features
+    """
+    # Load price data
+    data = helpers.load_data(ticker, TimeFrame.D)
+    
+    # Calculate log return as target
+    data['target'] = np.log(data['close'] / data['open'])
+    
+    # Set datetime as index for joining
+    data.set_index('datetime', inplace=True)
+    
+    # Extract bias features
+    features, cols = extract_bias(ticker=ticker, start=start, end=end)
+    
+    data.index = data.index.tz_localize('UTC')
+    
+    # Join price data with features
+    full_df = data.join(features, how='inner')
+    
+    # Add ticker column
+    full_df['ticker'] = ticker.name
+    
+    return full_df
+
+
+def extract_features_multi(
+        tickers: List[Ticker],
+        start: datetime = datetime(2000, 1, 1),
+        end: datetime = datetime.now(),
+) -> pd.DataFrame:
+    """
+    Extract and combine features for multiple tickers by appending them together.
+    Uses a simple index for compatibility with plotting code.
+    
+    Parameters
+    ----------
+    tickers : List[Ticker]
+        List of ticker symbols to process
+    start : datetime
+        Start date for the data
+    end : datetime
+        End date for the data
         
-        return features, columns
+    Returns
+    -------
+    pd.DataFrame
+        Combined DataFrame with data from all tickers using a simple index
+    """
+    if not tickers:
+        raise ValueError("No tickers provided")
+    
+    # Extract features for each ticker
+    all_dfs = []
+    for ticker in tickers:
+        try:
+            df = extract_feature(ticker=ticker, start=start, end=end)
+            
+            # Reset the index to make datetime a regular column
+            df = df.reset_index()
+            
+            # Make sure the ticker column exists and has the correct value
+            df['ticker'] = ticker.name
+            
+            all_dfs.append(df)
+        except Exception as e:
+            print(f"Error extracting features for {ticker.name}: {str(e)}")
+    
+    if not all_dfs:
+        raise ValueError("Failed to extract features for any ticker")
+    
+    # Concatenate all dataframes
+    combined_df = pd.concat(all_dfs, axis=0, ignore_index=True)
+    
+    # Sort by datetime
+    combined_df = combined_df.sort_values('datetime')
+    
+    # Reset index after sorting to ensure sequential indices for plotting
+    combined_df = combined_df.reset_index(drop=True)
+    
+    return combined_df

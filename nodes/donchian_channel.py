@@ -1,5 +1,5 @@
 from typing import List, Tuple
-from utils.enums import Bias, TimeFrame, Ticker, BiasStrategy
+from utils.enums import TimeFrame, Ticker
 from nodes.bias_nodes import BiasNode
 from utils.models import Candle
 import collections
@@ -29,7 +29,7 @@ class DonchianChannel(BiasNode):
 
         Returns: None
         """
-        super().__init__(BiasStrategy.DonchianChannel, ticker, tf)
+        super().__init__(ticker, tf)
 
         if not (lookback > 0):
             raise ValueError("Lookback period must be a positive integer.")
@@ -43,7 +43,7 @@ class DonchianChannel(BiasNode):
         # For tracking current position
         self.current_position = 1  # Start with long position (1=long, -1=short)
         
-        self.columns = [f'donchian_{lookback}']
+        self.columns = [f'donchian_{lookback}', f'donchian_{lookback}_position']
 
     def calculate_donchian_channel(self, lookback: int) -> Tuple[float, float]:
         """
@@ -101,5 +101,8 @@ class DonchianChannel(BiasNode):
             if current_price > highest_high:
                 self.current_position = 1
         
-        # Return the current position as the bias
-        return [float(self.current_position)]
+        # Map the current position to a string representation
+        position_str = "buy" if self.current_position == 1 else "sell"
+        
+        # Return both the numeric position and string representation
+        return [float(self.current_position), position_str]

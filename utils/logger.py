@@ -69,7 +69,7 @@ def setup_logger(log_level=logging.INFO, log_to_file=True):
     logger.addFilter(feature_filter)
     
     # Also apply to common library loggers that might be causing this
-    for logger_name in ['polars', 'functime', 'machine_learning', '__main__']:
+    for logger_name in ['functime', 'machine_learning', '__main__']:
         lib_logger = logging.getLogger(logger_name)
         lib_logger.addFilter(feature_filter)
     

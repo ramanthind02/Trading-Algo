@@ -1,8 +1,8 @@
 from typing import List, Optional
-from utils.enums import Bias, TimeFrame, Ticker, BiasStrategy
+from utils.enums import TimeFrame, Ticker
 from nodes.bias_nodes import BiasNode
 from utils.models import Candle
-from nodes.bias_nodes.donchian_channel import DonchianChannel
+from nodes.donchian_channel import DonchianChannel
 import collections
 
 
@@ -30,7 +30,7 @@ class TurtleTrading(BiasNode):
 
         Returns: None
         """
-        super().__init__(BiasStrategy.TurtleTrading, ticker, tf)
+        super().__init__( ticker, tf)
 
         if not (entry_lookback > 0 and stop_lookback > 0):
             raise ValueError("Lookback periods must be positive integers.")
@@ -62,7 +62,7 @@ class TurtleTrading(BiasNode):
         - tuple[float, float]: (highest_high, lowest_low) over the lookback period.
         """
         # Create a temporary DonchianChannel instance with the same candles history
-        temp_donchian = DonchianChannel(self.ticker, self.tf, lookback)
+        temp_donchian = DonchianChannel(self.ticker, self.tf, lookback=lookback)
         temp_donchian.candles_history = self.candles_history.copy()
         
         # Use the DonchianChannel's method to calculate the channel

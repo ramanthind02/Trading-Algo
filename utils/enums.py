@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 
 class TimeFrame(Enum):
     """Simplified TimeFrame enum for daily, weekly, and monthly data only."""
-    D = 'D'  # Daily
-    W = 'W'  # Weekly
-    M = 'M'  # Monthly
+    D = 60 * 60 * 24
+    W = 60 * 60 * 24 * 7
+    M = 60 * 60 * 24 * 30
+
 
     def __lt__(self, other):
         return tuple(self.__class__).index(self) < tuple(self.__class__).index(other)
@@ -44,20 +45,13 @@ class Ticker(Enum):
     SF = 'CHFUSD'  # Swiss Franc
     AD = 'AUDUSD'  # Australian Dollar
     RP = 'EURGBP'  # Euro/British Pound
-    
-    # Cryptocurrencies
-    BTC = 'BTCUSD'  # Bitcoin
+
     
     # Agricultural (Food Grains)
     C = 'CORN'  # Corn
     S = 'SOYBEANS'  # Soybean
     W = 'WHEAT'  # Wheat (SRW)
-    
-    # Softs
-    SB = 'SUGAR'  # Sugar
-    KC = 'COFFEE'  # Coffee
-    CT = 'COTTON'  # Cotton
-    
+
     # Meat
     LC = 'LIVE_CATTLE'  # Live Cattle
     LH = 'LEAN_HOG'  # Lean Hog
@@ -71,3 +65,11 @@ class Ticker(Enum):
 
     def __lt__(self, other):
         return tuple(self.__class__).index(self) < tuple(self.__class__).index(other)
+
+
+
+class Bias(Enum):
+    BULLISH = 1
+    BEARISH = -1
+    NEUTRAL = 0
+    ANY = None
