@@ -57,10 +57,13 @@ class BiasNode(ABC):
         Returns:
         - List
         """
-        if self._cache['last_candle_id'] == candle.id:
+        # Create cache key from datetime and ticker (works for both Candle and FastCandle)
+        cache_key = (candle.datetime, candle.ticker)
+        
+        if self._cache['last_candle_id'] == cache_key:
             return self._cache['last_result']
         result = self._compute_candle(candle)
-        self._cache['last_candle_id'] = candle.id
+        self._cache['last_candle_id'] = cache_key
         self._cache['last_result'] = result
         return result
 

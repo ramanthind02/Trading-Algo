@@ -28,6 +28,7 @@ class Backtest:
         ml_manager: MLManager,
         candle_fetcher: CandleFetcher,
         evaluate_tf: TimeFrame = TimeFrame.D,
+        fast_mode: bool = False,
     ):
         """
         Initializes a backtest with a strategy
@@ -38,6 +39,7 @@ class Backtest:
         - ml_manager (MLManager): ml manager object
         - candle_fetcher (CandleFetcher): candle fetcher object to get candles
         - evaluate_tf (TimeFrame): timeframe to execute trades on
+        - fast_mode (bool): Use FastCandle instead of Pydantic Candle (5-10x faster, no validation)
 
 
         Returns: None
@@ -48,6 +50,7 @@ class Backtest:
         self.candle_fetcher = candle_fetcher
         self.tz = ZoneInfo('UTC')
         self.evaluate_tf = evaluate_tf
+        self.fast_mode = fast_mode
 
     
     def run(self) -> None:
@@ -135,7 +138,7 @@ class Backtest:
                 mapped_candle = self._apply_mapping(candle)
                 self.ml_manager.add_candle(candle=mapped_candle, tf=timeframe)
 
-    def _apply_mapping(self, candle: np.ndarray) -> Candle:
+    def _apply_mapping(self, candle: np.ndarray):
         """
         Helper function to map candle array to dictionary
 
@@ -143,18 +146,28 @@ class Backtest:
         - candle (np.ndarray): candle in numpy array format
 
         Returns:
-        - Candle: candle with references to original data
+        - Candle or FastCandle: candle with references to original data
         """
-        return Candle(
-            open=candle['open'],
-            close=candle['close'],
-            high=candle['high'],
-            low=candle['low'],
-            volume=candle['volume'] if 'volume' in candle else 0,
-            datetime=datetime.fromtimestamp(candle['datetime'], tz=timezone.utc),
-            ticker=self.ml_manager.ticker,
-            tf=self.evaluate_tf
-        )
+        if self.fast_mode:
+            # Use FastCandle for 5-10x speedup (no validation overhead)
+            from utils.fast_candle import FastCandle
+            return FastCandle.from_numpy(
+                candle,
+                ticker=self.ml_manager.ticker,
+                tf=self.evaluate_tf
+            )
+        else:
+            # Use Pydantic Candle (with validation)
+            return Candle(
+                open=candle['open'],
+                close=candle['close'],
+                high=candle['high'],
+                low=candle['low'],
+                volume=candle['volume'] if 'volume' in candle else 0,
+                datetime=datetime.fromtimestamp(candle['datetime'], tz=timezone.utc),
+                ticker=self.ml_manager.ticker,
+                tf=self.evaluate_tf
+            )
 
     
     def _is_start_of_day(self, date: datetime) -> bool:

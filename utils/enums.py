@@ -23,11 +23,9 @@ class Ticker(Enum):
     NQ = 'US100'  # E-Mini Nasdaq
     YM = 'US30'   # E-Mini Dow
     RTY = 'RUSSELL_2000'  # E-Mini Russell 2000
-    NN = 'NIKKEI_225'  # Nikkei 225 Yen Index
     
     # Energy
     CL = 'OIL_CRUDE'  # Crude Oil (WTI)
-    NG = 'NAT_GAS'  # Natural Gas
     HO = 'HEATING_OIL'  # ULSD (Heating Oil)
     
     # Metals
@@ -35,7 +33,7 @@ class Ticker(Enum):
     HG = 'COPPER'  # Copper
     SI = 'SILVER'  # Silver
     PL = 'PLATINUM'  # Platinum
-    PA = 'PALLADIUM'  # Palladium
+
     
     # Currencies (FX)
     EU = 'EURUSD'  # Euro Currency
@@ -43,8 +41,6 @@ class Ticker(Enum):
     BP = 'GBPUSD'  # British Pound
     CD = 'CADUSD'  # Canadian Dollar
     SF = 'CHFUSD'  # Swiss Franc
-    AD = 'AUDUSD'  # Australian Dollar
-    RP = 'EURGBP'  # Euro/British Pound
 
     
     # Agricultural (Food Grains)
@@ -53,8 +49,6 @@ class Ticker(Enum):
     W = 'WHEAT'  # Wheat (SRW)
 
     # Meat
-    LC = 'LIVE_CATTLE'  # Live Cattle
-    LH = 'LEAN_HOG'  # Lean Hog
     GF = 'FEEDER_CATTLE'  # Feeder Cattle
     
     # Fixed Income

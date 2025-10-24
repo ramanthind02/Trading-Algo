@@ -207,7 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 
-data/
 daily_futures_data.csv
 .vscode/
 cpython_env

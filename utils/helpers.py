@@ -3,7 +3,7 @@ import os
 import gc
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 from utils.enums import TimeFrame, Ticker
 from datetime import datetime
 
@@ -131,23 +131,16 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
         raise ImportError(f"Error importing module {full_module_name}: {e}")
     
     # Find the main class in the module
-    # Strategy: Look for classes that have a get_instance method
+    # Strategy: Look for classes that are DEFINED in this module (not imported)
+    # This prevents finding imported classes like RSI when we want RSISignalNode
     main_class = None
     for name, obj in inspect.getmembers(module):
         # Skip the abstract BiasNode class
         if name == 'BiasNode':
             continue
-        if inspect.isclass(obj) and hasattr(obj, 'get_instance') and callable(getattr(obj, 'get_instance')):
-            main_class = obj
-            break
-    
-    # If we couldn't find a class with get_instance, try to find any class defined in the module
-    if main_class is None:
-        for name, obj in inspect.getmembers(module):
-            # Skip the abstract BiasNode class
-            if name == 'BiasNode':
-                continue
-            if inspect.isclass(obj) and obj.__module__ == full_module_name:
+        # Only consider classes that are actually defined in this module
+        if inspect.isclass(obj) and obj.__module__ == full_module_name:
+            if hasattr(obj, 'get_instance') and callable(getattr(obj, 'get_instance')):
                 main_class = obj
                 break
     
@@ -165,96 +158,195 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
         raise RuntimeError(f"Error instantiating class from {module_name}: {e}")
 
 
-def get_bias_nodes(ticker: Ticker) -> Dict[str, Tuple[List[TimeFrame], Dict]]:
+def get_bias_nodes(
+    ticker: Ticker,
+    bias_node_specs: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Tuple[List[TimeFrame], Dict]]:
     """
     Creates a dictionary of bias strategies in the format expected by MLManager.
     
-    This function defines bias strategies with their timeframes and parameters:
-    - Bollinger Bands for daily timeframe
-    - Donchian Channels for weekly and daily timeframes with various lookback periods
-    - Moving Average Difference for weekly and daily timeframes with various short/long lookback combinations
-    - Turtle Trading for weekly timeframe
+    Instead of hardcoding bias nodes, this function now accepts a list of bias node
+    specifications and formats them for MLManager.
     
     Parameters:
     - ticker (Ticker): The ticker symbol to create bias nodes for
+    - bias_node_specs (Optional[List[Dict[str, Any]]]): List of bias node specifications.
+        Each spec should be a dict with:
+        - 'module_name' (str): Name of the bias node module (e.g., 'rsi', 'atr')
+        - 'timeframes' (List[TimeFrame]): List of timeframes to use
+        - 'params' (Dict): Parameters for the bias node
+        - 'strategy_key' (Optional[str]): Custom key, auto-generated if not provided
+        
+        If None, returns default bias nodes for backwards compatibility.
     
     Returns:
     - Dict[str, Tuple[List[TimeFrame], Dict]]: A dictionary mapping strategy names to their timeframes and parameters
+    
+    Examples:
+    --------
+    >>> # Single RSI feature with lookback=14
+    >>> specs = [{
+    ...     'module_name': 'rsi',
+    ...     'timeframes': [TimeFrame.D],
+    ...     'params': {'lookback': 14},
+    ...     'strategy_key': 'rsi_14'
+    ... }]
+    >>> bias_nodes = get_bias_nodes(Ticker.SPY, bias_node_specs=specs)
+    
+    >>> # Multiple ATR features with different periods
+    >>> specs = [
+    ...     {'module_name': 'atr', 'timeframes': [TimeFrame.D], 'params': {'period': 20}},
+    ...     {'module_name': 'atr', 'timeframes': [TimeFrame.D], 'params': {'period': 50}},
+    ... ]
+    >>> bias_nodes = get_bias_nodes(Ticker.SPY, bias_node_specs=specs)
     """
     bias_strategies = {}
     
-    # Bollinger Bands - Daily
-    bias_strategies["bollinger_band"] = ([TimeFrame.D], {"ma_length": 80, "std_mult": 1})
+    # If no specs provided, return empty dict (fully dynamic - no defaults)
+    if bias_node_specs is None:
+        return bias_strategies
     
-    # Donchian Channel - Weekly and Daily with different lookback periods
-    # For Weekly: 4, 10, 20, 50
-    # For Daily: 5, 10, 20, 40, 80, 160
-    # Note: The MLManager will handle creating separate instances for each lookback period
-    weekly_lookbacks = [4, 10, 20, 50]
-    daily_lookbacks = [5, 10, 20, 40, 80, 160]
+    # Always ensure ATR 252 is included for target normalization
+    # Check if ATR is already in the specs
+    has_atr_252 = False
+    for spec in bias_node_specs:
+        if spec.get('module_name') == 'atr' and spec.get('params', {}).get('period') == 252:
+            has_atr_252 = True
+            break
     
-    for lookback in weekly_lookbacks:
-        strategy_key = f"donchian_channel_{lookback}"
-        bias_strategies[strategy_key] = ([TimeFrame.W], {"lookback": lookback})
+    # Add ATR 252 if not present
+    if not has_atr_252:
+        atr_spec = {
+            'module_name': 'atr',
+            'timeframes': [TimeFrame.D],
+            'params': {'period': 252},
+            'strategy_key': 'atr_252'
+        }
+        # Add ATR at the beginning so it's available for other features
+        bias_node_specs = [atr_spec] + list(bias_node_specs)
     
-    for lookback in daily_lookbacks:
-        strategy_key = f"donchian_channel_{lookback}"
-        bias_strategies[strategy_key] = ([TimeFrame.D], {"lookback": lookback})
+    # Always ensure EWSD is included for volatility estimation (Robert Carver methodology)
+    # Check if EWSD is already in the specs
+    has_ewsd = False
+    for spec in bias_node_specs:
+        if spec.get('module_name') == 'ewsd':
+            has_ewsd = True
+            break
     
-    # Moving Average Difference - Weekly and Daily with different short/long lookback combinations
-    ma_pairs = [
-        (2, 8), (4, 16), (8, 32), (16, 64), (32, 128), (64, 256),
-        (5, 50), (10, 100), (2, 4), (4, 8), (8, 16), (16, 32), (32, 64), (64, 128)
-    ]
+    # Add EWSD if not present
+    if not has_ewsd:
+        ewsd_spec = {
+            'module_name': 'ewsd',
+            'timeframes': [TimeFrame.D],
+            'params': {
+                'lambda_short': 0.06061,      # 32-day span (Carver's preferred)
+                'long_run_window': 252,        # 1 year for long-run estimate
+                'blend_short_weight': 0.7,     # 70% short-run
+                'blend_long_weight': 0.3       # 30% long-run
+            },
+            'strategy_key': 'ewsd_252'
+        }
+        # Add EWSD at the beginning alongside ATR
+        bias_node_specs = [ewsd_spec] + list(bias_node_specs)
     
-    for tf in [TimeFrame.W, TimeFrame.D]:
-        for short_lookback, long_lookback in ma_pairs:
-            strategy_key = f"moving_avg_diff_{short_lookback}_{long_lookback}"
-            bias_strategies[strategy_key] = ([tf], {
-                "short_lookback": short_lookback,
-                "long_lookback": long_lookback
-            })
-    
-    # Turtle Trading - Weekly
-    # Note: Using 'lookback' parameter to match DonchianChannel's expected parameter name
-    bias_strategies["turtle"] = ([TimeFrame.W], {"lookback": 4})
-
-    bias_strategies['prev_return'] = ([TimeFrame.D], {})
-
-    # Detrended RSI
-    bias_strategies['detrended_rsi'] = ([TimeFrame.D], {"short_length": 2, "long_length": 20, "lookback": 252})
-    
-    # RSI with different lookback periods
-    # Note: Each needs a unique key to avoid overwriting
-    rsi_lookbacks = [2, 5, 10, 14]
-    for lookback in rsi_lookbacks:
-        strategy_key = f"rsi_{lookback}"
-        bias_strategies[strategy_key] = ([TimeFrame.D], {"lookback": lookback})
-    
-
+    # Process each bias node specification
+    for spec in bias_node_specs:
+        module_name = spec.get('module_name')
+        timeframes = spec.get('timeframes', [TimeFrame.D])
+        params = spec.get('params', {})
+        
+        # Generate strategy key if not provided
+        if 'strategy_key' in spec:
+            strategy_key = spec['strategy_key']
+        else:
+            # Auto-generate key from module name and params
+            strategy_key = module_name
+            if params:
+                # Add param values to key for uniqueness
+                param_str = '_'.join(str(v) for v in params.values())
+                strategy_key = f"{module_name}_{param_str}"
+        
+        bias_strategies[strategy_key] = (timeframes, params)
     
     return bias_strategies
 
 
-def create_ml_manager(ticker: Ticker, base_tf: TimeFrame = TimeFrame.D, build_matrix: bool = True):
+def create_ml_manager(
+    ticker: Ticker, 
+    base_tf: TimeFrame = TimeFrame.D, 
+    build_matrix: bool = True,
+    feature_filter: List[str] = None,
+    bias_node_specs: Optional[List[Dict[str, Any]]] = None
+):
     """
-    Creates an ML Manager instance with all the bias nodes configured.
+    Creates an ML Manager instance with bias nodes configured.
     
-    This function instantiates an MLManager with all the bias nodes from the get_bias_nodes function,
-    formatted in the way MLManager expects.
+    This function instantiates an MLManager with bias nodes from the get_bias_nodes function.
+    Optionally filters to only include nodes needed for specified features for performance.
     
     Parameters:
     - ticker (Ticker): The ticker symbol to create the ML manager for
     - base_tf (TimeFrame): Base timeframe for the ML model, defaults to daily
     - build_matrix (bool): Whether to construct a matrix for training, defaults to False
+    - feature_filter (List[str]): Optional list of feature names to filter bias strategies.
+                                  If provided, only bias strategies needed for these features
+                                  will be included. This significantly improves performance
+                                  when only testing a subset of features.
+    - bias_node_specs (Optional[List[Dict[str, Any]]]): List of bias node specifications.
+                                  If provided, these specific bias nodes will be used.
+                                  If None, default bias nodes will be used.
+                                  See get_bias_nodes() for specification format.
     
     Returns:
-    - MLManager: An instantiated ML manager with all bias nodes configured
+    - MLManager: An instantiated ML manager with bias nodes configured
     """
     from feature_extraction.ml_manager import MLManager
     
     # Get bias strategies dictionary using our get_bias_nodes function
-    bias_strategies = get_bias_nodes(ticker)
+    bias_strategies = get_bias_nodes(ticker, bias_node_specs=bias_node_specs)
+    
+    # Filter bias strategies if feature_filter is provided
+    if feature_filter is not None and len(feature_filter) > 0:
+        filtered_strategies = {}
+        
+        # Extract unique strategy prefixes from feature names
+        # Feature names typically follow pattern: {module_name}_{params}_{tf}_{output_name}
+        # Strategy keys in bias_strategies are like: "atr_252", "ma_diff_50", "rsi_14", etc.
+        needed_strategies = set()
+        
+        for feature_name in feature_filter:
+            # Try to match feature name to strategy keys
+            # Feature names can be complex, e.g., "atr_252_D_atr_pct_252"
+            # Strategy key would be "atr_252"
+            
+            # Try exact match first
+            if feature_name in bias_strategies:
+                needed_strategies.add(feature_name)
+                continue
+            
+            # Try to find the strategy key that this feature belongs to
+            # by checking if the strategy_key appears at the start of the feature_name
+            for strategy_key in bias_strategies.keys():
+                # Check if feature starts with strategy key followed by underscore or end
+                # This handles cases like:
+                # - "atr_252" matches "atr_252_D_atr_pct_252"
+                # - "ma_diff_50" matches "ma_diff_50_D_ma_diff_50_252"
+                if feature_name.startswith(strategy_key + '_') or feature_name == strategy_key:
+                    needed_strategies.add(strategy_key)
+                    break
+        
+        # Keep only the needed strategies
+        for strategy_key in needed_strategies:
+            if strategy_key in bias_strategies:
+                filtered_strategies[strategy_key] = bias_strategies[strategy_key]
+        
+        # Use filtered strategies if we found any matches, otherwise use all
+        # (better to compute too much than too little)
+        if len(filtered_strategies) > 0:
+            bias_strategies = filtered_strategies
+        else:
+            # No matches found - log warning but use all strategies to be safe
+            print(f"Warning: Could not match any of {len(feature_filter)} features to bias strategies, using all strategies")
     
     # Create the ML Manager
     ml_manager = MLManager(
