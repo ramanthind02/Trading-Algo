@@ -194,7 +194,7 @@ class MultiFeatureExplorer:
         )
         
         # Filter features if requested
-        available_features = list(features_df.columns)
+        available_features = [col for col in features_df.columns if col != 'ticker'] # Exclude 'ticker' column when using multiple tickers
         if feature_filter:
             features_to_explore = [f for f in feature_filter if f in available_features]
             if not features_to_explore:
