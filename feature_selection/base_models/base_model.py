@@ -33,9 +33,10 @@ class BaseModel(ABC):
         - 'mean': mean return only
     """
     
-    def __init__(self, n_bins: int = 3, selection_metric: str = 'sortino'):
+    def __init__(self, n_bins: int = 3, selection_metric: str = 'sortino', normalize_by: Optional[str] = 'ewsd'):
         self.n_bins = n_bins
         self.selection_metric = selection_metric
+        self.normalize_by = normalize_by  # 'ewsd', 'atr', or None
         
         # Fitted parameters (set during fit())
         self.thresholds_ = None
@@ -43,6 +44,49 @@ class BaseModel(ABC):
         self.best_short_bin_ = None
         self.bin_stats_ = None
         self.is_fitted_ = False
+        self.normalization_data_ = None  # Store normalization series
+    
+    def _normalize_feature(
+        self,
+        feature_data: pd.Series,
+        normalization_data: Optional[pd.Series] = None
+    ) -> pd.Series:
+        """
+        Normalize feature by volatility (EWSD or ATR).
+        
+        Parameters
+        ----------
+        feature_data : pd.Series
+            Feature values to normalize
+        normalization_data : Optional[pd.Series]
+            Volatility data (EWSD or ATR) aligned with feature_data.
+            If None and normalize_by is set, will raise an error.
+            
+        Returns
+        -------
+        pd.Series
+            Normalized feature values
+        """
+        if self.normalize_by is None:
+            return feature_data
+        
+        if normalization_data is None:
+            raise ValueError(
+                f"normalize_by='{self.normalize_by}' but no normalization_data provided. "
+                f"Pass the {self.normalize_by.upper()} column when calling fit()."
+            )
+        
+        # Align indices
+        aligned_feature = feature_data.reindex(normalization_data.index)
+        
+        # Safe division with minimum threshold
+        MIN_VOL = 1e-8 if self.normalize_by == 'ewsd' else 1.0
+        safe_vol = normalization_data.clip(lower=MIN_VOL)
+        
+        # Normalize: feature / volatility
+        normalized = aligned_feature / safe_vol
+        
+        return normalized
     
     @abstractmethod
     def _create_bins(self, feature_data: pd.Series, target_data: pd.Series) -> pd.Series:
@@ -171,23 +215,37 @@ class BaseModel(ABC):
         
         return np.array(sorted(thresholds))
     
-    def fit(self, feature_data: pd.Series, target_data: pd.Series) -> 'BaseModel':
+    def fit(
+        self,
+        feature_data: pd.Series,
+        target_data: pd.Series,
+        normalization_data: Optional[pd.Series] = None
+    ) -> 'BaseModel':
         """
         Fit the model to training data.
+        
+        Binning is ALWAYS done on raw features, not normalized features.
+        Normalization is only applied to signals after binning (via predict_scaled).
         
         Parameters
         ----------
         feature_data : pd.Series
-            Feature values (training data)
+            Feature values (training data) - RAW, not normalized
         target_data : pd.Series
             Target values (training data)
+        normalization_data : Optional[pd.Series]
+            Volatility data for normalization (EWSD or ATR).
+            Stored for later use in predict_scaled().
             
         Returns
         -------
         self
             Fitted model
         """
-        # Create clean dataset
+        # Store normalization data for later use in predict_scaled()
+        self.normalization_data_ = normalization_data
+        
+        # Create clean dataset (NO normalization - bin on raw features)
         df = pd.DataFrame({'feature': feature_data, 'target': target_data}).dropna()
         
         if len(df) < self.n_bins * 10:
@@ -218,21 +276,50 @@ class BaseModel(ABC):
         self.is_fitted_ = True
         return self
     
-    def predict(self, feature_data: pd.Series, strategy: str = 'long') -> pd.Series:
+    def predict(
+        self,
+        feature_data: pd.Series,
+        strategy: str = 'long',
+        normalization_data: Optional[pd.Series] = None,
+        scaled: bool = False
+    ) -> pd.Series:
         """
         Predict signals for new data.
+        
+        Binning is ALWAYS done on RAW features. If scaled=True and normalize_by is set,
+        volatility scaling is applied AFTER binning to convert binary signals to position sizes.
         
         Parameters
         ----------
         feature_data : pd.Series
-            Feature values to classify
+            Feature values to classify - RAW, not normalized
         strategy : str, default='long'
             Strategy to use: 'long' or 'short'
+        normalization_data : Optional[pd.Series]
+            Volatility data (EWSD or ATR) for scaling.
+            Required if scaled=True and normalize_by is set.
+        scaled : bool, default=False
+            If True, apply volatility scaling to signals (position sizes).
+            If False, return binary signals (1 or 0).
             
         Returns
         -------
         pd.Series
-            Binary signal: 1 if in best bin, 0 otherwise
+            If scaled=False: Binary signals (1 if in best bin, 0 otherwise)
+            If scaled=True: Volatility-scaled position sizes (0 or 1/volatility)
+            
+        Examples
+        --------
+        >>> # Get binary signals (1 or 0)
+        >>> signals = model.predict(X_test, strategy='long', scaled=False)
+        >>> 
+        >>> # Get volatility-scaled position sizes
+        >>> positions = model.predict(
+        ...     X_test,
+        ...     strategy='long',
+        ...     normalization_data=ewsd_test,
+        ...     scaled=True
+        ... )
         """
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before calling predict()")
@@ -245,13 +332,35 @@ class BaseModel(ABC):
         else:
             raise ValueError(f"Unknown strategy: {strategy}. Use 'long' or 'short'")
         
-        # Assign bins based on thresholds
+        # Assign bins based on thresholds (always on RAW features)
         bins = np.digitize(feature_data.values, self.thresholds_)
         
-        # Create signal: 1 if in best bin, 0 otherwise
+        # Create binary signal: 1 if in best bin, 0 otherwise
         signal = pd.Series((bins == best_bin).astype(int), index=feature_data.index)
         
-        return signal
+        # If not scaled or no normalization, return binary signals
+        if not scaled or self.normalize_by is None:
+            return signal
+        
+        # Apply volatility scaling to signals
+        if normalization_data is None:
+            raise ValueError(
+                f"scaled=True and normalize_by='{self.normalize_by}' but no normalization_data provided. "
+                f"Pass the {self.normalize_by.upper()} column when calling predict()."
+            )
+        
+        # Align indices
+        aligned_signal = signal.reindex(normalization_data.index, fill_value=0)
+        
+        # Safe division with minimum threshold
+        MIN_VOL = 1e-8 if self.normalize_by == 'ewsd' else 1.0
+        safe_vol = normalization_data.clip(lower=MIN_VOL)
+        
+        # Scale signals: signal / volatility
+        # If signal=0, result=0. If signal=1, result=1/vol (position size)
+        scaled_signal = aligned_signal / safe_vol
+        
+        return scaled_signal
     
     def get_bin_stats(self) -> Dict:
         """
@@ -272,7 +381,8 @@ class BaseModel(ABC):
         feature_data: pd.Series,
         target_data: pd.Series,
         objective_metric: 'ObjectiveMetric',
-        strategy: str = 'long'
+        strategy: str = 'long',
+        normalization_data: Optional[pd.Series] = None
     ) -> float:
         """
         Fit model and compute objective metric for the best bin.
@@ -295,6 +405,9 @@ class BaseModel(ABC):
             Metric instance to compute (e.g., SortinoRatio, SharpeRatio)
         strategy : str, default='long'
             Strategy to evaluate: 'long' or 'short'
+        normalization_data : Optional[pd.Series]
+            Volatility data for normalization (EWSD or ATR).
+            Required if normalize_by is set.
             
         Returns
         -------
@@ -318,10 +431,10 @@ class BaseModel(ABC):
         ... )
         """
         # Fit the model
-        self.fit(feature_data, target_data)
+        self.fit(feature_data, target_data, normalization_data=normalization_data)
         
         # Get predictions for the specified strategy
-        signals = self.predict(feature_data, strategy=strategy)
+        signals = self.predict(feature_data, strategy=strategy, normalization_data=normalization_data)
         
         # Get selected returns
         selected_returns = target_data[signals == 1]

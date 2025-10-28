@@ -245,7 +245,11 @@ class MultiFeatureExplorer:
                 'target_auto_extracted': target_data is None
             })
             
-            # Create explorer with all target types
+            # Create explorer with all target types AND normalization columns
+            # Find EWSD and ATR columns in features_df for volatility scaling
+            ewsd_cols = {col: features_df[col] for col in features_df.columns if 'ewsd' in col.lower()}
+            atr_cols = {col: features_df[col] for col in features_df.columns if 'atr' in col.lower()}
+            
             explorer = FeatureExplorer(
                 feature_name=feature_name,
                 feature_data=feature_data,
@@ -256,6 +260,12 @@ class MultiFeatureExplorer:
                 log_return_atr=targets_df['log_return_atr'],
                 log_return_ewsd=targets_df['log_return_ewsd']
             )
+            
+            # Add EWSD and ATR columns to explorer's dataframe for volatility scaling
+            for col_name, col_data in ewsd_cols.items():
+                explorer.df[col_name] = col_data
+            for col_name, col_data in atr_cols.items():
+                explorer.df[col_name] = col_data
             
             explorers[feature_name] = explorer
             print(f"  ✓ Created explorer for '{feature_name}'")
@@ -346,13 +356,30 @@ class MultiFeatureExplorer:
             
             results = {}
             for i, (feature_name, explorer) in enumerate(self.explorers.items(), 1):
+                # Skip non-numeric features upfront
+                if not pd.api.types.is_numeric_dtype(explorer.df['feature']):
+                    if verbose and self.n_features > 1:
+                        print(f"\n[{i}/{self.n_features}] {feature_name}")
+                        print("=" * 60)
+                        print(f"⚠️  Skipping '{feature_name}' - non-numeric feature (dtype: {explorer.df['feature'].dtype})")
+                    continue
+                
                 if verbose and self.n_features > 1:
                     print(f"\n[{i}/{self.n_features}] {feature_name}")
                     print("=" * 60)
                 
-                method = getattr(explorer, method_name)
-                result = method(*args, **kwargs)
-                results[feature_name] = result
+                try:
+                    method = getattr(explorer, method_name)
+                    result = method(*args, **kwargs)
+                    results[feature_name] = result
+                except TypeError as e:
+                    # Catch any other TypeErrors
+                    if 'non-numeric' in str(e) or "'<' not supported" in str(e):
+                        if verbose:
+                            print(f"⚠️  Skipping '{feature_name}' - incompatible data type")
+                        continue
+                    else:
+                        raise  # Re-raise if it's a different TypeError
             
             if verbose and self.n_features > 1:
                 print(f"\n{'='*60}")
@@ -367,175 +394,7 @@ class MultiFeatureExplorer:
         
         return multi_method
     
-    # Note: plot_feature_deciles, plot_2bin, plot_rolling_decile_whiskers, etc.
-    # are now automatically delegated via __getattr__. No need for wrapper methods!
-    
-    # All plotting methods (plot_2bin, plot_rolling_decile_whiskers, 
-    # plot_rolling_decile_heatmap) are automatically delegated via __getattr__
-    
-    def walkforward_bin_selection(
-        self,
-        train_start,
-        train_end,
-        test_step: int = 252,
-        num_steps: int = 10,
-        n_bins: int = 3,
-        selection_metric: str = 'sharpe',
-        verbose: bool = True,
-        plot_results: bool = True,
-        figsize: Tuple[int, int] = (16, 10),
-        save_dir: Optional[str] = None
-    ) -> Dict[str, Tuple]:
-        """
-        Perform walk-forward bin selection for ALL features.
-        
-        This method automatically applies walk-forward bin selection analysis
-        to all features managed by this MultiFeatureExplorer.
-        
-        Parameters
-        ----------
-        train_start : datetime
-            Start date for initial training window
-        train_end : datetime
-            End date for initial training window
-        test_step : int, default=252
-            Number of days for test period (~1 year)
-        num_steps : int, default=10
-            Number of walk-forward steps
-        n_bins : int, default=3
-            Number of bins to create (3 or 4 recommended)
-        selection_metric : str, default='sortino'
-            Metric to use for bin selection:
-            - 'sortino': mean / downside_std (risk-adjusted, penalizes only downside)
-            - 'mean': mean return only (ignores variance)
-        verbose : bool, default=True
-            Print detailed progress
-        plot_results : bool, default=True
-            Generate visualization of results
-        figsize : Tuple[int, int], default=(16, 10)
-            Figure size for plots
-        save_dir : Optional[str], default=None
-            If provided, save all figures to this directory
-            
-        Returns
-        -------
-        Dict[str, Tuple]
-            Dictionary mapping feature names to (results_df, step_info, figs) tuples
-            where figs is a tuple of (metrics_fig, equity_fig)
-            
-        Examples
-        --------
-        >>> from datetime import datetime
-        >>> results = explorer.walkforward_bin_selection(
-        ...     train_start=datetime(2000, 1, 1),
-        ...     train_end=datetime(2010, 1, 1),
-        ...     test_step=252,
-        ...     num_steps=15,
-        ...     n_bins=3
-        ... )
-        >>> 
-        >>> # Access individual feature results
-        >>> for feature_name, (results_df, step_info, figs) in results.items():
-        ...     print(f"{feature_name}: Avg Sortino = {results_df['test_sortino'].mean():.2f}")
-        ...     if figs:
-        ...         metrics_fig, equity_fig = figs
-        """
-        # Use auto-delegation to call walkforward_bin_selection on all explorers
-        # But handle save_dir specially to generate per-feature save paths
-        print(f"\n{'='*60}")
-        print(f"WALK-FORWARD BIN SELECTION FOR {self.n_features} FEATURES")
-        print(f"{'='*60}")
-        
-        results = {}
-        for feature_name, explorer in self.explorers.items():
-            # Generate save path if directory provided
-            save_path = f"{save_dir}/{feature_name}_walkforward.png" if save_dir else None
-            
-            # Call the method on individual explorer
-            result = explorer.walkforward_bin_selection(
-                train_start=train_start,
-                train_end=train_end,
-                test_step=test_step,
-                num_steps=num_steps,
-                n_bins=n_bins,
-                selection_metric=selection_metric,
-                verbose=verbose,
-                plot_results=plot_results,
-                figsize=figsize,
-                save_path=save_path
-            )
-            results[feature_name] = result
-        
-        print(f"\n{'='*60}")
-        print(f"COMPLETED WALK-FORWARD ANALYSIS FOR ALL {self.n_features} FEATURES")
-        print(f"{'='*60}")
-        
-        # Print comparative summary for LONG and SHORT strategies
-        print(f"\nComparative Summary (LONG Strategy):")
-        print(f"{'Feature':<40} {'Avg Return':>12} {'Avg Sortino':>12} {'Total Trades':>12}")
-        print(f"{'-'*80}")
-        for feature_name, (results_df, _, _) in results.items():
-            avg_return_long = results_df['test_mean_return_long'].mean()
-            avg_sortino_long = results_df['test_sortino_long'].mean()
-            total_trades_long = results_df['n_trades_long'].sum()
-            print(f"{feature_name:<40} {avg_return_long:>12.6f} {avg_sortino_long:>12.2f} {total_trades_long:>12.0f}")
-        print(f"{'-'*80}")
-        
-        print(f"\nComparative Summary (SHORT Strategy):")
-        print(f"{'Feature':<40} {'Avg Return':>12} {'Avg Sortino':>12} {'Total Trades':>12}")
-        print(f"{'-'*80}")
-        for feature_name, (results_df, _, _) in results.items():
-            avg_return_short = results_df['test_mean_return_short'].mean()
-            avg_sortino_short = results_df['test_sortino_short'].mean()
-            total_trades_short = results_df['n_trades_short'].sum()
-            print(f"{feature_name:<40} {avg_return_short:>12.6f} {avg_sortino_short:>12.2f} {total_trades_short:>12.0f}")
-        print(f"{'-'*80}")
-        
-        print(f"\nComparative Summary (COMBINED L+S):")
-        print(f"{'Feature':<40} {'Avg Return':>12} {'Total Trades':>12}")
-        print(f"{'-'*80}")
-        for feature_name, (results_df, _, _) in results.items():
-            avg_return_combined = (results_df['test_mean_return_long'].mean() + results_df['test_mean_return_short'].mean()) / 2
-            total_trades_combined = results_df['n_trades_long'].sum() + results_df['n_trades_short'].sum()
-            print(f"{feature_name:<40} {avg_return_combined:>12.6f} {total_trades_combined:>12.0f}")
-        print(f"{'-'*80}")
-        
-        return results
-    
-    # Note: walkforward_bin_selection_tree, binning_permutation_test, and other
-    # FeatureExplorer methods are automatically delegated via __getattr__.
-    # No wrapper methods needed!
-    
-    # binning_permutation_test is automatically delegated via __getattr__
-    # It will work automatically without a wrapper method!
-    
-    def get_results_summary(self) -> pd.DataFrame:
-        """
-        Get a summary DataFrame of all analysis results across features.
-        
-        Returns
-        -------
-        pd.DataFrame
-            Summary of results with one row per feature
-        """
-        summary_data = []
-        
-        for feature_name, explorer in self.explorers.items():
-            row = {'feature_name': feature_name}
-            
-            # Add basic statistics only (no statistical tests)
-            row['n_samples'] = explorer.n_samples
-            row['feature_mean'] = explorer.df['feature'].mean()
-            row['feature_std'] = explorer.df['feature'].std()
-            row['feature_min'] = explorer.df['feature'].min()
-            row['feature_max'] = explorer.df['feature'].max()
-            row['target_mean'] = explorer.df['target'].mean()
-            row['target_std'] = explorer.df['target'].std()
-            
-            summary_data.append(row)
-        
-        return pd.DataFrame(summary_data)
-    
+
     def __repr__(self) -> str:
         """String representation."""
         return (f"MultiFeatureExplorer(n_features={self.n_features}, "
