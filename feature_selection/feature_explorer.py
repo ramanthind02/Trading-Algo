@@ -748,6 +748,74 @@ class FeatureExplorer:
         
         return fig
     
+    def plot_deciles(
+        self,
+        feature_name: str,
+        n_bins: int = 10,
+        target_col: str = 'log_return',
+        figsize: Tuple[int, int] = (12, 8),
+        plot_type: str = "bar",
+        save_path: Optional[str] = None
+    ) -> plt.Figure:
+        """
+        Plot decile analysis for a single feature.
+        
+        Parameters
+        ----------
+        feature_name : str
+            Name of the feature
+        n_bins : int, default=10
+            Number of bins
+        target_col : str, default='log_return'
+            Target column to use
+        figsize : Tuple[int, int], default=(12, 8)
+            Figure size
+        plot_type : str, default="bar"
+            Plot type
+        save_path : Optional[str], default=None
+            Path to save figure
+            
+        Returns
+        -------
+        plt.Figure
+            Matplotlib figure
+        """
+        # Validate
+        if feature_name not in self.feature_names:
+            raise ValueError(f"Feature '{feature_name}' not found")
+        if target_col not in self.targets_df.columns:
+            raise ValueError(f"Target '{target_col}' not found")
+        
+        # Get data
+        feature_data = self.features_df[feature_name]
+        target_data = self.targets_df[target_col]
+        
+        # Check numeric
+        if not pd.api.types.is_numeric_dtype(feature_data):
+            raise TypeError(f"Feature '{feature_name}' is non-numeric")
+        
+        # Plot using the imported function
+        fig, bin_table = plot_decile_analysis(
+            feature_data=feature_data,
+            target_data=target_data,
+            feature_name=feature_name,
+            n_bins=n_bins,
+            figsize=figsize,
+            plot_type=plot_type,
+            save_path=save_path
+        )
+        
+        # Store results
+        if 'decile_analysis' not in self.results:
+            self.results['decile_analysis'] = {}
+        self.results['decile_analysis'][feature_name] = {
+            'target_col': target_col,
+            'n_bins': n_bins,
+            'bin_data': bin_table
+        }
+        
+        return fig
+    
     def get_summary(self) -> pd.DataFrame:
         """
         Get summary statistics for all features.
