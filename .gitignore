@@ -210,3 +210,8 @@ __marimo__/
 daily_futures_data.csv
 .vscode/
 cpython_env
+
+# uv 
+.python-version
+pyproject.toml
+uv.lock
