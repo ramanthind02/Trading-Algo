@@ -57,6 +57,12 @@ class EWMACNode(BiasNode):
         self.lambda_slow = 2.0 / (span_slow + 1.0)
         self.lambda_ewsd = 2.0 / (span_ewsd + 1.0)
         
+        # Create unique feature names based on parameters
+        self.columns = [
+            f"ewmac_{span_fast}_{span_slow}",
+            f"ewmac_{span_fast}_{span_slow}_bool"
+        ]
+        
         # Internal state for EWMA and EWSD
         self.ewma_fast: Optional[float] = None
         self.ewma_slow: Optional[float] = None
@@ -68,8 +74,6 @@ class EWMACNode(BiasNode):
         self.front_bad = span_ewsd # Use EWSD span as the minimum required period for a meaningful EWSD estimate
         
         self.candle_count = 0
-        
-        self.columns = [f'ewmac_{span_fast}_{span_slow}', f'ewmac_{span_fast}_{span_slow}_bool']
     
     def _initialize_ewma(self, price: float):
         """Initializes EWMA values with the first available price."""

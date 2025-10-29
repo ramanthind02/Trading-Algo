@@ -11,9 +11,69 @@ from functools import partial
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.enums import Ticker, TimeFrame
 from utils.helpers import load_data, create_ml_manager
-from feature_selection.opt_thresh import optimize_threshold
 from feature_extraction.feature_extractor import extract_bias
-from feature_selection.cross_val import apply_threshold_strategy, compute_profit_factor
+
+def compute_profit_factor(returns: np.ndarray) -> float:
+    """Compute profit factor for a series of returns.
+    
+    Args:
+        returns: Array of returns (can be positive or negative)
+        
+    Returns:
+        float: Profit factor (sum of gains / sum of losses)
+    """
+    gains = returns[returns > 0].sum()
+    losses = -returns[returns < 0].sum()
+    return gains / max(losses, 1e-10)  # Avoid division by zero
+
+# Make optimize_threshold optional
+OPTIMIZE_THRESHOLD_AVAILABLE = False
+try:
+    from feature_selection.opt_thresh import optimize_threshold
+    OPTIMIZE_THRESHOLD_AVAILABLE = True
+except ImportError:
+    import warnings
+    from dataclasses import dataclass
+    
+    warnings.warn(
+        "feature_selection.opt_thresh not found. Using simplified threshold optimization. "
+        "For full functionality, ensure the opt_thresh module is available."
+    )
+    
+    @dataclass
+    class OptimizationResult:
+        """Simple result container for threshold optimization."""
+        profit_factor: float
+        threshold: float = 0.0
+        n_trades: int = 0
+        
+    def optimize_threshold(feature, target, min_kept=0.1, **kwargs):
+        """Simplified threshold optimization when opt_thresh is not available.
+        
+        Args:
+            feature: Feature values
+            target: Target returns
+            min_kept: Minimum fraction of samples to keep (0-1)
+            **kwargs: Ignored, for compatibility only
+            
+        Returns:
+            OptimizationResult with profit_factor, threshold, and n_trades
+        """
+        # Simple median threshold
+        threshold = feature.median()
+        signals = (feature > threshold).astype(int)
+        returns = signals * target
+        
+        # Calculate profit factor
+        gains = returns[returns > 0].sum()
+        losses = -returns[returns < 0].sum()
+        profit_factor = gains / max(losses, 1e-10)
+        
+        return OptimizationResult(
+            profit_factor=profit_factor,
+            threshold=threshold,
+            n_trades=len(signals[signals != 0])
+        )
 
 
 class BarPermute:
@@ -1196,5 +1256,6 @@ def _run_single_permutation(
         counts = {feature: 0 for feature in original_pfs.keys()}
     
     return counts
+
 
 
