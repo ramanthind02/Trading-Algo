@@ -215,3 +215,6 @@ cpython_env
 .python-version
 pyproject.toml
 uv.lock
+
+# macOS file
+*.DS_Store
