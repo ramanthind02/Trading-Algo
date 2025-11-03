@@ -226,8 +226,8 @@ class FeatureSelector:
             
         Examples
         --------
-        >>> from feature_selection.base_models import QuantileBinningModel
-        >>> from feature_selection.objective_metric import SortinoRatio
+        >>> from plotting.base_models import QuantileBinningModel
+        >>> from plotting.objective_metric import SortinoRatio
         >>> 
         >>> # Use quantile binning model
         >>> model = QuantileBinningModel(n_bins=3, selection_metric='sortino')
@@ -251,7 +251,7 @@ class FeatureSelector:
                 f"Available columns: {list(self.df.columns)}"
             )
         
-        from feature_selection.walkforward.walkforward_model import WalkForwardSplitter
+        from plotting.walkforward.walkforward_model import WalkForwardSplitter
         
         # Get data
         feature_data = self.df['feature']
@@ -462,7 +462,7 @@ class FeatureSelector:
             print(f"  Equity curve uses: raw_return (actual P&L)")
             print(f"{'='*70}")
         
-        from feature_selection.graphing.quantstats_reports import generate_tearsheet
+        from plotting.graphing.quantstats_reports import generate_tearsheet
         
         # Create daily returns series for strategy and baseline
         # Initialize with zeros for all dates

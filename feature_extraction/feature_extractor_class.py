@@ -256,35 +256,34 @@ class FeatureExtractor:
                 if 'ticker_dup' in self.combined_features.columns:
                     self.combined_features = self.combined_features.drop(columns=['ticker_dup'])
                     
-        # Build feature metadata
+        # Build feature metadata via standardized name parsing
         feature_metadata = {}
-        print(f"Generating feature metadata for {len(bias_node_specs)} specs")
-        for i, spec in enumerate(bias_node_specs):
-            module_name = spec['module_name']
-            params = spec['params']
-            timeframes = spec['timeframes']
-            
-            print(f"  Spec {i+1}: {module_name} with params {params}")
-            
-            # Generate unique base name using parameter values only
-            param_values = '_'.join(str(v) for v in params.values())
-            base_name = f"{module_name}_{param_values}"
-            
-            # Find features that start with the base name
-            module_cols = [col for col in self.combined_features.columns 
-                         if col.startswith(base_name)]
-            
-            print(f"    Found {len(module_cols)} columns for {base_name}")
-            
-            for col in module_cols:
-                feature_metadata[col] = {
-                    'module': module_name,
-                    'parameters': params.copy(),
-                    'timeframes': timeframes.copy(),
-                    'base_name': base_name,
-                    'full_name': col
-                }
-                print(f"      Metadata for {col}: {feature_metadata[col]['parameters']}")
+        print("Generating feature metadata by parsing column names")
+        if self.combined_features is not None:
+            for col in [c for c in self.combined_features.columns if c != 'ticker']:
+                try:
+                    parsed = helpers.parse_feature_column_name(col)
+                    module = parsed.get('module')
+                    params = parsed.get('params', {})
+                    tf_token = parsed.get('tf')
+                    # Normalize timeframe to list form for consistency
+                    timeframes = [tf_token] if tf_token is not None else []
+                    feature_metadata[col] = {
+                        'module': module,
+                        'parameters': params,
+                        'timeframes': timeframes,
+                        'base_name': f"{module}",
+                        'full_name': col
+                    }
+                except Exception as e:
+                    # If parsing fails, leave minimal metadata
+                    feature_metadata[col] = {
+                        'module': None,
+                        'parameters': {},
+                        'timeframes': [],
+                        'base_name': None,
+                        'full_name': col
+                    }
         
         # After processing all specs, set up the combined data
         if self.combined_features is not None:

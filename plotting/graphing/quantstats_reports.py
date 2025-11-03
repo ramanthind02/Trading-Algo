@@ -190,7 +190,7 @@ def compute_baseline_results(
         
     Examples
     --------
-    >>> from feature_selection.objective_metric import SortinoRatio
+    >>> from utils.objective_metric import SortinoRatio
     >>> 
     >>> baseline_df = compute_baseline_results(
     ...     results_df=strategy_results,

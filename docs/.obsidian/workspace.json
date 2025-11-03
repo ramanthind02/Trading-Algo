@@ -1,0 +1,231 @@
+{
+  "main": {
+    "id": "5d59327178511875",
+    "type": "split",
+    "children": [
+      {
+        "id": "bf8ac3704d80c939",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5967fca94fb3762f",
+            "type": "leaf",
+            "state": {
+              "type": "canvas",
+              "state": {
+                "file": "ML pipeline overview.canvas",
+                "viewState": {
+                  "x": 1004.3861049629193,
+                  "y": 214.60348107752588,
+                  "zoom": -1.335185083110189
+                }
+              },
+              "icon": "lucide-layout-dashboard",
+              "title": "ML pipeline overview"
+            }
+          },
+          {
+            "id": "e7f24c314cd9edeb",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Feature engineering/Trading ideas.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Trading ideas"
+            }
+          },
+          {
+            "id": "164d35390165490a",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Dimensionality Reduction.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "Dimensionality Reduction"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "deb7a3c84866fa28",
+    "type": "split",
+    "children": [
+      {
+        "id": "fef985ec2dceb75c",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "7c70d63ac7db1a56",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "2b5998d1598e7bed",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "092be032e022c697",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 200
+  },
+  "right": {
+    "id": "e48c1781296e3df6",
+    "type": "split",
+    "children": [
+      {
+        "id": "4b1e4e833fe5faf5",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "706e681fd2f1ec23",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "ML pipeline overview.canvas",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for ML pipeline overview"
+            }
+          },
+          {
+            "id": "f66587b06f9dcfee",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "ML pipeline overview.canvas",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from ML pipeline overview"
+            }
+          },
+          {
+            "id": "454cace0403e76c8",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "ecf1b881303bba77",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "ML pipeline overview.canvas",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of ML pipeline overview"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "e7f24c314cd9edeb",
+  "lastOpenFiles": [
+    "ML pipeline overview.canvas",
+    "Feature engineering/Trading ideas.md",
+    "Feature engineering/Raw feature Extraction.md",
+    "Feature distribution.md",
+    "Feature engineering/Market & Sector selection.md",
+    "z-attachements/Pasted image 20251101145117.png",
+    "z-attachements/Pasted image 20251101143218.png",
+    "z-attachements/Pasted image 20251101142953.png",
+    "z-attachements/Pasted image 20251101142643.png",
+    "z-attachements/Pasted image 20251101142522.png",
+    "z-attachements/Pasted image 20251101142437.png",
+    "Feature engineering",
+    "z-attachements/Pasted image 20251101141450.png",
+    "Dimensionality Reduction.md",
+    "Normalization.md",
+    "In-sample permutation test.md",
+    "In-Sample Binning.md",
+    "Parameter Sensitivity Analysis.md",
+    "z-attachements/Pasted image 20251030191937.png",
+    "Untitled 1",
+    "z-attachements",
+    "z-attachements/Pasted image 20251030191534.png",
+    "z-attachements/Pasted image 20251030191358.png",
+    "Welcome.md"
+  ]
+}

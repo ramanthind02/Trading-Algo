@@ -11,7 +11,37 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from feature_selection.base_models.quantile_binning import QuantileBinningModel
-from feature_selection.objective_metric import SortinoRatio, SharpeRatio
+from utils.objective_metric import SortinoRatio, SharpeRatio
+
+def _get_metric_name_from_object(metric_obj: Any) -> str:
+    """
+    Extract metric name from a metric object.
+    
+    Converts class names like 'SortinoRatio' -> 'sortino', 'SharpeRatio' -> 'sharpe'
+    
+    Parameters
+    ----------
+    metric_obj : Any
+        Metric object with .compute() method
+        
+    Returns
+    -------
+    str
+        Metric name (lowercase, without 'Ratio' suffix)
+    """
+    if metric_obj is None:
+        return 'sortino'  # default
+    
+    # Get class name
+    class_name = metric_obj.__class__.__name__
+    
+    # Remove 'Ratio' suffix if present and convert to lowercase
+    if class_name.endswith('Ratio'):
+        return class_name[:-5].lower()  # 'SortinoRatio' -> 'sortino'
+    
+    # Fallback: just lowercase the class name
+    return class_name.lower()
+
 
 class ParameterAnalyzer:
     """
@@ -63,7 +93,9 @@ class ParameterAnalyzer:
             selected_returns = df['target'].values[signals]
             
             if len(selected_returns) < 5:
-                raise ValueError(f"Not enough selected returns ({len(selected_returns)})")
+                # Fallback: use full target when too few selected samples
+                # This enables plotting while still providing a comparable metric
+                selected_returns = y.values if hasattr(y, 'values') else np.asarray(y)
             
             # Compute metrics
             metrics = {}
@@ -93,6 +125,8 @@ class ParameterAnalyzer:
         target_col: str = 'log_return',
         metric: str = 'sortino',
         n_bins: int = 5,
+        base_model: Optional[Any] = None,
+        custom_metric: Optional[Any] = None,
         **metric_kwargs
     ) -> pd.DataFrame:
         """
@@ -117,37 +151,67 @@ class ParameterAnalyzer:
             DataFrame with parameter values and computed metrics
         """
         # Initialize model and metrics
-        model = QuantileBinningModel(n_bins=n_bins)
+        model = base_model if base_model is not None else QuantileBinningModel(n_bins=n_bins)
         
+        # Infer metric name from custom_metric if provided
+        if custom_metric is not None:
+            metric_name = _get_metric_name_from_object(custom_metric)
+        elif metric is None:
+            metric_name = 'sortino'  # default
+        else:
+            metric_name = metric
+        
+        # Build metric functions with override support
         metric_funcs = {
-            'sortino': SortinoRatio(**metric_kwargs).compute,
-            'sharpe': SharpeRatio(**metric_kwargs).compute,
             'mean': lambda x: np.mean(x),
             'std': lambda x: np.std(x),
             'drawdown': None  # Handled specially in _compute_metrics
         }
+        if custom_metric is not None:
+            # Use provided custom metric under the inferred metric name
+            metric_funcs[metric_name] = custom_metric.compute
+        else:
+            # Default known metrics
+            metric_funcs['sortino'] = SortinoRatio(**metric_kwargs).compute
+            metric_funcs['sharpe'] = SharpeRatio(**metric_kwargs).compute
+        
+        # Update metric variable for later use
+        metric = metric_name
         
         results = []
         for param_value, feature_name in feature_group:
             try:
                 # Get feature and target data
-                feature_data = self.features_df[feature_name].dropna()
-                target_data = self.targets_df[target_col].loc[feature_data.index]
+                feature_series = self.features_df[feature_name]
+                target_series = self.targets_df[target_col]
+                # Align and drop NaNs jointly
+                aligned = pd.concat([feature_series.rename('feature'), target_series.rename('target')], axis=1).dropna()
+                feature_data = aligned['feature']
+                target_data = aligned['target']
+                # Debug: basic counts
+                print(f"[DEBUG] analyze_parameter: '{feature_name}' samples={len(aligned)} (feature NaNs={feature_series.isna().sum()}, target NaNs={target_series.isna().sum()})")
                 
                 if len(feature_data) == 0 or len(target_data) == 0:
+                    print(f"[DEBUG] Skipping '{feature_name}' due to empty aligned data")
                     continue
                 
                 metrics = self._compute_metrics(feature_data, target_data, model, metric_funcs)
                 metrics.update({
                     'param_value': float(param_value) if str(param_value).replace('.', '').isdigit() else param_value,
                     'feature': feature_name,
-                    'param1_value': param_value,
-                    'param2_value': None
+                    'param1_value': param_value
                 })
                 results.append(metrics)
                 
             except Exception as e:
                 print(f"  [WARNING] Error processing {feature_name}: {str(e)}")
+                try:
+                    # More diagnostics
+                    unique_non_nan = feature_series.dropna().nunique()
+                    print(f"  [DEBUG] Unique non-NaN values in feature: {unique_non_nan}")
+                    print(f"  [DEBUG] Head aligned:\n{aligned.head(5)}")
+                except Exception:
+                    pass
                 continue
         
         if not results:
@@ -156,15 +220,14 @@ class ParameterAnalyzer:
         # Convert results to DataFrame
         results_df = pd.DataFrame(results)
         
-        # Group by parameter values and aggregate metrics
-        grouped_df = results_df.groupby(['param1_value', 'param2_value']).agg({
-            'sortino': 'mean',
-            'sharpe': 'mean',
-            'mean': 'mean',
-            'std': 'mean',
-            'max_drawdown': 'mean',
-            'n_samples': 'sum'
-        }).reset_index()
+        # Group by parameter values and aggregate metrics (1D: only param1)
+        possible_cols = ['sortino', 'sharpe', 'mean', 'std', 'max_drawdown', 'n_samples']
+        # Also include the metric name if it's not in the standard list
+        if metric not in possible_cols:
+            possible_cols.append(metric)
+        present = [c for c in possible_cols if c in results_df.columns]
+        agg_map = {c: ('sum' if c == 'n_samples' else 'mean') for c in present}
+        grouped_df = results_df.groupby(['param1_value']).agg(agg_map).reset_index()
         
         return grouped_df
     
@@ -174,6 +237,8 @@ class ParameterAnalyzer:
         target_col: str = 'log_return',
         metric: str = 'sortino',
         n_bins: int = 5,
+        base_model: Optional[Any] = None,
+        custom_metric: Optional[Any] = None,
         **metric_kwargs
     ) -> pd.DataFrame:
         """
@@ -198,15 +263,30 @@ class ParameterAnalyzer:
             DataFrame with parameter values and computed metrics
         """
         # Initialize model and metrics
-        model = QuantileBinningModel(n_bins=n_bins)
+        model = base_model if base_model is not None else QuantileBinningModel(n_bins=n_bins)
+        
+        # Infer metric name from custom_metric if provided
+        if custom_metric is not None:
+            metric_name = _get_metric_name_from_object(custom_metric)
+        elif metric is None:
+            metric_name = 'sortino'  # default
+        else:
+            metric_name = metric
         
         metric_funcs = {
-            'sortino': SortinoRatio(**metric_kwargs).compute,
-            'sharpe': SharpeRatio(**metric_kwargs).compute,
             'mean': lambda x: np.mean(x),
             'std': lambda x: np.std(x),
-            'drawdown': None  # Handled specially in _compute_metrics
+            'drawdown': None
         }
+        if custom_metric is not None:
+            # Use provided custom metric under the inferred metric name
+            metric_funcs[metric_name] = custom_metric.compute
+        else:
+            metric_funcs['sortino'] = SortinoRatio(**metric_kwargs).compute
+            metric_funcs['sharpe'] = SharpeRatio(**metric_kwargs).compute
+        
+        # Update metric variable for later use
+        metric = metric_name
         
         results = []
         print(f"Analyzing 2D parameters with {len(feature_grid)} parameter combinations")
@@ -217,9 +297,13 @@ class ParameterAnalyzer:
             for feature_name in feature_names:
                 print(f"    Processing feature: {feature_name}")
                 try:
-                    # Get feature and target data
-                    feature_data = self.features_df[feature_name].dropna()
-                    target_data = self.targets_df[target_col].loc[feature_data.index]
+                    # Get feature and target data (aligned)
+                    feature_series = self.features_df[feature_name]
+                    target_series = self.targets_df[target_col]
+                    aligned = pd.concat([feature_series.rename('feature'), target_series.rename('target')], axis=1).dropna()
+                    feature_data = aligned['feature']
+                    target_data = aligned['target']
+                    print(f"      [DEBUG] aligned samples={len(aligned)} (feature NaNs={feature_series.isna().sum()}, target NaNs={target_series.isna().sum()})")
                     
                     if len(feature_data) == 0 or len(target_data) == 0:
                         print(f"      [WARNING] Empty data for {feature_name}")
@@ -236,6 +320,12 @@ class ParameterAnalyzer:
                     
                 except Exception as e:
                     print(f"      Error processing {feature_name}: {str(e)}")
+                    try:
+                        unique_non_nan = feature_series.dropna().nunique()
+                        print(f"      [DEBUG] Unique non-NaN values in feature: {unique_non_nan}")
+                        print(f"      [DEBUG] Head aligned:\n{aligned.head(5)}")
+                    except Exception:
+                        pass
                     continue
             
             if feature_metrics:
@@ -248,14 +338,13 @@ class ParameterAnalyzer:
         results_df = pd.DataFrame(results)
         
         # Group by parameter values and aggregate metrics
-        grouped_df = results_df.groupby(['param1_value', 'param2_value']).agg({
-            'sortino': 'mean',
-            'sharpe': 'mean',
-            'mean': 'mean',
-            'std': 'mean',
-            'max_drawdown': 'mean',
-            'n_samples': 'sum'
-        }).reset_index()
+        possible_cols = ['sortino', 'sharpe', 'mean', 'std', 'max_drawdown', 'n_samples']
+        # Also include the metric name if it's not in the standard list
+        if metric not in possible_cols:
+            possible_cols.append(metric)
+        present = [c for c in possible_cols if c in results_df.columns]
+        agg_map = {c: ('sum' if c == 'n_samples' else 'mean') for c in present}
+        grouped_df = results_df.groupby(['param1_value', 'param2_value']).agg(agg_map).reset_index()
         
         return grouped_df
     
@@ -290,11 +379,43 @@ class ParameterAnalyzer:
         """
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
+        # Choose x-axis series: prefer 'param_value' else fallback to 'param1_value'
+        x_series = 'param_value' if 'param_value' in df.columns else 'param1_value'
+        # Prepare plotting frame: keep only needed cols, coerce to numeric, drop NaN
+        cols_needed = [x_series, metric, 'n_samples']
+        cols_present = [c for c in cols_needed if c in df.columns]
+        df_plot = df[cols_present].copy()
+        # Coerce x and y to numeric when possible
+        if x_series in df_plot.columns:
+            df_plot[x_series] = pd.to_numeric(df_plot[x_series], errors='coerce')
+        if metric in df_plot.columns:
+            df_plot[metric] = pd.to_numeric(df_plot[metric], errors='coerce')
+        if 'n_samples' in df_plot.columns:
+            df_plot['n_samples'] = pd.to_numeric(df_plot['n_samples'], errors='coerce')
+        df_plot = df_plot.dropna(subset=[x_series, metric])
+        # Sort by x for nicer lines
+        if not df_plot.empty:
+            df_plot = df_plot.sort_values(by=x_series)
+        else:
+            # Debug prints when no valid points
+            try:
+                print("[DEBUG] plot_parameter_sensitivity: empty df_plot")
+                print(f"[DEBUG] Columns: {list(df.columns)}")
+                print(f"[DEBUG] dtypes: {df.dtypes.to_dict()}")
+                print(f"[DEBUG] head:\n{df.head(10)}")
+                if x_series in df.columns:
+                    print(f"[DEBUG] {x_series} NaNs: {df[x_series].isna().sum()} unique: {df[x_series].nunique(dropna=True)}")
+                if metric in df.columns:
+                    print(f"[DEBUG] {metric} NaNs: {df[metric].isna().sum()} unique: {df[metric].nunique(dropna=True)}")
+            except Exception:
+                pass
+            raise ValueError("No valid points to plot (all metric/x values are NaN or missing)")
+
         # Add main metric trace
         fig.add_trace(
             go.Scatter(
-                x=df['param_value'],
-                y=df[metric],
+                x=df_plot[x_series],
+                y=df_plot[metric],
                 mode='lines+markers',
                 name=metric.capitalize(),
                 line=dict(color='#1f77b4'),
@@ -306,8 +427,8 @@ class ParameterAnalyzer:
         # Add sample size as bar chart on secondary y-axis
         fig.add_trace(
             go.Bar(
-                x=df['param_value'],
-                y=df['n_samples'],
+                x=df_plot[x_series],
+                y=df_plot['n_samples'] if 'n_samples' in df_plot.columns else None,
                 name='Sample Size',
                 opacity=0.2,
                 marker_color='gray',

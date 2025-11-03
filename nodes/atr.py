@@ -35,6 +35,10 @@ class ATRNode(BiasNode):
         """
         super().__init__(ticker, tf)
         self.period = period
+        # Standardized naming metadata
+        self.module_name = 'atr'
+        self.output_features = ['atr', 'atrPct']
+        self.params = {'period': period}
         
         if CYTHON_NODES_AVAILABLE:
             # Cython path: use circular buffer for 5-10x speedup
@@ -47,8 +51,8 @@ class ATRNode(BiasNode):
             self.prev_close: Optional[float] = None
             self.true_ranges = deque(maxlen=period)
         
-        # Define the columns attribute required by the MLManager
-        self.columns = [f'atr_{period}', f'atr_pct_{period}']
+        # Define standardized columns
+        self.ensure_standardized_columns()
     
     def _compute_candle(self, candle: Candle) -> List:
         """

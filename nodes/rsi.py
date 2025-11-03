@@ -106,6 +106,10 @@ class RSI(BiasNode):
         super().__init__(ticker, tf)
         
         self.lookback = lookback
+        # Standardized naming metadata
+        self.module_name = 'rsi'
+        self.output_features = ['signal']
+        self.params = {'lookback': lookback}
         
         # Number of candles needed before we can compute valid output
         self.front_bad = lookback
@@ -124,8 +128,8 @@ class RSI(BiasNode):
         # Store previous close for RSI update (more efficient than buffer access)
         self.prev_close = 0.0
         
-        # Column name for output
-        self.columns = [f'rsi_{lookback}']
+        # Define standardized columns
+        self.ensure_standardized_columns()
     
     def _compute_candle(self, candle: Candle) -> List:
         """

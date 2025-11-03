@@ -6,7 +6,7 @@ This package contains all permutation testing functionality:
 """
 
 # Import main classes and functions for easy access
-from feature_selection.permutation_test.permutation_engine import (
+from utils.permutation_test.permutation_engine import (
     PermutationEngine,
     PermutationStrategy,
     FeaturePermutationStrategy,
@@ -14,7 +14,7 @@ from feature_selection.permutation_test.permutation_engine import (
     run_permutation_test
 )
 
-from feature_selection.permutation_test.permute_bars import (
+from utils.permutation_test.permute_bars import (
     BarPermute,
     BarPermuteWalkForward,
     WalkForwardValidator

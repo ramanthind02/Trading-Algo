@@ -13,9 +13,9 @@ Author: Trading Research Team
 Date: 2025-10-23
 """
 
-from feature_selection.objective_metric.base_metric import ObjectiveMetric
-from feature_selection.objective_metric.sharpe import SharpeRatio
-from feature_selection.objective_metric.sortino import SortinoRatio
+from utils.objective_metric.base_metric import ObjectiveMetric
+from utils.objective_metric.sharpe import SharpeRatio
+from utils.objective_metric.sortino import SortinoRatio
 
 __all__ = [
     'ObjectiveMetric',

@@ -417,7 +417,7 @@ class BaseModel(ABC):
         Examples
         --------
         >>> from feature_selection.base_models import QuantileBinningModel
-        >>> from feature_selection.objective_metric import SortinoRatio
+        >>> from utils.objective_metric import SortinoRatio
         >>> 
         >>> model = QuantileBinningModel(n_bins=3)
         >>> metric = SortinoRatio(annualization_factor=252)

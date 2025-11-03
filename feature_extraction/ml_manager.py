@@ -133,6 +133,17 @@ class MLManager:
         """
         # Ensure all buffered data is in the DataFrame
         self._flush_matrix_buffer()
+        
+        # Compute time series features if there are any TimeSeriesFeatureNode instances
+        from nodes.ts_feature import TimeSeriesFeatureNode
+        has_ts_nodes = any(isinstance(bias_node, TimeSeriesFeatureNode) 
+                           for _, bias_node in self.bias_nodes)
+        
+        if has_ts_nodes:
+            # Post-process to compute TS features
+            updated_matrix = helpers.compute_ts_features_from_ml_manager(self)
+            self.matrix = updated_matrix
+        
         return self.matrix
         
     def prepare_bias_nodes(self) -> None:
@@ -155,11 +166,24 @@ class MLManager:
                     self.tf_matrix[tf] = []
                     self.vector_matrix[tf] = []
                 
-                bias_node = helpers.create_bias_node(bias_strategy, self.ticker, tf, params)
+                # Get the actual module name from params if stored there, otherwise use strategy key
+                # This is important for ts_feature which needs the correct module name
+                # Make a copy of params to avoid mutating the original
+                params_copy = params.copy() if isinstance(params, dict) else {}
+                module_name = params_copy.pop('_module_name', bias_strategy) if isinstance(params_copy, dict) else bias_strategy
+                
+                bias_node = helpers.create_bias_node(module_name, self.ticker, tf, params_copy)
                 self.bias_nodes.append((tf, bias_node))
 
-                for column in bias_node.columns:
-                    column_name = f"{bias_strategy}_{tf.name}_{column}"
+                # Prefer standardized names from node; fall back to legacy columns
+                try:
+                    column_names = bias_node.get_column_names() if hasattr(bias_node, 'get_column_names') else list(getattr(bias_node, 'columns', []))
+                    if not column_names:
+                        column_names = list(getattr(bias_node, 'columns', []))
+                except Exception:
+                    column_names = list(getattr(bias_node, 'columns', []))
+
+                for column_name in column_names:
                     self.columns.append(column_name)
                     self.tf_columns[tf].append(column_name)
                     self.tf_indices[tf].append(column_index)

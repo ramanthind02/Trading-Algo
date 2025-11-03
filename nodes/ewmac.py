@@ -51,17 +51,22 @@ class EWMACNode(BiasNode):
         self.span_slow = span_slow
         self.span_ewsd = span_ewsd
         self.forecast_scalar = forecast_scalar
+        # Standardized naming metadata
+        self.module_name = 'ewmac'
+        self.output_features = ['signal', 'signalBool']
+        # Only include primary params used to define the feature identity
+        self.params = {
+            'spanFast': span_fast,
+            'spanSlow': span_slow
+        }
         
         # Calculate EWMA lambdas: lambda = 2 / (N + 1)
         self.lambda_fast = 2.0 / (span_fast + 1.0)
         self.lambda_slow = 2.0 / (span_slow + 1.0)
         self.lambda_ewsd = 2.0 / (span_ewsd + 1.0)
         
-        # Create unique feature names based on parameters
-        self.columns = [
-            f"ewmac_{span_fast}_{span_slow}",
-            f"ewmac_{span_fast}_{span_slow}_bool"
-        ]
+        # Define standardized columns
+        self.ensure_standardized_columns()
         
         # Internal state for EWMA and EWSD
         self.ewma_fast: Optional[float] = None

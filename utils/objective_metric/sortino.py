@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 from typing import Union
 
-from feature_selection.objective_metric.base_metric import ObjectiveMetric
+from utils.objective_metric.base_metric import ObjectiveMetric
 
 
 class SortinoRatio(ObjectiveMetric):
