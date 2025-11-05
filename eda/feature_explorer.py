@@ -1171,8 +1171,8 @@ class FeatureExplorer:
         Plot cumulative sum of target returns gated by model signals for each feature.
         
         For each feature, this will:
-        - Fit the provided base model on (feature, target)
-        - Generate binary signals (1 for enter, 0 otherwise)
+        - If base_model is provided: Fit the base model on (feature, target) and generate binary signals
+        - If base_model is None: Use the feature series directly as signals (for features that are already binary)
         - Compute product: target * signal
         - Plot cumulative sum over time
         
@@ -1183,11 +1183,13 @@ class FeatureExplorer:
         features : Optional[List[str]], default=None
             Subset of features to analyze. If None, uses all features
         base_model : Optional[Any], default=None
-            Model implementing fit(X, y) and predict(X, strategy) -> {0,1}
+            Model implementing fit(X, y) and predict(X, strategy) -> {0,1}.
+            If None, the feature series itself is used as signals (useful for binary features).
         metric : Optional[Any], default=None
-            Metric object with compute(returns) -> float for title/summary
+            Metric object with compute(returns) -> float for title/summary.
+            If None, metric computation is skipped.
         strategy : str, default='long'
-            Strategy flag forwarded to model.predict
+            Strategy flag forwarded to model.predict (only used if base_model is provided)
         figsize : Tuple[int, int], default=(12, 6)
             Figure size
         save_dir : Optional[str], default=None
@@ -1209,10 +1211,6 @@ class FeatureExplorer:
                 f"Target '{target_col}' not found. Available targets: {list(self.targets_df.columns)}"
             )
         
-        if base_model is None:
-            raise ValueError("You must pass a base_model instance implementing fit/predict methods.")
-        if metric is None:
-            raise ValueError("You must pass in an objective metric instance or class implementing .compute.")
         if features is None:
             features = list(self.feature_names)
         
@@ -1253,25 +1251,37 @@ class FeatureExplorer:
                 continue
             
             try:
-                base_model.fit(X_clean, y_clean)
-                signals = base_model.predict(X_clean, strategy=strategy)
-                if isinstance(signals, (pd.Series, pd.DataFrame)):
-                    signals_series = signals.squeeze()
+                # Generate signals: use model if provided, otherwise use feature series directly
+                if base_model is not None:
+                    base_model.fit(X_clean, y_clean)
+                    signals = base_model.predict(X_clean, strategy=strategy)
+                    if isinstance(signals, (pd.Series, pd.DataFrame)):
+                        signals_series = signals.squeeze()
+                    else:
+                        signals_series = pd.Series(signals, index=X_clean.index)
                 else:
-                    signals_series = pd.Series(signals, index=X_clean.index)
+                    # Use feature series directly as signals (for binary features)
+                    signals_series = X_clean
+                
                 gated_returns = y_clean * signals_series
                 cum_returns = gated_returns.cumsum()
-                try:
-                    selected_returns = gated_returns[gated_returns != 0]
-                    metric_value = float(metric.compute(selected_returns)) if len(selected_returns) > 0 else float('nan')
-                except Exception:
-                    metric_value = float('nan')
+                
+                # Compute metric if provided
+                metric_value = float('nan')
+                if metric is not None:
+                    try:
+                        selected_returns = gated_returns[gated_returns != 0]
+                        metric_value = float(metric.compute(selected_returns)) if len(selected_returns) > 0 else float('nan')
+                    except Exception:
+                        metric_value = float('nan')
+                
                 fig, ax = plt.subplots(figsize=figsize)
                 ax.plot(cum_returns.index, cum_returns.values, label='Cumulative Return')
                 ax.axhline(0.0, color='black', linewidth=1, alpha=0.5)
+                metric_str = f"{metric_value:.4f}" if not np.isnan(metric_value) else 'NA'
                 ax.set_title(
                     f"{feature_name} | CumSum(target * signal)\n"
-                    f"Final: {cum_returns.iloc[-1]:.4f} | Metric: {metric_value if not np.isnan(metric_value) else 'NA'}"
+                    f"Final: {cum_returns.iloc[-1]:.4f} | Metric: {metric_str}"
                 )
                 ax.set_xlabel('Date')
                 ax.set_ylabel('Cumulative Sum')
@@ -1286,7 +1296,7 @@ class FeatureExplorer:
                 summary_rows.append({
                     'feature': feature_name,
                     'n_samples': int(len(X_clean)),
-                    'n_signals': int(signals_series.sum()),
+                    'n_signals': int(signals_series.sum()) if pd.api.types.is_numeric_dtype(signals_series) else int((signals_series != 0).sum()),
                     'final_cumsum': float(cum_returns.iloc[-1]),
                     'metric': metric_value
                 })
@@ -1301,8 +1311,8 @@ class FeatureExplorer:
         self.results['signal_cumsum'] = {
             'target_col': target_col,
             'strategy': strategy,
-            'model': str(base_model),
-            'metric': str(metric),
+            'model': str(base_model) if base_model is not None else 'feature_direct',
+            'metric': str(metric) if metric is not None else 'none',
             'summary': summary_df
         }
         return figures, summary_df
