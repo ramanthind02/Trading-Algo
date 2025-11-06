@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from typing import Dict, Optional, Tuple, List, Any
 import utils.helpers as helpers
 from datetime import datetime as dt
-from plotting.decile_plots import plot_decile_analysis, plot_2bin_analysis
+from plotting.decile_plots import plot_decile_analysis, plot_2bin_analysis, plot_uniform_binning
 from plotting.distribution import plot_feature_distribution, plot_feature_timeseries
 from utils.permutation_test.permutation_engine import (
     PermutationEngine,
@@ -880,6 +880,140 @@ class FeatureExplorer:
             'bin_data': bin_table
         }
         return fig
+    
+    def plot_uniform_bins(
+        self,
+        feature_name: str,
+        n_bins: int = 10,
+        target_col: str = 'log_return',
+        figsize: Tuple[int, int] = (12, 8),
+        plot_type: str = "bar",
+        save_path: Optional[str] = None
+    ) -> plt.Figure:
+        """
+        Plot uniform binning analysis for a single feature.
+        
+        Uniform binning uses equal-width bins (unlike deciles which use equal-frequency bins).
+        This is useful for understanding behavior at specific feature value ranges.
+        
+        Parameters
+        ----------
+        feature_name : str
+            Name of the feature to plot
+        n_bins : int, default=10
+            Number of bins to create
+        target_col : str, default='log_return'
+            Target column to use
+        figsize : Tuple[int, int], default=(12, 8)
+            Figure size
+        plot_type : str, default="bar"
+            Type of plot: "bar" or "line"
+        save_path : Optional[str], default=None
+            Path to save the figure
+            
+        Returns
+        -------
+        plt.Figure
+            Matplotlib figure object
+        """
+        if feature_name not in self.feature_names:
+            raise ValueError(f"Feature '{feature_name}' not found")
+        if target_col not in self.targets_df.columns:
+            raise ValueError(f"Target '{target_col}' not found")
+        
+        feature_data = self.features_df[feature_name]
+        target_data = self.targets_df[target_col]
+        if not pd.api.types.is_numeric_dtype(feature_data):
+            raise TypeError(f"Feature '{feature_name}' is non-numeric")
+        
+        fig, bin_table = plot_uniform_binning(
+            feature_data=feature_data,
+            target_data=target_data,
+            feature_name=feature_name,
+            n_bins=n_bins,
+            figsize=figsize,
+            plot_type=plot_type,
+            save_path=save_path
+        )
+        if 'uniform_binning' not in self.results:
+            self.results['uniform_binning'] = {}
+        self.results['uniform_binning'][feature_name] = {
+            'target_col': target_col,
+            'n_bins': n_bins,
+            'bin_data': bin_table
+        }
+        return fig
+    
+    def plot_all_uniform_bins(
+        self,
+        n_bins: int = 10,
+        target_col: str = 'log_return',
+        figsize: Tuple[int, int] = (12, 8),
+        plot_type: str = "bar",
+        save_dir: Optional[str] = None,
+        verbose: bool = True
+    ) -> Dict[str, plt.Figure]:
+        """
+        Plot uniform binning analysis for all features.
+        
+        Parameters
+        ----------
+        n_bins : int, default=10
+            Number of bins to create
+        target_col : str, default='log_return'
+            Target column to use
+        figsize : Tuple[int, int], default=(12, 8)
+            Figure size
+        plot_type : str, default="bar"
+            Type of plot: "bar" or "line"
+        save_dir : Optional[str], default=None
+            Directory to save plots
+        verbose : bool, default=True
+            Print progress
+            
+        Returns
+        -------
+        Dict[str, plt.Figure]
+            Dictionary mapping feature names to figure objects
+        """
+        if verbose:
+            print(f"\n{'='*70}")
+            print(f"Plotting uniform binning analysis for {self.n_features} features")
+            print(f"Target: {target_col}")
+            print(f"{'='*70}")
+        
+        figures = {}
+        for i, feature_name in enumerate(self.feature_names, 1):
+            if verbose:
+                print(f"\n[{i}/{self.n_features}] {feature_name}")
+            
+            try:
+                save_path = None
+                if save_dir:
+                    import os
+                    os.makedirs(save_dir, exist_ok=True)
+                    save_path = os.path.join(save_dir, f"{feature_name}_uniform_bins.png")
+                fig = self.plot_uniform_bins(
+                    feature_name=feature_name,
+                    n_bins=n_bins,
+                    target_col=target_col,
+                    figsize=figsize,
+                    plot_type=plot_type,
+                    save_path=save_path
+                )
+                figures[feature_name] = fig
+                if verbose:
+                    print(f"  ✓ Complete")
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Failed: {e}")
+                continue
+        
+        if verbose:
+            print(f"\n{'='*70}")
+            print(f"Completed {len(figures)}/{self.n_features} features")
+            print(f"{'='*70}")
+        return figures
     
     def get_summary(self) -> pd.DataFrame:
         """

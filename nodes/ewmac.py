@@ -33,7 +33,7 @@ class EWMACNode(BiasNode):
     """
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, 
-                 span_fast: int = 16, span_slow: int = 64, 
+                 spanFast: int = 16, spanSlow: int = 64, 
                  span_ewsd: int = 32, forecast_scalar: float = 4.10):
         """
         Initializes the EWMACNode bias node.
@@ -41,14 +41,14 @@ class EWMACNode(BiasNode):
         Parameters:
         - ticker (Ticker): The ticker symbol.
         - tf (TimeFrame): The timeframe of the candles.
-        - span_fast (int): N-day span for the faster EWMA (default: 16).
-        - span_slow (int): 4N-day span for the slower EWMA (default: 64).
+        - spanFast (int): N-day span for the faster EWMA (default: 16).
+        - spanSlow (int): 4N-day span for the slower EWMA (default: 64).
         - span_ewsd (int): Span for EWSD risk normalization (default: 32).
         - forecast_scalar (float): Scaling factor to bring the average absolute forecast to 10 (default: 4.10 for EWMAC16, 64).
         """
         super().__init__(ticker, tf)
-        self.span_fast = span_fast
-        self.span_slow = span_slow
+        self.spanFast = spanFast
+        self.spanSlow = spanSlow
         self.span_ewsd = span_ewsd
         self.forecast_scalar = forecast_scalar
         # Standardized naming metadata
@@ -56,13 +56,13 @@ class EWMACNode(BiasNode):
         self.output_features = ['signal', 'signalBool']
         # Only include primary params used to define the feature identity
         self.params = {
-            'spanFast': span_fast,
-            'spanSlow': span_slow
+            'spanFast': spanFast,
+            'spanSlow': spanSlow
         }
         
         # Calculate EWMA lambdas: lambda = 2 / (N + 1)
-        self.lambda_fast = 2.0 / (span_fast + 1.0)
-        self.lambda_slow = 2.0 / (span_slow + 1.0)
+        self.lambda_fast = 2.0 / (spanFast + 1.0)
+        self.lambda_slow = 2.0 / (spanSlow + 1.0)
         self.lambda_ewsd = 2.0 / (span_ewsd + 1.0)
         
         # Define standardized columns
