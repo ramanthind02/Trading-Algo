@@ -28,14 +28,17 @@
             "id": "e7f24c314cd9edeb",
             "type": "leaf",
             "state": {
-              "type": "markdown",
+              "type": "canvas",
               "state": {
-                "file": "Feature engineering/Trading ideas.md",
-                "mode": "source",
-                "source": false
+                "file": "ML pipeline overview.canvas",
+                "viewState": {
+                  "x": 3594.2630092404033,
+                  "y": 198.90036318440463,
+                  "zoom": -1.52814850655951
+                }
               },
-              "icon": "lucide-file",
-              "title": "Trading ideas"
+              "icon": "lucide-layout-dashboard",
+              "title": "ML pipeline overview"
             }
           },
           {
@@ -203,11 +206,11 @@
   },
   "active": "e7f24c314cd9edeb",
   "lastOpenFiles": [
-    "ML pipeline overview.canvas",
     "Feature engineering/Trading ideas.md",
     "Feature engineering/Raw feature Extraction.md",
-    "Feature distribution.md",
     "Feature engineering/Market & Sector selection.md",
+    "ML pipeline overview.canvas",
+    "Feature distribution.md",
     "z-attachements/Pasted image 20251101145117.png",
     "z-attachements/Pasted image 20251101143218.png",
     "z-attachements/Pasted image 20251101142953.png",

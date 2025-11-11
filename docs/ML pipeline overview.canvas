@@ -10,6 +10,8 @@
 		{"id":"447139ce07c0c7d6","type":"file","file":"Normalization.md","x":-328,"y":-118,"width":275,"height":97,"color":"4"},
 		{"id":"4fa2aa8ff1d31345","type":"file","file":"Dimensionality Reduction.md","x":-328,"y":625,"width":296,"height":135,"color":"4"},
 		{"id":"b775a717a9df6956","type":"file","file":"In-Sample Binning.md","x":-328,"y":44,"width":288,"height":97,"color":"4"},
+		{"id":"8f3d7411f5076e99","type":"text","text":"Walk forward analysis","x":362,"y":-190,"width":275,"height":136,"color":"4"},
+		{"id":"42d3cf946fd2baad","type":"text","text":"Forecast generation","x":362,"y":-316,"width":250,"height":75,"color":"4"},
 		{"id":"de3df14d2333e666","type":"file","file":"Parameter Sensitivity Analysis.md","x":-328,"y":400,"width":333,"height":159,"color":"4"},
 		{"id":"2222e4d60be6663b","type":"file","file":"In-sample permutation test.md","x":-328,"y":206,"width":280,"height":129,"color":"4"},
 		{"id":"37f7829fc61cd404","type":"file","file":"Feature engineering/Market & Sector selection.md","x":-1000,"y":-254,"width":250,"height":121,"color":"4"},
@@ -19,8 +21,6 @@
 		{"id":"de0399c8b3499dca","type":"text","text":"Temporal stability analysis","x":362,"y":184,"width":275,"height":136,"color":"4"},
 		{"id":"5c491a4796924631","type":"text","text":"Walkforward permutation test","x":362,"y":370,"width":275,"height":136,"color":"4"},
 		{"id":"338137ab43fd5f0c","type":"text","text":"CV permutation test","x":362,"y":556,"width":275,"height":136,"color":"4"},
-		{"id":"8f3d7411f5076e99","type":"text","text":"Walk forward analysis","x":362,"y":-190,"width":275,"height":136,"color":"4"},
-		{"id":"42d3cf946fd2baad","type":"text","text":"Forecast generation","x":362,"y":-316,"width":250,"height":75,"color":"4"},
 		{"id":"4b7f4b872144eb31","type":"text","text":"Feature correlation analysis \n","x":2120,"y":-344,"width":760,"height":154,"color":"4"},
 		{"id":"856c0fb7d7ddb85e","type":"text","text":"Forecast Generation","x":2120,"y":-135,"width":760,"height":154,"color":"4"},
 		{"id":"ce4fb0945bf5781d","type":"text","text":"Benchmark vs Strategy analysis ","x":2120,"y":354,"width":760,"height":154,"color":"4"},
@@ -28,12 +28,11 @@
 		{"id":"fdbe11782e47547f","type":"text","text":"Ensemble model Walkforward  ","x":2120,"y":113,"width":760,"height":133,"color":"4"},
 		{"id":"9c43ebe4fc940807","type":"text","text":"Robustness testing ","x":4720,"y":299,"width":566,"height":125,"color":"4"},
 		{"id":"aa6ca97c7f5052ae","type":"text","text":"Bootstrapping","x":4720,"y":505,"width":566,"height":103,"color":"4"},
-		{"id":"c3e12ec39a26268f","type":"text","text":"Risk management ","x":4720,"y":689,"width":566,"height":125,"color":"4"},
+		{"id":"3bc6ed755448289e","type":"text","text":"Ensemble models can vary among each based on things like \n- Instrument / sector\n- TimeFrame (D, H1, M5)\n- Direction (long only, long/short)\n- Model type (averaging, Linear, RF, NN, etc...)\n- Style (Momentum/Mean reversion)\n","x":3600,"y":-344,"width":400,"height":336,"color":"1"},
 		{"id":"a0e4e99225f64d0a","type":"text","text":"Meta model training ","x":4720,"y":-317,"width":566,"height":125,"color":"4"},
 		{"id":"96865247663d4dd1","type":"text","text":"Forecast generation ","x":4720,"y":-111,"width":566,"height":125,"color":"4"},
 		{"id":"4c3c17b544bc15ed","type":"text","text":"Out of Sample testing ","x":4720,"y":93,"width":566,"height":125,"color":"4"},
-		{"id":"a40f10846ee785be","type":"text","text":"Strategy correlation analysis","x":4720,"y":-523,"width":566,"height":125,"color":"4"},
-		{"id":"3bc6ed755448289e","type":"text","text":"Ensemble models can vary among each based on things like \n- Instrument / sector\n- TimeFrame (D, H1, M5)\n- Direction (long only, long/short)\n- Model type (averaging, Linear, RF, NN, etc...)\n- Style (Momentum/Mean reversion)\n","x":3600,"y":-344,"width":400,"height":336,"color":"1"}
+		{"id":"a40f10846ee785be","type":"text","text":"Strategy correlation analysis","x":4720,"y":-523,"width":566,"height":125,"color":"4"}
 	],
 	"edges":[
 		{"id":"dd5898440e3f61a7","fromNode":"37f7829fc61cd404","fromSide":"bottom","toNode":"fd07cc490de2e646","toSide":"top"},
@@ -60,7 +59,6 @@
 		{"id":"e686bd086bd8a1a2","fromNode":"a0e4e99225f64d0a","fromSide":"bottom","toNode":"96865247663d4dd1","toSide":"top"},
 		{"id":"f619be71110119eb","fromNode":"96865247663d4dd1","fromSide":"bottom","toNode":"4c3c17b544bc15ed","toSide":"top"},
 		{"id":"4e7bd3ea173f016f","fromNode":"4c3c17b544bc15ed","fromSide":"bottom","toNode":"9c43ebe4fc940807","toSide":"top"},
-		{"id":"75c68cfb92edc9e8","fromNode":"9c43ebe4fc940807","fromSide":"bottom","toNode":"aa6ca97c7f5052ae","toSide":"top"},
-		{"id":"b36e7c8e87570b95","fromNode":"aa6ca97c7f5052ae","fromSide":"bottom","toNode":"c3e12ec39a26268f","toSide":"top"}
+		{"id":"75c68cfb92edc9e8","fromNode":"9c43ebe4fc940807","fromSide":"bottom","toNode":"aa6ca97c7f5052ae","toSide":"top"}
 	]
 }

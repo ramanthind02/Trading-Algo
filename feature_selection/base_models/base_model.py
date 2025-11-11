@@ -136,14 +136,24 @@ class BaseModel(ABC):
                 downside_returns = bin_data['target'][bin_data['target'] < 0]
                 downside_std = downside_returns.std() if len(downside_returns) > 0 else 0
                 
-                # Calculate Sortino ratio (annualized)
+                # Calculate Sortino ratio (annualized) for long strategy
                 sortino_metric = (mean_ret / max(downside_std, MIN_STD)) * np.sqrt(252) if downside_std > 0 else (mean_ret * np.sqrt(252) if mean_ret > 0 else 0)
+                
+                # Calculate Sortino ratio on negated returns for short strategy
+                # When shorting, we profit from negative returns (so we get -return)
+                # Negated mean = -mean_ret
+                # For negated returns, downside is when negated return < 0, i.e., when original return > 0
+                upside_returns = bin_data['target'][bin_data['target'] > 0]
+                upside_std = upside_returns.std() if len(upside_returns) > 0 else 0
+                negated_mean = -mean_ret
+                sortino_metric_short = (negated_mean / max(upside_std, MIN_STD)) * np.sqrt(252) if upside_std > 0 else (negated_mean * np.sqrt(252) if negated_mean > 0 else 0)
                 
                 bin_stats[bin_idx] = {
                     'mean_return': mean_ret,
                     'std_return': std_ret,
                     'downside_std': downside_std,
                     'sortino_metric': sortino_metric,
+                    'sortino_metric_short': sortino_metric_short,
                     'count': len(bin_data),
                     'feature_min': bin_data['feature'].min(),
                     'feature_max': bin_data['feature'].max()
@@ -177,14 +187,16 @@ class BaseModel(ABC):
             # Long: Find bin with highest Sortino ratio
             best_long_bin = max(bin_stats.keys(), key=lambda k: bin_stats[k]['sortino_metric'])
             
-            # Short: Find bin with lowest mean return (most negative)
-            best_short_bin = min(bin_stats.keys(), key=lambda k: bin_stats[k]['mean_return'])
+            # Short: Find bin with highest Sortino ratio on negated returns
+            # (shorting profits from negative returns, so we compute Sortino on -returns)
+            best_short_bin = max(bin_stats.keys(), key=lambda k: bin_stats[k]['sortino_metric_short'])
             
         elif self.selection_metric == 'mean':
             # Long: Find bin with highest mean return
             best_long_bin = max(bin_stats.keys(), key=lambda k: bin_stats[k]['mean_return'])
             
             # Short: Find bin with lowest mean return (most negative)
+            # When shorting, we profit from negative returns, so we want the most negative mean
             best_short_bin = min(bin_stats.keys(), key=lambda k: bin_stats[k]['mean_return'])
         else:
             raise ValueError(f"Unknown selection_metric: {self.selection_metric}. Use 'sortino' or 'mean'")
@@ -441,6 +453,10 @@ class BaseModel(ABC):
         
         if len(selected_returns) == 0:
             return 0.0
+        
+        # For short strategy, negate returns (shorting profits from negative returns)
+        if strategy == 'short':
+            selected_returns = -selected_returns
         
         # Compute objective metric
         metric_value = objective_metric.compute(selected_returns)

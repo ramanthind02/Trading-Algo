@@ -1323,7 +1323,11 @@ class FeatureExplorer:
             Metric object with compute(returns) -> float for title/summary.
             If None, metric computation is skipped.
         strategy : str, default='long'
-            Strategy flag forwarded to model.predict (only used if base_model is provided)
+            Strategy flag: 'long', 'short', or 'long-short'.
+            - 'long': Only take long positions when long bin is selected
+            - 'short': Only take short positions when short bin is selected
+            - 'long-short': Take long positions when long bin is selected, short positions when short bin is selected
+            Only used if base_model is provided
         figsize : Tuple[int, int], default=(12, 6)
             Figure size
         save_dir : Optional[str], default=None
@@ -1358,6 +1362,10 @@ class FeatureExplorer:
         
         target_series = self.targets_df[target_col]
         
+        # Validate strategy
+        if strategy not in ['long', 'short', 'long-short']:
+            raise ValueError(f"strategy must be 'long', 'short', or 'long-short', got '{strategy}'")
+        
         if verbose:
             print(f"\n{'='*70}")
             print(f"Plotting signal-gated cumulative returns for {len(features)} features")
@@ -1388,16 +1396,50 @@ class FeatureExplorer:
                 # Generate signals: use model if provided, otherwise use feature series directly
                 if base_model is not None:
                     base_model.fit(X_clean, y_clean)
-                    signals = base_model.predict(X_clean, strategy=strategy)
-                    if isinstance(signals, (pd.Series, pd.DataFrame)):
-                        signals_series = signals.squeeze()
+                    
+                    if strategy == 'long-short':
+                        # Get signals for both long and short bins
+                        long_signals = base_model.predict(X_clean, strategy='long')
+                        short_signals = base_model.predict(X_clean, strategy='short')
+                        
+                        if isinstance(long_signals, (pd.Series, pd.DataFrame)):
+                            long_signals = long_signals.squeeze()
+                        else:
+                            long_signals = pd.Series(long_signals, index=X_clean.index)
+                        
+                        if isinstance(short_signals, (pd.Series, pd.DataFrame)):
+                            short_signals = short_signals.squeeze()
+                        else:
+                            short_signals = pd.Series(short_signals, index=X_clean.index)
+                        
+                        # Long positions: use returns as-is
+                        # Short positions: negate returns (shorting profits from negative returns)
+                        gated_returns = (y_clean * long_signals) + (-y_clean * short_signals)
+                        signals_series = long_signals + short_signals  # For summary stats
                     else:
-                        signals_series = pd.Series(signals, index=X_clean.index)
+                        signals = base_model.predict(X_clean, strategy=strategy)
+                        if isinstance(signals, (pd.Series, pd.DataFrame)):
+                            signals_series = signals.squeeze()
+                        else:
+                            signals_series = pd.Series(signals, index=X_clean.index)
+                        
+                        # For short strategy, negate returns (shorting profits from negative returns)
+                        if strategy == 'short':
+                            gated_returns = -y_clean * signals_series
+                        else:
+                            gated_returns = y_clean * signals_series
                 else:
                     # Use feature series directly as signals (for binary features)
                     signals_series = X_clean
+                    if strategy == 'short':
+                        gated_returns = -y_clean * signals_series
+                    elif strategy == 'long-short':
+                        # For binary features, long-short doesn't make sense without a model
+                        # Treat as long-only
+                        gated_returns = y_clean * signals_series
+                    else:
+                        gated_returns = y_clean * signals_series
                 
-                gated_returns = y_clean * signals_series
                 cum_returns = gated_returns.cumsum()
                 
                 # Compute metric if provided
@@ -1413,8 +1455,9 @@ class FeatureExplorer:
                 ax.plot(cum_returns.index, cum_returns.values, label='Cumulative Return')
                 ax.axhline(0.0, color='black', linewidth=1, alpha=0.5)
                 metric_str = f"{metric_value:.4f}" if not np.isnan(metric_value) else 'NA'
+                strategy_label = strategy.replace('-', ' ').title().replace(' ', '-')  # 'long-short' -> 'Long-Short'
                 ax.set_title(
-                    f"{feature_name} | CumSum(target * signal)\n"
+                    f"{feature_name} | CumSum(target * signal) [{strategy_label}]\n"
                     f"Final: {cum_returns.iloc[-1]:.4f} | Metric: {metric_str}"
                 )
                 ax.set_xlabel('Date')
