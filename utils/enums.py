@@ -67,3 +67,12 @@ class Bias(Enum):
     BEARISH = -1
     NEUTRAL = 0
     ANY = None
+
+class Direction(Enum):
+    LONG_ONLY = "long_only"
+    LONG_AND_SHORT = "long_and_short"
+    SHORT_ONLY = "short_only"
+
+class Style(Enum):
+    MEAN_REVERSION = "mean_reversion"
+    MOMENTUM = "momentum"

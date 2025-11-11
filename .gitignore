@@ -218,3 +218,5 @@ uv.lock
 
 # macOS file
 *.DS_Store
+
+data/ensembles_staging/

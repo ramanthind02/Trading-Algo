@@ -18,6 +18,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ensemble import TradingEnsemble
+from utils.enums import Ticker, TimeFrame, Direction, Style
 
 
 class TestTradingEnsemble(unittest.TestCase):
@@ -54,12 +55,31 @@ class TestTradingEnsemble(unittest.TestCase):
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         
+    def _create_test_ensemble(self, **kwargs):
+        """Helper method to create TradingEnsemble with default test parameters."""
+        defaults = {
+            'ticker': Ticker.ES,
+            'timeframe': TimeFrame.D,
+            'direction': Direction.LONG_ONLY,
+            'style': Style.MOMENTUM
+        }
+        defaults.update(kwargs)
+        return TradingEnsemble(**defaults)
+        
     def test_initialization_default(self):
         """Test default initialization."""
-        ensemble = TradingEnsemble()
+        ensemble = TradingEnsemble(
+            ticker=Ticker.ES,
+            timeframe=TimeFrame.D,
+            direction=Direction.LONG_ONLY,
+            style=Style.MOMENTUM
+        )
         
         self.assertEqual(ensemble.r, 0.15)
-        self.assertIsNone(ensemble.save_path)
+        self.assertEqual(ensemble.ticker, Ticker.ES)
+        self.assertEqual(ensemble.timeframe, TimeFrame.D)
+        self.assertEqual(ensemble.direction, Direction.LONG_ONLY)
+        self.assertEqual(ensemble.style, Style.MOMENTUM)
         self.assertIsNone(ensemble.weights_)
         self.assertIsNone(ensemble.exposure_fractions_)
         self.assertIsNone(ensemble.feature_names_)
@@ -67,15 +87,29 @@ class TestTradingEnsemble(unittest.TestCase):
         
     def test_initialization_with_parameters(self):
         """Test initialization with custom parameters."""
-        ensemble = TradingEnsemble(r=0.20, save_path="test.json")
+        ensemble = TradingEnsemble(
+            ticker=Ticker.GC,
+            timeframe=TimeFrame.W,
+            direction=Direction.LONG_AND_SHORT,
+            style=Style.MEAN_REVERSION,
+            r=0.20
+        )
         
         self.assertEqual(ensemble.r, 0.20)
-        self.assertEqual(ensemble.save_path, "test.json")
+        self.assertEqual(ensemble.ticker, Ticker.GC)
+        self.assertEqual(ensemble.timeframe, TimeFrame.W)
+        self.assertEqual(ensemble.direction, Direction.LONG_AND_SHORT)
+        self.assertEqual(ensemble.style, Style.MEAN_REVERSION)
         self.assertFalse(ensemble.is_fitted_)
         
     def test_fit_basic(self):
         """Test basic fit functionality."""
-        ensemble = TradingEnsemble()
+        ensemble = TradingEnsemble(
+            ticker=Ticker.ES,
+            timeframe=TimeFrame.D,
+            direction=Direction.LONG_ONLY,
+            style=Style.MOMENTUM
+        )
         result = ensemble.fit(self.X_valid, self.y_valid)
         
         # Check return value
@@ -105,7 +139,7 @@ class TestTradingEnsemble(unittest.TestCase):
             
     def test_fit_weight_calculation(self):
         """Test that weights are calculated correctly."""
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         ensemble.fit(self.X_valid, self.y_valid)
         
         # Strategy_1 should have highest weight (strongest correlation)
@@ -123,7 +157,7 @@ class TestTradingEnsemble(unittest.TestCase):
             
     def test_predict_basic(self):
         """Test basic predict functionality."""
-        ensemble = TradingEnsemble(r=0.20)
+        ensemble = self._create_test_ensemble(r=0.20)
         ensemble.fit(self.X_valid, self.y_valid)
         
         predictions = ensemble.predict(self.X_valid)
@@ -137,7 +171,7 @@ class TestTradingEnsemble(unittest.TestCase):
         
     def test_predict_formula(self):
         """Test that predict implements the correct formula: r/v * Σ(w_i * X_i / √h_i)."""
-        ensemble = TradingEnsemble(r=0.10)
+        ensemble = self._create_test_ensemble(r=0.10)
         ensemble.fit(self.X_valid, self.y_valid)
         
         # Create simple test case
@@ -170,7 +204,7 @@ class TestTradingEnsemble(unittest.TestCase):
     def test_save_load_config(self):
         """Test configuration save and load."""
         # Fit original ensemble
-        ensemble1 = TradingEnsemble(r=0.18)
+        ensemble1 = self._create_test_ensemble(r=0.18)
         ensemble1.fit(self.X_valid, self.y_valid)
         
         # Save configuration
@@ -181,7 +215,12 @@ class TestTradingEnsemble(unittest.TestCase):
         self.assertTrue(os.path.exists(config_path))
         
         # Load configuration into new ensemble
-        ensemble2 = TradingEnsemble()
+        ensemble2 = TradingEnsemble(
+            ticker=Ticker.ES,
+            timeframe=TimeFrame.D,
+            direction=Direction.LONG_ONLY,
+            style=Style.MOMENTUM
+        )
         ensemble2.load_config(config_path)
         
         # Check loaded parameters
@@ -198,7 +237,7 @@ class TestTradingEnsemble(unittest.TestCase):
         
     def test_config_file_format(self):
         """Test that saved configuration has correct format."""
-        ensemble = TradingEnsemble(r=0.12)
+        ensemble = self._create_test_ensemble(r=0.12)
         ensemble.fit(self.X_valid, self.y_valid)
         
         config_path = os.path.join(self.temp_dir, "format_test.json")
@@ -224,7 +263,7 @@ class TestTradingEnsemble(unittest.TestCase):
     def test_initialization_with_config(self):
         """Test initialization with config_path parameter."""
         # Create and save config
-        ensemble1 = TradingEnsemble(r=0.25)
+        ensemble1 = self._create_test_ensemble(r=0.25)
         ensemble1.fit(self.X_valid, self.y_valid)
         
         config_path = os.path.join(self.temp_dir, "init_test.json")
@@ -244,7 +283,7 @@ class TestTradingEnsemble(unittest.TestCase):
         })
         y_bad = pd.Series([0.01, -0.005, 0.02, -0.01])
         
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(ValueError) as context:
             ensemble.fit(X_bad, y_bad)
@@ -259,7 +298,7 @@ class TestTradingEnsemble(unittest.TestCase):
         })
         y_bad = pd.Series([0.01, -0.005, 0.02, -0.01])
         
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(ValueError) as context:
             ensemble.fit(X_bad, y_bad)
@@ -274,7 +313,7 @@ class TestTradingEnsemble(unittest.TestCase):
         })
         y_bad = pd.Series([0.01, -0.005, 0.02, -0.01])
         
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(ValueError) as context:
             ensemble.fit(X_bad, y_bad)
@@ -283,7 +322,7 @@ class TestTradingEnsemble(unittest.TestCase):
         
     def test_error_predict_not_fitted(self):
         """Test error when calling predict before fit."""
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(ValueError) as context:
             ensemble.predict(self.X_valid)
@@ -292,7 +331,7 @@ class TestTradingEnsemble(unittest.TestCase):
         
     def test_error_predict_missing_features(self):
         """Test error when predict data is missing required features."""
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         ensemble.fit(self.X_valid, self.y_valid)
         
         X_missing = pd.DataFrame({
@@ -311,7 +350,7 @@ class TestTradingEnsemble(unittest.TestCase):
         X_array = np.array([[0, 1, 0.15], [1, 0, 0.20]])
         y_array = np.array([0.01, -0.01])
         
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(ValueError) as context:
             ensemble.fit(X_array, y_array)
@@ -320,26 +359,33 @@ class TestTradingEnsemble(unittest.TestCase):
         
     def test_error_save_config_not_fitted(self):
         """Test error when saving config before fitting."""
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(ValueError) as context:
             ensemble.save_config("test.json")
             
         self.assertIn("fitted", str(context.exception))
         
-    def test_error_save_config_no_path(self):
-        """Test error when no save path provided."""
-        ensemble = TradingEnsemble()
+    def test_auto_generate_config_path(self):
+        """Test that save_config() auto-generates path when none provided."""
+        ensemble = self._create_test_ensemble()
         ensemble.fit(self.X_valid, self.y_valid)
         
-        with self.assertRaises(ValueError) as context:
-            ensemble.save_config()
-            
-        self.assertIn("filepath", str(context.exception))
+        # Should auto-generate path without error
+        saved_path = ensemble.save_config()
+        
+        # Check that path was generated and file exists
+        self.assertIsNotNone(saved_path)
+        self.assertTrue(os.path.exists(saved_path))
+        self.assertTrue(saved_path.endswith('.json'))
+        
+        # Clean up
+        if os.path.exists(saved_path):
+            os.unlink(saved_path)
         
     def test_error_load_config_file_not_found(self):
         """Test error when config file doesn't exist."""
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(FileNotFoundError):
             ensemble.load_config("nonexistent_file.json")
@@ -350,7 +396,7 @@ class TestTradingEnsemble(unittest.TestCase):
         with open(bad_config_path, 'w') as f:
             f.write("{ invalid json }")
             
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         
         with self.assertRaises(ValueError) as context:
             ensemble.load_config(bad_config_path)
@@ -360,7 +406,7 @@ class TestTradingEnsemble(unittest.TestCase):
     def test_string_representations(self):
         """Test __repr__ and __str__ methods."""
         # Test unfitted ensemble
-        ensemble = TradingEnsemble(r=0.18)
+        ensemble = self._create_test_ensemble(r=0.18)
         
         repr_str = repr(ensemble)
         self.assertIn("TradingEnsemble", repr_str)
@@ -393,7 +439,7 @@ class TestTradingEnsemble(unittest.TestCase):
         })
         y_single = 0.01 * X_single['strategy_1'] + np.random.normal(0, 0.005, n_samples)
         
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         ensemble.fit(X_single, y_single)
         
         self.assertTrue(ensemble.is_fitted_)
@@ -415,7 +461,7 @@ class TestTradingEnsemble(unittest.TestCase):
         })
         y_zero_var = 0.01 * X_zero_var['strategy_2'] + np.random.normal(0, 0.005, n_samples)
         
-        ensemble = TradingEnsemble()
+        ensemble = self._create_test_ensemble()
         ensemble.fit(X_zero_var, y_zero_var)
         
         # Should handle zero variance gracefully
@@ -451,7 +497,13 @@ class TestTradingEnsembleIntegration(unittest.TestCase):
         )
         
         # Test full workflow
-        ensemble = TradingEnsemble(r=0.15)
+        ensemble = TradingEnsemble(
+            ticker=Ticker.ES,
+            timeframe=TimeFrame.D,
+            direction=Direction.LONG_ONLY,
+            style=Style.MOMENTUM,
+            r=0.15
+        )
         
         # Split data
         split = int(0.7 * n_samples)
@@ -499,9 +551,15 @@ class TestTradingEnsembleIntegration(unittest.TestCase):
             
         try:
             # Training ensemble
-            training_ensemble = TradingEnsemble(r=0.22, save_path=config_path)
+            training_ensemble = TradingEnsemble(
+                ticker=Ticker.ES,
+                timeframe=TimeFrame.D,
+                direction=Direction.LONG_ONLY,
+                style=Style.MOMENTUM,
+                r=0.22
+            )
             training_ensemble.fit(X_train, y_train)
-            saved_path = training_ensemble.save_config()
+            saved_path = training_ensemble.save_config(config_path)
             
             self.assertEqual(saved_path, config_path)
             

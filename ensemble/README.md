@@ -63,6 +63,9 @@ ensemble = TradingEnsemble(r=0.15)
 ensemble.fit(X_train, y_train)
 ensemble.save_config("my_ensemble_config.json")
 
+# Or auto-generate filename (saves to data/ensembles/TradingEnsemble/)
+config_path = ensemble.save_config()
+
 # Load in production (no need to refit)
 production_ensemble = TradingEnsemble(config_path="my_ensemble_config.json")
 predictions = production_ensemble.predict(X_new)

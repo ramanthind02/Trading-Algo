@@ -9,8 +9,10 @@ risk-adjusted position sizing based on volatility and exposure fractions.
 import pandas as pd
 import numpy as np
 import json
+import os
 from typing import Optional, Union
 from datetime import datetime
+from utils.enums import Ticker, TimeFrame, Direction, Style
 
 
 class TradingEnsemble:
@@ -25,15 +27,29 @@ class TradingEnsemble:
     
     Parameters
     ----------
+    ticker : Ticker
+        Market ticker symbol from utils.enums.Ticker
+    timeframe : TimeFrame
+        Trading timeframe from utils.enums.TimeFrame (D, W, M)
+    direction : Direction
+        Trading direction from utils.enums.Direction (long_only, long_and_short, short_only)
+    style : Style
+        Trading style from utils.enums.Style (mean_reversion, momentum)
     r : float, default=0.15
         Target annual portfolio risk (e.g., 0.15 = 15% annual risk)
     config_path : str, optional
         Path to saved configuration file for loading pre-fitted parameters
-    save_path : str, optional
-        Default path to save fitted parameters
         
     Attributes
     ----------
+    ticker : Ticker
+        Market ticker symbol
+    timeframe : TimeFrame
+        Trading timeframe
+    direction : Direction
+        Trading direction
+    style : Style
+        Trading style
     weights_ : dict
         Feature name -> correlation coefficient mapping after fitting
     exposure_fractions_ : dict
@@ -48,12 +64,19 @@ class TradingEnsemble:
     
     def __init__(
         self,
+        ticker: Optional[Ticker] = None,
+        timeframe: Optional[TimeFrame] = None,
+        direction: Optional[Direction] = None,
+        style: Optional[Style] = None,
         r: float = 0.15,
-        config_path: Optional[str] = None,
-        save_path: Optional[str] = None
+        config_path: Optional[str] = None
     ):
+        # Initialize metadata fields
+        self.ticker = ticker
+        self.timeframe = timeframe
+        self.direction = direction
+        self.style = style
         self.r = r
-        self.save_path = save_path
         
         # Fitted parameters (set during fit() or load_config())
         self.weights_ = None
@@ -64,6 +87,12 @@ class TradingEnsemble:
         # Load configuration if provided
         if config_path is not None:
             self.load_config(config_path)
+        elif any(param is None for param in [ticker, timeframe, direction, style]):
+            # If no config_path and required parameters are missing, raise error
+            raise ValueError(
+                "Either provide config_path for loading saved configuration, "
+                "or provide all required parameters: ticker, timeframe, direction, style"
+            )
     
     def _validate_input_data(
         self,
@@ -163,6 +192,24 @@ class TradingEnsemble:
                 )
         
         return X
+    
+    def _generate_config_filename(self) -> str:
+        """
+        Generate config filename based on metadata fields.
+        
+        Returns
+        -------
+        str
+            Generated filename in format: data/ensembles/{model_type}/{ticker}_{timeframe}_{direction}_{style}_{timestamp}.json
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.ticker.name}_{self.timeframe.name}_{self.direction.value}_{self.style.value}_{timestamp}.json"
+        
+        # Ensure data/ensembles/TradingEnsemble directory exists
+        config_dir = os.path.join("data", "ensembles_staging", "TradingEnsemble")
+        os.makedirs(config_dir, exist_ok=True)
+        
+        return os.path.join(config_dir, filename)
     
     def fit(
         self,
@@ -312,10 +359,13 @@ class TradingEnsemble:
         """
         Save fitted parameters to a JSON configuration file.
         
+        If no filepath is provided, generates filename automatically based on metadata:
+        {ticker}_{timeframe}_{direction}_{style}_ensemble_{timestamp}.json
+        
         Parameters
         ----------
         filepath : str, optional
-            Path to save configuration. If None, uses self.save_path.
+            Path to save configuration. If None, auto-generates filename.
             
         Returns
         -------
@@ -325,22 +375,23 @@ class TradingEnsemble:
         Raises
         ------
         ValueError
-            If model not fitted or no filepath provided
+            If model not fitted
         """
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before saving configuration")
         
         if filepath is None:
-            filepath = self.save_path
-        
-        if filepath is None:
-            raise ValueError("No filepath provided and no default save_path set")
+            filepath = self._generate_config_filename()
         
         # Create configuration dictionary
         config = {
             'metadata': {
                 'created_at': datetime.now().isoformat(),
                 'model_type': 'TradingEnsemble',
+                'ticker': self.ticker.name,
+                'timeframe': self.timeframe.name,
+                'direction': self.direction.value,
+                'style': self.style.value,
                 'num_features': len(self.feature_names_),
                 'target_risk': self.r
             },
@@ -348,6 +399,10 @@ class TradingEnsemble:
             'exposure_fractions': self.exposure_fractions_,
             'feature_names': self.feature_names_,
             'parameters': {
+                'ticker': self.ticker.name,
+                'timeframe': self.timeframe.name,
+                'direction': self.direction.value,
+                'style': self.style.value,
                 'r': self.r
             }
         }
@@ -403,6 +458,15 @@ class TradingEnsemble:
             params = config['parameters']
             if 'r' in params:
                 self.r = params['r']
+            # Load metadata fields if available
+            if 'ticker' in params:
+                self.ticker = Ticker[params['ticker']]
+            if 'timeframe' in params:
+                self.timeframe = TimeFrame[params['timeframe']]
+            if 'direction' in params:
+                self.direction = Direction(params['direction'])
+            if 'style' in params:
+                self.style = Style(params['style'])
         
         # Validate loaded data consistency
         if set(self.weights_.keys()) != set(self.feature_names_):
