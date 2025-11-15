@@ -32,13 +32,25 @@
               "state": {
                 "file": "ML pipeline overview.canvas",
                 "viewState": {
-                  "x": 3594.2630092404033,
-                  "y": 198.90036318440463,
-                  "zoom": -1.52814850655951
+                  "x": 4796.778599812576,
+                  "y": 138.20513414285085,
+                  "zoom": -1.29666703108244
                 }
               },
               "icon": "lucide-layout-dashboard",
               "title": "ML pipeline overview"
+            }
+          },
+          {
+            "id": "0148ccb5b4080c84",
+            "type": "leaf",
+            "state": {
+              "type": "release-notes",
+              "state": {
+                "currentVersion": "1.10.3"
+              },
+              "icon": "lucide-book-up",
+              "title": "Release Notes 1.10.3"
             }
           },
           {
@@ -56,7 +68,7 @@
             }
           }
         ],
-        "currentTab": 1
+        "currentTab": 2
       }
     ],
     "direction": "vertical"
@@ -204,7 +216,7 @@
       "bases:Create new base": false
     }
   },
-  "active": "e7f24c314cd9edeb",
+  "active": "0148ccb5b4080c84",
   "lastOpenFiles": [
     "Feature engineering/Trading ideas.md",
     "Feature engineering/Raw feature Extraction.md",
