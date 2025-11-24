@@ -1,238 +1,104 @@
-# TradingEnsemble Class
+# DiversifiedEnsemble
 
-A trading-specific ensemble class that combines multiple binary strategy signals using correlation coefficients as weights and applies risk-adjusted position sizing based on volatility and exposure fractions.
-
-## Overview
-
-The `TradingEnsemble` class is designed for combining trading strategies where:
-- Features are binary (0 or 1) indicating whether each strategy is in a trade
-- Target is continuous log returns 
-- Weights are correlation coefficients normalized to sum to 1
-- Final prediction includes risk scaling and exposure adjustment using the formula: `r/v * Σ(w_i * X_i / √h_i)`
-
-## Key Parameters
-
-- `r`: Target annual portfolio risk (default: 0.15 = 15%)
-- `w_i`: Weight of each feature (correlation coefficient)
-- `h_i`: Exposure fraction (fraction of time each strategy is in market)
-- `v`: Instrument's annualized volatility (passed as 'annualized_volatility' column)
-
-## Installation
-
-The class is part of the `ensemble` module:
-
-```python
-from ensemble import TradingEnsemble
-```
+A diversified ensemble class for combining binary trading strategies with risk-adjusted position sizing and instrument allocation.
 
 ## Quick Start
 
 ```python
+from ensemble import DiversifiedEnsemble
 import pandas as pd
 import numpy as np
-from ensemble import TradingEnsemble
 
-# Create sample data
+# Prepare data
 X = pd.DataFrame({
-    'strategy_1': [0, 1, 0, 1, 1],  # Binary strategy signals
-    'strategy_2': [1, 0, 1, 0, 1],
-    'strategy_3': [0, 0, 1, 1, 0],
-    'annualized_volatility': [0.15, 0.18, 0.12, 0.20, 0.16]  # Required!
+    'momentum': [0, 1, 0, 1, 1],
+    'mean_reversion': [1, 0, 1, 0, 1],
+    'breakout': [0, 0, 1, 1, 0],
 })
-y = pd.Series([0.01, -0.005, 0.02, -0.01, 0.015])  # Log returns
+ticker = pd.Series(['ES', 'NQ', 'ES', 'YM', 'ES'])
+volatility = pd.Series([0.15, 0.18, 0.12, 0.20, 0.16])
+y = pd.Series([0.01, -0.005, 0.02, -0.01, 0.015])  # Required but ignored
 
-# Fit the ensemble
-ensemble = TradingEnsemble(r=0.20)  # 20% target risk
-ensemble.fit(X, y)
-
-# Make predictions
-predictions = ensemble.predict(X)
-print(f"Position sizes: {predictions}")
-
-# Get feature importance
-print(f"Weights: {ensemble.get_feature_importance()}")
+# Fit and predict
+ensemble = DiversifiedEnsemble(target_volatility=0.15)
+ensemble.fit(X, ticker, volatility, y)
+positions = ensemble.predict(X, ticker, volatility)
 ```
 
-## Advanced Usage
+## API
 
-### Save and Load Configuration
-
+### Constructor
 ```python
-# Fit and save configuration
-ensemble = TradingEnsemble(r=0.15)
-ensemble.fit(X_train, y_train)
-ensemble.save_config("my_ensemble_config.json")
-
-# Load in production (no need to refit)
-production_ensemble = TradingEnsemble(config_path="my_ensemble_config.json")
-predictions = production_ensemble.predict(X_new)
+DiversifiedEnsemble(
+    target_volatility=0.15,          # Target portfolio volatility 
+    instrument_weights=None,         # Optional: {'ES': 0.4, 'NQ': 0.6}
+    config_path=None,               # Load from saved config
+    save_path=None                  # Default save path
+)
 ```
 
-### Get Detailed Statistics
-
+### Methods
 ```python
-# Feature importance (weights)
-importance = ensemble.get_feature_importance()
+# Training
+ensemble.fit(X, ticker, volatility, y, instrument_weights=None)
 
-# Exposure statistics
-exposure_stats = ensemble.get_exposure_stats()
-for feature, stats in exposure_stats.items():
-    print(f"{feature}: weight={stats['weight']:.3f}, exposure={stats['exposure_fraction']:.3f}")
+# Prediction  
+positions = ensemble.predict(X, ticker, volatility)
+
+# Utilities
+weights = ensemble.get_feature_importance()
+stats = ensemble.get_exposure_stats()
+ensemble.save_config("config.json")
+ensemble.load_config("config.json")
 ```
 
 ## Input Requirements
 
-### Feature Matrix (X)
-- **Type**: `pandas.DataFrame`
-- **Required column**: `'annualized_volatility'` (continuous, positive values)
-- **Feature columns**: All other columns must be binary (0 or 1) for fit()
-- **Shape**: (n_samples, n_features + 1)
+- **X**: DataFrame with binary (0/1) strategy signals only
+- **ticker**: Series of ticker symbols for each sample
+- **volatility**: Series of positive volatility values for each sample  
+- **y**: Series of target values (required but ignored in this implementation)
 
-### Target (y)  
-- **Type**: `pandas.Series` or `numpy.ndarray`
-- **Values**: Continuous (typically log returns)
-- **Shape**: (n_samples,)
+All parameters must have the same length.
 
-## Output
+## How It Works
 
-The `predict()` method returns position sizes calculated as:
-```
-position_size = (r / volatility) * Σ(w_i * signal_i / √h_i)
-```
+1. **Diversification Weighting**: Features with lower correlation to others get higher weights
+2. **Exposure Adjustment**: Accounts for time-in-market using `√h_i` where `h_i` is fraction of time active
+3. **Risk Scaling**: Scales by target volatility and inverse actual volatility
+4. **Instrument Allocation**: Applies equal or custom weights across ticker symbols
 
-Where:
-- `r`: Target annual risk
-- `volatility`: Annualized volatility for each sample
-- `w_i`: Weight of feature i (normalized correlation coefficient)
-- `signal_i`: Binary signal from feature i (0 or 1)
-- `h_i`: Exposure fraction of feature i
-
-## Configuration File Format
-
-The ensemble saves/loads configurations in JSON format:
-
-```json
-{
-  "metadata": {
-    "created_at": "2025-11-09T01:10:00",
-    "model_type": "TradingEnsemble",
-    "num_features": 3,
-    "target_risk": 0.15
-  },
-  "weights": {
-    "strategy_1": 0.4,
-    "strategy_2": 0.35,
-    "strategy_3": 0.25
-  },
-  "exposure_fractions": {
-    "strategy_1": 0.3,
-    "strategy_2": 0.4,
-    "strategy_3": 0.25
-  },
-  "feature_names": ["strategy_1", "strategy_2", "strategy_3"],
-  "parameters": {
-    "r": 0.15
-  }
-}
-```
-
-## Error Handling
-
-The class provides comprehensive validation:
-
-- **Missing volatility column**: Raises `ValueError` if 'annualized_volatility' not found
-- **Non-binary features**: Raises `ValueError` if features contain values other than 0/1 during fit
-- **Invalid volatility**: Raises `ValueError` for non-positive volatility values
-- **Unfitted model**: Raises `ValueError` when calling predict() before fit()
-- **Missing features**: Raises `ValueError` if predict() data missing required features
+**Formula**: `Σ((target_volatility × w_i) / (volatility × √h_i)) × instrument_weight`
 
 ## Examples
 
-### Example 1: Basic Trading Ensemble
-
+### Custom Instrument Weights
 ```python
-from ensemble import TradingEnsemble
-import pandas as pd
-import numpy as np
-
-# Sample trading data
-np.random.seed(42)
-n_samples = 1000
-
-data = {
-    'momentum_signal': np.random.binomial(1, 0.3, n_samples),
-    'mean_reversion_signal': np.random.binomial(1, 0.2, n_samples), 
-    'breakout_signal': np.random.binomial(1, 0.25, n_samples),
-    'annualized_volatility': np.random.lognormal(np.log(0.15), 0.2, n_samples).clip(0.05, 0.4)
-}
-
-X = pd.DataFrame(data)
-# Create correlated returns
-y = (0.01 * X['momentum_signal'] + 
-     0.008 * X['mean_reversion_signal'] +
-     0.012 * X['breakout_signal'] +
-     np.random.normal(0, 0.02, n_samples))
-
-# Fit ensemble with 18% target risk
-ensemble = TradingEnsemble(r=0.18)
-ensemble.fit(X, y)
-
-print(f"Fitted ensemble: {ensemble}")
-print(f"Feature weights: {ensemble.get_feature_importance()}")
-
-# Generate position sizes for new data
-new_signals = pd.DataFrame({
-    'momentum_signal': [1, 0, 1],
-    'mean_reversion_signal': [0, 1, 1], 
-    'breakout_signal': [1, 0, 0],
-    'annualized_volatility': [0.15, 0.20, 0.12]
-})
-
-positions = ensemble.predict(new_signals)
-print(f"Position sizes: {positions}")
+# Sector allocation
+weights = {'ES': 0.4, 'CL': 0.3, 'GC': 0.3}
+ensemble = DiversifiedEnsemble(target_volatility=0.12, instrument_weights=weights)
 ```
 
-### Example 2: Production Workflow
-
+### Save/Load Configuration
 ```python
-# Training phase - fit and save
-training_ensemble = TradingEnsemble(r=0.15, save_path="production_ensemble.json")
-training_ensemble.fit(X_train, y_train)
-config_path = training_ensemble.save_config()
-print(f"Model saved to: {config_path}")
+# Training
+ensemble.fit(X_train, ticker_train, vol_train, y_train)
+ensemble.save_config("model.json")
 
-# Production phase - load and predict
-production_ensemble = TradingEnsemble(config_path=config_path)
-daily_positions = production_ensemble.predict(live_data)
+# Production
+prod_ensemble = DiversifiedEnsemble(config_path="model.json")
+positions = prod_ensemble.predict(X_new, ticker_new, vol_new)
 ```
 
-## Mathematical Details
+### Error Handling
+- Raises `ValueError` for mismatched input lengths
+- Raises `ValueError` for unseen tickers in predict()
+- Raises `ValueError` if volatility column found in X (pass separately)
+- Raises `ValueError` for non-positive volatility values
 
-### Weight Calculation
-1. Calculate correlation coefficient between each feature and target: `corr_i = corr(X_i, y)`
-2. Take absolute values: `abs_corr_i = |corr_i|`
-3. Normalize to sum to 1: `w_i = abs_corr_i / Σabs_corr_j`
+## Notes
 
-### Exposure Calculation  
-For each feature i: `h_i = (number of 1s) / (total samples)`
-
-### Position Sizing Formula
-```
-position_size = (r / v) * Σ(w_i * X_i / √h_i)
-```
-
-This formula:
-- Scales by target risk `r` and inverse volatility `1/v` for risk management
-- Weights each signal by its correlation strength `w_i`
-- Adjusts for time-in-market exposure using `1/√h_i` (strategies with lower exposure get higher weight when active)
-
-## Integration with Existing Codebase
-
-The `TradingEnsemble` follows the same sklearn-style interface as other models in the `feature_selection` module:
-- `fit(X, y)` for training
-- `predict(X)` for inference  
-- Comprehensive input validation
-- Configuration save/load functionality
-- Detailed documentation and error messages
-
-This makes it compatible with existing workflows and easy to integrate into the trading infrastructure.
+- Target `y` is required for API consistency but ignored in weight calculation
+- Uses intra-feature correlations instead of target correlations for diversification
+- Equal instrument weighting by default across unique tickers
+- Minimum 10 samples required for fitting
