@@ -1,14 +1,14 @@
 """
-Ensemble Models for Trading Strategy Combination
+Diversified Ensemble for Trading Strategy Combination
 
-This module provides ensemble methods specifically designed for combining
-multiple trading strategies based on correlation coefficients and exposure
-fractions.
+This module provides a diversified ensemble method specifically designed for 
+combining multiple trading strategies using intra-feature correlations and 
+instrument-level risk management.
 
 Author: Trading Research Team
-Date: 2025-11-09
+Date: 2025-11-23
 """
 
-from .trading_ensemble import TradingEnsemble
+from .diversified_ensemble import DiversifiedEnsemble
 
-__all__ = ['TradingEnsemble']
+__all__ = ['DiversifiedEnsemble']
