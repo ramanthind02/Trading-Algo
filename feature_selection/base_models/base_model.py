@@ -12,8 +12,11 @@ Date: 2025-10-23
 import pandas as pd
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict, Optional, List
 from sklearn.tree import DecisionTreeRegressor
+import json
+import os
+from datetime import datetime
 
 
 class BaseModel(ABC):
@@ -31,12 +34,26 @@ class BaseModel(ABC):
         Metric to use for bin selection:
         - 'sortino': mean / downside_std (risk-adjusted)
         - 'mean': mean return only
+    normalize_by : str, optional, default='ewsd'
+        Normalization method: 'ewsd', 'atr', or None
+    strategy : str, default='long'
+        Strategy type: 'long' or 'short'
     """
     
-    def __init__(self, n_bins: int = 3, selection_metric: str = 'sortino', normalize_by: Optional[str] = 'ewsd'):
+    def __init__(
+        self,
+        n_bins: int = 3,
+        selection_metric: str = 'sortino',
+        normalize_by: Optional[str] = 'ewsd',
+        strategy: str = 'long'
+    ):
         self.n_bins = n_bins
         self.selection_metric = selection_metric
         self.normalize_by = normalize_by  # 'ewsd', 'atr', or None
+        self.strategy = strategy  # 'long' or 'short'
+        
+        # Feature column name (stored automatically from Series.name when fit() is called)
+        self.feature_column: Optional[str] = None
         
         # Fitted parameters (set during fit())
         self.thresholds_ = None
@@ -254,6 +271,14 @@ class BaseModel(ABC):
         self
             Fitted model
         """
+        # Store feature column name from Series name (standardized from bias node)
+        if feature_data.name is None:
+            raise ValueError(
+                "feature_data must have a name attribute. "
+                "Pass a named pd.Series (e.g., df['column_name']) to ensure standardized naming."
+            )
+        self.feature_column = feature_data.name
+        
         # Store normalization data for later use in predict_scaled()
         self.normalization_data_ = normalization_data
         
@@ -462,6 +487,105 @@ class BaseModel(ABC):
         metric_value = objective_metric.compute(selected_returns)
         
         return metric_value
+    
+    def save_to_feature_list(
+        self,
+        filepath: str,
+        tickers: Optional[List[str]] = None
+    ) -> None:
+        """
+        Programmatically save feature config to control file.
+        
+        Extracts constructor params via get_params() and uses self.strategy automatically.
+        Uses self.feature_column (stored from fit() via Series.name) and generates
+        model_name automatically as {feature_column}_{strategy}.
+        
+        Validates that feature_column follows standardized format so bias nodes
+        can be reconstructed from the column name.
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to control file JSON
+        tickers : List[str], optional
+            List of ticker symbols associated with this feature.
+            If provided and file exists, will merge with existing tickers.
+            
+        Raises
+        ------
+        ValueError
+            If model is not properly configured, feature_column not set, 
+            feature_column cannot be parsed, or feature already exists
+        """
+        # Check that feature_column is set (from fit())
+        if self.feature_column is None:
+            raise ValueError(
+                "feature_column not set. Call fit() with a named pd.Series first, "
+                "or ensure the Series has a name attribute (e.g., df['column_name'])."
+            )
+        
+        # Validate feature column name can be parsed (for bias node reconstruction)
+        import utils.helpers as helpers
+        from utils.enums import TimeFrame
+        parsed = helpers.parse_feature_column_name(self.feature_column)
+        if parsed.get('module') is None or parsed.get('tf') is None:
+            raise ValueError(
+                f"Feature column '{self.feature_column}' cannot be parsed. "
+                f"Column names must follow standardized format: module_feature_tf_param1_val1_param2_val2. "
+                f"This ensures bias nodes can be reconstructed from the column name."
+            )
+        
+        # Validate that tf is a valid TimeFrame
+        tf = parsed.get('tf')
+        if tf is not None:
+            # tf might be a TimeFrame enum or a string
+            if isinstance(tf, TimeFrame):
+                # Already a valid TimeFrame enum, no need to validate
+                pass
+            elif isinstance(tf, str):
+                # Try to convert string to TimeFrame enum
+                try:
+                    TimeFrame[tf]
+                except (KeyError, AttributeError):
+                    raise ValueError(
+                        f"Feature column '{self.feature_column}' has invalid timeframe '{tf}'. "
+                        f"Timeframe must be a valid TimeFrame enum value (D, W, M, etc.)."
+                    )
+            else:
+                raise ValueError(
+                    f"Feature column '{self.feature_column}' has invalid timeframe type '{type(tf)}'. "
+                    f"Timeframe must be a TimeFrame enum or string."
+                )
+        
+        # Generate model name automatically: {feature_column}_{strategy}
+        model_name = f"{self.feature_column}_{self.strategy}"
+        
+        # Get constructor params (excluding strategy which is handled separately)
+        params = self.get_params()
+        
+        # Determine model type from class name
+        model_type = self.__class__.__name__
+        
+        # Create feature config
+        feature_config = {
+            'name': model_name,
+            'model_type': model_type,
+            'feature_column': self.feature_column,
+            'strategy': self.strategy,
+            'constructor_params': params
+        }
+        
+        # Use utility function to add feature (import here to avoid circular import)
+        try:
+            from ensemble.ensemble_utils import add_feature_to_control_file
+        except ImportError:
+            raise ImportError(
+                "Cannot import ensemble.ensemble_utils. "
+                "Make sure the ensemble package is properly installed."
+            )
+        
+        # Add feature to control file (tickers will be merged inside add_feature_to_control_file)
+        add_feature_to_control_file(filepath, feature_config, tickers=tickers)
 
 
 

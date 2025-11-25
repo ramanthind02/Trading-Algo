@@ -10,7 +10,11 @@ import json
 import numpy as np
 import pandas as pd
 from datetime import datetime
-from typing import Optional, Union, Dict
+from typing import Optional, Union, Dict, List, Any
+import os
+from utils.enums import TimeFrame
+import utils.helpers as helpers
+from .ensemble_utils import filter_dataframe_by_timeframe
 
 class DiversifiedEnsemble:
     """
@@ -59,11 +63,20 @@ class DiversifiedEnsemble:
         target_volatility: float = 0.15,
         instrument_weights: Optional[Dict[str, float]] = None,
         config_path: Optional[str] = None,
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
+        control_file_path: Optional[str] = None,
+        base_tf: Optional[TimeFrame] = None
     ):
         self.target_volatility = target_volatility
         self.instrument_weights = instrument_weights
         self.save_path = save_path
+        
+        # Base model ownership
+        self.base_models: Dict[str, Any] = {}  # Dict[str, BaseModel]
+        self.column_to_model: Dict[str, str] = {}  # Map feature columns to model names
+        self.required_columns: List[str] = []
+        self.control_file_data: Optional[Dict[str, Any]] = None
+        self.base_tf: Optional[TimeFrame] = None  # Will be set from file or parameter
         
         # Fitted parameters (set during fit() or load_config())
         self.weights_ = None
@@ -75,7 +88,21 @@ class DiversifiedEnsemble:
         self.n_tickers_ = None
         self.is_fitted_ = False
         
-        # Load configuration if provided
+        # Validate that control_file_path is provided
+        if control_file_path is None:
+            raise ValueError(
+                "control_file_path must be provided. "
+                "This is the unified control file containing base model configs and optional fitted parameters."
+            )
+        
+        # Initialize from control file
+        self._initialize_from_control_file(control_file_path)
+        
+        # Set base_tf from parameter if provided (overrides file value)
+        if base_tf is not None:
+            self.base_tf = base_tf
+        
+        # Load configuration if provided (legacy support)
         if config_path is not None:
             self.load_config(config_path)
     
@@ -198,6 +225,215 @@ class DiversifiedEnsemble:
         
         return X, validated_ticker, validated_volatility, validated_y
     
+    def _initialize_from_control_file(self, filepath: str) -> None:
+        """
+        Initialize ensemble from unified control file.
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to control file
+        """
+        from ensemble.ensemble_utils import (
+            parse_control_file,
+            create_base_model_from_config
+        )
+        
+        # Load control file
+        control_file = parse_control_file(filepath)
+        
+        # Extract metadata
+        metadata = control_file.get('metadata', {})
+        is_fit = metadata.get('is_fit', False)
+        
+        # Extract base_tf from metadata if available
+        if 'base_tf' in metadata:
+            tf_str = metadata['base_tf']
+            try:
+                self.base_tf = TimeFrame[tf_str]
+            except (KeyError, AttributeError):
+                pass
+        
+        # If base_tf not in metadata, try to parse from filename
+        if self.base_tf is None:
+            import os
+            filename = os.path.basename(filepath)
+            name_parts = os.path.splitext(filename)[0].split('_')
+            if len(name_parts) > 1:
+                tf_str = name_parts[-1]
+                try:
+                    self.base_tf = TimeFrame[tf_str]
+                except (KeyError, AttributeError):
+                    pass
+        
+        # Store control file data
+        self.control_file_data = control_file
+        
+        # Load fitted ensemble state if is_fit=True
+        if is_fit:
+            fitted_ensemble = control_file.get('fitted_ensemble', {})
+            if fitted_ensemble:
+                self.weights_ = fitted_ensemble.get('weights')
+                self.exposure_fractions_ = fitted_ensemble.get('exposure_fractions')
+                self.feature_names_ = fitted_ensemble.get('feature_names')
+                self.target_volatility_ = fitted_ensemble.get('target_volatility')
+                self.unique_tickers_ = fitted_ensemble.get('unique_tickers')
+                self.instrument_weights_ = fitted_ensemble.get('instrument_weights')
+                self.n_tickers_ = fitted_ensemble.get('n_tickers')
+                self.is_fitted_ = True
+        
+        # Get fitted base models if available
+        fitted_base_models = control_file.get('fitted_base_models', {}) if is_fit else {}
+        
+        # Initialize base models
+        self.base_models = {}
+        self.column_to_model = {}
+        self.required_columns = []
+        
+        for model_config in control_file['base_models']:
+            model_name = model_config['name']
+            feature_column = model_config['feature_column']
+            
+            # Get fitted params if available
+            fitted_params = fitted_base_models.get(model_name)
+            
+            # Create base model instance
+            base_model = create_base_model_from_config(model_config, fitted_params=fitted_params)
+            
+            # Store model
+            self.base_models[model_name] = base_model
+            self.column_to_model[feature_column] = model_name
+            self.required_columns.append(feature_column)
+    
+    def _create_base_model_instance(
+        self,
+        model_config: Dict[str, Any],
+        fitted_params: Optional[Dict[str, Any]] = None
+    ) -> Any:
+        """
+        Factory method to create base model instances.
+        
+        Parameters
+        ----------
+        model_config : Dict[str, Any]
+            Base model configuration
+        fitted_params : Dict[str, Any], optional
+            Fitted parameters to restore
+            
+        Returns
+        -------
+        BaseModel
+            Instantiated base model
+        """
+        from ensemble.ensemble_utils import create_base_model_from_config
+        return create_base_model_from_config(model_config, fitted_params=fitted_params)
+    
+    def get_required_columns(self) -> List[str]:
+        """
+        Return list of feature columns needed by this ensemble.
+        
+        Returns
+        -------
+        List[str]
+            List of required feature column names
+        """
+        return self.required_columns.copy()
+    
+    def get_required_bias_nodes(self) -> List[Dict[str, Any]]:
+        """
+        Get bias node specifications needed by this ensemble.
+        
+        Parses feature column names to extract bias node specs that can be
+        used to initialize MLManager with the required bias nodes.
+        
+        Returns
+        -------
+        List[Dict[str, Any]]
+            List of bias node specifications in format:
+            [{'module_name': str, 'timeframes': [TimeFrame], 'params': dict}, ...]
+        """
+        from ensemble.ensemble_utils import extract_bias_node_specs_from_control_file
+        
+        # If we have a control file path, use it
+        if hasattr(self, 'control_file_data') and self.control_file_data is not None:
+            # Extract from control file data
+            bias_node_specs = []
+            seen_specs = set()
+            
+            for model_config in self.control_file_data.get('base_models', []):
+                feature_column = model_config.get('feature_column')
+                if not feature_column:
+                    continue
+                
+                # Parse feature column name to extract module, params, timeframe
+                parsed = helpers.parse_feature_column_name(feature_column)
+                module_name = parsed.get('module')
+                params = parsed.get('params', {})
+                tf = parsed.get('tf')
+                
+                if module_name is None or tf is None:
+                    continue
+                
+                # Convert tf to TimeFrame enum if it's a string
+                if isinstance(tf, str):
+                    try:
+                        tf = TimeFrame[tf]
+                    except (KeyError, AttributeError):
+                        continue
+                
+                # Create spec key for deduplication
+                spec_key = (module_name, tf.name if hasattr(tf, 'name') else str(tf), tuple(sorted(params.items())))
+                if spec_key in seen_specs:
+                    continue
+                seen_specs.add(spec_key)
+                
+                # Create bias node spec
+                bias_node_spec = {
+                    'module_name': module_name,
+                    'timeframes': [tf],
+                    'params': params
+                }
+                bias_node_specs.append(bias_node_spec)
+            
+            return bias_node_specs
+        else:
+            # Fallback: extract from required_columns
+            bias_node_specs = []
+            seen_specs = set()
+            
+            for feature_column in self.required_columns:
+                # Parse feature column name
+                parsed = helpers.parse_feature_column_name(feature_column)
+                module_name = parsed.get('module')
+                params = parsed.get('params', {})
+                tf = parsed.get('tf')
+                
+                if module_name is None or tf is None:
+                    continue
+                
+                # Convert tf to TimeFrame enum if it's a string
+                if isinstance(tf, str):
+                    try:
+                        tf = TimeFrame[tf]
+                    except (KeyError, AttributeError):
+                        continue
+                
+                # Create spec key for deduplication
+                spec_key = (module_name, tf.name if hasattr(tf, 'name') else str(tf), tuple(sorted(params.items())))
+                if spec_key in seen_specs:
+                    continue
+                seen_specs.add(spec_key)
+                
+                # Create bias node spec
+                bias_node_spec = {
+                    'module_name': module_name,
+                    'timeframes': [tf],
+                    'params': params
+                }
+                bias_node_specs.append(bias_node_spec)
+            
+            return bias_node_specs
+    
     def _calculate_diversified_weights(self, X: pd.DataFrame) -> Dict[str, float]:
         """
         Calculate diversified weights based on intra-feature correlations.
@@ -255,28 +491,31 @@ class DiversifiedEnsemble:
         ticker: Union[pd.Series, np.ndarray],
         volatility: Union[pd.Series, np.ndarray],
         y: Union[pd.Series, np.ndarray],
-        instrument_weights: Optional[Dict[str, float]] = None
+        instrument_weights: Optional[Dict[str, float]] = None,
+        normalization_data: Optional[pd.DataFrame] = None
     ) -> 'DiversifiedEnsemble':
         """
         Fit the ensemble model to training data.
         
-        Calculates diversified weights based on intra-feature correlations,
-        computes exposure fractions, and sets up instrument weighting.
-        The target y is required for API consistency but ignored in this implementation.
+        First fits all base models on their respective features, generates binary signals,
+        then fits the ensemble on the binary signals.
         
         Parameters
         ----------
         X : pd.DataFrame
-            Feature matrix with binary (0/1) trading signals.
-            Should not contain 'annualized_volatility' column.
+            Feature matrix with raw feature values (not binary).
+            Must contain all required feature columns.
         ticker : pd.Series or np.ndarray
             Ticker symbols for each sample
         volatility : pd.Series or np.ndarray
             Volatility values for each sample (positive values)
         y : pd.Series or np.ndarray
-            Target values (required but ignored in this implementation)
+            Target values (returns) for training base models
         instrument_weights : dict, optional
             Custom instrument weights mapping ticker -> weight
+        normalization_data : pd.DataFrame, optional
+            Normalization data (EWSD/ATR) for each feature column.
+            Columns should match feature columns in X.
             
         Returns
         -------
@@ -289,22 +528,85 @@ class DiversifiedEnsemble:
             If input validation fails or insufficient data
         """
         # Validate inputs
-        X, ticker, volatility, y = self._validate_input_data(
-            X, ticker, volatility, y, method="fit"
-        )
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("X must be a pandas DataFrame")
         
         if ticker is None or volatility is None:
             raise ValueError("ticker and volatility parameters are required for fit()")
         
         if y is None:
-            raise ValueError("y parameter is required for fit() (even though it's ignored)")
+            raise ValueError("y parameter is required for fit()")
         
-        # Get feature columns
-        feature_cols = list(X.columns)
+        # Filter X by timeframe if base_tf is set
+        if self.base_tf is not None:
+            X = filter_dataframe_by_timeframe(X, self.base_tf)
+            if normalization_data is not None:
+                normalization_data = filter_dataframe_by_timeframe(normalization_data, self.base_tf)
+        
+        # Check that all required columns are present
+        missing_columns = set(self.required_columns) - set(X.columns)
+        if missing_columns:
+            raise ValueError(
+                f"Missing required feature columns: {missing_columns}. "
+                f"Required: {self.required_columns}"
+            )
+        
+        # Filter X to only required columns
+        X_filtered = X[self.required_columns].copy()
+        
+        # Convert ticker, volatility, y to Series if needed
+        if isinstance(ticker, np.ndarray):
+            ticker = pd.Series(ticker, index=X_filtered.index)
+        if isinstance(volatility, np.ndarray):
+            volatility = pd.Series(volatility, index=X_filtered.index)
+        if isinstance(y, np.ndarray):
+            y = pd.Series(y, index=X_filtered.index)
+        
+        # Step 1: Fit each base model on its feature column
+        binary_signals = {}
+        for model_name, base_model in self.base_models.items():
+            # Find feature column for this model
+            feature_column = None
+            for col, name in self.column_to_model.items():
+                if name == model_name:
+                    feature_column = col
+                    break
+            if feature_column is None:
+                raise ValueError(f"Could not find feature column for model: {model_name}")
+            
+            # Get feature data
+            feature_data = X_filtered[feature_column]
+            
+            # Get normalization data for this feature if provided
+            norm_data = None
+            if normalization_data is not None and feature_column in normalization_data.columns:
+                norm_data = normalization_data[feature_column]
+            
+            # Fit model if not already fitted (from ensemble_model)
+            if not base_model.is_fitted_:
+                base_model.fit(
+                    feature_data=feature_data,
+                    target_data=y,
+                    normalization_data=norm_data
+                )
+            
+            # Generate binary signals using the model's strategy
+            binary_signals[model_name] = base_model.predict(
+                feature_data,
+                strategy=base_model.strategy,
+                normalization_data=norm_data
+            )
+        
+        # Step 2: Combine binary signals into DataFrame
+        binary_df = pd.DataFrame(binary_signals, index=X_filtered.index)
+        
+        # Step 3: Fit ensemble on binary signals
+        # Use the existing ensemble fit logic but with binary_df as X
+        feature_cols = list(binary_df.columns)
         
         # Align data and drop NaN values
         df = pd.DataFrame({
-            **{col: X[col] for col in feature_cols},
+            **{col: binary_df[col] for col in feature_cols},
             'ticker': ticker,
             'volatility': volatility,
             'target': y
@@ -313,7 +615,7 @@ class DiversifiedEnsemble:
         if len(df) < 10:
             raise ValueError(f"Insufficient data after dropping NaN. Need at least 10 samples, got {len(df)}")
         
-        # Calculate diversified weights (ignoring target y)
+        # Calculate diversified weights
         self.weights_ = self._calculate_diversified_weights(df[feature_cols])
         
         # Calculate exposure fractions (h_i)
@@ -323,7 +625,7 @@ class DiversifiedEnsemble:
             # Fraction of time feature == 1
             self.exposure_fractions_[col] = feature_data.mean()
         
-        # Store feature names
+        # Store feature names (base model names, not column names)
         self.feature_names_ = feature_cols
         
         # Store target volatility
@@ -371,23 +673,26 @@ class DiversifiedEnsemble:
         self, 
         X: Union[pd.DataFrame, np.ndarray],
         ticker: Union[pd.Series, np.ndarray],
-        volatility: Union[pd.Series, np.ndarray]
+        volatility: Union[pd.Series, np.ndarray],
+        normalization_data: Optional[pd.DataFrame] = None
     ) -> np.ndarray:
         """
         Generate ensemble predictions using fitted parameters.
         
-        Applies the ensemble formula: Σ((τ × w_i) / (σ_i × √h_i)) × instrument_weight
-        for each active feature, then multiplies by instrument weight.
+        First gets binary signals from base models, then applies ensemble formula.
         
         Parameters
         ----------
         X : pd.DataFrame
-            Feature matrix with binary values.
-            Must contain the same feature columns as used in fit().
+            Feature matrix with raw feature values (not binary).
+            Must contain all required feature columns.
         ticker : pd.Series or np.ndarray
             Ticker symbols for each sample
         volatility : pd.Series or np.ndarray  
             Volatility values for each sample (positive values)
+        normalization_data : pd.DataFrame, optional
+            Normalization data (EWSD/ATR) for each feature column.
+            Columns should match feature columns in X.
             
         Returns
         -------
@@ -402,26 +707,40 @@ class DiversifiedEnsemble:
         if not self.is_fitted_:
             raise ValueError(
                 "Model must be fitted before calling predict(). "
-                "Call fit() first or load a configuration file."
+                "Call fit() first or load an ensemble model file."
             )
         
         # Validate inputs
-        X, ticker, volatility, _ = self._validate_input_data(
-            X, ticker, volatility, method="predict"
-        )
+        if not isinstance(X, pd.DataFrame):
+            raise ValueError("X must be a pandas DataFrame")
         
         if ticker is None or volatility is None:
             raise ValueError("ticker and volatility parameters are required for predict()")
         
-        # Check that all required feature columns are present
-        missing_features = set(self.feature_names_) - set(X.columns)
-        if missing_features:
+        # Filter X by timeframe if base_tf is set
+        if self.base_tf is not None:
+            X = filter_dataframe_by_timeframe(X, self.base_tf)
+            if normalization_data is not None:
+                normalization_data = filter_dataframe_by_timeframe(normalization_data, self.base_tf)
+        
+        # Check that all required columns are present
+        missing_columns = set(self.required_columns) - set(X.columns)
+        if missing_columns:
             raise ValueError(
-                f"Missing feature columns: {missing_features}. "
-                f"Expected: {self.feature_names_}"
+                f"Missing required feature columns: {missing_columns}. "
+                f"Required: {self.required_columns}"
             )
         
-        # Check for unseen tickers (raise error as requested)
+        # Filter X to only required columns
+        X_filtered = X[self.required_columns].copy()
+        
+        # Convert ticker, volatility to Series if needed
+        if isinstance(ticker, np.ndarray):
+            ticker = pd.Series(ticker, index=X_filtered.index)
+        if isinstance(volatility, np.ndarray):
+            volatility = pd.Series(volatility, index=X_filtered.index)
+        
+        # Check for unseen tickers
         unseen_tickers = set(ticker.unique()) - set(self.unique_tickers_)
         if unseen_tickers:
             raise ValueError(
@@ -429,24 +748,51 @@ class DiversifiedEnsemble:
                 f"Known tickers: {self.unique_tickers_}"
             )
         
-        # Extract feature data
-        feature_data = X[self.feature_names_]
+        # Step 1: Get binary signals from base models
+        binary_signals = {}
+        for model_name, base_model in self.base_models.items():
+            # Find feature column for this model
+            feature_column = None
+            for col, name in self.column_to_model.items():
+                if name == model_name:
+                    feature_column = col
+                    break
+            if feature_column is None:
+                raise ValueError(f"Could not find feature column for model: {model_name}")
+            
+            # Get feature data
+            feature_data = X_filtered[feature_column]
+            
+            # Get normalization data for this feature if provided
+            norm_data = None
+            if normalization_data is not None and feature_column in normalization_data.columns:
+                norm_data = normalization_data[feature_column]
+            
+            # Get binary signals using the model's strategy
+            binary_signals[model_name] = base_model.predict(
+                feature_data,
+                strategy=base_model.strategy,
+                normalization_data=norm_data
+            )
         
-        # Apply ensemble formula: Σ((τ × w_i) / (σ_i × √h_i)) × instrument_weight
-        predictions = np.zeros(len(X))
+        # Step 2: Combine binary signals into DataFrame
+        binary_df = pd.DataFrame(binary_signals, index=X_filtered.index)
         
-        for row_idx in range(len(X)):
+        # Step 3: Apply ensemble formula: Σ((τ × w_i) / (σ_i × √h_i)) × instrument_weight
+        predictions = np.zeros(len(X_filtered))
+        
+        for row_idx in range(len(X_filtered)):
             row_forecast = 0.0
             vol = volatility.iloc[row_idx] if hasattr(volatility, 'iloc') else volatility[row_idx]
             tick = ticker.iloc[row_idx] if hasattr(ticker, 'iloc') else ticker[row_idx]
             
             # Calculate sum of active features
-            for col in self.feature_names_:
-                X_i = feature_data.iloc[row_idx, feature_data.columns.get_loc(col)]
+            for model_name in self.feature_names_:
+                X_i = binary_df.iloc[row_idx, binary_df.columns.get_loc(model_name)]
                 
                 if X_i == 1:  # Feature is active
-                    w_i = self.weights_[col]
-                    h_i = self.exposure_fractions_[col]
+                    w_i = self.weights_[model_name]
+                    h_i = self.exposure_fractions_[model_name]
                     
                     # Avoid division by zero for h_i
                     sqrt_h_i = np.sqrt(max(h_i, 1e-8))
@@ -582,6 +928,110 @@ class DiversifiedEnsemble:
         # Set fitted status
         self.is_fitted_ = True
         
+        return self
+    
+    def save_control_file(self, filepath: str) -> str:
+        """
+        Save ensemble to unified control file.
+        
+        Saves base model configs and fitted parameters (if fitted) to a single control file.
+        The is_fit flag in metadata indicates whether fitted parameters are included.
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to save control file
+            
+        Returns
+        -------
+        str
+            Path where control file was saved
+            
+        Raises
+        ------
+        ValueError
+            If control_file_data not available
+        """
+        if self.control_file_data is None:
+            raise ValueError("control_file_data not available. Cannot save control file.")
+        
+        from ensemble.ensemble_utils import save_control_file
+        
+        # Prepare metadata
+        metadata = self.control_file_data.get('metadata', {}).copy()
+        metadata['is_fit'] = self.is_fitted_
+        if 'created_at' not in metadata:
+            metadata['created_at'] = datetime.now().isoformat()
+        metadata['updated_at'] = datetime.now().isoformat()
+        metadata['version'] = '2.0.0'
+        if self.base_tf is not None:
+            metadata['base_tf'] = self.base_tf.name
+        
+        # Extract fitted base model states if fitted
+        fitted_base_models = None
+        fitted_ensemble = None
+        
+        if self.is_fitted_:
+            # Only save fitted params for base models that are actually fitted
+            # This allows partial fitted states (some models fitted, some not)
+            fitted_base_models = {}
+            for model_name, base_model in self.base_models.items():
+                if base_model.is_fitted_:
+                    fitted_base_models[model_name] = {
+                        'thresholds': base_model.thresholds_.tolist() if base_model.thresholds_ is not None else None,
+                        'best_long_bin': base_model.best_long_bin_,
+                        'best_short_bin': base_model.best_short_bin_,
+                        'bin_stats': base_model.bin_stats_
+                    }
+            # Note: fitted_base_models can be empty dict if no base models are fitted
+            
+            fitted_ensemble = {
+                'weights': self.weights_,
+                'exposure_fractions': self.exposure_fractions_,
+                'feature_names': self.feature_names_,
+                'target_volatility': self.target_volatility_,
+                'unique_tickers': self.unique_tickers_,
+                'instrument_weights': self.instrument_weights_,
+                'n_tickers': self.n_tickers_
+            }
+        
+        # Save using utility function
+        save_control_file(
+            filepath=filepath,
+            base_models=self.control_file_data['base_models'],
+            metadata=metadata,
+            fitted_base_models=fitted_base_models,
+            fitted_ensemble=fitted_ensemble,
+            tickers=self.control_file_data.get('tickers', [])
+        )
+        
+        return filepath
+    
+    def load_control_file(self, filepath: str) -> 'DiversifiedEnsemble':
+        """
+        Load control file and restore all states.
+        
+        This is called automatically in __init__ if control_file_path is provided.
+        This method is provided for reloading after initialization.
+        
+        Parameters
+        ----------
+        filepath : str
+            Path to control file
+            
+        Returns
+        -------
+        self
+            Ensemble with loaded parameters
+            
+        Raises
+        ------
+        FileNotFoundError
+            If file not found
+        ValueError
+            If file format is invalid
+        """
+        self._initialize_from_control_file(filepath)
         return self
     
     def __repr__(self) -> str:

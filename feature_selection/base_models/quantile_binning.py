@@ -76,7 +76,7 @@ class QuantileBinningModel(BaseModel):
     >>> model.set_params(n_bins=4)
     """
     
-    def __init__(self, n_bins: int = 3, selection_metric: str = 'sortino'):
+    def __init__(self, n_bins: int = 3, selection_metric: str = 'sortino', strategy: str = 'long'):
         """
         Initialize quantile binning model.
         
@@ -86,8 +86,10 @@ class QuantileBinningModel(BaseModel):
             Number of bins to create
         selection_metric : str, default='sortino'
             Metric to use for bin selection ('sortino' or 'mean')
+        strategy : str, default='long'
+            Strategy type: 'long' or 'short'
         """
-        super().__init__(n_bins=n_bins, selection_metric=selection_metric)
+        super().__init__(n_bins=n_bins, selection_metric=selection_metric, strategy=strategy)
     
     def _create_bins(self, feature_data: pd.Series, target_data: pd.Series) -> pd.Series:
         """
@@ -136,7 +138,8 @@ class QuantileBinningModel(BaseModel):
         """
         return {
             'n_bins': self.n_bins,
-            'selection_metric': self.selection_metric
+            'selection_metric': self.selection_metric,
+            'normalize_by': self.normalize_by
         }
     
     def set_params(self, **params) -> 'QuantileBinningModel':

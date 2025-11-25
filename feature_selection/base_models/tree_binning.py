@@ -98,7 +98,8 @@ class DecisionTreeBinningModel(BaseModel):
         self, 
         n_bins: int = 3, 
         selection_metric: str = 'sortino', 
-        min_samples_leaf_pct: float = 0.05
+        min_samples_leaf_pct: float = 0.05,
+        strategy: str = 'long'
     ):
         """
         Initialize decision tree binning model.
@@ -111,8 +112,10 @@ class DecisionTreeBinningModel(BaseModel):
             Metric to use for bin selection ('sortino' or 'mean')
         min_samples_leaf_pct : float, default=0.05
             Minimum percentage of samples required in each leaf
+        strategy : str, default='long'
+            Strategy type: 'long' or 'short'
         """
-        super().__init__(n_bins=n_bins, selection_metric=selection_metric)
+        super().__init__(n_bins=n_bins, selection_metric=selection_metric, strategy=strategy)
         self.min_samples_leaf_pct = min_samples_leaf_pct
         self.tree_ = None
     
@@ -205,7 +208,8 @@ class DecisionTreeBinningModel(BaseModel):
         return {
             'n_bins': self.n_bins,
             'selection_metric': self.selection_metric,
-            'min_samples_leaf_pct': self.min_samples_leaf_pct
+            'min_samples_leaf_pct': self.min_samples_leaf_pct,
+            'normalize_by': self.normalize_by
         }
     
     def set_params(self, **params) -> 'DecisionTreeBinningModel':

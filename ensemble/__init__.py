@@ -10,5 +10,6 @@ Date: 2025-11-23
 """
 
 from .diversified_ensemble import DiversifiedEnsemble
+from .portfolio import Portfolio
 
-__all__ = ['DiversifiedEnsemble']
+__all__ = ['DiversifiedEnsemble', 'Portfolio']

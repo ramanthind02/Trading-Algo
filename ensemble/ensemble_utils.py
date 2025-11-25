@@ -1,0 +1,686 @@
+"""
+Ensemble Utility Functions
+
+This module provides utility functions for parsing unified control files,
+creating base model instances, and managing feature configurations.
+"""
+
+import json
+import os
+from datetime import datetime
+from typing import Dict, List, Optional, Any
+import numpy as np
+import pandas as pd
+
+from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel
+from utils.enums import TimeFrame
+import utils.helpers as helpers
+
+
+def parse_control_file(filepath: str) -> Dict[str, Any]:
+    """
+    Parse and validate unified control file.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to control file JSON
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Parsed control file dictionary
+        
+    Raises
+    ------
+    FileNotFoundError
+        If file not found
+    ValueError
+        If file format is invalid
+    """
+    try:
+        with open(filepath, 'r') as f:
+            control_file = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Control file not found: {filepath}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in control file: {e}")
+    
+    # Validate structure
+    validate_control_file(control_file)
+    
+    return control_file
+
+
+def validate_control_file(control_file: Dict[str, Any]) -> None:
+    """
+    Validate control file structure.
+    
+    Parameters
+    ----------
+    control_file : Dict[str, Any]
+        Control file dictionary to validate
+        
+    Raises
+    ------
+    ValueError
+        If structure is invalid
+    """
+    # Check required top-level keys
+    required_keys = ['metadata', 'base_models']
+    missing_keys = [key for key in required_keys if key not in control_file]
+    if missing_keys:
+        raise ValueError(f"Control file missing required keys: {missing_keys}")
+    
+    # Validate metadata
+    metadata = control_file.get('metadata', {})
+    if 'is_fit' not in metadata:
+        raise ValueError("Control file metadata must contain 'is_fit' flag")
+    
+    if not isinstance(metadata['is_fit'], bool):
+        raise ValueError("Control file metadata 'is_fit' must be a boolean")
+    
+    is_fit = metadata['is_fit']
+    
+    # Validate base_models
+    if not isinstance(control_file['base_models'], list):
+        raise ValueError("base_models must be a list")
+    
+    for i, model_config in enumerate(control_file['base_models']):
+        validate_base_model_config(model_config, index=i)
+    
+    # If is_fit=True, validate fitted params are present
+    if is_fit:
+        if 'fitted_base_models' not in control_file:
+            raise ValueError("Control file with is_fit=True must contain 'fitted_base_models'")
+        if 'fitted_ensemble' not in control_file:
+            raise ValueError("Control file with is_fit=True must contain 'fitted_ensemble'")
+        
+        # Validate fitted_base_models structure
+        # Note: fitted_base_models can be empty dict (not all base models need fitted params)
+        fitted_base_models = control_file['fitted_base_models']
+        if not isinstance(fitted_base_models, dict):
+            raise ValueError("fitted_base_models must be a dictionary")
+        
+        # Validate fitted_ensemble structure
+        fitted_ensemble = control_file['fitted_ensemble']
+        required_ensemble_keys = [
+            'weights', 'exposure_fractions', 'feature_names', 'target_volatility',
+            'unique_tickers', 'instrument_weights', 'n_tickers'
+        ]
+        missing_ensemble_keys = [key for key in required_ensemble_keys if key not in fitted_ensemble]
+        if missing_ensemble_keys:
+            raise ValueError(f"fitted_ensemble missing required keys: {missing_ensemble_keys}")
+    
+    # If is_fit=False, fitted params should not be present
+    if not is_fit:
+        if 'fitted_base_models' in control_file and control_file['fitted_base_models']:
+            raise ValueError("Control file with is_fit=False should not contain 'fitted_base_models'")
+        if 'fitted_ensemble' in control_file and control_file['fitted_ensemble']:
+            raise ValueError("Control file with is_fit=False should not contain 'fitted_ensemble'")
+
+
+def save_control_file(
+    filepath: str,
+    base_models: List[Dict[str, Any]],
+    metadata: Dict[str, Any],
+    fitted_base_models: Optional[Dict[str, Any]] = None,
+    fitted_ensemble: Optional[Dict[str, Any]] = None,
+    tickers: Optional[List[str]] = None
+) -> str:
+    """
+    Save unified control file.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to save control file
+    base_models : List[Dict[str, Any]]
+        List of base model configurations
+    metadata : Dict[str, Any]
+        Metadata dictionary (must include is_fit flag)
+    fitted_base_models : Dict[str, Any], optional
+        Fitted base model parameters (required if is_fit=True)
+    fitted_ensemble : Dict[str, Any], optional
+        Fitted ensemble parameters (required if is_fit=True)
+    tickers : List[str], optional
+        List of ticker symbols
+        
+    Returns
+    -------
+    str
+        Path where file was saved
+        
+    Raises
+    ------
+    ValueError
+        If parameters are inconsistent with is_fit flag
+    """
+    # Validate metadata has is_fit
+    if 'is_fit' not in metadata:
+        raise ValueError("metadata must contain 'is_fit' flag")
+    
+    is_fit = metadata['is_fit']
+    
+    # Validate consistency
+    if is_fit:
+        # fitted_base_models can be empty dict (some models may not be fitted)
+        if fitted_base_models is None:
+            raise ValueError("fitted_base_models required when is_fit=True (can be empty dict)")
+        if not isinstance(fitted_base_models, dict):
+            raise ValueError("fitted_base_models must be a dictionary")
+        if fitted_ensemble is None:
+            raise ValueError("fitted_ensemble required when is_fit=True")
+    else:
+        if fitted_base_models is not None:
+            raise ValueError("fitted_base_models should not be provided when is_fit=False")
+        if fitted_ensemble is not None:
+            raise ValueError("fitted_ensemble should not be provided when is_fit=False")
+    
+    # Build control file structure
+    control_file = {
+        'metadata': metadata,
+        'base_models': base_models,
+        'tickers': tickers or []
+    }
+    
+    if is_fit:
+        control_file['fitted_base_models'] = fitted_base_models
+        control_file['fitted_ensemble'] = fitted_ensemble
+    
+    # Validate before saving
+    validate_control_file(control_file)
+    
+    # Create directory if needed
+    os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+    
+    # Save to file
+    with open(filepath, 'w') as f:
+        json.dump(control_file, f, indent=2, default=str)
+    
+    return filepath
+
+
+# Legacy function names for backward compatibility (deprecated, will be removed)
+def parse_feature_list(filepath: str) -> Dict[str, Any]:
+    """
+    Parse and validate feature_list file.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to feature_list JSON file
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Parsed feature_list dictionary
+        
+    Raises
+    ------
+    FileNotFoundError
+        If file not found
+    ValueError
+        If file format is invalid
+    """
+    try:
+        with open(filepath, 'r') as f:
+            feature_list = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Feature list file not found: {filepath}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in feature list file: {e}")
+    
+    # Validate structure
+    required_keys = ['metadata', 'tickers', 'base_models']
+    missing_keys = [key for key in required_keys if key not in feature_list]
+    if missing_keys:
+        raise ValueError(f"Feature list missing required keys: {missing_keys}")
+    
+    # Validate base_models is a list
+    if not isinstance(feature_list['base_models'], list):
+        raise ValueError("base_models must be a list")
+    
+    # Validate each base model config
+    for i, model_config in enumerate(feature_list['base_models']):
+        validate_base_model_config(model_config, index=i)
+    
+    return feature_list
+
+
+def parse_ensemble_model(filepath: str) -> Dict[str, Any]:
+    """
+    Parse and validate ensemble_model file.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to ensemble_model JSON file
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Parsed ensemble_model dictionary
+        
+    Raises
+    ------
+    FileNotFoundError
+        If file not found
+    ValueError
+        If file format is invalid
+    """
+    try:
+        with open(filepath, 'r') as f:
+            ensemble_model = json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Ensemble model file not found: {filepath}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in ensemble model file: {e}")
+    
+    # Validate structure
+    required_keys = ['feature_list', 'fitted_base_models', 'fitted_ensemble']
+    missing_keys = [key for key in required_keys if key not in ensemble_model]
+    if missing_keys:
+        raise ValueError(f"Ensemble model missing required keys: {missing_keys}")
+    
+    # Validate feature_list structure
+    parse_feature_list_data(ensemble_model['feature_list'])
+    
+    return ensemble_model
+
+
+def parse_feature_list_data(feature_list: Dict[str, Any]) -> None:
+    """
+    Validate feature_list data structure (used internally).
+    
+    Parameters
+    ----------
+    feature_list : Dict[str, Any]
+        Feature list dictionary to validate
+    """
+    required_keys = ['metadata', 'tickers', 'base_models']
+    missing_keys = [key for key in required_keys if key not in feature_list]
+    if missing_keys:
+        raise ValueError(f"Feature list missing required keys: {missing_keys}")
+    
+    if not isinstance(feature_list['base_models'], list):
+        raise ValueError("base_models must be a list")
+    
+    for i, model_config in enumerate(feature_list['base_models']):
+        validate_base_model_config(model_config, index=i)
+
+
+def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = None) -> None:
+    """
+    Validate base model configuration.
+    
+    Parameters
+    ----------
+    config : Dict[str, Any]
+        Base model configuration dictionary
+    index : int, optional
+        Index of model in list (for error messages)
+        
+    Raises
+    ------
+    ValueError
+        If configuration is invalid
+    """
+    prefix = f"Base model at index {index}: " if index is not None else "Base model: "
+    
+    required_keys = ['name', 'model_type', 'feature_column', 'strategy', 'constructor_params']
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
+    
+    # Validate model_type
+    valid_model_types = ['QuantileBinningModel', 'DecisionTreeBinningModel']
+    if config['model_type'] not in valid_model_types:
+        raise ValueError(
+            f"{prefix}Invalid model_type: {config['model_type']}. "
+            f"Must be one of: {valid_model_types}"
+        )
+    
+    # Validate strategy
+    valid_strategies = ['long', 'short']
+    if config['strategy'] not in valid_strategies:
+        raise ValueError(
+            f"{prefix}Invalid strategy: {config['strategy']}. "
+            f"Must be one of: {valid_strategies}"
+        )
+    
+    # Validate constructor_params is a dict
+    if not isinstance(config['constructor_params'], dict):
+        raise ValueError(f"{prefix}constructor_params must be a dictionary")
+
+
+def create_base_model_from_config(
+    config: Dict[str, Any],
+    fitted_params: Optional[Dict[str, Any]] = None
+) -> Any:
+    """
+    Factory function to create base model instances from configuration.
+    
+    Parameters
+    ----------
+    config : Dict[str, Any]
+        Base model configuration with 'model_type' and 'constructor_params'
+    fitted_params : Dict[str, Any], optional
+        Fitted parameters to restore (thresholds, best bins, etc.)
+        
+    Returns
+    -------
+    BaseModel
+        Instantiated base model (fitted if fitted_params provided)
+        
+    Raises
+    ------
+    ValueError
+        If model_type is not supported
+    """
+    model_type = config['model_type']
+    constructor_params = config['constructor_params'].copy()
+    
+    # Extract strategy from config and add to constructor params
+    strategy = config.get('strategy', 'long')
+    constructor_params['strategy'] = strategy
+    
+    # Remove normalize_by from constructor_params if present (it's a BaseModel param, not subclass param)
+    # Subclasses don't accept normalize_by in their __init__, it's handled by BaseModel
+    constructor_params.pop('normalize_by', None)
+    
+    # Create model instance
+    if model_type == 'QuantileBinningModel':
+        model = QuantileBinningModel(**constructor_params)
+    elif model_type == 'DecisionTreeBinningModel':
+        model = DecisionTreeBinningModel(**constructor_params)
+    else:
+        raise ValueError(f"Unsupported model type: {model_type}")
+    
+    # Set feature_column from config (for consistency, even if model is fitted)
+    if 'feature_column' in config:
+        model.feature_column = config['feature_column']
+    
+    # Restore fitted state if provided
+    if fitted_params is not None:
+        if 'thresholds' in fitted_params and fitted_params['thresholds'] is not None:
+            model.thresholds_ = np.array(fitted_params['thresholds'])
+        if 'best_long_bin' in fitted_params:
+            model.best_long_bin_ = fitted_params['best_long_bin']
+        if 'best_short_bin' in fitted_params:
+            model.best_short_bin_ = fitted_params['best_short_bin']
+        if 'bin_stats' in fitted_params:
+            model.bin_stats_ = fitted_params['bin_stats']
+        model.is_fitted_ = True
+    
+    return model
+
+
+def add_feature_to_control_file(filepath: str, feature_config: Dict[str, Any], tickers: Optional[List[str]] = None) -> None:
+    """
+    Add a feature configuration to an existing control file.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to control file JSON
+    feature_config : Dict[str, Any]
+        Feature configuration to add (must have 'name', 'model_type', etc.)
+    tickers : List[str], optional
+        Ticker symbols to merge into the control file
+        
+    Raises
+    ------
+    ValueError
+        If feature_config is invalid, feature already exists, or control file is fitted
+    """
+    # Validate feature config
+    validate_base_model_config(feature_config)
+    
+    # Validate feature column name can be parsed
+    feature_column = feature_config.get('feature_column')
+    if feature_column:
+        parsed = helpers.parse_feature_column_name(feature_column)
+        if parsed.get('module') is None or parsed.get('tf') is None:
+            raise ValueError(
+                f"Feature column '{feature_column}' cannot be parsed. "
+                f"Column names must follow format: module_feature_tf_param1_val1_param2_val2"
+            )
+    
+    # Load existing control file
+    if os.path.exists(filepath):
+        control_file = parse_control_file(filepath)
+        
+        # Check if file is fitted - cannot add features to fitted models
+        if control_file['metadata'].get('is_fit', False):
+            raise ValueError(
+                "Cannot add features to a fitted control file. "
+                "Create a new control file or load without fitted parameters."
+            )
+    else:
+        # Create new control file
+        filename = os.path.splitext(os.path.basename(filepath))[0]
+        control_file = {
+            'metadata': {
+                'created_at': datetime.now().isoformat(),
+                'version': '2.0.0',
+                'ensemble_name': filename,
+                'is_fit': False
+            },
+            'tickers': [],
+            'base_models': []
+        }
+    
+    # Merge tickers if provided
+    if tickers is not None:
+        existing_tickers = control_file.get('tickers', [])
+        combined_tickers = list(dict.fromkeys(existing_tickers + tickers))
+        control_file['tickers'] = combined_tickers
+    
+    # Check if feature already exists
+    existing_names = [model['name'] for model in control_file['base_models']]
+    if feature_config['name'] in existing_names:
+        raise ValueError(f"Feature '{feature_config['name']}' already exists in control file")
+    
+    # Add feature
+    control_file['base_models'].append(feature_config)
+    
+    # Update metadata
+    control_file['metadata']['updated_at'] = datetime.now().isoformat()
+    
+    # Validate before saving
+    validate_control_file(control_file)
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+    
+    # Save updated control file
+    with open(filepath, 'w') as f:
+        json.dump(control_file, f, indent=2)
+
+
+# Legacy function name for backward compatibility (deprecated)
+def add_feature_to_list(filepath: str, feature_config: Dict[str, Any], tickers: Optional[List[str]] = None) -> None:
+    """Deprecated: Use add_feature_to_control_file instead."""
+    return add_feature_to_control_file(filepath, feature_config, tickers)
+
+
+def extract_bias_node_specs_from_control_file(filepath: str) -> List[Dict[str, Any]]:
+    """
+    Extract bias node specifications from a control file.
+    
+    Parses feature column names to reconstruct the bias node specifications
+    needed to recreate those features in MLManager.
+    
+    Parameters
+    ----------
+    filepath : str
+        Path to control file JSON
+        
+    Returns
+    -------
+    List[Dict[str, Any]]
+        List of bias node specifications in format:
+        [{'module_name': str, 'timeframes': [TimeFrame], 'params': dict}, ...]
+        
+    Raises
+    ------
+    FileNotFoundError
+        If file not found
+    ValueError
+        If file format is invalid
+    """
+    control_file = parse_control_file(filepath)
+    bias_node_specs = []
+    seen_specs = set()  # Track unique specs to avoid duplicates
+    
+    for model_config in control_file['base_models']:
+        feature_column = model_config.get('feature_column')
+        if not feature_column:
+            continue
+        
+        # Parse feature column name to extract module, params, timeframe
+        parsed = helpers.parse_feature_column_name(feature_column)
+        module_name = parsed.get('module')
+        params = parsed.get('params', {})
+        tf = parsed.get('tf')
+        
+        if module_name is None or tf is None:
+            # Skip if we can't parse the column name
+            continue
+        
+        # Convert tf to TimeFrame enum if it's a string
+        if isinstance(tf, str):
+            try:
+                tf = TimeFrame[tf]
+            except (KeyError, AttributeError):
+                continue
+        
+        # Create spec key for deduplication
+        spec_key = (module_name, tf.name, tuple(sorted(params.items())))
+        if spec_key in seen_specs:
+            continue
+        seen_specs.add(spec_key)
+        
+        # Create bias node spec
+        bias_node_spec = {
+            'module_name': module_name,
+            'timeframes': [tf],
+            'params': params
+        }
+        bias_node_specs.append(bias_node_spec)
+    
+    return bias_node_specs
+
+
+def aggregate_bias_node_specs_from_directory(directory: str) -> List[Dict[str, Any]]:
+    """
+    Aggregate bias node specifications from all control files in a directory.
+    
+    Scans directory for control file JSON files, extracts bias node specs from each,
+    and returns a deduplicated list of all required bias nodes.
+    
+    Parameters
+    ----------
+    directory : str
+        Path to directory containing control file JSON files
+        
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Aggregated list of unique bias node specifications
+        
+    Raises
+    ------
+    FileNotFoundError
+        If directory not found
+    """
+    if not os.path.isdir(directory):
+        raise FileNotFoundError(f"Directory not found: {directory}")
+    
+    all_specs = []
+    seen_specs = set()
+    
+    # Find all JSON files in directory
+    for filename in os.listdir(directory):
+        if not filename.endswith('.json'):
+            continue
+        
+        filepath = os.path.join(directory, filename)
+        try:
+            # Try to parse as control file
+            specs = extract_bias_node_specs_from_control_file(filepath)
+            
+            # Deduplicate across files
+            for spec in specs:
+                module_name = spec['module_name']
+                tf = spec['timeframes'][0]
+                params = spec['params']
+                spec_key = (module_name, tf.name if hasattr(tf, 'name') else str(tf), tuple(sorted(params.items())))
+                
+                if spec_key not in seen_specs:
+                    seen_specs.add(spec_key)
+                    all_specs.append(spec)
+        except (ValueError, FileNotFoundError, json.JSONDecodeError):
+            # Skip files that aren't valid control files
+            continue
+    
+    return all_specs
+
+
+def filter_dataframe_by_timeframe(df: pd.DataFrame, base_tf: TimeFrame) -> pd.DataFrame:
+    """
+    Filter DataFrame columns to only include those matching the specified timeframe.
+    
+    Parses feature column names to extract timeframe information and filters
+    columns where the parsed timeframe matches base_tf.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with feature columns (column names follow standardized format)
+    base_tf : TimeFrame
+        Target timeframe to filter for
+        
+    Returns
+    -------
+    pd.DataFrame
+        Filtered DataFrame with only columns matching base_tf
+        
+    Notes
+    -----
+    Columns that cannot be parsed (non-feature columns) are kept in the result.
+    This allows for columns like 'ticker', 'volatility', etc. to pass through.
+    """
+    if df.empty:
+        return df
+    
+    matching_columns = []
+    
+    for col in df.columns:
+        # Try to parse column name
+        parsed = helpers.parse_feature_column_name(col)
+        tf = parsed.get('tf')
+        
+        # If we can't parse it or it's not a feature column, keep it
+        # (allows non-feature columns like 'ticker', 'volatility' to pass through)
+        if tf is None:
+            matching_columns.append(col)
+            continue
+        
+        # Convert tf to TimeFrame enum if it's a string
+        if isinstance(tf, str):
+            try:
+                tf = TimeFrame[tf]
+            except (KeyError, AttributeError):
+                # If we can't convert, keep the column (might be non-feature)
+                matching_columns.append(col)
+                continue
+        
+        # Check if timeframe matches
+        if tf == base_tf:
+            matching_columns.append(col)
+    
+    return df[matching_columns]
+
+
