@@ -45,12 +45,17 @@
             "id": "0148ccb5b4080c84",
             "type": "leaf",
             "state": {
-              "type": "release-notes",
+              "type": "canvas",
               "state": {
-                "currentVersion": "1.10.3"
+                "file": "ML pipeline overview.canvas",
+                "viewState": {
+                  "x": 393.90890647520587,
+                  "y": 195.8199501753203,
+                  "zoom": -0.8444187276664475
+                }
               },
-              "icon": "lucide-book-up",
-              "title": "Release Notes 1.10.3"
+              "icon": "lucide-layout-dashboard",
+              "title": "ML pipeline overview"
             }
           },
           {
@@ -218,6 +223,7 @@
   },
   "active": "0148ccb5b4080c84",
   "lastOpenFiles": [
+    "os_feature_selection.md",
     "Feature engineering/Trading ideas.md",
     "Feature engineering/Raw feature Extraction.md",
     "Feature engineering/Market & Sector selection.md",
