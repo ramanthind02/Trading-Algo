@@ -5,7 +5,7 @@ This module provides a framework for selecting features using walk-forward analy
 and other model-based selection techniques. It separates the selection logic from
 the exploration/visualization logic in FeatureExplorer.
 
-The FeatureSelector class includes methods for:
+The ISFeatureSelector class includes methods for:
 - Walk-forward analysis with any BaseModel
 - Rolling decile analysis for temporal stability
 - Model-based feature selection strategies
@@ -22,7 +22,7 @@ from datetime import datetime as dt
 from eda.rolling_decile import plot_rolling_decile_whiskers
 
 
-class FeatureSelector:
+class ISFeatureSelector:
     """
     Feature selection framework using model-based approaches.
     
@@ -61,7 +61,7 @@ class FeatureSelector:
         target_data: pd.DataFrame,
         metadata: Optional[Dict[str, Any]] = None
     ):
-        """Initialize the FeatureSelector with feature and target data."""
+        """Initialize the ISFeatureSelector with feature and target data."""
         self.feature_name = feature_name
         self.metadata = metadata or {}
         self.results = {}
@@ -590,9 +590,9 @@ class FeatureSelector:
     
 
     def __repr__(self) -> str:
-        """String representation of the FeatureSelector."""
+        """String representation of the ISFeatureSelector."""
         return (
-            f"FeatureSelector(feature='{self.feature_name}', "
+            f"ISFeatureSelector(feature='{self.feature_name}', "
             f"n_samples={self.n_samples}, "
             f"date_range={self.date_range[0].date()} to {self.date_range[1].date()})"
         )
