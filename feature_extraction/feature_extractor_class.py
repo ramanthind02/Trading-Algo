@@ -11,7 +11,7 @@ The FeatureExtractor class:
 - Handles multiple tickers with automatic alignment
 - Supports parameter grid exploration
 - Returns organized dataframes (per-module and combined)
-- Decouples extraction logic from analysis (FeatureExplorer, FeatureSelector)
+- Decouples extraction logic from analysis (FeatureExplorer, ISFeatureSelector)
 
 Author: Trading Research Team
 Date: 2025-10-28
@@ -36,7 +36,7 @@ class FeatureExtractor:
     This class provides a clean interface for extracting features from multiple
     bias nodes across different tickers and parameter configurations. It returns
     organized dataframes that can be directly consumed by FeatureExplorer and
-    FeatureSelector without any knowledge of the extraction process.
+    ISFeatureSelector without any knowledge of the extraction process.
     
     Key Features:
     - Extract from single or multiple tickers
