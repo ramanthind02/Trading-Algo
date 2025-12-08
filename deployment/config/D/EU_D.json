@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "created_at": "2025-12-07T22:28:21.298056",
+    "updated_at": "2025-12-07T22:28:21.298056",
+    "version": "2.0.0",
+    "ensemble_name": "EU_D_production",
+    "is_fit": true,
+    "base_tf": "D",
+    "description": "Production ensemble for EU D"
+  },
+  "base_models": [
+    {
+      "name": "model_0",
+      "model_type": "QuantileBinningModel",
+      "feature_column": "rsi_signal_D_lookback_14",
+      "strategy": "long",
+      "constructor_params": {
+        "n_bins": 3,
+        "selection_metric": "sortino"
+      }
+    }
+  ],
+  "tickers": [
+    "EURUSD"
+  ],
+  "fitted_base_models": {
+    "model_0": {
+      "thresholds": [
+        0,
+        1
+      ],
+      "best_long_bin": 1,
+      "best_short_bin": 0,
+      "bin_stats": {
+        "0": {
+          "mean_return": 1.3382644136669366e-05,
+          "std_return": 0.00493088741363994,
+          "downside_std": 0.0030784226417877856,
+          "sortino_metric": 0.06901030636171755,
+          "sortino_metric_short": -0.06401337397663533,
+          "count": 1260,
+          "feature_min": "-1",
+          "feature_max": "0"
+        },
+        "1": {
+          "mean_return": 0.0003276604768016782,
+          "std_return": 0.005165935457479382,
+          "downside_std": 0.0031634106527084383,
+          "sortino_metric": 1.644253430087926,
+          "sortino_metric_short": -1.5284901991568136,
+          "count": 130,
+          "feature_min": "1",
+          "feature_max": "1"
+        }
+      }
+    }
+  },
+  "fitted_ensemble": {
+    "weights": {
+      "model_0": 1.0
+    },
+    "exposure_fractions": {
+      "model_0": 0.2143884892086331
+    },
+    "feature_names": [
+      "model_0"
+    ],
+    "target_volatility": 0.15,
+    "unique_tickers": [
+      "EURUSD"
+    ],
+    "instrument_weights": {
+      "EURUSD": 1.0
+    },
+    "n_tickers": 1
+  }
+}

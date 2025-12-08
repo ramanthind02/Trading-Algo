@@ -1,0 +1,130 @@
+{
+  "metadata": {
+    "created_at": "2025-12-07T22:28:21.753353",
+    "updated_at": "2025-12-07T22:28:21.753353",
+    "version": "2.0.0",
+    "ensemble_name": "EU_W_production",
+    "is_fit": true,
+    "base_tf": "W",
+    "description": "Production ensemble for EU W"
+  },
+  "base_models": [
+    {
+      "name": "model_0",
+      "model_type": "QuantileBinningModel",
+      "feature_column": "rsi_signal_W_lookback_14",
+      "strategy": "long",
+      "constructor_params": {
+        "n_bins": 3,
+        "selection_metric": "sortino"
+      }
+    },
+    {
+      "name": "model_1",
+      "model_type": "QuantileBinningModel",
+      "feature_column": "ma_diff_signal_W_lookback_50",
+      "strategy": "long",
+      "constructor_params": {
+        "n_bins": 3,
+        "selection_metric": "sortino"
+      }
+    }
+  ],
+  "tickers": [
+    "EURUSD"
+  ],
+  "fitted_base_models": {
+    "model_0": {
+      "thresholds": [
+        0,
+        1
+      ],
+      "best_long_bin": 1,
+      "best_short_bin": 0,
+      "bin_stats": {
+        "0": {
+          "mean_return": -0.0005418135818976126,
+          "std_return": 0.009976301190803666,
+          "downside_std": 0.005835689830059584,
+          "sortino_metric": -1.4738658527815285,
+          "sortino_metric_short": 1.10243569834875,
+          "count": 212,
+          "feature_min": "-1",
+          "feature_max": "0"
+        },
+        "1": {
+          "mean_return": 0.002344882728189973,
+          "std_return": 0.010880410874912129,
+          "downside_std": 0.008047237109658462,
+          "sortino_metric": 4.625669507082271,
+          "sortino_metric_short": -5.194318337462552,
+          "count": 37,
+          "feature_min": "1",
+          "feature_max": "1"
+        }
+      }
+    },
+    "model_1": {
+      "thresholds": [
+        -0.9440427646232313,
+        0.5675754296768017
+      ],
+      "best_long_bin": 1,
+      "best_short_bin": 2,
+      "bin_stats": {
+        "0": {
+          "mean_return": 7.44097558500896e-05,
+          "std_return": 0.013090390848224059,
+          "downside_std": 0.008046985919910633,
+          "sortino_metric": 0.14679014805475665,
+          "sortino_metric_short": -0.1141305921180645,
+          "count": 83,
+          "feature_min": -5.390099351954516,
+          "feature_max": -0.9440427646232313
+        },
+        "1": {
+          "mean_return": 0.0002945742726959256,
+          "std_return": 0.007998054480033415,
+          "downside_std": 0.0042942597188675245,
+          "sortino_metric": 1.0889470864095911,
+          "sortino_metric_short": -0.8076508630271355,
+          "count": 83,
+          "feature_min": -0.9183075301504078,
+          "feature_max": 0.5675754296768017
+        },
+        "2": {
+          "mean_return": -0.0007075842504648686,
+          "std_return": 0.008682432213413005,
+          "downside_std": 0.005101252226692079,
+          "sortino_metric": -2.2019204797133254,
+          "sortino_metric_short": 1.975626261440643,
+          "count": 83,
+          "feature_min": 0.58241775378837,
+          "feature_max": 4.821886345448695
+        }
+      }
+    }
+  },
+  "fitted_ensemble": {
+    "weights": {
+      "model_0": 0.5,
+      "model_1": 0.5
+    },
+    "exposure_fractions": {
+      "model_0": 0.25301204819277107,
+      "model_1": 1.0
+    },
+    "feature_names": [
+      "model_0",
+      "model_1"
+    ],
+    "target_volatility": 0.15,
+    "unique_tickers": [
+      "EURUSD"
+    ],
+    "instrument_weights": {
+      "EURUSD": 1.0
+    },
+    "n_tickers": 1
+  }
+}
