@@ -49,6 +49,11 @@ class MADiffNode(BiasNode):
         self.atr_length = atr_length
         self.compression = compression
         
+        # Standardized naming metadata
+        self.module_name = 'ma_diff'
+        self.output_features = ['signal']
+        self.params = {'lookback': lookback}
+        
         # Storage for historical data
         self.log_closes = deque(maxlen=lookback)
         self.prev_close: Optional[float] = None
@@ -58,8 +63,8 @@ class MADiffNode(BiasNode):
         self.candle_count = 0
         self.front_bad = max(lookback, atr_length)
         
-        # Define the columns attribute required by the MLManager
-        self.columns = [f'ma_diff_{lookback}_{atr_length}', f'ma_diff_{lookback}_{atr_length}_bool']
+        # Define standardized columns (will be: ma_diff_signal_D_lookback_50)
+        self.ensure_standardized_columns()
     
     def _compute_candle(self, candle: Candle) -> List:
         """

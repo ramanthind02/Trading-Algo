@@ -5,10 +5,84 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Any, Tuple, Optional
 from utils.enums import TimeFrame, Ticker
-from datetime import datetime
+from datetime import datetime, timezone
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def is_dst(dt: datetime) -> bool:
+    """Check if datetime is in daylight saving time."""
+    from datetime import timedelta
+    return dt.dst() != timedelta(0)
+
+
+def convert_ftmo_time_to_ny_time(timestamp: int) -> datetime:
+    """
+    Convert FTMO server timestamp to New York time.
+    
+    Parameters
+    ----------
+    timestamp : int
+        Unix timestamp from FTMO server
+        
+    Returns
+    -------
+    datetime
+        Datetime in NY timezone
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import timedelta
+    
+    dt_gmt2 = datetime.fromtimestamp(timestamp, tz=ZoneInfo("UTC"))
+    dt_ny_plus_offset = dt_gmt2.astimezone(ZoneInfo("America/New_York"))
+    hours_offset = 3 if is_dst(dt_ny_plus_offset) else 2
+    dt_ny = dt_ny_plus_offset - timedelta(hours=hours_offset)
+    return dt_ny
+
+
+def convert_ny_time_to_ftmo_time(dt_ny: datetime) -> int:
+    """
+    Convert New York time to FTMO server time timestamp.
+    
+    Parameters
+    ----------
+    dt_ny : datetime
+        Datetime in NY timezone
+        
+    Returns
+    -------
+    int
+        Unix timestamp for FTMO server
+    """
+    from datetime import timedelta
+    
+    hours_offset = 3 if is_dst(dt_ny) else 2
+    dt_ny = dt_ny + timedelta(hours=hours_offset)
+    return int(dt_ny.timestamp())
+
+
+def get_next_ftmo_midnight_time() -> tuple:
+    """
+    Get today's and tomorrow's midnight timestamps in FTMO time.
+    
+    Returns
+    -------
+    tuple
+        (today_midnight_timestamp, tomorrow_midnight_timestamp)
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import timedelta
+    
+    cet_now = datetime.now(ZoneInfo('Europe/Berlin'))
+    today_midnight = cet_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_midnight = today_midnight.replace(tzinfo=ZoneInfo('UTC'))
+    tomorrow_midnight = today_midnight + timedelta(days=1)
+    
+    return (
+        int(today_midnight.timestamp()),
+        int(tomorrow_midnight.timestamp())
+    )
 
 
 def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1990, 1, 1), end: datetime = datetime(2025, 12, 30)) -> pd.DataFrame:
@@ -692,25 +766,69 @@ def compute_ts_features_from_ml_manager(ml_manager) -> pd.DataFrame:
 def parse_feature_column_name(name: str) -> Dict[str, Any]:
     """
     Parse standardized feature column name into components.
+    
+    Expected format: {module}_{feature}_{tf}_{param}_{value}_{param}_{value}...
+    Example: rsi_signal_D_lookback_14
+    
+    Handles multi-word module names (ma_diff, cumulative_rsi, ts_feature, etc.)
+    by checking against known modules first.
 
     Returns dict with keys: { 'module', 'feature', 'tf', 'params' }
     - tf is the TimeFrame enum if name matches, else raw string
     - params values are auto-converted to int/float when possible
     """
-    tokens = name.split('_') if isinstance(name, str) else [str(name)]
-    if len(tokens) < 3:
-        return {'module': None, 'feature': None, 'tf': None, 'params': {}}
-
-    module = tokens[0]
-    feature = tokens[1]
-    tf_token = tokens[2]
+    if not isinstance(name, str):
+        name = str(name)
+    
+    # Known multi-word module names (in order of length, longest first to match greedily)
+    known_modules = [
+        'cumulative_rsi',
+        'consecMomentum',
+        'ts_feature',
+        'ma_diff',
+        'momentum',
+        'ewmac',
+        'ewsd',
+        'cmma',
+        'rsi',
+        'roc',
+        'atr',
+    ]
+    
+    # Try to find matching module name at start of feature column name
+    module = None
+    remainder = name
+    for known_module in known_modules:
+        if name.startswith(known_module + '_'):
+            module = known_module
+            remainder = name[len(known_module) + 1:]  # +1 for the underscore
+            break
+    
+    # If no known module matched, fall back to first token
+    if module is None:
+        tokens = name.split('_')
+        if len(tokens) < 3:
+            return {'module': None, 'feature': None, 'tf': None, 'params': {}}
+        module = tokens[0]
+        remainder = '_'.join(tokens[1:])
+    
+    # Parse remainder: feature_tf_param_value_param_value...
+    tokens = remainder.split('_')
+    if len(tokens) < 2:
+        return {'module': module, 'feature': None, 'tf': None, 'params': {}}
+    
+    feature = tokens[0]
+    tf_token = tokens[1]
+    
+    # Try to convert timeframe token to TimeFrame enum
     try:
         tf = TimeFrame[tf_token]
     except Exception:
         tf = tf_token
 
+    # Parse remaining tokens as key-value pairs for params
     params: Dict[str, Any] = {}
-    i = 3
+    i = 2
     while i + 1 < len(tokens):
         key = tokens[i]
         val_raw = tokens[i + 1]
