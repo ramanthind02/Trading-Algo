@@ -96,3 +96,5 @@ wcwidth==0.2.14
 websockets==15.0.1
 yfinance==0.2.66
 zipp==3.23.0
+schedule==1.2.2
+MetaTrader5==5.0.4552
