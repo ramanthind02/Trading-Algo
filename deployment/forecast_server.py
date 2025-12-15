@@ -454,30 +454,44 @@ class ForecastServer:
         except Exception as e:
             logger.error(f"🧪 Test forecast error: {e}")
     
-    def load_historical_data(self, days_back: int = 30) -> None:
+    def load_historical_data(self, days_back: int = 60) -> None:
         """
         Load historical data for all MLManagers.
+        
+        ⚠️ IMPORTANT: This should only be called ONCE during initialization!
+        
+        This fetches enough historical candles to properly initialize all bias nodes
+        with their required lookback periods.
         
         Parameters
         ----------
         days_back : int
             Number of days of historical data to load
         """
-        logger.info(f"📚 Loading {days_back} days of historical data...")
+        logger.info(f"📚 Loading historical data for all MLManagers (INITIALIZATION ONLY)...")
         
-        for (ticker, timeframe), ml_manager in self.ml_managers.items():
+        # Determine how many candles we need based on lookback_candles
+        candles_needed = max(self.lookback_candles, days_back)
+        
+        for (ticker, timeframe), _ in self.ml_managers.items():
             try:
-                logger.info(f"Loading history for {ticker.name} {timeframe.name}...")
+                logger.info(f"Loading {candles_needed} candles for {ticker.name} {timeframe.name}...")
                 
-                # This is simplified - in reality we'd need to fetch historical candles
-                # For now, we'll just add the latest candle to initialize
-                latest_candle = self.mt5_connector.get_latest_candle(ticker.value, timeframe)
+                # Fetch historical candles
+                candles = self.mt5_connector.get_historical_candles(
+                    ticker.value, 
+                    timeframe, 
+                    count=candles_needed
+                )
                 
-                if latest_candle is not None:
-                    self._add_candle(ticker, timeframe, latest_candle)
-                    logger.info(f"✅ Initialized {ticker.name} {timeframe.name}")
+                if candles:
+                    # Add all candles to buffer and MLManager
+                    for candle in candles:
+                        self._add_candle(ticker, timeframe, candle)
+                    
+                    logger.info(f"✅ Loaded {len(candles)} candles for {ticker.name} {timeframe.name}")
                 else:
-                    logger.warning(f"❌ No data for {ticker.name} {timeframe.name}")
+                    logger.warning(f"❌ No historical data for {ticker.name} {timeframe.name}")
                     
             except Exception as e:
                 logger.error(f"❌ Error loading history for {ticker.name} {timeframe.name}: {e}")
