@@ -52,16 +52,22 @@ def main():
     args = parser.parse_args()
     
     try:
+        print("🚀 Initializing test server...")
         logger.info("🚀 Initializing test server...")
         server = TestForecastServer()
+        print("✅ Server initialized")
         
+        print("📚 Loading historical data...")
         logger.info("📚 Loading historical data...")
         server.load_historical_data()
+        print("✅ Historical data loaded")
         
         timeframe = TimeFrame[args.timeframe] if args.timeframe else None
         
+        print("🧪 Running test forecast...")
         logger.info("🧪 Running test forecast...")
         results = server.run_test_forecast(timeframe=timeframe)
+        print("✅ Forecast complete")
         
         print_forecast_results(results)
         
@@ -70,11 +76,15 @@ def main():
                 json.dump(results, f, indent=2)
             logger.info(f"💾 Results saved to {args.output}")
         
+        print("🧹 Cleaning up...")
         server.stop()
         logger.info("✅ Test complete!")
         
     except Exception as e:
+        print(f"💥 ERROR: {e}")
         logger.error(f"💥 Test failed: {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
 
