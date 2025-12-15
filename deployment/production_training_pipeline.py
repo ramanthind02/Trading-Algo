@@ -293,10 +293,12 @@ class ProductionTrainingPipeline:
             sma_50 = closes.rolling(50).mean()
             ma_diff = (sma_20 - sma_50) / sma_50 * 100
             
+            # Use standardized naming (camelCase format)
+            import utils.helpers as helpers
             features_df = pd.DataFrame({
-                f'rsi_signal_{timeframe.name}_lookback_14': np.where(rsi < 30, 1, np.where(rsi > 70, -1, 0)),
-                f'momentum_signal_{timeframe.name}_lookback_20': np.where(momentum > 5, 1, np.where(momentum < -5, -1, 0)),
-                f'ma_diff_signal_{timeframe.name}_lookback_50': ma_diff  # Fixed: Now follows standard naming
+                helpers.build_feature_column_name('rsi', 'signal', timeframe, {'lookback': 14}): np.where(rsi < 30, 1, np.where(rsi > 70, -1, 0)),
+                helpers.build_feature_column_name('momentum', 'signal', timeframe, {'lookback': 20}): np.where(momentum > 5, 1, np.where(momentum < -5, -1, 0)),
+                helpers.build_feature_column_name('ma_diff', 'signal', timeframe, {'lookback': 50}): ma_diff
             }, index=data.index)
         
         # Calculate target returns
