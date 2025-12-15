@@ -31,9 +31,8 @@ def print_forecast_results(results: dict) -> None:
     
     for timeframe, data in results['forecasts'].items():
         print(f"{timeframe} Forecasts: {data['count']} total")
-        for forecast in data['predictions']:
-            ticker = forecast['ticker']
-            prediction = forecast['prediction']
+        # predictions is now a dict: {ticker_name: forecast_value}
+        for ticker, prediction in data['predictions'].items():
             print(f"  {ticker}: {prediction:+.4f}")
         print()
     
