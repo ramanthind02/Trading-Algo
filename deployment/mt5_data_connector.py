@@ -33,9 +33,9 @@ class ForecastMT5DataConnector:
     
     def __init__(self):
         """Initialize MT5 connection for forecasting."""
-        self.username = int(os.environ.get('MT5_USERNAME', '1511850895'))
-        self.password = os.environ.get('MT5_PASSWORD', '@?v$vXjh4@!8$?')
-        self.server = os.environ.get('MT5_SERVER', 'FTMO-Demo')
+        self.username = int(os.environ.get('MT5_USERNAME', '1520871062'))
+        self.password = os.environ.get('MT5_PASSWORD', 'm34bn4x6$W')
+        self.server = os.environ.get('MT5_SERVER', 'FTMO-Demo2')
         self.path = 'C:/Program Files/FTMO MetaTrader 5/terminal64.exe'
         
         # MT5 timeframe mappings (only for available timeframes)
