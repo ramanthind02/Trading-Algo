@@ -39,6 +39,7 @@ llvmlite==0.45.1
 locket==1.0.0
 matplotlib==3.10.6
 matplotlib-inline==0.1.7
+MetaTrader5==5.0.5430
 multitasking==0.0.12
 narwhals==2.10.0
 nbformat==5.10.4
@@ -75,6 +76,7 @@ QuantStats==0.0.77
 referencing==0.37.0
 requests==2.32.5
 rpds-py==0.28.0
+schedule==1.2.2
 scikit-learn==1.7.2
 scipy==1.15.3
 seaborn==0.13.2
@@ -96,5 +98,3 @@ wcwidth==0.2.14
 websockets==15.0.1
 yfinance==0.2.66
 zipp==3.23.0
-schedule==1.2.2
-MetaTrader5==5.0.4552

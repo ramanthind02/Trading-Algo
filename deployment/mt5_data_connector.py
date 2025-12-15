@@ -144,14 +144,14 @@ class ForecastMT5DataConnector:
             # Convert to Candle objects
             candles = []
             for candle_data in rates:
-                candle_time = helpers.convert_ftmo_time_to_ny_time(candle_data['time'])
+                candle_time = helpers.convert_ftmo_time_to_ny_time(int(candle_data['time']))
                 
                 candle = Candle(
                     open=float(candle_data['open']),
                     close=float(candle_data['close']),
                     high=float(candle_data['high']),
                     low=float(candle_data['low']),
-                    volume=int(candle_data.get('tick_volume', 0)),
+                    volume=int(candle_data['tick_volume']),  # Use bracket notation, not .get()
                     datetime=candle_time,
                     ticker=ticker if isinstance(ticker, Ticker) else Ticker[ticker] if hasattr(Ticker, ticker) else None,
                     tf=timeframe
@@ -163,10 +163,6 @@ class ForecastMT5DataConnector:
             
         except Exception as e:
             logger.error(f"Error getting historical candles for {ticker} {timeframe}: {e}")
-            # Try to re-authenticate once
-            if self.authenticate():
-                logger.info("Re-authenticated, retrying candle fetch...")
-                return self.get_historical_candles(ticker, timeframe, count)
             return []
     
     def get_latest_candle(self, ticker: str, timeframe: TimeFrame) -> Optional[Candle]:
@@ -218,7 +214,7 @@ class ForecastMT5DataConnector:
             candle_data = rates[-2] if len(rates) > 1 else rates[-1]
             
             # Convert MT5 time to NY time
-            candle_time = helpers.convert_ftmo_time_to_ny_time(candle_data['time'])
+            candle_time = helpers.convert_ftmo_time_to_ny_time(int(candle_data['time']))
             
             # Create Candle object
             candle = Candle(
@@ -226,7 +222,7 @@ class ForecastMT5DataConnector:
                 close=float(candle_data['close']),
                 high=float(candle_data['high']),
                 low=float(candle_data['low']),
-                volume=int(candle_data.get('tick_volume', 0)),
+                volume=int(candle_data['tick_volume']),  # Use bracket notation, not .get()
                 datetime=candle_time,
                 ticker=ticker if isinstance(ticker, Ticker) else Ticker[ticker] if hasattr(Ticker, ticker) else None,
                 tf=timeframe
@@ -237,10 +233,6 @@ class ForecastMT5DataConnector:
             
         except Exception as e:
             logger.error(f"Error getting latest candle for {ticker} {timeframe}: {e}")
-            # Try to re-authenticate once
-            if self.authenticate():
-                logger.info("Re-authenticated, retrying candle fetch...")
-                return self.get_latest_candle(ticker, timeframe)
             return None
     
     def is_market_open(self, ticker: str = 'EURUSD') -> bool:
