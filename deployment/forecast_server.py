@@ -337,6 +337,14 @@ class ForecastServer:
                     len(latest_features)
                 )
                 
+                # DEBUG LOGGING
+                logger.info(f"🔍 DEBUG {ticker.name} {timeframe.name}:")
+                logger.info(f"   Features shape: {latest_features.shape}")
+                logger.info(f"   Feature columns: {list(latest_features.columns)}")
+                logger.info(f"   Ticker series: {ticker_series.tolist() if hasattr(ticker_series, 'tolist') else ticker_series}")
+                logger.info(f"   Ticker unique values: {set(ticker_series) if hasattr(ticker_series, '__iter__') else ticker_series}")
+                logger.info(f"   Volatility: {volatility_series.tolist() if hasattr(volatility_series, 'tolist') else volatility_series}")
+                
                 # Generate prediction using portfolio
                 # Portfolio.predict expects features for a specific timeframe
                 predictions = portfolio.predict(
@@ -391,6 +399,12 @@ class ForecastServer:
         # Create ticker series - use ticker value
         ticker_value = ticker.value
         ticker_series = pd.Series([ticker_value] * n_samples)
+        
+        # DEBUG LOGGING
+        logger.info(f"🔍 _prepare_prediction_data for {ticker.name}:")
+        logger.info(f"   ticker.value = {ticker_value}")
+        logger.info(f"   n_samples = {n_samples}")
+        logger.info(f"   ticker_series = {ticker_series.tolist()}")
         
         # Calculate volatility from recent candles
         candles = self.candle_buffers.get(ml_manager_key, [])

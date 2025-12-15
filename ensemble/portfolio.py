@@ -305,10 +305,23 @@ class Portfolio:
         # Collect predictions from ensembles matching the timeframe
         ensemble_predictions = []
         
+        # DEBUG LOGGING
+        from utils.logger import logger
+        logger.info(f"🔍 Portfolio.predict called:")
+        logger.info(f"   X shape: {X.shape}")
+        logger.info(f"   X columns: {list(X.columns)}")
+        logger.info(f"   ticker type: {type(ticker)}")
+        logger.info(f"   ticker values: {ticker.tolist() if hasattr(ticker, 'tolist') else ticker}")
+        logger.info(f"   timeframe: {timeframe.name}")
+        logger.info(f"   Total ensembles: {len(self.ensembles)}")
+        
         for ensemble_name, (ensemble, ensemble_tf) in self.ensembles.items():
             # Only process ensembles that match the current timeframe
             if ensemble_tf != timeframe:
                 continue
+            
+            logger.info(f"   Processing ensemble: {ensemble_name}, TF: {ensemble_tf.name}")
+            logger.info(f"      Ensemble unique_tickers: {getattr(ensemble, 'unique_tickers_', 'NOT SET')}")
             
             # Get predictions from this ensemble
             predictions = ensemble.predict(
