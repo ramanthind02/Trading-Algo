@@ -9,7 +9,7 @@ import os
 import sys
 import time
 import schedule
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -60,7 +60,8 @@ class ForecastServer:
         self.telegram = TelegramNotifier()
         
         # Portfolios - one per timeframe
-        self.portfolios: Dict[TimeFrame, Portfolio] = {}
+        # Changed: Now we store ensembles per ticker/timeframe, not one portfolio per timeframe
+        self.ensembles: Dict[tuple, Any] = {}  # (ticker, timeframe) -> DiversifiedEnsemble
         
         # MLManagers - one per ticker/timeframe for feature extraction
         # We need separate MLManagers per ticker because each ticker has different price data
@@ -75,7 +76,7 @@ class ForecastServer:
         self.timeframes = [TimeFrame.D, TimeFrame.W]  # Daily and Weekly
         
         # Initialize portfolios and MLManagers
-        self._setup_portfolios()
+        self._setup_ensembles()
         self._setup_ml_managers()
         
         # Setup scheduling
@@ -84,6 +85,45 @@ class ForecastServer:
         logger.info(f"✅ ForecastServer initialized")
         logger.info(f"   Portfolios: {len(self.portfolios)}")
         logger.info(f"   MLManagers: {len(self.ml_managers)}")
+    
+    def _setup_ensembles(self) -> None:
+        """Setup one ensemble per ticker/timeframe combination."""
+        logger.info("Setting up ensembles...")
+        
+        from ensemble.diversified_ensemble import DiversifiedEnsemble
+        
+        for timeframe in self.timeframes:
+            # Each timeframe has its own subdirectory (e.g., config/D/, config/W/)
+            tf_dir = os.path.join(self.config_dir, timeframe.name)
+            
+            if not os.path.exists(tf_dir):
+                logger.warning(f"Timeframe directory not found: {tf_dir}")
+                continue
+            
+            for ticker in self.tickers:
+                try:
+                    # Look for ensemble file: {TICKER}_{TF}.json (e.g., EU_D.json)
+                    ensemble_filename = f"{ticker.name}_{timeframe.name}.json"
+                    ensemble_path = os.path.join(tf_dir, ensemble_filename)
+                    
+                    if not os.path.exists(ensemble_path):
+                        logger.warning(f"Ensemble file not found: {ensemble_path}")
+                        continue
+                    
+                    # Load ensemble
+                    ensemble = DiversifiedEnsemble(
+                        control_file_path=ensemble_path,
+                        base_tf=timeframe
+                    )
+                    
+                    # Store by (ticker, timeframe) key
+                    self.ensembles[(ticker, timeframe)] = ensemble
+                    logger.info(f"✅ Loaded ensemble: {ticker.name} {timeframe.name}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to load ensemble {ticker.name} {timeframe.name}: {e}")
+        
+        logger.info(f"Setup complete: {len(self.ensembles)} ensembles loaded")
     
     def _setup_portfolios(self) -> None:
         """Setup portfolio for each timeframe."""
@@ -286,7 +326,7 @@ class ForecastServer:
     
     def _generate_portfolio_forecasts(self, timeframe: TimeFrame) -> Dict[str, float]:
         """
-        Generate forecasts for all tickers using portfolio.
+        Generate forecasts for all tickers using individual ensembles.
         
         Parameters
         ----------
@@ -300,14 +340,18 @@ class ForecastServer:
         """
         forecasts = {}
         
-        if timeframe not in self.portfolios:
-            return forecasts
-        
-        portfolio = self.portfolios[timeframe]
-        
         # Generate forecast for each ticker
         for ticker in self.tickers:
             try:
+                # Get ensemble for this ticker/timeframe
+                ensemble_key = (ticker, timeframe)
+                
+                if ensemble_key not in self.ensembles:
+                    logger.warning(f"No ensemble for {ticker.name} {timeframe.name}")
+                    continue
+                
+                ensemble = self.ensembles[ensemble_key]
+                
                 ml_manager_key = (ticker, timeframe)
                 
                 if ml_manager_key not in self.ml_managers:
@@ -345,23 +389,21 @@ class ForecastServer:
                 logger.info(f"   Ticker unique values: {set(ticker_series) if hasattr(ticker_series, '__iter__') else ticker_series}")
                 logger.info(f"   Volatility: {volatility_series.tolist() if hasattr(volatility_series, 'tolist') else volatility_series}")
                 
-                # Generate prediction using portfolio
-                # Portfolio.predict expects features for a specific timeframe
-                predictions = portfolio.predict(
+                # Generate prediction using individual ensemble
+                predictions = ensemble.predict(
                     X=latest_features,
                     ticker=ticker_series,
-                    volatility=volatility_series,
-                    timeframe=timeframe
+                    volatility=volatility_series
                 )
                 
                 if len(predictions) == 0:
                     logger.warning(f"No predictions for {ticker.name}")
                     continue
                 
-                # Extract forecast value (portfolio returns DataFrame with %_to_risk column)
+                # Extract forecast value (ensemble returns DataFrame with %_to_risk column)
                 forecast = float(predictions['%_to_risk'].iloc[0])
                 
-                # Normalize to 0-1 range if needed (portfolio already returns position sizes)
+                # Normalize to 0-1 range if needed (ensemble already returns position sizes)
                 # The ensemble predict() method returns values in a specific range
                 # We may want to apply sigmoid normalization for consistency
                 forecast_normalized = 1.0 / (1.0 + np.exp(-forecast * 2))

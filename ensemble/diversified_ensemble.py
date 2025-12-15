@@ -740,6 +740,15 @@ class DiversifiedEnsemble:
         if isinstance(volatility, np.ndarray):
             volatility = pd.Series(volatility, index=X_filtered.index)
         
+        # DEBUG LOGGING - BEFORE ticker check
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔍 DiversifiedEnsemble.predict DEBUG:")
+        logger.info(f"   self.unique_tickers_ = {self.unique_tickers_}")
+        logger.info(f"   ticker.unique() = {ticker.unique().tolist()}")
+        logger.info(f"   X_filtered.shape = {X_filtered.shape}")
+        logger.info(f"   X_filtered.columns = {list(X_filtered.columns)}")
+        
         # Check for unseen tickers
         unseen_tickers = set(ticker.unique()) - set(self.unique_tickers_)
         if unseen_tickers:
