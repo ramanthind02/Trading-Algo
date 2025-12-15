@@ -67,7 +67,6 @@ class MLManager:
         Returns:
         - float: Ranges between 0 and 1 -> 0 being bearish, 1 being bullish
         """
-
         if self.build_matrix and tf == self.base_tf:
             # Add to buffer instead of immediately appending to DataFrame
             self.matrix_buffer.append((candle.datetime, self.bias_values.copy()))
@@ -77,31 +76,41 @@ class MLManager:
                 self._flush_matrix_buffer()
         
         
-        column_index = 0
-        # Update all bias nodes and bias_values array
+        # Update bias nodes for the given timeframe only
+        # Use tf_indices to get the correct column positions for this timeframe
+        tf_column_idx = 0
+        
         for idx in range(len(self.bias_nodes)):
             timeframe, bias_node = self.bias_nodes[idx]
-            num_columns = len(bias_node.columns)  # Get number of columns for this node
-
+            
             if tf != timeframe:
-                column_index += num_columns  # Skip the indices for this node
+                # Skip nodes that don't match the timeframe
                 continue
 
             vals = bias_node.add_candle(candle)
+            num_vals = len(vals)
 
-            for j in range(len(vals)):
+            # Update bias_values using the correct column indices for this timeframe
+            for j in range(num_vals):
                 if isinstance(vals[j], Bias):
                     val = vals[j].value
                 else:
                     val = vals[j]
-
-                self.bias_values[column_index] = val
-                column_index += 1
+                
+                # Bounds check before accessing
+                if tf_column_idx >= len(self.tf_indices[tf]):
+                    # This should never happen if nodes are properly configured
+                    logger.error(f"Index out of bounds: tf_column_idx={tf_column_idx}, tf_indices[{tf.name}] has {len(self.tf_indices[tf])} indices")
+                    logger.error(f"  Node: {type(bias_node).__name__}, returned {num_vals} values")
+                    logger.error(f"  Available indices: {self.tf_indices[tf]}")
+                    raise IndexError(f"tf_column_idx {tf_column_idx} out of range for timeframe {tf.name}")
+                
+                # Get the global column index from tf_indices
+                global_column_idx = self.tf_indices[tf][tf_column_idx]
+                self.bias_values[global_column_idx] = val
+                tf_column_idx += 1
        
         return self.bias
-    
-
-
 
     def _flush_matrix_buffer(self) -> None:
         """

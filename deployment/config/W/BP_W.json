@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "created_at": "2025-12-14T19:07:35.389131",
-    "updated_at": "2025-12-14T19:07:35.389131",
+    "created_at": "2025-12-14T19:31:29.933814",
+    "updated_at": "2025-12-14T19:31:29.933814",
     "version": "2.0.0",
     "ensemble_name": "BP_W_production",
     "is_fit": true,
@@ -12,7 +12,7 @@
     {
       "name": "model_0",
       "model_type": "QuantileBinningModel",
-      "feature_column": "momentum_signal_W_lookback_20",
+      "feature_column": "rsi_signal_W_lookback_14",
       "strategy": "long",
       "constructor_params": {
         "n_bins": 3,
@@ -36,71 +36,71 @@
   "fitted_base_models": {
     "model_0": {
       "thresholds": [
-        0,
-        1
+        50.0,
+        59.92131915340796
       ],
-      "best_long_bin": 0,
-      "best_short_bin": 1,
+      "best_long_bin": 2,
+      "best_short_bin": 0,
       "bin_stats": {
         "0": {
-          "mean_return": 0.00017791652324009895,
-          "std_return": 0.011381427229705886,
-          "downside_std": 0.007408076863167905,
-          "sortino_metric": 0.3812510722961784,
-          "sortino_metric_short": -0.3697530327587722,
-          "count": 206,
-          "feature_min": "-1",
-          "feature_max": "0"
+          "mean_return": -0.0013168163122230959,
+          "std_return": 0.01755165308374819,
+          "downside_std": 0.012164210287306342,
+          "sortino_metric": -1.7184683931998956,
+          "sortino_metric_short": 1.6165566647377048,
+          "count": 106,
+          "feature_min": 20.985803329186076,
+          "feature_max": 50.0
         },
         "1": {
-          "mean_return": -0.0004448564647493357,
-          "std_return": 0.009857578901325815,
-          "downside_std": 0.0069359331830310105,
-          "sortino_metric": -1.018158229429574,
-          "sortino_metric_short": 1.1361345464530177,
-          "count": 43,
-          "feature_min": "1",
-          "feature_max": "1"
+          "mean_return": 0.00012115555926903573,
+          "std_return": 0.008223430792013526,
+          "downside_std": 0.005738672829182972,
+          "sortino_metric": 0.3351445422872648,
+          "sortino_metric_short": -0.3721293194497197,
+          "count": 92,
+          "feature_min": 50.025178483888496,
+          "feature_max": 59.92131915340796
+        },
+        "2": {
+          "mean_return": 0.0015613214803215298,
+          "std_return": 0.011335907941061998,
+          "downside_std": 0.007303215660079662,
+          "sortino_metric": 3.3937393163402243,
+          "sortino_metric_short": -3.6041425804303437,
+          "count": 100,
+          "feature_min": 60.49435785156173,
+          "feature_max": 86.6622744358295
         }
       }
     },
     "model_1": {
       "thresholds": [
-        -0.3950566945652102,
-        1.5997850345167073
+        0.0,
+        13.988050295071588
       ],
       "best_long_bin": 1,
-      "best_short_bin": 2,
+      "best_short_bin": 0,
       "bin_stats": {
         "0": {
-          "mean_return": -0.00026970950598764255,
-          "std_return": 0.014241526235184073,
-          "downside_std": 0.009688518770716368,
-          "sortino_metric": -0.4419154027322751,
-          "sortino_metric_short": 0.47383697925184937,
-          "count": 83,
-          "feature_min": -6.730551018516461,
-          "feature_max": -0.3950566945652102
+          "mean_return": 3.90035174048375e-05,
+          "std_return": 0.013544521542086668,
+          "downside_std": 0.009795194901549788,
+          "sortino_metric": 0.06321075283166781,
+          "sortino_metric_short": -0.0658794653717026,
+          "count": 268,
+          "feature_min": -11.402396684635619,
+          "feature_max": 0.0
         },
         "1": {
-          "mean_return": 0.0009609084773189149,
-          "std_return": 0.009289329152200473,
-          "downside_std": 0.004977790904899195,
-          "sortino_metric": 3.0644013526290332,
-          "sortino_metric_short": -2.1998231259176837,
-          "count": 83,
-          "feature_min": -0.3546814615081931,
-          "feature_max": 1.5997850345167073
-        },
-        "2": {
-          "mean_return": -0.0004800908291235741,
-          "std_return": 0.009134671633361893,
-          "downside_std": 0.005698434413771555,
-          "sortino_metric": -1.3374209633937928,
-          "sortino_metric_short": 1.377705510128895,
-          "count": 83,
-          "feature_min": 1.6042360754413538,
-          "feature_max": 4.131905874250134
+          "mean_return": 0.0005747662574919903,
+          "std_return": 0.009574328853428096,
+          "downside_std": 0.0061527270652023775,
+          "sortino_metric": 1.4829410404848853,
+          "sortino_metric_short": -1.3363848889606083,
+          "count": 30,
+          "feature_min": 2.069253163137553,
+          "feature_max": 13.988050295071588
         }
       }
     }
@@ -111,8 +111,8 @@
       "model_1": 0.5
     },
     "exposure_fractions": {
-      "model_0": 0.30522088353413657,
-      "model_1": 1.0
+      "model_0": 1.0,
+      "model_1": 0.15436241610738255
     },
     "feature_names": [
       "model_0",

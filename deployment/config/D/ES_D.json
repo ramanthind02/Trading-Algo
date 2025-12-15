@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "created_at": "2025-12-14T19:07:35.609054",
-    "updated_at": "2025-12-14T19:07:35.609054",
+    "created_at": "2025-12-14T19:31:30.542159",
+    "updated_at": "2025-12-14T19:31:30.542159",
     "version": "2.0.0",
     "ensemble_name": "ES_D_production",
     "is_fit": true,
@@ -28,16 +28,6 @@
         "n_bins": 3,
         "selection_metric": "sortino"
       }
-    },
-    {
-      "name": "model_2",
-      "model_type": "QuantileBinningModel",
-      "feature_column": "maDiff_signal_D_lookback_50",
-      "strategy": "long",
-      "constructor_params": {
-        "n_bins": 3,
-        "selection_metric": "sortino"
-      }
     }
   ],
   "tickers": [
@@ -46,120 +36,97 @@
   "fitted_base_models": {
     "model_0": {
       "thresholds": [
-        0,
-        1
+        51.526364271746544,
+        61.744285238410924
       ],
       "best_long_bin": 1,
-      "best_short_bin": 0,
+      "best_short_bin": 2,
       "bin_stats": {
         "0": {
-          "mean_return": 0.0004084235586444718,
-          "std_return": 0.011711952117759168,
-          "downside_std": 0.009584352653399651,
-          "sortino_metric": 0.6764695779656962,
-          "sortino_metric_short": -0.8894766997315158,
-          "count": 1312,
-          "feature_min": "-1",
-          "feature_max": "0"
+          "mean_return": 0.0010825073448996975,
+          "std_return": 0.018099484413225154,
+          "downside_std": 0.014038363422290949,
+          "sortino_metric": 1.2240936386321453,
+          "sortino_metric_short": -1.3880388685130005,
+          "count": 480,
+          "feature_min": 22.08731320277365,
+          "feature_max": 51.526364271746544
         },
         "1": {
-          "mean_return": 0.004901284373203818,
-          "std_return": 0.019346109105240213,
-          "downside_std": 0.008366065998526637,
-          "sortino_metric": 9.300127126839403,
-          "sortino_metric_short": -4.348156561034021,
-          "count": 78,
-          "feature_min": "1",
-          "feature_max": "1"
+          "mean_return": 0.0007443326547368585,
+          "std_return": 0.01136046985253401,
+          "downside_std": 0.008740040497622704,
+          "sortino_metric": 1.3519290426678594,
+          "sortino_metric_short": -1.6944261761664625,
+          "count": 479,
+          "feature_min": 51.54312172375709,
+          "feature_max": 61.744285238410924
+        },
+        "2": {
+          "mean_return": -0.00031687324555282163,
+          "std_return": 0.008180022849214418,
+          "downside_std": 0.007805995034303409,
+          "sortino_metric": -0.644403027041498,
+          "sortino_metric_short": 1.2434522790706481,
+          "count": 480,
+          "feature_min": 61.76613588068368,
+          "feature_max": 98.53369471894413
         }
       }
     },
     "model_1": {
       "thresholds": [
-        0,
-        1
+        0.0,
+        145.75
       ],
-      "best_long_bin": 0,
-      "best_short_bin": 1,
+      "best_long_bin": 1,
+      "best_short_bin": 0,
       "bin_stats": {
         "0": {
-          "mean_return": 0.0008118643016111368,
-          "std_return": 0.012709941631430199,
-          "downside_std": 0.009813145137790556,
-          "sortino_metric": 1.313334925897872,
-          "sortino_metric_short": -1.4526098129976874,
-          "count": 1133,
-          "feature_min": "-1",
-          "feature_max": "0"
+          "mean_return": 0.0002649672691089934,
+          "std_return": 0.018581271144235696,
+          "downside_std": 0.014734639643564359,
+          "sortino_metric": 0.2854650741080792,
+          "sortino_metric_short": -0.3335477467359915,
+          "count": 486,
+          "feature_min": -1050.75,
+          "feature_max": 0.0
         },
         "1": {
-          "mean_return": -6.5772905602071e-06,
-          "std_return": 0.010294141405375754,
-          "downside_std": 0.008214800922993969,
-          "sortino_metric": -0.012710137679084545,
-          "sortino_metric_short": 0.016519921960771056,
-          "count": 257,
-          "feature_min": "1",
-          "feature_max": "1"
-        }
-      }
-    },
-    "model_2": {
-      "thresholds": [
-        0.4026935665611379,
-        2.1063158757031366
-      ],
-      "best_long_bin": 0,
-      "best_short_bin": 1,
-      "bin_stats": {
-        "0": {
-          "mean_return": 0.0010917692317341226,
-          "std_return": 0.016562605584669474,
-          "downside_std": 0.012399694234257148,
-          "sortino_metric": 1.3977198897019023,
-          "sortino_metric_short": -1.4622966360858325,
-          "count": 463,
-          "feature_min": -14.57266182656041,
-          "feature_max": 0.4026935665611379
-        },
-        "1": {
-          "mean_return": 0.00031880012802552567,
-          "std_return": 0.009466470957393506,
-          "downside_std": 0.007284895147600953,
-          "sortino_metric": 0.6946970460945034,
-          "sortino_metric_short": -0.8970314557959411,
-          "count": 463,
-          "feature_min": 0.40794592350603753,
-          "feature_max": 2.1063158757031366
+          "mean_return": 0.0008024705040923258,
+          "std_return": 0.009339005586664523,
+          "downside_std": 0.007159038217004911,
+          "sortino_metric": 1.779404431659408,
+          "sortino_metric_short": -2.307804201473207,
+          "count": 473,
+          "feature_min": 0.25,
+          "feature_max": 145.75
         },
         "2": {
-          "mean_return": 0.0005712462855231201,
-          "std_return": 0.009507681147625012,
-          "downside_std": 0.007446673974101347,
-          "sortino_metric": 1.217758919582051,
-          "sortino_metric_short": -1.6506914275130407,
-          "count": 464,
-          "feature_min": 2.1124246441950363,
-          "feature_max": 6.253423558508968
+          "mean_return": 0.0004493688918391969,
+          "std_return": 0.009417191090333274,
+          "downside_std": 0.0072102912053970125,
+          "sortino_metric": 0.9893511656050236,
+          "sortino_metric_short": -1.1140720221632994,
+          "count": 480,
+          "feature_min": 146.0,
+          "feature_max": 797.75
         }
       }
     }
   },
   "fitted_ensemble": {
     "weights": {
-      "model_0": 0.3333333333333333,
-      "model_1": 0.3333333333333333,
-      "model_2": 0.3333333333333333
+      "model_0": 0.5,
+      "model_1": 0.5
     },
     "exposure_fractions": {
-      "model_0": 0.26258992805755393,
-      "model_1": 0.2841726618705036,
-      "model_2": 1.0
+      "model_0": 1.0,
+      "model_1": 0.9861014593467686
     },
     "feature_names": [
       "model_0",
-      "model_1",
-      "model_2"
+      "model_1"
     ],
     "target_volatility": 0.15,
     "unique_tickers": [
