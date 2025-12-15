@@ -78,7 +78,7 @@ class TestForecastServer(ForecastServer):
                 
                 results['forecasts'][tf_name] = {
                     'count': len(forecasts),
-                    'tickers': [f['ticker'] for f in forecasts],
+                    'tickers': list(forecasts.keys()),
                     'predictions': forecasts
                 }
                 
