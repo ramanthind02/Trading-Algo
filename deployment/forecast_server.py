@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import schedule
+import numpy as np
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
