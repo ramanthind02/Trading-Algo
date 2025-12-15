@@ -146,6 +146,17 @@ class ForecastMT5DataConnector:
             for candle_data in rates:
                 candle_time = helpers.convert_ftmo_time_to_ny_time(int(candle_data['time']))
                 
+                # Determine ticker enum
+                if isinstance(ticker, Ticker):
+                    ticker_enum = ticker
+                else:
+                    # Find Ticker by value (e.g., 'EURUSD' -> Ticker.EU)
+                    ticker_enum = None
+                    for t in Ticker:
+                        if t.value == ticker:
+                            ticker_enum = t
+                            break
+                
                 candle = Candle(
                     open=float(candle_data['open']),
                     close=float(candle_data['close']),
@@ -153,7 +164,7 @@ class ForecastMT5DataConnector:
                     low=float(candle_data['low']),
                     volume=int(candle_data['tick_volume']),  # Use bracket notation, not .get()
                     datetime=candle_time,
-                    ticker=ticker if isinstance(ticker, Ticker) else Ticker[ticker] if hasattr(Ticker, ticker) else None,
+                    ticker=ticker_enum,
                     tf=timeframe
                 )
                 candles.append(candle)
@@ -216,6 +227,17 @@ class ForecastMT5DataConnector:
             # Convert MT5 time to NY time
             candle_time = helpers.convert_ftmo_time_to_ny_time(int(candle_data['time']))
             
+            # Determine ticker enum
+            if isinstance(ticker, Ticker):
+                ticker_enum = ticker
+            else:
+                # Find Ticker by value (e.g., 'EURUSD' -> Ticker.EU)
+                ticker_enum = None
+                for t in Ticker:
+                    if t.value == ticker:
+                        ticker_enum = t
+                        break
+            
             # Create Candle object
             candle = Candle(
                 open=float(candle_data['open']),
@@ -224,7 +246,7 @@ class ForecastMT5DataConnector:
                 low=float(candle_data['low']),
                 volume=int(candle_data['tick_volume']),  # Use bracket notation, not .get()
                 datetime=candle_time,
-                ticker=ticker if isinstance(ticker, Ticker) else Ticker[ticker] if hasattr(Ticker, ticker) else None,
+                ticker=ticker_enum,
                 tf=timeframe
             )
             
