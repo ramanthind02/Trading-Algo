@@ -1,0 +1,70 @@
+---
+alwaysApply: true
+---
+
+# Functional Control Flow & Sequence Rules
+
+## 1. No Raw Loops
+*   **Avoid `for`/`while`:** Raw loops often mix filtering, transformation, and aggregation logic, making code hard to read and debug.
+*   **Use Comprehensions:** Prefer List/Dict/Set comprehensions for mapping and filtering. They are Pythonic, faster, and declarative.
+*   **Use Generators:** For large datasets or infinite sequences, use generator expressions `(...)` to process data lazily (streaming).
+
+## 2. Pipeline Thinking (Map/Filter/Reduce)
+*   Break complex data processing into atomic steps:
+    *   **Filter:** Select a subset of data (`[x for x in data if check(x)]`).
+    *   **Map:** Transform data (`[transform(x) for x in data]`).
+    *   **Reduce:** Aggregate results (`functools.reduce` or `sum`, `max`, `any`).
+*   **Itertools:** Use the `itertools` module for complex iteration patterns (`chain`, `groupby`, `cycle`) rather than implementing stateful loop logic.
+
+## 3. Functional Decorators
+*   Use decorators (`@wrapper`) to apply cross-cutting concerns (logging, caching, timing) transparently.
+*   Decorators should return new functions and avoid modifying the input function in place.
+
+## 4. Higher-Order Functions
+*   Pass behavior as arguments (Strategies).
+*   Return functions from functions to configure behavior (Factory/Builder pattern via closures).
+
+## Examples
+
+### Replacing Loops with Comprehensions & Generators
+**Bad (Imperative):**
+```python
+results = []
+for user in users:
+    if user.is_active:
+        results.append(user.email.lower())
+Good (Declarative):
+code
+Python
+# Clear intent: Filter then Map
+active_emails = [
+    user.email.lower() 
+    for user in users 
+    if user.is_active
+]
+Lazy Streaming Pipelines
+code
+Python
+from typing import Iterator
+
+def stream_processing(lines: Iterator[str]) -> int:
+    # 1. Map: Strip whitespace (Lazy)
+    clean_lines = (line.strip() for line in lines)
+    # 2. Filter: Remove comments (Lazy)
+    code_lines = (line for line in clean_lines if not line.startswith('#'))
+    # 3. Map: Get lengths (Lazy)
+    lengths = (len(line) for line in code_lines)
+    # 4. Reduce: Sum total length (Consumes the generator)
+    return sum(lengths)
+Higher-Order Functions (Strategy)
+code
+Python
+from typing import Callable, Iterable
+
+# The generic algorithm (Reduce/Find)
+def count_if(items: Iterable[int], predicate: Callable[[int], bool]) -> int:
+    return sum(1 for item in items if predicate(item))
+
+# Injecting policy via lambda
+evens = count_if(data, lambda x: x % 2 == 0)
+large = count_if(data, lambda x: x > 100)

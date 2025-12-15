@@ -1,0 +1,91 @@
+---
+alwaysApply: true
+---
+# Core Architecture & Data Design Rules
+
+## 1. Functional Core, Imperative Shell
+*   **Pure Functions:** Logic should be contained in pure functions (deterministic, no side effects).
+*   **Boundary Separation:** I/O (database, network, print) should be pushed to the edges of the program ("shell").
+*   **Separation of Data and Behavior:** Unlike classic OOP, prefer defining data structures (Data Classes) separately from the functions that operate on them.
+
+## 2. Immutability & Data Modeling
+*   **Frozen Data Classes:** Use `@dataclass(frozen=True)` by default for all data structures. This prevents accidental state mutation.
+*   **Replace Primitives:** Do not use raw `int`, `str`, or `float` for domain concepts.
+    *   Use `NewType` for simple wrappers (e.g., `UserId = NewType('UserId', int)`).
+    *   Use Pydantic models for complex validation.
+*   **No Booleans in APIs:** Avoid passing `True/False` flags to functions. Use `Enum` to make call sites explicit.
+    *   *Bad:* `process_data(data, True)`
+    *   *Good:* `process_data(data, Mode.ASYNC)`
+
+## 3. Composition Over Inheritance
+*   **Avoid Subclassing:** Python inheritance is often brittle. Avoid deep inheritance hierarchies.
+*   **Protocols (Interfaces):** Use `typing.Protocol` to define interfaces. This allows structural subtyping (static duck typing).
+*   **Dependency Injection:** Pass dependencies (strategies, loggers, adapters) as arguments to functions or constructors. Do not instantiate heavy resources inside logic classes.
+
+## 4. Algebraic Data Types (ADTs) & Pattern Matching
+*   **Sum Types:** Use `Union` (or `|` in Python 3.10+) to represent data that can be one of several distinct types.
+*   **Pattern Matching:** Use the `match`/`case` statement (Python 3.10+) to handle these types. This effectively replaces the Visitor pattern and ensures structural correctness.
+
+## Examples
+
+### Immutable Data & Strong Types
+```python
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import NewType
+
+# Strong typing prevents swapping arguments
+Meters = NewType('Meters', float)
+Seconds = NewType('Seconds', float)
+
+class MovementType(Enum):
+    WALK = auto()
+    RUN = auto()
+
+@dataclass(frozen=True)
+class PlayerState:
+    position: Meters
+    stamina: float
+
+# Pure function: Input -> Output, no side effects
+def move_player(state: PlayerState, distance: Meters, mode: MovementType) -> PlayerState:
+    cost = 10.0 if mode == MovementType.RUN else 2.0
+    return PlayerState(
+        position=Meters(state.position + distance),
+        stamina=state.stamina - cost
+    )
+Protocol-Based Composition (DI)
+code
+Python
+from typing import Protocol
+
+class DataSaver(Protocol):
+    def save(self, data: dict) -> None:
+        ...
+
+def process_and_save(data: dict, saver: DataSaver) -> None:
+    # Logic is decoupled from the specific saving mechanism
+    clean_data = {k: v for k, v in data.items() if v is not None}
+    saver.save(clean_data)
+ADTs & Pattern Matching
+code
+Python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class Success:
+    value: int
+
+@dataclass(frozen=True)
+class Error:
+    message: str
+
+Result = Success | Error
+
+def handle_result(res: Result) -> str:
+    match res:
+        case Success(val):
+            return f"Computed: {val}"
+        case Error(msg):
+            return f"Failed: {msg}"
+        # No default case needed if all types covered (type checker assists)

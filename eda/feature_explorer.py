@@ -435,14 +435,14 @@ class FeatureExplorer:
         base_model : Optional[Any], default=None
             Model instance with fit/predict methods. If None, uses QuantileBinningModel.
         custom_metric : Optional[Any], default=None
-            Objective metric instance from utils.objective_metric (e.g., SortinoRatio, SharpeRatio).
+            Objective metric instance from metrics.performance (e.g., SortinoRatio, SharpeRatio).
             Must have a .compute() method. The metric name is automatically inferred from the class name.
         **plot_kwargs
             Additional keyword arguments passed to Plotly
             
         Examples
         --------
-        >>> from utils.objective_metric import SortinoRatio
+        >>> from metrics.performance import SortinoRatio
         >>> from feature_selection.base_models.quantile_binning import QuantileBinningModel
         >>> 
         >>> metric = SortinoRatio(annualization_factor=252)

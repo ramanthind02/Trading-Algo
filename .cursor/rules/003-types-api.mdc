@@ -1,0 +1,93 @@
+---
+alwaysApply: true
+---
+# Type Safety, API Design & Generics Rules
+
+## 1. Strict Type Hinting
+*   **100% Coverage:** All function arguments and return values must be type hinted.
+*   **No `Any`:** Avoid `typing.Any`. It disables the type checker. Use `object` if you really mean "anything", or a `TypeVar` if the type passes through.
+*   **Static Analysis:** Code must pass `mypy` or `pyright` in strict mode.
+
+## 2. Generics (Parametric Polymorphism)
+*   **Generic Functions:** Write algorithms once for abstract types using `TypeVar`.
+*   **Bounded Generics:** Use `TypeVar('T', bound=SomeProtocol)` to enforce constraints on generic types (equivalent to C++ Concepts/Traits).
+*   **Generic Classes:** Use `Generic[T]` for container classes or handlers that work on multiple types.
+
+## 3. Monadic Error Handling (Railroad Oriented Programming)
+*   **Avoid Exceptions for Control Flow:** Exceptions hide goto-like jumps. Use them only for truly unrecoverable system errors.
+*   **Explicit Return Types:**
+    *   Use `Optional[T]` (or `T | None`) for values that might be missing.
+    *   Use `Result[T, E]` (via libraries like `returns` or custom ADTs) for operations that can fail. This forces the caller to handle the error case.
+
+## 4. Fluent APIs & Method Chaining
+*   For configuration objects or builders, use method chaining.
+*   Methods should return `Self` (from `typing`) to allow chaining.
+*   This guides the user through the valid sequence of operations.
+
+## Examples
+
+### Generics & Constraints
+```python
+from typing import TypeVar, Iterable, Protocol
+
+# Define a constraint (Concept)
+class Comparable(Protocol):
+    def __lt__(self, other: 'Comparable') -> bool: ...
+
+T = TypeVar('T', bound=Comparable)
+
+# Generic function working on any Comparable type
+def find_min(items: Iterable[T]) -> T | None:
+    iterator = iter(items)
+    try:
+        min_val = next(iterator)
+    except StopIteration:
+        return None
+        
+    for item in iterator:
+        if item < min_val:
+            min_val = item
+    return min_val
+Monadic Error Handling (Result Pattern)
+code
+Python
+from dataclasses import dataclass
+
+@dataclass
+class Failure:
+    reason: str
+
+@dataclass
+class Success[T]: # Python 3.12+ syntax
+    value: T
+
+def divide(a: float, b: float) -> Success[float] | Failure:
+    if b == 0:
+        return Failure("Division by zero")
+    return Success(a / b)
+
+# Usage forces checking
+result = divide(10, 0)
+match result:
+    case Success(val): print(val)
+    case Failure(err): print(f"Error: {err}")
+Fluent API
+code
+Python
+from typing import Self
+
+@dataclass
+class QueryBuilder:
+    _table: str | None = None
+    _fields: list[str] | None = None
+
+    def from_table(self, table: str) -> Self:
+        return replace(self, _table=table) # Functional update: return copy
+
+    def select(self, *fields: str) -> Self:
+        return replace(self, _fields=list(fields))
+
+    def build(self) -> str:
+        if not self._table: raise ValueError("Table missing")
+        cols = ", ".join(self._fields) if self._fields else "*"
+        return f"SELECT {cols} FROM {self._table}"

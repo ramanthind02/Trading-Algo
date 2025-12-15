@@ -23,7 +23,7 @@ from sklearn.model_selection import KFold
 
 from feature_selection.base_models.base_model import BaseModel
 from feature_selection.walkforward.walkforward_model import WalkForwardSplitter
-from utils.objective_metric.base_metric import ObjectiveMetric
+from metrics.performance import ObjectiveMetric
 from utils.permutation_test.permutation_engine import (
     PermutationEngine, 
     FeaturePermutationStrategy

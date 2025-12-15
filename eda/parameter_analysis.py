@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from feature_selection.base_models.quantile_binning import QuantileBinningModel
-from utils.objective_metric import SortinoRatio, SharpeRatio
+from metrics.performance import SortinoRatio, SharpeRatio
 
 def _get_metric_name_from_object(metric_obj: Any) -> str:
     """

@@ -218,7 +218,7 @@ class WalkForwardModel(BaseModel):
     Examples
     --------
     >>> from feature_selection.base_models import QuantileBinningModel
-    >>> from utils.objective_metric import SortinoRatio
+    >>> from metrics.performance import SortinoRatio
     >>> 
     >>> # Create walk-forward wrapper
     >>> base_model = QuantileBinningModel(n_bins=3)

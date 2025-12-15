@@ -226,8 +226,8 @@ class ISFeatureSelector:
             
         Examples
         --------
-        >>> from plotting.base_models import QuantileBinningModel
-        >>> from plotting.objective_metric import SortinoRatio
+        >>> from feature_selection.base_models.quantile_binning import QuantileBinningModel
+        >>> from metrics.performance import SortinoRatio
         >>> 
         >>> # Use quantile binning model
         >>> model = QuantileBinningModel(n_bins=3, selection_metric='sortino')

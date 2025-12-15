@@ -67,3 +67,10 @@ class Bias(Enum):
     BEARISH = -1
     NEUTRAL = 0
     ANY = None
+
+
+class ResamplingMethod(Enum):
+    """Enum for probabilistic resampling methods used in robustness testing."""
+    MONTE_CARLO = "monte_carlo"  # Random permutation/shuffle without replacement
+    BOOTSTRAP = "bootstrap"  # Simple bootstrap (sampling with replacement)
+    BLOCK_BOOTSTRAP = "block_bootstrap"  # Block bootstrap (preserves serial correlation)

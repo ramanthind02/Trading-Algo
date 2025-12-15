@@ -4,27 +4,15 @@ Sharpe Ratio Metric
 This module implements the Sharpe ratio, a classic risk-adjusted performance metric
 that measures excess return per unit of total volatility.
 
-DEPRECATED: This module is deprecated. Use metrics.performance.sharpe instead.
-
 Author: Trading Research Team
 Date: 2025-10-23
 """
 
-import warnings
+import numpy as np
+import pandas as pd
+from typing import Union
 
-# Import from new location
-from metrics.performance.sharpe import SharpeRatio
-
-# Issue deprecation warning
-warnings.warn(
-    "utils.objective_metric.sharpe is deprecated. "
-    "Use metrics.performance.sharpe instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
-
-# Re-export for backward compatibility
-__all__ = ['SharpeRatio']
+from metrics.performance.base import ObjectiveMetric
 
 
 class SharpeRatio(ObjectiveMetric):
@@ -152,3 +140,4 @@ class SharpeRatio(ObjectiveMetric):
         """String representation."""
         return (f"SharpeRatio(annualization_factor={self.annualization_factor}, "
                 f"risk_free_rate={self.risk_free_rate})")
+
