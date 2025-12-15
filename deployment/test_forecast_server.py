@@ -64,10 +64,13 @@ class TestForecastServer(ForecastServer):
         # Run forecasts for each timeframe
         for tf, tf_name in timeframes_to_test:
             try:
+                print(f"🔮 Testing {tf_name} forecasts...")
                 logger.info(f"🔮 Testing {tf_name} forecasts...")
                 
                 # Get latest data and run forecasts
+                print(f"  Generating forecasts for {tf_name}...")
                 forecasts = self._generate_portfolio_forecasts(tf)
+                print(f"  Generated {len(forecasts)} forecasts")
                 
                 results['forecasts'][tf_name] = {
                     'count': len(forecasts),
@@ -75,12 +78,16 @@ class TestForecastServer(ForecastServer):
                     'predictions': forecasts
                 }
                 
+                print(f"✅ {tf_name} test complete: {len(forecasts)} forecasts")
                 logger.info(f"✅ {tf_name} test complete: {len(forecasts)} forecasts generated")
                 
             except Exception as e:
                 error_msg = f"Error testing {tf_name}: {e}"
+                print(f"❌ {error_msg}")
                 logger.error(f"❌ {error_msg}")
                 results['errors'].append(error_msg)
+                import traceback
+                traceback.print_exc()
         
         # Summary
         total_forecasts = sum(r['count'] for r in results['forecasts'].values())
