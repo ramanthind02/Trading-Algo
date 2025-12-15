@@ -164,19 +164,27 @@ class ForecastServer:
         Setup MLManagers for feature extraction.
         
         Creates one MLManager per ticker/timeframe combination.
-        Each MLManager gets the bias nodes required by the portfolio for that timeframe.
+        Each MLManager gets the bias nodes required by the ensemble for that ticker/timeframe.
         """
         logger.info("Setting up MLManagers...")
         
-        for timeframe, portfolio in self.portfolios.items():
-            # Get all bias nodes needed by this portfolio
-            bias_node_specs = portfolio.get_required_bias_nodes()
-            
-            logger.info(f"Portfolio {timeframe.name} requires {len(bias_node_specs)} bias node types")
-            
-            # Create MLManager for each ticker (each ticker needs its own data)
-            for ticker in self.tickers:
+        # Create MLManager for each ticker/timeframe combination
+        for ticker in self.tickers:
+            for timeframe in self.timeframes:
                 try:
+                    ensemble_key = (ticker, timeframe)
+                    
+                    if ensemble_key not in self.ensembles:
+                        logger.warning(f"No ensemble for {ticker.name} {timeframe.name}, skipping MLManager")
+                        continue
+                    
+                    ensemble = self.ensembles[ensemble_key]
+                    
+                    # Get bias nodes needed by this ensemble
+                    bias_node_specs = ensemble.get_required_bias_nodes()
+                    
+                    logger.info(f"Ensemble {ticker.name} {timeframe.name} requires {len(bias_node_specs)} bias node types")
+                    
                     # Create MLManager using helper function
                     ml_manager = helpers.create_ml_manager(
                         ticker=ticker,
