@@ -4,27 +4,15 @@ Sortino Ratio Metric
 This module implements the Sortino ratio, a risk-adjusted performance metric
 that only penalizes downside volatility (negative returns).
 
-DEPRECATED: This module is deprecated. Use metrics.performance.sortino instead.
-
 Author: Trading Research Team
 Date: 2025-10-23
 """
 
-import warnings
+import numpy as np
+import pandas as pd
+from typing import Union
 
-# Import from new location
-from metrics.performance.sortino import SortinoRatio
-
-# Issue deprecation warning
-warnings.warn(
-    "utils.objective_metric.sortino is deprecated. "
-    "Use metrics.performance.sortino instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
-
-# Re-export for backward compatibility
-__all__ = ['SortinoRatio']
+from metrics.performance.base import ObjectiveMetric
 
 
 class SortinoRatio(ObjectiveMetric):
@@ -159,3 +147,4 @@ class SortinoRatio(ObjectiveMetric):
         """String representation."""
         return (f"SortinoRatio(annualization_factor={self.annualization_factor}, "
                 f"target_return={self.target_return})")
+

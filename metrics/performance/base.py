@@ -5,27 +5,9 @@ This module provides an abstract base class for objective metrics used in
 feature selection and bin evaluation. Objective metrics compute risk-adjusted
 performance measures from return distributions.
 
-DEPRECATED: This module is deprecated. Use metrics.performance.base instead.
-
 Author: Trading Research Team
 Date: 2025-10-23
 """
-
-import warnings
-
-# Import from new location
-from metrics.performance.base import ObjectiveMetric
-
-# Issue deprecation warning
-warnings.warn(
-    "utils.objective_metric.base_metric is deprecated. "
-    "Use metrics.performance.base instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
-
-# Re-export for backward compatibility
-__all__ = ['ObjectiveMetric']
 
 import numpy as np
 import pandas as pd
@@ -179,3 +161,4 @@ class ObjectiveMetric(ABC):
     def __str__(self) -> str:
         """User-friendly string representation."""
         return self.__class__.__name__
+

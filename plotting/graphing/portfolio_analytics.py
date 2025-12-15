@@ -138,10 +138,8 @@ class PortfolioAnalytics:
         sortino = (returns.mean() * 252 - rf) / downside_std
         
         # Max drawdown
-        cumulative = (1 + returns).cumprod()
-        running_max = cumulative.expanding().max()
-        drawdown = (cumulative - running_max) / running_max
-        max_drawdown = drawdown.min()
+        from metrics.risk import max_drawdown as compute_max_drawdown
+        max_drawdown = compute_max_drawdown(returns=returns)
         
         return {
             'total_return': total_return,
@@ -204,8 +202,11 @@ class PortfolioAnalytics:
         fig.suptitle(title, fontsize=14, fontweight='bold')
         
         # Plot 1: Cumulative returns
+        from metrics.equity import cumulative_returns
+        from metrics.risk import drawdown_series
+        
         ax = axes[0]
-        cumulative = (1 + self.returns).cumprod()
+        cumulative = cumulative_returns(self.returns)
         ax.plot(cumulative.index, cumulative.values, linewidth=2, color='#2ecc71')
         ax.fill_between(cumulative.index, 1, cumulative.values, alpha=0.3, color='#2ecc71')
         ax.axhline(y=1, color='black', linestyle='--', linewidth=1, alpha=0.5)
@@ -214,8 +215,7 @@ class PortfolioAnalytics:
         
         # Plot 2: Drawdown
         ax = axes[1]
-        running_max = cumulative.expanding().max()
-        drawdown = (cumulative - running_max) / running_max
+        drawdown = drawdown_series(returns=self.returns)
         ax.fill_between(drawdown.index, 0, drawdown.values, alpha=0.7, color='#e74c3c')
         ax.set_ylabel('Drawdown', fontsize=10, fontweight='bold')
         ax.set_xlabel('Date', fontsize=10, fontweight='bold')

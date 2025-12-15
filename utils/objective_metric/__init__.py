@@ -9,13 +9,25 @@ Available Metrics:
 - SharpeRatio: Classic Sharpe ratio (penalizes all volatility)
 - SortinoRatio: Sortino ratio (penalizes only downside volatility)
 
+DEPRECATED: This module is deprecated. Use metrics.performance instead.
+
 Author: Trading Research Team
 Date: 2025-10-23
 """
 
-from utils.objective_metric.base_metric import ObjectiveMetric
-from utils.objective_metric.sharpe import SharpeRatio
-from utils.objective_metric.sortino import SortinoRatio
+import warnings
+
+# Import from new location
+from metrics.performance import ObjectiveMetric, SharpeRatio, SortinoRatio
+
+# Issue deprecation warning
+warnings.warn(
+    "utils.objective_metric is deprecated and will be removed in a future version. "
+    "Use metrics.performance instead. "
+    "Example: from metrics.performance import SharpeRatio, SortinoRatio",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 __all__ = [
     'ObjectiveMetric',

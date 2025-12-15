@@ -350,7 +350,7 @@ class ProductionTrainingPipeline:
             
             # Import required models and metrics
             from feature_selection.base_models.quantile_binning import QuantileBinningModel
-            from utils.objective_metric.sortino import SortinoRatio
+            from metrics.performance import SortinoRatio
             from datetime import datetime, timedelta
             
             # Set up walkforward parameters based on data range
