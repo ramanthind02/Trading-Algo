@@ -369,21 +369,23 @@ class ForecastServer:
                 logger.info(f"🔍 Predictions columns: {list(predictions.columns) if hasattr(predictions, 'columns') else 'N/A'}")
                 logger.info(f"🔍 Predictions content: {predictions}")
                 
-                if len(predictions) == 0:
+                # Robustly check predictions structure
+                if predictions is None or (hasattr(predictions, '__len__') and len(predictions) == 0):
                     logger.warning(f"No predictions for {ticker.name}")
                     continue
-                
-                # Extract forecast value (ensemble returns DataFrame with %_to_risk column)
-                forecast = float(predictions['%_to_risk'].iloc[0])
-                
+                # Check if DataFrame and has expected column
+                if not (hasattr(predictions, 'iloc') and hasattr(predictions, 'columns') and '%_to_risk' in predictions.columns):
+                    logger.error(f"Predictions for {ticker.name} is not a DataFrame with '%_to_risk' column. Type: {type(predictions)}, Content: {predictions}")
+                    continue
+                try:
+                    forecast = float(predictions['%_to_risk'].iloc[0])
+                except Exception as e:
+                    logger.error(f"Failed to extract forecast for {ticker.name}: {e}. Predictions: {predictions}")
+                    continue
                 # Normalize to 0-1 range if needed (ensemble already returns position sizes)
-                # The ensemble predict() method returns values in a specific range
-                # We may want to apply sigmoid normalization for consistency
                 forecast_normalized = 1.0 / (1.0 + np.exp(-forecast * 2))
-                
                 forecasts[ticker.name] = forecast_normalized
                 logger.info(f"✅ {ticker.name}: {forecast_normalized:.4f}")
-                
             except Exception as e:
                 logger.error(f"❌ Error forecasting {ticker.name}: {e}")
                 logger.exception("Full traceback:")
