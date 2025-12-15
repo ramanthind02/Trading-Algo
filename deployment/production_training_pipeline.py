@@ -168,11 +168,10 @@ class ProductionTrainingPipeline:
     def extract_features_and_targets(self, data: pd.DataFrame, ticker: Ticker, 
                                    timeframe: TimeFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Extract features and target returns from price data using MLManager and bias nodes.
+        Extract features and target returns from price data using MLManager.
         
-        This uses the proper node-based architecture to generate features from 
-        existing bias nodes (RSI, momentum, moving averages, etc.) instead of 
-        hardcoded calculations.
+        Uses proper node-based architecture via MLManager to generate features.
+        Features use standardized camelCase naming convention.
         
         Parameters
         ----------
@@ -188,116 +187,55 @@ class ProductionTrainingPipeline:
         Tuple[pd.DataFrame, pd.DataFrame]
             Features DataFrame and targets DataFrame
         """
-        logger.info(f"🔧 Extracting features using MLManager for {ticker.name} {timeframe.name}")
+        logger.info(f"🔧 Extracting features using bias nodes for {ticker.name} {timeframe.name}")
         
-        # Define bias node specs for feature generation
-        bias_node_specs = [
-            {
-                'module_name': 'rsi',
-                'timeframes': [timeframe],
-                'params': {'lookback': 2},
-                'strategy_key': f'rsi_2'
-            },
-            {
-                'module_name': 'momentum', 
-                'timeframes': [timeframe],
-                'params': {'lookback': 20},
-                'strategy_key': f'momentum_20'
-            },
-            {
-                'module_name': 'ma_diff',
-                'timeframes': [timeframe],
-                'params': {'lookback': 50},
-                'strategy_key': f'ma_diff_50'
-            }
-        ]
+        # Use bias nodes directly instead of MLManager for batch feature extraction
+        # This avoids the complexity of MLManager's multi-timeframe architecture
+        from utils.helpers import create_bias_node
+        from utils.models import Candle
+        import utils.helpers as helpers
         
-        try:
-            # Create MLManager with specified bias nodes
-            from utils.helpers import create_ml_manager
-            
-            ml_manager = create_ml_manager(
+        # Create bias nodes for feature extraction
+        rsi_node = create_bias_node('rsi', ticker, timeframe, {'lookback': 14})
+        momentum_node = create_bias_node('momentum', ticker, timeframe, {'lookback': 20})
+        ma_diff_node = create_bias_node('ma_diff', ticker, timeframe, {'lookback': 50})
+        
+        # Process all candles through nodes
+        rsi_values = []
+        momentum_values = []
+        ma_diff_values = []
+        
+        for idx, row in data.iterrows():
+            candle = Candle(
+                open=float(row['open']),
+                high=float(row['high']),
+                low=float(row['low']),
+                close=float(row['close']),
+                datetime=idx,
+                volume=float(row.get('volume', row.get('tick_volume', 0))),
                 ticker=ticker,
-                base_tf=timeframe,
-                build_matrix=True,
-                bias_node_specs=bias_node_specs
+                tf=timeframe
             )
             
-            # Convert pandas data to numpy format for MLManager
-            # MLManager expects data in specific numpy record format
-            data_array = np.zeros(len(data), dtype=[
-                ('open', np.float32),
-                ('high', np.float32), 
-                ('low', np.float32),
-                ('close', np.float32),
-                ('datetime', np.uint32)
-            ])
+            # Get values from each node
+            rsi_vals = rsi_node.add_candle(candle)
+            momentum_vals = momentum_node.add_candle(candle)
+            ma_diff_vals = ma_diff_node.add_candle(candle)
             
-            # Convert datetime index to Unix timestamps
-            timestamps = (data.index - pd.Timestamp('1970-01-01')) // pd.Timedelta('1s')
-            
-            data_array['open'] = data['open'].values
-            data_array['high'] = data['high'].values
-            data_array['low'] = data['low'].values
-            data_array['close'] = data['close'].values
-            data_array['datetime'] = timestamps.astype(np.uint32)
-            
-            # Run backtest to generate feature matrix
-            ml_manager.run_backtest(data_array, live_update=False)
-            
-            # Get features matrix
-            features_df = ml_manager.matrix.copy()
-            
-            if len(features_df) == 0:
-                raise ValueError("MLManager produced empty feature matrix")
-                
-            # Align features with original data index
-            # MLManager may have different indexing, so we need to align properly
-            aligned_features = pd.DataFrame(index=data.index)
-            
-            # Map MLManager features to aligned DataFrame
-            for col in features_df.columns:
-                if len(features_df[col]) <= len(data):
-                    # Pad at beginning if needed (due to lookback periods)
-                    padding_needed = len(data) - len(features_df[col])
-                    if padding_needed > 0:
-                        padded_values = [np.nan] * padding_needed + features_df[col].tolist()
-                    else:
-                        padded_values = features_df[col].tolist()
-                    aligned_features[col] = padded_values
-                else:
-                    # Take the last N values if MLManager produced more data
-                    aligned_features[col] = features_df[col].iloc[-len(data):].values
-                    
-            features_df = aligned_features
-            
-        except Exception as e:
-            logger.error(f"❌ MLManager feature extraction failed: {e}")
-            logger.error("   Falling back to simplified feature generation")
-            
-            # Fallback: Create minimal features if MLManager fails
-            closes = data['close']
-            
-            # Simple RSI calculation as fallback
-            delta = closes.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            
-            # Simple momentum
-            momentum = closes.pct_change(20) * 100
-            
-            # Moving average difference
-            sma_20 = closes.rolling(20).mean()
-            sma_50 = closes.rolling(50).mean()
-            ma_diff = (sma_20 - sma_50) / sma_50 * 100
-            
-            features_df = pd.DataFrame({
-                f'rsi_signal_{timeframe.name}_lookback_14': np.where(rsi < 30, 1, np.where(rsi > 70, -1, 0)),
-                f'momentum_signal_{timeframe.name}_lookback_20': np.where(momentum > 5, 1, np.where(momentum < -5, -1, 0)),
-                f'ma_diff_signal_{timeframe.name}_lookback_50': ma_diff  # Fixed: Now follows standard naming
-            }, index=data.index)
+            # Extract the signal values (first element from each node's output)
+            rsi_values.append(rsi_vals[0] if len(rsi_vals) > 0 else 0)
+            momentum_values.append(momentum_vals[0] if len(momentum_vals) > 0 else 0)
+            ma_diff_values.append(ma_diff_vals[0] if len(ma_diff_vals) > 0 else 0)
+        
+        # Create features DataFrame with standardized camelCase naming
+        features_df = pd.DataFrame({
+            helpers.build_feature_column_name('rsi', 'signal', timeframe, {'lookback': 14}): rsi_values,
+            helpers.build_feature_column_name('momentum', 'signal', timeframe, {'lookback': 20}): momentum_values,
+            helpers.build_feature_column_name('ma_diff', 'signal', timeframe, {'lookback': 50}): ma_diff_values
+        }, index=data.index)
+        
+        logger.info(f"   Extracted {len(features_df)} rows × {len(features_df.columns)} features")
+        logger.info(f"   Feature columns: {list(features_df.columns)}")
         
         # Calculate target returns
         closes = data['close']
@@ -653,7 +591,9 @@ class ProductionTrainingPipeline:
             return config_path
             
         except Exception as e:
+            import traceback
             logger.error(f"❌ Training failed for {ticker.name} {timeframe.name}: {e}")
+            logger.error(f"   Traceback:\n{traceback.format_exc()}")
             raise
     
     def train_all_production_ensembles(self, tickers: Optional[List[Ticker]] = None,

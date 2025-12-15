@@ -9,7 +9,8 @@ import os
 import sys
 import time
 import schedule
-from typing import Dict, List, Optional
+import numpy as np
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -60,7 +61,8 @@ class ForecastServer:
         self.telegram = TelegramNotifier()
         
         # Portfolios - one per timeframe
-        self.portfolios: Dict[TimeFrame, Portfolio] = {}
+        # Changed: Now we store ensembles per ticker/timeframe, not one portfolio per timeframe
+        self.ensembles: Dict[tuple, Any] = {}  # (ticker, timeframe) -> DiversifiedEnsemble
         
         # MLManagers - one per ticker/timeframe for feature extraction
         # We need separate MLManagers per ticker because each ticker has different price data
@@ -75,68 +77,81 @@ class ForecastServer:
         self.timeframes = [TimeFrame.D, TimeFrame.W]  # Daily and Weekly
         
         # Initialize portfolios and MLManagers
-        self._setup_portfolios()
+        self._setup_ensembles()
         self._setup_ml_managers()
         
         # Setup scheduling
         self._setup_scheduling()
         
         logger.info(f"✅ ForecastServer initialized")
-        logger.info(f"   Portfolios: {len(self.portfolios)}")
+        logger.info(f"   Ensembles: {len(self.ensembles)}")
         logger.info(f"   MLManagers: {len(self.ml_managers)}")
     
-    def _setup_portfolios(self) -> None:
-        """Setup portfolio for each timeframe."""
-        logger.info("Setting up portfolios...")
+    def _setup_ensembles(self) -> None:
+        """Setup one ensemble per ticker/timeframe combination."""
+        logger.info("Setting up ensembles...")
+        
+        from ensemble.diversified_ensemble import DiversifiedEnsemble
         
         for timeframe in self.timeframes:
-            try:
-                # Each timeframe has its own subdirectory (e.g., config/D/, config/W/)
-                tf_dir = os.path.join(self.config_dir, timeframe.name)
-                
-                if not os.path.exists(tf_dir):
-                    logger.warning(f"Timeframe directory not found: {tf_dir}")
-                    continue
-                
-                # Create portfolio for this timeframe
-                # Portfolio will load ALL control files in the directory
-                portfolio = Portfolio(
-                    control_file_dir=tf_dir,
-                    is_fit=True,  # Load fitted ensembles
-                    ticker=None,  # Will infer from control files
-                    base_tf=timeframe
-                )
-                
-                if len(portfolio.ensembles) == 0:
-                    logger.warning(f"No ensembles loaded for timeframe {timeframe.name}")
-                    continue
-                
-                self.portfolios[timeframe] = portfolio
-                logger.info(f"✅ Setup portfolio for {timeframe.name}: {len(portfolio.ensembles)} ensembles")
-                
-            except Exception as e:
-                logger.error(f"❌ Failed to setup portfolio for {timeframe.name}: {e}")
+            # Each timeframe has its own subdirectory (e.g., config/D/, config/W/)
+            tf_dir = os.path.join(self.config_dir, timeframe.name)
+            
+            if not os.path.exists(tf_dir):
+                logger.warning(f"Timeframe directory not found: {tf_dir}")
+                continue
+            
+            for ticker in self.tickers:
+                try:
+                    # Look for ensemble file: {TICKER}_{TF}.json (e.g., EU_D.json)
+                    ensemble_filename = f"{ticker.name}_{timeframe.name}.json"
+                    ensemble_path = os.path.join(tf_dir, ensemble_filename)
+                    
+                    if not os.path.exists(ensemble_path):
+                        logger.warning(f"Ensemble file not found: {ensemble_path}")
+                        continue
+                    
+                    # Load ensemble
+                    ensemble = DiversifiedEnsemble(
+                        control_file_path=ensemble_path,
+                        base_tf=timeframe
+                    )
+                    
+                    # Store by (ticker, timeframe) key
+                    self.ensembles[(ticker, timeframe)] = ensemble
+                    logger.info(f"✅ Loaded ensemble: {ticker.name} {timeframe.name}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to load ensemble {ticker.name} {timeframe.name}: {e}")
         
-        logger.info(f"Setup complete: {len(self.portfolios)} portfolios")
+        logger.info(f"Setup complete: {len(self.ensembles)} ensembles loaded")
     
     def _setup_ml_managers(self) -> None:
         """
         Setup MLManagers for feature extraction.
         
         Creates one MLManager per ticker/timeframe combination.
-        Each MLManager gets the bias nodes required by the portfolio for that timeframe.
+        Each MLManager gets the bias nodes required by the ensemble for that ticker/timeframe.
         """
         logger.info("Setting up MLManagers...")
         
-        for timeframe, portfolio in self.portfolios.items():
-            # Get all bias nodes needed by this portfolio
-            bias_node_specs = portfolio.get_required_bias_nodes()
-            
-            logger.info(f"Portfolio {timeframe.name} requires {len(bias_node_specs)} bias node types")
-            
-            # Create MLManager for each ticker (each ticker needs its own data)
-            for ticker in self.tickers:
+        # Create MLManager for each ticker/timeframe combination
+        for ticker in self.tickers:
+            for timeframe in self.timeframes:
                 try:
+                    ensemble_key = (ticker, timeframe)
+                    
+                    if ensemble_key not in self.ensembles:
+                        logger.warning(f"No ensemble for {ticker.name} {timeframe.name}, skipping MLManager")
+                        continue
+                    
+                    ensemble = self.ensembles[ensemble_key]
+                    
+                    # Get bias nodes needed by this ensemble
+                    bias_node_specs = ensemble.get_required_bias_nodes()
+                    
+                    logger.info(f"Ensemble {ticker.name} {timeframe.name} requires {len(bias_node_specs)} bias node types")
+                    
                     # Create MLManager using helper function
                     ml_manager = helpers.create_ml_manager(
                         ticker=ticker,
@@ -193,13 +208,6 @@ class ForecastServer:
         """
         logger.info(f"🔮 Running {timeframe_name} forecasts...")
         timestamp = datetime.now(NY_TZ)
-        
-        # Check if we have a portfolio for this timeframe
-        if timeframe not in self.portfolios:
-            logger.warning(f"No portfolio for timeframe {timeframe.name}")
-            return
-        
-        portfolio = self.portfolios[timeframe]
         
         # Check market status
         market_open = self.mt5_connector.is_market_open()
@@ -286,7 +294,7 @@ class ForecastServer:
     
     def _generate_portfolio_forecasts(self, timeframe: TimeFrame) -> Dict[str, float]:
         """
-        Generate forecasts for all tickers using portfolio.
+        Generate forecasts for all tickers using individual ensembles.
         
         Parameters
         ----------
@@ -300,14 +308,18 @@ class ForecastServer:
         """
         forecasts = {}
         
-        if timeframe not in self.portfolios:
-            return forecasts
-        
-        portfolio = self.portfolios[timeframe]
-        
         # Generate forecast for each ticker
         for ticker in self.tickers:
             try:
+                # Get ensemble for this ticker/timeframe
+                ensemble_key = (ticker, timeframe)
+                
+                if ensemble_key not in self.ensembles:
+                    logger.warning(f"No ensemble for {ticker.name} {timeframe.name}")
+                    continue
+                
+                ensemble = self.ensembles[ensemble_key]
+                
                 ml_manager_key = (ticker, timeframe)
                 
                 if ml_manager_key not in self.ml_managers:
@@ -337,30 +349,30 @@ class ForecastServer:
                     len(latest_features)
                 )
                 
-                # Generate prediction using portfolio
-                # Portfolio.predict expects features for a specific timeframe
-                predictions = portfolio.predict(
+                # Generate prediction using individual ensemble
+                predictions = ensemble.predict(
                     X=latest_features,
                     ticker=ticker_series,
-                    volatility=volatility_series,
-                    timeframe=timeframe
+                    volatility=volatility_series
                 )
+                
+                # DiversifiedEnsemble.predict() returns numpy array, not DataFrame
+                # predictions is a numpy array with shape (1,) containing the forecast
+                if not isinstance(predictions, np.ndarray):
+                    logger.error(f"Unexpected predictions type for {ticker.name}: {type(predictions)}")
+                    continue
                 
                 if len(predictions) == 0:
                     logger.warning(f"No predictions for {ticker.name}")
                     continue
                 
-                # Extract forecast value (portfolio returns DataFrame with %_to_risk column)
-                forecast = float(predictions['%_to_risk'].iloc[0])
+                # Extract forecast value (first element of array)
+                forecast = float(predictions[0])
                 
-                # Normalize to 0-1 range if needed (portfolio already returns position sizes)
-                # The ensemble predict() method returns values in a specific range
-                # We may want to apply sigmoid normalization for consistency
+                # Normalize to 0-1 range if needed (ensemble already returns position sizes)
                 forecast_normalized = 1.0 / (1.0 + np.exp(-forecast * 2))
-                
                 forecasts[ticker.name] = forecast_normalized
                 logger.info(f"✅ {ticker.name}: {forecast_normalized:.4f}")
-                
             except Exception as e:
                 logger.error(f"❌ Error forecasting {ticker.name}: {e}")
                 logger.exception("Full traceback:")
@@ -391,6 +403,12 @@ class ForecastServer:
         # Create ticker series - use ticker value
         ticker_value = ticker.value
         ticker_series = pd.Series([ticker_value] * n_samples)
+        
+        # DEBUG LOGGING
+        logger.info(f"🔍 _prepare_prediction_data for {ticker.name}:")
+        logger.info(f"   ticker.value = {ticker_value}")
+        logger.info(f"   n_samples = {n_samples}")
+        logger.info(f"   ticker_series = {ticker_series.tolist()}")
         
         # Calculate volatility from recent candles
         candles = self.candle_buffers.get(ml_manager_key, [])
@@ -454,30 +472,44 @@ class ForecastServer:
         except Exception as e:
             logger.error(f"🧪 Test forecast error: {e}")
     
-    def load_historical_data(self, days_back: int = 30) -> None:
+    def load_historical_data(self, days_back: int = 60) -> None:
         """
         Load historical data for all MLManagers.
+        
+        ⚠️ IMPORTANT: This should only be called ONCE during initialization!
+        
+        This fetches enough historical candles to properly initialize all bias nodes
+        with their required lookback periods.
         
         Parameters
         ----------
         days_back : int
             Number of days of historical data to load
         """
-        logger.info(f"📚 Loading {days_back} days of historical data...")
+        logger.info(f"📚 Loading historical data for all MLManagers (INITIALIZATION ONLY)...")
         
-        for (ticker, timeframe), ml_manager in self.ml_managers.items():
+        # Determine how many candles we need based on lookback_candles
+        candles_needed = max(self.lookback_candles, days_back)
+        
+        for (ticker, timeframe), _ in self.ml_managers.items():
             try:
-                logger.info(f"Loading history for {ticker.name} {timeframe.name}...")
+                logger.info(f"Loading {candles_needed} candles for {ticker.name} {timeframe.name}...")
                 
-                # This is simplified - in reality we'd need to fetch historical candles
-                # For now, we'll just add the latest candle to initialize
-                latest_candle = self.mt5_connector.get_latest_candle(ticker.value, timeframe)
+                # Fetch historical candles
+                candles = self.mt5_connector.get_historical_candles(
+                    ticker.value, 
+                    timeframe, 
+                    count=candles_needed
+                )
                 
-                if latest_candle is not None:
-                    self._add_candle(ticker, timeframe, latest_candle)
-                    logger.info(f"✅ Initialized {ticker.name} {timeframe.name}")
+                if candles:
+                    # Add all candles to buffer and MLManager
+                    for candle in candles:
+                        self._add_candle(ticker, timeframe, candle)
+                    
+                    logger.info(f"✅ Loaded {len(candles)} candles for {ticker.name} {timeframe.name}")
                 else:
-                    logger.warning(f"❌ No data for {ticker.name} {timeframe.name}")
+                    logger.warning(f"❌ No historical data for {ticker.name} {timeframe.name}")
                     
             except Exception as e:
                 logger.error(f"❌ Error loading history for {ticker.name} {timeframe.name}: {e}")
@@ -491,7 +523,7 @@ class ForecastServer:
         # Send startup notification
         self.telegram.send_status_update(
             status="ForecastServer starting",
-            details=f"Managing {len(self.portfolios)} portfolios, {len(self.ml_managers)} MLManagers"
+            details=f"Managing {len(self.ensembles)} ensembles, {len(self.ml_managers)} MLManagers"
         )
         
         # Load historical data
@@ -552,11 +584,15 @@ class ForecastServer:
     
     def get_status(self) -> Dict:
         """Get server status information."""
+        # Count ensembles per timeframe
+        ensembles_by_tf = {}
+        for (ticker, tf), ensemble in self.ensembles.items():
+            if tf.name not in ensembles_by_tf:
+                ensembles_by_tf[tf.name] = 0
+            ensembles_by_tf[tf.name] += 1
+        
         return {
-            'portfolios': {
-                tf.name: len(portfolio.ensembles)
-                for tf, portfolio in self.portfolios.items()
-            },
+            'ensembles': ensembles_by_tf,
             'ml_managers': len(self.ml_managers),
             'tickers': [t.name for t in self.tickers],
             'timeframes': [tf.name for tf in self.timeframes],

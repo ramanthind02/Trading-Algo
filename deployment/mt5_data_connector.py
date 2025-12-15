@@ -33,9 +33,9 @@ class ForecastMT5DataConnector:
     
     def __init__(self):
         """Initialize MT5 connection for forecasting."""
-        self.username = int(os.environ.get('MT5_USERNAME', '1511850895'))
-        self.password = os.environ.get('MT5_PASSWORD', '@?v$vXjh4@!8$?')
-        self.server = os.environ.get('MT5_SERVER', 'FTMO-Demo')
+        self.username = int(os.environ.get('MT5_USERNAME', '1520871062'))
+        self.password = os.environ.get('MT5_PASSWORD', 'm34bn4x6$W')
+        self.server = os.environ.get('MT5_SERVER', 'FTMO-Demo2')
         self.path = 'C:/Program Files/FTMO MetaTrader 5/terminal64.exe'
         
         # MT5 timeframe mappings (only for available timeframes)
@@ -95,6 +95,87 @@ class ForecastMT5DataConnector:
         
         return False
     
+    def get_historical_candles(self, ticker: str, timeframe: TimeFrame, count: int = 100) -> list[Candle]:
+        """
+        Get multiple historical candles for a ticker and timeframe.
+        
+        Parameters
+        ----------
+        ticker : str
+            Ticker symbol (e.g., 'EURUSD', 'US500')
+        timeframe : TimeFrame
+            Timeframe for the candles
+        count : int
+            Number of candles to fetch (default 100)
+            
+        Returns
+        -------
+        list[Candle]
+            List of historical candles, newest last
+        """
+        try:
+            # Convert ticker to MT5 symbol
+            if isinstance(ticker, Ticker):
+                symbol = self.ticker_to_symbol.get(ticker)
+            else:
+                # Handle string tickers
+                symbol = self.ticker_to_symbol.get(ticker, ticker)
+            
+            if symbol is None:
+                logger.error(f"Unknown ticker: {ticker}")
+                return []
+            
+            # Get MT5 timeframe
+            mt5_timeframe = self.timeframe_to_enum.get(timeframe)
+            if mt5_timeframe is None:
+                logger.error(f"Unknown timeframe: {timeframe}")
+                return []
+            
+            # Get current time and fetch candles
+            now = datetime.now(NY_TZ)
+            
+            # Fetch requested number of candles
+            rates = mt5.copy_rates_from(symbol, mt5_timeframe, helpers.convert_ny_time_to_ftmo_time(now), count)
+            
+            if rates is None or len(rates) == 0:
+                logger.warning(f"No historical data received from MT5 for {ticker} {timeframe}")
+                return []
+            
+            # Convert to Candle objects
+            candles = []
+            for candle_data in rates:
+                candle_time = helpers.convert_ftmo_time_to_ny_time(int(candle_data['time']))
+                
+                # Determine ticker enum
+                if isinstance(ticker, Ticker):
+                    ticker_enum = ticker
+                else:
+                    # Find Ticker by value (e.g., 'EURUSD' -> Ticker.EU)
+                    ticker_enum = None
+                    for t in Ticker:
+                        if t.value == ticker:
+                            ticker_enum = t
+                            break
+                
+                candle = Candle(
+                    open=float(candle_data['open']),
+                    close=float(candle_data['close']),
+                    high=float(candle_data['high']),
+                    low=float(candle_data['low']),
+                    volume=int(candle_data['tick_volume']),  # Use bracket notation, not .get()
+                    datetime=candle_time,
+                    ticker=ticker_enum,
+                    tf=timeframe
+                )
+                candles.append(candle)
+            
+            logger.info(f"Retrieved {len(candles)} historical candles for {ticker} {timeframe}")
+            return candles
+            
+        except Exception as e:
+            logger.error(f"Error getting historical candles for {ticker} {timeframe}: {e}")
+            return []
+    
     def get_latest_candle(self, ticker: str, timeframe: TimeFrame) -> Optional[Candle]:
         """
         Get the most recent closed candle for a ticker and timeframe.
@@ -144,7 +225,18 @@ class ForecastMT5DataConnector:
             candle_data = rates[-2] if len(rates) > 1 else rates[-1]
             
             # Convert MT5 time to NY time
-            candle_time = helpers.convert_ftmo_time_to_ny_time(candle_data['time'])
+            candle_time = helpers.convert_ftmo_time_to_ny_time(int(candle_data['time']))
+            
+            # Determine ticker enum
+            if isinstance(ticker, Ticker):
+                ticker_enum = ticker
+            else:
+                # Find Ticker by value (e.g., 'EURUSD' -> Ticker.EU)
+                ticker_enum = None
+                for t in Ticker:
+                    if t.value == ticker:
+                        ticker_enum = t
+                        break
             
             # Create Candle object
             candle = Candle(
@@ -152,9 +244,9 @@ class ForecastMT5DataConnector:
                 close=float(candle_data['close']),
                 high=float(candle_data['high']),
                 low=float(candle_data['low']),
-                volume=int(candle_data.get('tick_volume', 0)),
+                volume=int(candle_data['tick_volume']),  # Use bracket notation, not .get()
                 datetime=candle_time,
-                ticker=ticker if isinstance(ticker, Ticker) else Ticker[ticker] if hasattr(Ticker, ticker) else None,
+                ticker=ticker_enum,
                 tf=timeframe
             )
             
@@ -163,10 +255,6 @@ class ForecastMT5DataConnector:
             
         except Exception as e:
             logger.error(f"Error getting latest candle for {ticker} {timeframe}: {e}")
-            # Try to re-authenticate once
-            if self.authenticate():
-                logger.info("Re-authenticated, retrying candle fetch...")
-                return self.get_latest_candle(ticker, timeframe)
             return None
     
     def is_market_open(self, ticker: str = 'EURUSD') -> bool:

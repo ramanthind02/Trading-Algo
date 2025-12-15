@@ -1,7 +1,7 @@
 {
   "metadata": {
-    "created_at": "2025-12-07T22:28:21.753353",
-    "updated_at": "2025-12-07T22:28:21.753353",
+    "created_at": "2025-12-14T20:05:39.986997",
+    "updated_at": "2025-12-14T20:05:39.986997",
     "version": "2.0.0",
     "ensemble_name": "EU_W_production",
     "is_fit": true,
@@ -22,7 +22,7 @@
     {
       "name": "model_1",
       "model_type": "QuantileBinningModel",
-      "feature_column": "ma_diff_signal_W_lookback_50",
+      "feature_column": "momentum_signal_W_lookback_20",
       "strategy": "long",
       "constructor_params": {
         "n_bins": 3,
@@ -36,71 +36,81 @@
   "fitted_base_models": {
     "model_0": {
       "thresholds": [
-        0,
-        1
+        45.97474524221509,
+        60.608843338812825
       ],
-      "best_long_bin": 1,
+      "best_long_bin": 2,
       "best_short_bin": 0,
       "bin_stats": {
         "0": {
-          "mean_return": -0.0005418135818976126,
-          "std_return": 0.009976301190803666,
-          "downside_std": 0.005835689830059584,
-          "sortino_metric": -1.4738658527815285,
-          "sortino_metric_short": 1.10243569834875,
-          "count": 212,
-          "feature_min": "-1",
-          "feature_max": "0"
+          "mean_return": -0.0009163344996216309,
+          "std_return": 0.012066117741690318,
+          "downside_std": 0.007521614750357788,
+          "sortino_metric": -1.9339410093815204,
+          "sortino_metric_short": 1.50066770375856,
+          "count": 99,
+          "feature_min": 23.846702992280623,
+          "feature_max": 45.97474524221509
         },
         "1": {
-          "mean_return": 0.002344882728189973,
-          "std_return": 0.010880410874912129,
-          "downside_std": 0.008047237109658462,
-          "sortino_metric": 4.625669507082271,
-          "sortino_metric_short": -5.194318337462552,
-          "count": 37,
-          "feature_min": "1",
-          "feature_max": "1"
+          "mean_return": 0.0005487414086704854,
+          "std_return": 0.01098689985335781,
+          "downside_std": 0.007229593187291672,
+          "sortino_metric": 1.204908711027417,
+          "sortino_metric_short": -1.093639475229567,
+          "count": 99,
+          "feature_min": 46.4155991494332,
+          "feature_max": 60.608843338812825
+        },
+        "2": {
+          "mean_return": 0.0008756910815957527,
+          "std_return": 0.009545901233025901,
+          "downside_std": 0.005354622237479401,
+          "sortino_metric": 2.596105634869386,
+          "sortino_metric_short": -2.0484049757391585,
+          "count": 100,
+          "feature_min": 60.67669822280568,
+          "feature_max": 90.02397906464802
         }
       }
     },
     "model_1": {
       "thresholds": [
-        -0.9440427646232313,
-        0.5675754296768017
+        -0.016550000000000065,
+        0.019749999999999934
       ],
-      "best_long_bin": 1,
-      "best_short_bin": 2,
+      "best_long_bin": 2,
+      "best_short_bin": 0,
       "bin_stats": {
         "0": {
-          "mean_return": 7.44097558500896e-05,
-          "std_return": 0.013090390848224059,
-          "downside_std": 0.008046985919910633,
-          "sortino_metric": 0.14679014805475665,
-          "sortino_metric_short": -0.1141305921180645,
-          "count": 83,
-          "feature_min": -5.390099351954516,
-          "feature_max": -0.9440427646232313
+          "mean_return": -0.0005735626429161856,
+          "std_return": 0.01237076266183996,
+          "downside_std": 0.007328959469102619,
+          "sortino_metric": -1.2423352489836959,
+          "sortino_metric_short": 0.9114638451694691,
+          "count": 99,
+          "feature_min": -0.11404999999999998,
+          "feature_max": -0.016550000000000065
         },
         "1": {
-          "mean_return": 0.0002945742726959256,
-          "std_return": 0.007998054480033415,
-          "downside_std": 0.0042942597188675245,
-          "sortino_metric": 1.0889470864095911,
-          "sortino_metric_short": -0.8076508630271355,
-          "count": 83,
-          "feature_min": -0.9183075301504078,
-          "feature_max": 0.5675754296768017
+          "mean_return": -0.00036015753133287576,
+          "std_return": 0.010551690773409759,
+          "downside_std": 0.007062196876265915,
+          "sortino_metric": -0.8095672868448051,
+          "sortino_metric_short": 0.7354978261469026,
+          "count": 99,
+          "feature_min": -0.016450000000000076,
+          "feature_max": 0.019749999999999934
         },
         "2": {
-          "mean_return": -0.0007075842504648686,
-          "std_return": 0.008682432213413005,
-          "downside_std": 0.005101252226692079,
-          "sortino_metric": -2.2019204797133254,
-          "sortino_metric_short": 1.975626261440643,
-          "count": 83,
-          "feature_min": 0.58241775378837,
-          "feature_max": 4.821886345448695
+          "mean_return": 0.0014361568940606882,
+          "std_return": 0.009612869538706272,
+          "downside_std": 0.005731870282439314,
+          "sortino_metric": 3.9774598497073494,
+          "sortino_metric_short": -3.4265965933467455,
+          "count": 100,
+          "feature_min": 0.01980000000000004,
+          "feature_max": 0.14105000000000012
         }
       }
     }
@@ -111,8 +121,8 @@
       "model_1": 0.5
     },
     "exposure_fractions": {
-      "model_0": 0.25301204819277107,
-      "model_1": 1.0
+      "model_0": 1.0,
+      "model_1": 0.9328859060402684
     },
     "feature_names": [
       "model_0",
