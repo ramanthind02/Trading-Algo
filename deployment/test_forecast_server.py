@@ -53,12 +53,16 @@ class TestForecastServer(ForecastServer):
         # Determine which timeframes to test
         timeframes_to_test = []
         if timeframe is not None:
-            if timeframe in self.portfolios:
+            # Check if we have any ensembles for this timeframe
+            has_ensemble = any(tf == timeframe for (_, tf) in self.ensembles.keys())
+            if has_ensemble:
                 timeframes_to_test = [(timeframe, timeframe.name)]
         else:
             # Test all available timeframes
             for tf in [TimeFrame.D, TimeFrame.W]:
-                if tf in self.portfolios:
+                # Check if we have any ensembles for this timeframe
+                has_ensemble = any(timeframe_key == tf for (_, timeframe_key) in self.ensembles.keys())
+                if has_ensemble:
                     timeframes_to_test.append((tf, tf.name))
         
         # Run forecasts for each timeframe
