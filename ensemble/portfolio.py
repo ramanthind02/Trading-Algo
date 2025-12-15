@@ -306,7 +306,8 @@ class Portfolio:
         ensemble_predictions = []
         
         # DEBUG LOGGING
-        from utils.logger import logger
+        import logging
+        logger = logging.getLogger(__name__)
         logger.info(f"🔍 Portfolio.predict called:")
         logger.info(f"   X shape: {X.shape}")
         logger.info(f"   X columns: {list(X.columns)}")
