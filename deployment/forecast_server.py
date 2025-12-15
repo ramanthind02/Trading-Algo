@@ -348,14 +348,6 @@ class ForecastServer:
                     len(latest_features)
                 )
                 
-                # DEBUG LOGGING
-                logger.info(f"🔍 DEBUG {ticker.name} {timeframe.name}:")
-                logger.info(f"   Features shape: {latest_features.shape}")
-                logger.info(f"   Feature columns: {list(latest_features.columns)}")
-                logger.info(f"   Ticker series: {ticker_series.tolist() if hasattr(ticker_series, 'tolist') else ticker_series}")
-                logger.info(f"   Ticker unique values: {set(ticker_series) if hasattr(ticker_series, '__iter__') else ticker_series}")
-                logger.info(f"   Volatility: {volatility_series.tolist() if hasattr(volatility_series, 'tolist') else volatility_series}")
-                
                 # Generate prediction using individual ensemble
                 predictions = ensemble.predict(
                     X=latest_features,
@@ -363,25 +355,19 @@ class ForecastServer:
                     volatility=volatility_series
                 )
                 
-                # DEBUG: Check what predictions looks like
-                logger.info(f"🔍 Predictions type: {type(predictions)}")
-                logger.info(f"🔍 Predictions shape: {predictions.shape if hasattr(predictions, 'shape') else 'N/A'}")
-                logger.info(f"🔍 Predictions columns: {list(predictions.columns) if hasattr(predictions, 'columns') else 'N/A'}")
-                logger.info(f"🔍 Predictions content: {predictions}")
+                # DiversifiedEnsemble.predict() returns numpy array, not DataFrame
+                # predictions is a numpy array with shape (1,) containing the forecast
+                if not isinstance(predictions, np.ndarray):
+                    logger.error(f"Unexpected predictions type for {ticker.name}: {type(predictions)}")
+                    continue
                 
-                # Robustly check predictions structure
-                if predictions is None or (hasattr(predictions, '__len__') and len(predictions) == 0):
+                if len(predictions) == 0:
                     logger.warning(f"No predictions for {ticker.name}")
                     continue
-                # Check if DataFrame and has expected column
-                if not (hasattr(predictions, 'iloc') and hasattr(predictions, 'columns') and '%_to_risk' in predictions.columns):
-                    logger.error(f"Predictions for {ticker.name} is not a DataFrame with '%_to_risk' column. Type: {type(predictions)}, Content: {predictions}")
-                    continue
-                try:
-                    forecast = float(predictions['%_to_risk'].iloc[0])
-                except Exception as e:
-                    logger.error(f"Failed to extract forecast for {ticker.name}: {e}. Predictions: {predictions}")
-                    continue
+                
+                # Extract forecast value (first element of array)
+                forecast = float(predictions[0])
+                
                 # Normalize to 0-1 range if needed (ensemble already returns position sizes)
                 forecast_normalized = 1.0 / (1.0 + np.exp(-forecast * 2))
                 forecasts[ticker.name] = forecast_normalized
