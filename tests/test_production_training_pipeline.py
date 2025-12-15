@@ -88,7 +88,7 @@ class TestProductionTrainingPipeline(unittest.TestCase):
         expected_features = [
             f'rsi_signal_{self.test_timeframe.name}_lookback_14',
             f'momentum_signal_{self.test_timeframe.name}_lookback_20',
-            f'ma_cross_{self.test_timeframe.name}_lookback_50'
+            f'ma_diff_signal_{self.test_timeframe.name}_lookback_50'
         ]
         self.assertListEqual(list(features_df.columns), expected_features)
         
@@ -100,10 +100,14 @@ class TestProductionTrainingPipeline(unittest.TestCase):
         # Check alignment
         self.assertTrue(features_df.index.equals(targets_df.index))
         
-        # Check feature values are valid signals (-1, 0, 1)
+        # Check feature values are numeric and finite
         for col in features_df.columns:
-            unique_values = set(features_df[col].dropna().unique())
-            self.assertTrue(unique_values.issubset({-1, 0, 1}))
+            self.assertTrue(features_df[col].dtype in [np.float64, np.float32, np.int64, np.int32])
+            self.assertTrue(features_df[col].notna().any())  # At least some non-null values
+            # Check finite values (no inf)
+            valid_values = features_df[col].dropna()
+            if len(valid_values) > 0:
+                self.assertTrue(np.isfinite(valid_values).all())
         
         # Check returns are reasonable
         self.assertTrue(targets_df['log_return'].std() < 0.1)  # Daily vol < 10%

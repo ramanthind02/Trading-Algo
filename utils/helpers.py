@@ -221,9 +221,9 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
                 transformation_name, transformation_args
             )
     
-    # Extract the base module name (e.g., 'donchian_channel' from 'donchian_channel_10_D')
+    # Extract the base module name (e.g., 'ma_diff' from 'ma_diff_50_D')
     # This pattern matches the base module name before any underscore followed by numbers
-    base_module_match = re.match(r'^([a-zA-Z_]+)(?:_\d+.*)?$', module_name)
+    base_module_match = re.match(r'^([a-z_]+)(?:_\d+.*)?$', module_name)
     if base_module_match:
         base_module_name = base_module_match.group(1)
     else:
@@ -510,27 +510,29 @@ def create_ml_manager(
 
 # ============================================================================
 # Standardized Feature Column Naming Utilities
-# Format: moduleName_featureName_tf_param1_param1Value_param2_param2Value
+# Format: module_name_feature_name_tf_param1_param1_value_param2_param2_value
+# - All snake_case (matching Python file names in nodes/)
 # - No ticker in names
 # - TimeFrame token uses TimeFrame.name (e.g., D, H1, M15)
 # - Params sorted alphabetically by parameter name
-# - moduleName and featureName should be camelCase (we convert snake_case tokens)
+# Examples:
+#   - rsi_signal_D_lookback_14
+#   - ma_diff_signal_D_lookback_50
+#   - momentum_signal_W_lookback_20
 # ============================================================================
 
-def _to_camel_case(token: str) -> str:
-    """Convert snake_case or kebab-case to lowerCamelCase; preserve existing camelCase."""
+def _to_snake_case(token: str) -> str:
+    """Convert lowerCamelCase to snake_case; preserve existing snake_case."""
     if not isinstance(token, str):
         return str(token)
-    # If it already looks like camelCase (contains an uppercase and no separators), keep as-is
-    if ('_' not in token and '-' not in token) and any(ch.isupper() for ch in token[1:]):
-        return token
-    token = token.replace('-', '_')
-    parts = [p for p in token.split('_') if p]
-    if not parts:
-        return ''
-    head = parts[0].lower()
-    tail = ''.join(p.capitalize() for p in parts[1:])
-    return head + tail
+    # If it already contains underscores, assume it's already snake_case
+    if '_' in token:
+        return token.lower()
+    # Convert camelCase to snake_case
+    import re
+    # Insert underscore before uppercase letters (except at start)
+    result = re.sub(r'(?<!^)(?=[A-Z])', '_', token)
+    return result.lower()
 
 
 def build_feature_column_name(
@@ -540,23 +542,24 @@ def build_feature_column_name(
     params: Dict[str, Any]
 ) -> str:
     """
-    Build standardized feature column name.
+    Build standardized feature column name using snake_case.
 
     Args:
-        module: Module name (e.g., 'rsi', 'cmma')
-        feature: Feature token for this node's output (e.g., 'signal', 'atrPct')
+        module: Module name (e.g., 'rsi', 'ma_diff')
+        feature: Feature token for this node's output (e.g., 'signal', 'atr_pct')
         tf: TimeFrame enum
         params: Parameter dict; sorted alphabetically by key
 
     Returns:
-        str: module_feature_tf_param1_val1_param2_val2
+        str: module_feature_tf_param1_val1_param2_val2 (all snake_case)
     """
-    module_tok = _to_camel_case(module)
-    feature_tok = _to_camel_case(feature)
+    # Use snake_case consistently - no conversion needed
+    module_tok = _to_snake_case(module)
+    feature_tok = _to_snake_case(feature)
     name_parts: List[str] = [module_tok, feature_tok, tf.name]
     if params:
         for key in sorted(params.keys()):
-            name_parts.append(_to_camel_case(str(key)))
+            name_parts.append(_to_snake_case(str(key)))
             name_parts.append(str(params[key]))
     return '_'.join(name_parts)
 
@@ -767,8 +770,10 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     """
     Parse standardized feature column name into components.
     
+    All names use snake_case consistently (matching Python file names).
     Expected format: {module}_{feature}_{tf}_{param}_{value}_{param}_{value}...
     Example: rsi_signal_D_lookback_14
+    Example: ma_diff_signal_D_lookback_50
     
     Handles multi-word module names (ma_diff, cumulative_rsi, ts_feature, etc.)
     by checking against known modules first.
@@ -781,11 +786,13 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
         name = str(name)
     
     # Known multi-word module names (in order of length, longest first to match greedily)
+    # All use snake_case to match Python file names
     known_modules = [
         'cumulative_rsi',
-        'consecMomentum',
+        'consec_momentum',
         'ts_feature',
         'ma_diff',
+        'simple_ma',
         'momentum',
         'ewmac',
         'ewsd',
