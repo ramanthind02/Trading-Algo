@@ -363,6 +363,12 @@ class ForecastServer:
                     volatility=volatility_series
                 )
                 
+                # DEBUG: Check what predictions looks like
+                logger.info(f"🔍 Predictions type: {type(predictions)}")
+                logger.info(f"🔍 Predictions shape: {predictions.shape if hasattr(predictions, 'shape') else 'N/A'}")
+                logger.info(f"🔍 Predictions columns: {list(predictions.columns) if hasattr(predictions, 'columns') else 'N/A'}")
+                logger.info(f"🔍 Predictions content: {predictions}")
+                
                 if len(predictions) == 0:
                     logger.warning(f"No predictions for {ticker.name}")
                     continue
