@@ -83,7 +83,7 @@ class ForecastServer:
         self._setup_scheduling()
         
         logger.info(f"✅ ForecastServer initialized")
-        logger.info(f"   Portfolios: {len(self.portfolios)}")
+        logger.info(f"   Ensembles: {len(self.ensembles)}")
         logger.info(f"   MLManagers: {len(self.ml_managers)}")
     
     def _setup_ensembles(self) -> None:
@@ -124,40 +124,6 @@ class ForecastServer:
                     logger.error(f"❌ Failed to load ensemble {ticker.name} {timeframe.name}: {e}")
         
         logger.info(f"Setup complete: {len(self.ensembles)} ensembles loaded")
-    
-    def _setup_portfolios(self) -> None:
-        """Setup portfolio for each timeframe."""
-        logger.info("Setting up portfolios...")
-        
-        for timeframe in self.timeframes:
-            try:
-                # Each timeframe has its own subdirectory (e.g., config/D/, config/W/)
-                tf_dir = os.path.join(self.config_dir, timeframe.name)
-                
-                if not os.path.exists(tf_dir):
-                    logger.warning(f"Timeframe directory not found: {tf_dir}")
-                    continue
-                
-                # Create portfolio for this timeframe
-                # Portfolio will load ALL control files in the directory
-                portfolio = Portfolio(
-                    control_file_dir=tf_dir,
-                    is_fit=True,  # Load fitted ensembles
-                    ticker=None,  # Will infer from control files
-                    base_tf=timeframe
-                )
-                
-                if len(portfolio.ensembles) == 0:
-                    logger.warning(f"No ensembles loaded for timeframe {timeframe.name}")
-                    continue
-                
-                self.portfolios[timeframe] = portfolio
-                logger.info(f"✅ Setup portfolio for {timeframe.name}: {len(portfolio.ensembles)} ensembles")
-                
-            except Exception as e:
-                logger.error(f"❌ Failed to setup portfolio for {timeframe.name}: {e}")
-        
-        logger.info(f"Setup complete: {len(self.portfolios)} portfolios")
     
     def _setup_ml_managers(self) -> None:
         """
@@ -241,13 +207,6 @@ class ForecastServer:
         """
         logger.info(f"🔮 Running {timeframe_name} forecasts...")
         timestamp = datetime.now(NY_TZ)
-        
-        # Check if we have a portfolio for this timeframe
-        if timeframe not in self.portfolios:
-            logger.warning(f"No portfolio for timeframe {timeframe.name}")
-            return
-        
-        portfolio = self.portfolios[timeframe]
         
         # Check market status
         market_open = self.mt5_connector.is_market_open()
@@ -569,7 +528,7 @@ class ForecastServer:
         # Send startup notification
         self.telegram.send_status_update(
             status="ForecastServer starting",
-            details=f"Managing {len(self.portfolios)} portfolios, {len(self.ml_managers)} MLManagers"
+            details=f"Managing {len(self.ensembles)} ensembles, {len(self.ml_managers)} MLManagers"
         )
         
         # Load historical data
@@ -630,11 +589,15 @@ class ForecastServer:
     
     def get_status(self) -> Dict:
         """Get server status information."""
+        # Count ensembles per timeframe
+        ensembles_by_tf = {}
+        for (ticker, tf), ensemble in self.ensembles.items():
+            if tf.name not in ensembles_by_tf:
+                ensembles_by_tf[tf.name] = 0
+            ensembles_by_tf[tf.name] += 1
+        
         return {
-            'portfolios': {
-                tf.name: len(portfolio.ensembles)
-                for tf, portfolio in self.portfolios.items()
-            },
+            'ensembles': ensembles_by_tf,
             'ml_managers': len(self.ml_managers),
             'tickers': [t.name for t in self.tickers],
             'timeframes': [tf.name for tf in self.timeframes],
