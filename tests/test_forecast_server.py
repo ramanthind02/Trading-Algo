@@ -59,51 +59,57 @@ class TestForecastServer(unittest.TestCase):
         mock_ml_manager = Mock(spec=MLManager)
         mock_ml_manager.bias_nodes = [(TimeFrame.D, Mock())]
         mock_create_ml_manager.return_value = mock_ml_manager
-        
+
         # Create server
         server = ForecastServer(config_dir=self.config_dir)
-        
+
         # Verify initialization
         self.assertIsNotNone(server)
         self.assertEqual(server.config_dir, self.config_dir)
-        
-        # Verify portfolios were loaded - should have D and W portfolios from test control files
-        self.assertIsInstance(server.portfolios, dict)
-        self.assertIn(TimeFrame.D, server.portfolios, "Daily portfolio should be loaded from test configs")
-        self.assertIn(TimeFrame.W, server.portfolios, "Weekly portfolio should be loaded from test configs")
-        
+
+        # Verify ensembles were loaded - should have ensembles for D and W timeframes
+        self.assertIsInstance(server.ensembles, dict)
+        # Check that we have ensembles for both timeframes
+        timeframes_loaded = set(tf for (ticker, tf) in server.ensembles.keys())
+        self.assertIn(TimeFrame.D, timeframes_loaded, "Daily ensembles should be loaded from test configs")
+        self.assertIn(TimeFrame.W, timeframes_loaded, "Weekly ensembles should be loaded from test configs")
+
         # Verify MLManagers were created for test tickers
         self.assertIsInstance(server.ml_managers, dict)
         self.assertGreater(len(server.ml_managers), 0, "MLManagers should be created for configured tickers")
-        
+
         # Verify candle buffers were initialized
         self.assertIsInstance(server.candle_buffers, dict)
-        self.assertEqual(len(server.candle_buffers), len(server.ml_managers), 
+        self.assertEqual(len(server.candle_buffers), len(server.ml_managers),
                         "Should have one candle buffer per MLManager")
     
     @patch('deployment.forecast_server.ForecastMT5DataConnector')
     @patch('deployment.forecast_server.TelegramNotifier')
     @patch('deployment.forecast_server.helpers.create_ml_manager')
     def test_portfolio_setup(self, mock_create_ml_manager, mock_telegram, mock_mt5):
-        """Test that portfolios are set up correctly."""
+        """Test that ensembles are set up correctly."""
         # Mock MLManager
         mock_ml_manager = Mock(spec=MLManager)
         mock_ml_manager.bias_nodes = [(TimeFrame.D, Mock())]
         mock_create_ml_manager.return_value = mock_ml_manager
-        
+
         # Create server
         server = ForecastServer(config_dir=self.config_dir)
-        
-        # Verify portfolios were loaded
-        self.assertIsInstance(server.portfolios, dict)
-        self.assertGreater(len(server.portfolios), 0, "Should have loaded portfolios from test config files")
-        
-        # Verify each portfolio has ensembles loaded from control files
-        for timeframe, portfolio in server.portfolios.items():
-            self.assertIsInstance(portfolio, Portfolio, f"Portfolio for {timeframe} should be a Portfolio instance")
-            # We trained 4 tickers (EU, BP, ES, NQ) for each timeframe
-            self.assertEqual(len(portfolio.ensembles), 4, 
-                           f"Portfolio {timeframe} should have 4 ensembles (EU, BP, ES, NQ)")
+
+        # Verify ensembles were loaded
+        self.assertIsInstance(server.ensembles, dict)
+        self.assertGreater(len(server.ensembles), 0, "Should have loaded ensembles from test config files")
+
+        # Count ensembles per timeframe - we trained 4 tickers (EU, BP, ES, NQ) for each timeframe
+        ensembles_by_tf = {}
+        for (ticker, tf) in server.ensembles.keys():
+            if tf not in ensembles_by_tf:
+                ensembles_by_tf[tf] = 0
+            ensembles_by_tf[tf] += 1
+
+        # Verify we have 4 ensembles per timeframe
+        for tf, count in ensembles_by_tf.items():
+            self.assertEqual(count, 4, f"Timeframe {tf} should have 4 ensembles (EU, BP, ES, NQ)")
     
     @patch('deployment.forecast_server.ForecastMT5DataConnector')
     @patch('deployment.forecast_server.TelegramNotifier')
@@ -265,27 +271,27 @@ class TestForecastServer(unittest.TestCase):
         mock_ml_manager = Mock(spec=MLManager)
         mock_ml_manager.bias_nodes = [(TimeFrame.D, Mock())]
         mock_create_ml_manager.return_value = mock_ml_manager
-        
+
         # Mock MT5 connector
         mock_mt5_instance = Mock()
         mock_mt5_instance.is_market_open.return_value = True
         mock_mt5.return_value = mock_mt5_instance
-        
+
         # Create server
         server = ForecastServer(config_dir=self.config_dir)
-        
+
         # Get status
         status = server.get_status()
-        
+
         # Verify status structure
-        self.assertIn('portfolios', status)
+        self.assertIn('ensembles', status)
         self.assertIn('ml_managers', status)
         self.assertIn('tickers', status)
         self.assertIn('timeframes', status)
         self.assertIn('mt5_connected', status)
-        
+
         # Verify status values
-        self.assertIsInstance(status['portfolios'], dict)
+        self.assertIsInstance(status['ensembles'], dict)
         self.assertIsInstance(status['ml_managers'], int)
         self.assertIsInstance(status['tickers'], list)
         self.assertIsInstance(status['timeframes'], list)
@@ -403,23 +409,23 @@ class TestForecastServerIntegration(unittest.TestCase):
     @patch('deployment.forecast_server.ForecastMT5DataConnector')
     @patch('deployment.forecast_server.TelegramNotifier')
     def test_end_to_end_initialization(self, mock_telegram, mock_mt5):
-        """Test end-to-end initialization with real Portfolio and MLManager."""
-        # This test uses real Portfolio and MLManager (via helpers.create_ml_manager)
+        """Test end-to-end initialization with real DiversifiedEnsemble and MLManager."""
+        # This test uses real DiversifiedEnsemble and MLManager (via helpers.create_ml_manager)
         # Only MT5 and Telegram are mocked
-        
+
         try:
-            # Create server - will create real Portfolio and MLManager
+            # Create server - will create real DiversifiedEnsemble and MLManager
             server = ForecastServer(config_dir=self.config_dir)
-            
+
             # Verify server was created
             self.assertIsNotNone(server)
-            
-            # Verify portfolios exist
-            self.assertGreater(len(server.portfolios), 0)
-            
+
+            # Verify ensembles exist
+            self.assertGreater(len(server.ensembles), 0)
+
             # Verify MLManagers exist
             self.assertGreater(len(server.ml_managers), 0)
-            
+
         except Exception as e:
             # If initialization fails, that's OK for this test
             # We're mainly checking that the structure is correct
