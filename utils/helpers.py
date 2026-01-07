@@ -535,6 +535,23 @@ def _to_snake_case(token: str) -> str:
     return result.lower()
 
 
+def _to_camel_case(token: str) -> str:
+    """Convert snake_case to camelCase; preserve existing camelCase."""
+    if not isinstance(token, str):
+        return str(token)
+    # If already camelCase (has uppercase after first char and no underscores), return as-is
+    if '_' not in token and '-' not in token and any(ch.isupper() for ch in token[1:]):
+        return token
+    # Convert snake_case or kebab-case to camelCase
+    token = token.replace('-', '_')
+    parts = [p for p in token.split('_') if p]
+    if not parts:
+        return ''
+    head = parts[0].lower()
+    tail = ''.join(p.capitalize() for p in parts[1:])
+    return head + tail
+
+
 def build_feature_column_name(
     module: str,
     feature: str,
@@ -542,7 +559,10 @@ def build_feature_column_name(
     params: Dict[str, Any]
 ) -> str:
     """
-    Build standardized feature column name using snake_case.
+    Build standardized feature column name.
+    
+    Module and feature names use snake_case, parameter names use camelCase
+    to avoid parser confusion with multi-part parameter names.
 
     Args:
         module: Module name (e.g., 'rsi', 'ma_diff')
@@ -551,15 +571,17 @@ def build_feature_column_name(
         params: Parameter dict; sorted alphabetically by key
 
     Returns:
-        str: module_feature_tf_param1_val1_param2_val2 (all snake_case)
+        str: module_feature_tf_param1_val1_param2_val2
+             (module/feature in snake_case, params in camelCase)
     """
-    # Use snake_case consistently - no conversion needed
+    # Module and feature use snake_case
     module_tok = _to_snake_case(module)
     feature_tok = _to_snake_case(feature)
     name_parts: List[str] = [module_tok, feature_tok, tf.name]
+    # Parameter names use camelCase to avoid underscore confusion
     if params:
         for key in sorted(params.keys()):
-            name_parts.append(_to_snake_case(str(key)))
+            name_parts.append(_to_camel_case(str(key)))
             name_parts.append(str(params[key]))
     return '_'.join(name_parts)
 
@@ -770,16 +792,20 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     """
     Parse standardized feature column name into components.
     
-    All names use snake_case consistently (matching Python file names).
+    Module and feature names use snake_case, parameter names use camelCase.
     Expected format: {module}_{feature}_{tf}_{param}_{value}_{param}_{value}...
     Example: rsi_signal_D_lookback_14
-    Example: ma_diff_signal_D_lookback_50
+    Example: cumulative_rsi_signal_D_avgPeriod_2_lookback_2
     
     Handles multi-word module names (ma_diff, cumulative_rsi, ts_feature, etc.)
     by checking against known modules first.
+    
+    Parameter names are in camelCase (e.g., 'avgPeriod' not 'avg_period')
+    to avoid parser confusion with underscores.
 
     Returns dict with keys: { 'module', 'feature', 'tf', 'params' }
     - tf is the TimeFrame enum if name matches, else raw string
+    - params keys are in camelCase (converted from snake_case if needed)
     - params values are auto-converted to int/float when possible
     """
     if not isinstance(name, str):
@@ -834,11 +860,17 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
         tf = tf_token
 
     # Parse remaining tokens as key-value pairs for params
+    # Parameter names are in camelCase, but we need to handle both formats
     params: Dict[str, Any] = {}
     i = 2
     while i + 1 < len(tokens):
-        key = tokens[i]
+        key_raw = tokens[i]
         val_raw = tokens[i + 1]
+        
+        # Convert parameter name to camelCase if it's in snake_case
+        # This handles backward compatibility and ensures consistency
+        key = _to_camel_case(key_raw)
+        
         # Try to coerce to int, then float
         val: Any = val_raw
         try:

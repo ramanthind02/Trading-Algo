@@ -22,13 +22,27 @@ import matplotlib.pyplot as plt
 from typing import Dict, Optional, Tuple, List, Any
 import utils.helpers as helpers
 from datetime import datetime as dt
-from plotting.decile_plots import plot_decile_analysis, plot_2bin_analysis, plot_uniform_binning
-from plotting.distribution import plot_feature_distribution, plot_feature_timeseries
+from metrics.plotting.decile_plots import plot_decile_analysis, plot_2bin_analysis, plot_uniform_binning
+from metrics.plotting.distribution import plot_feature_distribution, plot_feature_timeseries
+from metrics.plotting.feature_explorer_plots import (
+    plot_all_feature_deciles,
+    plot_feature_2bin,
+    plot_all_feature_uniform_bins,
+    plot_feature_target_correlations as plot_feature_target_correlations_pure,
+    plot_feature_correlation_matrix,
+    plot_all_feature_distributions,
+    plot_all_feature_timeseries,
+    plot_feature_signal_cumsum,
+)
+from metrics.plotting.parameter_plots import (
+    plot_parameter_sensitivity as plot_parameter_sensitivity_pure,
+    plot_2d_parameter_surface as plot_2d_parameter_surface_pure,
+)
 from utils.permutation_test.permutation_engine import (
     PermutationEngine,
     FeaturePermutationStrategy
 )
-# Removed QuantileBinningModel and SortinoRatio imports
+
 
 
 class FeatureExplorer:
@@ -80,13 +94,15 @@ class FeatureExplorer:
     >>> # Step 1: Extract features using FeatureExtractor
     >>> from feature_extraction.feature_extractor_class import FeatureExtractor
     >>> extractor = FeatureExtractor(ticker=Ticker.SPY)
-    >>> result = extractor.extract(modules={'rsi': {'lookback': [14, 21]}})
+    >>> result = extractor.extract(bias_node_specs=[...])
     >>> 
     >>> # Step 2: Create FeatureExplorer from extracted dataframes
-    >>> from ut.feature_explorer import FeatureExplorer
+    >>> # Pass metadata for optimal performance (uses standardized parsing)
+    >>> from eda.feature_explorer import FeatureExplorer
     >>> explorer = FeatureExplorer(
     ...     features_df=result['features'],
-    ...     targets_df=result['targets']
+    ...     targets_df=result['targets'],
+    ...     metadata={'feature_metadata': result['feature_metadata']}
     ... )
     >>> 
     >>> # Step 3: Analyze features
@@ -95,6 +111,7 @@ class FeatureExplorer:
     >>> 
     >>> # Note: Normalization columns (ATR/EWSD) are in result['normalization']
     >>> # They don't clutter the feature analysis!
+    >>> # Note: If metadata is not passed, FeatureExplorer will parse names automatically
     """
     
     @staticmethod
@@ -213,17 +230,32 @@ class FeatureExplorer:
         self._initialize_parameter_mapping()
         
     def _initialize_parameter_mapping(self):
-        """Initialize parameter mapping from feature metadata."""
+        """Initialize parameter mapping from feature metadata.
+        
+        Trusts metadata from FeatureExtractor. If metadata is missing,
+        falls back to parsing feature names using the standardized parser.
+        """
         from collections import defaultdict
         
-        # Get feature metadata if available
+        # Get feature metadata if available (from FeatureExtractor)
         self._param_mapping = self.metadata.get('feature_metadata', {})
         self._feature_groups = defaultdict(list)
         
-        # If no metadata, fall back to name parsing
+        # If no metadata provided, parse feature names using standardized parser
         if not self._param_mapping:
-            self._initialize_parameter_mapping_from_names()
-            return
+            for feature in self.feature_names:
+                try:
+                    parsed = helpers.parse_feature_column_name(feature)
+                    if parsed and parsed.get('module') and parsed.get('params') is not None:
+                        self._param_mapping[feature] = {
+                            'module': parsed['module'],
+                            'parameters': parsed['params'],
+                            'base_name': parsed['module'],
+                            'full_name': feature
+                        }
+                except Exception:
+                    # Skip features that can't be parsed
+                    continue
             
         # Group features by module and parameter combinations
         for feature, meta in self._param_mapping.items():
@@ -248,87 +280,7 @@ class FeatureExplorer:
                 group_key = (module, param_name)
                 
                 # Store parameter value and feature name
-                self._feature_groups[group_key].append((str(param_value), feature))
-    
-    def _initialize_parameter_mapping_from_names(self):
-        """Fallback method to extract parameters from feature names when metadata is not available."""
-        from collections import defaultdict
-        
-        self._feature_groups = defaultdict(list)
-        
-        for feature in self.feature_names:
-            # Preferred: use standardized parser if the name conforms
-            try:
-                parsed = helpers.parse_feature_column_name(feature)
-                if parsed and parsed.get('module') and parsed.get('feature') and parsed.get('params') is not None:
-                    module = parsed['module']
-                    params = parsed['params']
-                    # Record full mapping
-                    self._param_mapping[feature] = {
-                        'base_name': module,
-                        'module': module,
-                        'parameters': params,
-                        'full_name': feature
-                    }
-                    # Group by each parameter
-                    for param_name, param_value in params.items():
-                        group_key = (module, param_name)
-                        self._feature_groups[group_key].append((str(param_value), feature))
-                    continue
-            except Exception:
-                # Fall through to legacy heuristics
-                pass
-
-            # Special handling for CMMA features (e.g., 'cmma_10_D_cmma_10_252')
-            if feature.startswith('cmma_') and feature.count('_') >= 4:
-                # Format: cmma_<lookback>_D_cmma_<lookback>_<atr_length>
-                parts = feature.split('_')
-                if len(parts) >= 5 and parts[0] == 'cmma' and parts[3] == 'cmma':
-                    lookback = parts[1]  # First number is lookback
-                    atr_length = parts[4]  # Last number is atr_length
-                    
-                    # Store the mapping with proper parameter names
-                    self._param_mapping[feature] = {
-                        'base_name': 'cmma',
-                        'module': 'cmma',
-                        'parameters': {
-                            'lookback': lookback,
-                            'atr_length': atr_length
-                        },
-                        'full_name': feature
-                    }
-                    
-                    # Add to feature groups for both parameters
-                    for param_name in ['lookback', 'atr_length']:
-                        group_key = ('cmma', param_name)
-                        self._feature_groups[group_key].append((self._param_mapping[feature]['parameters'][param_name], feature))
-                    continue
-            
-            # Default handling for other features
-            parts = feature.split('_')
-            if len(parts) < 2:
-                continue
-                
-            # The last part is usually the parameter value
-            param_value = parts[-1]
-            
-            # The part before the last underscore is usually the parameter name
-            param_name = parts[-2] if len(parts) > 1 else None
-            
-            # The base name is everything before the parameter name
-            base_name = '_'.join(parts[:-2]) if param_name else feature
-            
-            # Store the mapping
-            self._param_mapping[feature] = {
-                'base_name': base_name,
-                'module': base_name.split('_')[0],  # First part is usually module name
-                'parameters': {param_name: param_value} if param_name else {},
-                'full_name': feature
-            }
-            
-            # Add to feature groups
-            if param_name and param_name.isalpha():
-                group_key = (base_name, param_name)
+                # Metadata already has correct types from parse_feature_column_name
                 self._feature_groups[group_key].append((param_value, feature))
     
     def get_parameterized_features(self) -> Dict[Tuple[str, str], List[Tuple[Any, str]]]:
@@ -339,7 +291,7 @@ class FeatureExplorer:
         -------
         Dict[Tuple[str, str], List[Tuple[Any, str]]]
             Dictionary mapping (module_name, param_name) to list of (param_value, feature_name) tuples
-            Parameters are converted to their appropriate types (int, float, or str)
+            Parameter values are already correctly typed from metadata (int, float, or str)
             
         Examples
         --------
@@ -354,35 +306,27 @@ class FeatureExplorer:
         result = {}
         
         for (module_param, features) in self._feature_groups.items():
-            # Convert parameter values to appropriate types
-            converted = []
-            for value, feature in features:
-                try:
-                    # Try to convert to int first, then float, otherwise keep as string
-                    try:
-                        converted_value = int(value)
-                    except (ValueError, TypeError):
-                        try:
-                            converted_value = float(value)
-                        except (ValueError, TypeError):
-                            converted_value = value
-                    converted.append((converted_value, feature))
-                except Exception as e:
-                    print(f"Warning: Could not convert parameter value '{value}' for feature '{feature}': {e}")
-                    converted.append((value, feature))
-            
+            # Parameter values are already correctly typed from metadata
             # Sort by parameter value
             try:
-                result[module_param] = sorted(converted, key=lambda x: x[0] if isinstance(x[0], (int, float)) else str(x[0]))
+                result[module_param] = sorted(
+                    features, 
+                    key=lambda x: x[0] if isinstance(x[0], (int, float)) else str(x[0])
+                )
             except Exception as e:
                 print(f"Warning: Could not sort parameter group {module_param}: {e}")
-                result[module_param] = converted
+                result[module_param] = features
         
         return result
 
     @staticmethod
     def _canonicalize_param_name(name: str) -> str:
-        """Normalize parameter name to camelCase used in column names.
+        """Normalize parameter name for user input matching.
+        
+        Used to normalize user-provided parameter names (e.g., from plot_parameter_sensitivity)
+        to match the standardized naming convention. This is only for user input normalization,
+        not for parsing feature names (which are already standardized).
+        
         - If already camelCase (contains uppercase and no separators), return as-is.
         - Otherwise, convert snake/kebab to camelCase.
         """
@@ -405,12 +349,11 @@ class FeatureExplorer:
         module_name: str,
         param_name: str,
         target_col: str = 'log_return',
-        metric: Any = None,
+        metric: Optional[Any] = None,
         n_bins: int = 3,
         show_plot: bool = True,
         feature_name: Optional[str] = None,
         base_model: Optional[Any] = None,
-        custom_metric: Optional[Any] = None,
         **plot_kwargs
     ) -> Tuple[pd.DataFrame, Any]:
         """
@@ -424,8 +367,9 @@ class FeatureExplorer:
             Name of the parameter to analyze (e.g., 'lookback')
         target_col : str, default='log_return'
             Target column to use for computing metrics
-        metric : Any, default=None
-            DEPRECATED: Use custom_metric instead. If provided as string, will be used as metric name.
+        metric : Optional[Any], default=None
+            Metric object from metrics.performance (e.g., SortinoRatio, SharpeRatio).
+            Must have a .compute() method. If None, defaults to SortinoRatio.
         n_bins : int, default=3
             Number of bins (model-specific)
         show_plot : bool, default=True
@@ -434,9 +378,6 @@ class FeatureExplorer:
             Optional filter for specific feature type (e.g., 'signal')
         base_model : Optional[Any], default=None
             Model instance with fit/predict methods. If None, uses QuantileBinningModel.
-        custom_metric : Optional[Any], default=None
-            Objective metric instance from metrics.performance (e.g., SortinoRatio, SharpeRatio).
-            Must have a .compute() method. The metric name is automatically inferred from the class name.
         **plot_kwargs
             Additional keyword arguments passed to Plotly
             
@@ -454,7 +395,7 @@ class FeatureExplorer:
         ...     feature_name='signal',
         ...     target_col='log_return',
         ...     base_model=model,
-        ...     custom_metric=metric
+        ...     metric=metric
         ... )
             
         Returns
@@ -465,13 +406,15 @@ class FeatureExplorer:
         """
         from eda.parameter_analysis import ParameterAnalyzer
         
-        # Normalize parameter name to match standardized keys
-        param_name = self._canonicalize_param_name(param_name)
-        group_key = (module_name, param_name)
+        # Parameter names in metadata are now in camelCase
+        # Convert user input to camelCase to match
+        param_name_camel = self._canonicalize_param_name(param_name)
+        group_key = (module_name, param_name_camel)
+        
         if group_key not in self._feature_groups:
             available_modules = list(set(k[0] for k in self._feature_groups.keys()))
-            available_params = list(set(k[1] for k in self._feature_groups.keys() 
-                                     if k[0].lower() == module_name.lower()))
+            available_params = sorted(list(set(k[1] for k in self._feature_groups.keys() 
+                                 if k[0].lower() == module_name.lower())))
             
             error_msg = [
                 f"No features found for module='{module_name}' with parameter='{param_name}'."
@@ -481,6 +424,9 @@ class FeatureExplorer:
             if available_params:
                 error_msg.append(f"\nAvailable parameters for {module_name}: {available_params}")
             raise ValueError(''.join(error_msg))
+        
+        # Use the camelCase version
+        param_name = param_name_camel
         
         analyzer = ParameterAnalyzer(self.features_df, self.targets_df)
         features = list(self._feature_groups[group_key])
@@ -518,28 +464,22 @@ class FeatureExplorer:
         )
         
         try:
-            # Determine metric name from custom_metric if provided
-            if custom_metric is not None:
-                # Infer metric name from the metric object
-                class_name = custom_metric.__class__.__name__
-                if class_name.endswith('Ratio'):
-                    metric_name = class_name[:-5].lower()  # 'SortinoRatio' -> 'sortino'
-                else:
-                    metric_name = class_name.lower()
-            elif metric is not None and isinstance(metric, str):
-                metric_name = metric
-            else:
-                metric_name = 'sortino'  # default
+            # Use default metric if not provided
+            if metric is None:
+                from metrics.performance import SortinoRatio
+                metric = SortinoRatio(annualization_factor=252)
             
-            # User must now supply base_model and metric, or use analyzer defaults
+            # Infer metric name from metric object for display/plotting
+            from eda.parameter_analysis import _get_metric_name_from_object
+            metric_name = _get_metric_name_from_object(metric)
+            
+            # Analyze parameter with metric object
             df = analyzer.analyze_parameter(
                 feature_group=features,
                 target_col=target_col,
-                metric=metric_name,
+                metric=metric,
                 n_bins=n_bins,
-                base_model=base_model,
-                custom_metric=custom_metric,
-                annualization_factor=252
+                base_model=base_model
             )
             title = f"{module_name.upper()} Parameter Sensitivity: {param_name}"
             if module_name in [k[0] for k in self._feature_groups.keys()]:
@@ -551,7 +491,7 @@ class FeatureExplorer:
                 if other_params:
                     param_str = ", ".join(f"{k}={v}" for k, v in other_params.items())
                     title += f"<br><sup>Other params: {param_str}</sup>"
-            fig = analyzer.plot_parameter_sensitivity(
+            fig = plot_parameter_sensitivity_pure(
                 df=df,
                 param_name=param_name,
                 metric=metric_name,
@@ -582,13 +522,12 @@ class FeatureExplorer:
         param1_name: str,
         param2_name: str,
         target_col: str = 'log_return',
-        metric: Any = None,
+        metric: Optional[Any] = None,
         n_bins: int = 5,
         show_plot: bool = True,
         plot_type: str = 'surface',
         feature_name: Optional[str] = None,
         base_model: Optional[Any] = None,
-        custom_metric: Optional[Any] = None,
         **plot_kwargs
     ) -> Tuple[pd.DataFrame, Any]:
         """
@@ -604,14 +543,19 @@ class FeatureExplorer:
             Name of the second parameter (y-axis)
         target_col : str, default='log_return'
             Target column to use for computing metrics
-        metric : Any, default=None
-            Metric to compute (must provide .compute())
+        metric : Optional[Any], default=None
+            Metric object from metrics.performance (e.g., SortinoRatio, SharpeRatio).
+            Must have a .compute() method. If None, defaults to SortinoRatio.
         n_bins : int, default=5
             Number of bins (model-specific)
         show_plot : bool, default=True
             Whether to show the plot
         plot_type : str, default='surface'
             Type of plot to generate: 'surface', 'scatter', 'heatmap', 'contour', 'lines'
+        feature_name : Optional[str], default=None
+            Optional filter for specific feature type (e.g., 'signal')
+        base_model : Optional[Any], default=None
+            Model instance with fit/predict methods. If None, uses QuantileBinningModel.
         **plot_kwargs
             Additional keyword arguments passed to Plotly
             
@@ -710,29 +654,23 @@ class FeatureExplorer:
         
         analyzer = ParameterAnalyzer(self.features_df, self.targets_df)
         try:
-            # Determine metric name from custom_metric if provided
-            if custom_metric is not None:
-                # Infer metric name from the metric object
-                class_name = custom_metric.__class__.__name__
-                if class_name.endswith('Ratio'):
-                    metric_name = class_name[:-5].lower()  # 'SortinoRatio' -> 'sortino'
-                else:
-                    metric_name = class_name.lower()
-            elif metric is not None and isinstance(metric, str):
-                metric_name = metric
-            else:
-                metric_name = 'sortino'  # default
+            # Use default metric if not provided
+            if metric is None:
+                from metrics.performance import SortinoRatio
+                metric = SortinoRatio(annualization_factor=252)
+            
+            # Infer metric name from metric object for display/plotting
+            from eda.parameter_analysis import _get_metric_name_from_object
+            metric_name = _get_metric_name_from_object(metric)
             
             df = analyzer.analyze_2d_parameters(
                 feature_grid=module_features,
                 target_col=target_col,
-                metric=metric_name,
+                metric=metric,
                 n_bins=n_bins,
-                base_model=base_model,
-                custom_metric=custom_metric,
-                annualization_factor=252
+                base_model=base_model
             )
-            fig = analyzer.plot_2d_parameter_surface(
+            fig = plot_2d_parameter_surface_pure(
                 df=df,
                 param1=param1_name,
                 param2=param2_name,
@@ -762,46 +700,20 @@ class FeatureExplorer:
     ) -> Dict[str, plt.Figure]:
         """
         Plot decile analysis for all features.
-        (Unchanged)
+        
+        Delegates to pure function in metrics.plotting.
         """
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Plotting decile analysis for {self.n_features} features")
-            print(f"Target: {target_col}")
-            print(f"{'='*70}")
-        
-        figures = {}
-        for i, feature_name in enumerate(self.feature_names, 1):
-            if verbose:
-                print(f"\n[{i}/{self.n_features}] {feature_name}")
-            
-            try:
-                save_path = None
-                if save_dir:
-                    import os
-                    os.makedirs(save_dir, exist_ok=True)
-                    save_path = os.path.join(save_dir, f"{feature_name}_deciles.png")
-                fig = self.plot_deciles(
-                    feature_name=feature_name,
-                    n_bins=n_bins,
-                    target_col=target_col,
-                    figsize=figsize,
-                    plot_type=plot_type,
-                    save_path=save_path
-                )
-                figures[feature_name] = fig
-                if verbose:
-                    print(f"  ✓ Complete")
-            except Exception as e:
-                if verbose:
-                    print(f"  ✗ Failed: {e}")
-                continue
-        
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Completed {len(figures)}/{self.n_features} features")
-            print(f"{'='*70}")
-        return figures
+        return plot_all_feature_deciles(
+            features_df=self.features_df,
+            targets_df=self.targets_df,
+            feature_names=self.feature_names,
+            target_col=target_col,
+            n_bins=n_bins,
+            figsize=figsize,
+            plot_type=plot_type,
+            save_dir=save_dir,
+            verbose=verbose
+        )
     
     def plot_2bin(
         self,
@@ -812,7 +724,8 @@ class FeatureExplorer:
     ) -> plt.Figure:
         """
         Plot 2-bin analysis (positive vs negative feature values).
-        (Unchanged)
+        
+        Delegates to pure function in metrics.plotting.
         """
         # Validate
         if feature_name not in self.feature_names:
@@ -822,21 +735,21 @@ class FeatureExplorer:
         
         feature_data = self.features_df[feature_name]
         target_data = self.targets_df[target_col]
-        if not pd.api.types.is_numeric_dtype(feature_data):
-            raise TypeError(f"Feature '{feature_name}' is non-numeric")
         
-        fig, bin_table = plot_2bin_analysis(
+        fig = plot_feature_2bin(
             feature_data=feature_data,
             target_data=target_data,
             feature_name=feature_name,
             figsize=figsize,
             save_path=save_path
         )
+        
+        # Store results (analysis logic stays in class)
         if '2bin_analysis' not in self.results:
             self.results['2bin_analysis'] = {}
+        # Note: bin_table not available from pure function, but we can compute if needed
         self.results['2bin_analysis'][feature_name] = {
             'target_col': target_col,
-            'bin_data': bin_table
         }
         return fig
     
@@ -956,64 +869,19 @@ class FeatureExplorer:
         """
         Plot uniform binning analysis for all features.
         
-        Parameters
-        ----------
-        n_bins : int, default=10
-            Number of bins to create
-        target_col : str, default='log_return'
-            Target column to use
-        figsize : Tuple[int, int], default=(12, 8)
-            Figure size
-        plot_type : str, default="bar"
-            Type of plot: "bar" or "line"
-        save_dir : Optional[str], default=None
-            Directory to save plots
-        verbose : bool, default=True
-            Print progress
-            
-        Returns
-        -------
-        Dict[str, plt.Figure]
-            Dictionary mapping feature names to figure objects
+        Delegates to pure function in metrics.plotting.
         """
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Plotting uniform binning analysis for {self.n_features} features")
-            print(f"Target: {target_col}")
-            print(f"{'='*70}")
-        
-        figures = {}
-        for i, feature_name in enumerate(self.feature_names, 1):
-            if verbose:
-                print(f"\n[{i}/{self.n_features}] {feature_name}")
-            
-            try:
-                save_path = None
-                if save_dir:
-                    import os
-                    os.makedirs(save_dir, exist_ok=True)
-                    save_path = os.path.join(save_dir, f"{feature_name}_uniform_bins.png")
-                fig = self.plot_uniform_bins(
-                    feature_name=feature_name,
-                    n_bins=n_bins,
-                    target_col=target_col,
-                    figsize=figsize,
-                    plot_type=plot_type,
-                    save_path=save_path
-                )
-                figures[feature_name] = fig
-                if verbose:
-                    print(f"  ✓ Complete")
-            except Exception as e:
-                if verbose:
-                    print(f"  ✗ Failed: {e}")
-                continue
-        
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Completed {len(figures)}/{self.n_features} features")
-            print(f"{'='*70}")
-        return figures
+        return plot_all_feature_uniform_bins(
+            features_df=self.features_df,
+            targets_df=self.targets_df,
+            feature_names=self.feature_names,
+            target_col=target_col,
+            n_bins=n_bins,
+            figsize=figsize,
+            plot_type=plot_type,
+            save_dir=save_dir,
+            verbose=verbose
+        )
     
     def get_summary(self) -> pd.DataFrame:
         """
@@ -1073,41 +941,23 @@ class FeatureExplorer:
     ) -> plt.Figure:
         """
         Plot heatmap of feature-target correlations using Spearman rank correlation.
-        (Unchanged)
+        
+        Delegates to pure function in metrics.plotting.
         """
-        import seaborn as sns
-        correlations = self.get_correlations(target_col=target_col, method='spearman')
-        correlations = correlations.dropna()
-        if correlations.empty:
-            raise ValueError("No valid correlations computed (all features are non-numeric)")
-        corr_df = pd.DataFrame({
-            target_col: correlations
-        })
-        corr_df = corr_df.reindex(correlations.abs().sort_values(ascending=False).index)
-        fig, ax = plt.subplots(figsize=figsize)
-        sns.heatmap(
-            corr_df,
+        fig = plot_feature_target_correlations_pure(
+            features_df=self.features_df,
+            targets_df=self.targets_df,
+            feature_names=self.feature_names,
+            target_col=target_col,
+            figsize=figsize,
+            cmap=cmap,
             annot=annot,
             fmt=fmt,
-            cmap=cmap,
-            center=0,
-            vmin=-1,
-            vmax=1,
-            cbar_kws={'label': 'Spearman Correlation'},
-            ax=ax
+            save_path=save_path
         )
-        ax.set_title(
-            f'Feature-Target Correlations (Spearman)\n'
-            f'Target: {target_col}\n'
-            f'Captures monotonic relationships',
-            fontsize=12,
-            pad=20
-        )
-        ax.set_xlabel('')
-        ax.set_ylabel('Features (sorted by |correlation|)')
-        plt.tight_layout()
-        if save_path:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        # Store results (analysis logic stays in class)
+        correlations = self.get_correlations(target_col=target_col, method='spearman')
         self.results['feature_target_correlations'] = {
             'target_col': target_col,
             'method': 'spearman',
@@ -1126,45 +976,26 @@ class FeatureExplorer:
     ) -> plt.Figure:
         """
         Plot heatmap of intra-feature correlations using Pearson correlation.
-        (Unchanged)
+        
+        Delegates to pure function in metrics.plotting.
         """
-        import seaborn as sns
+        fig = plot_feature_correlation_matrix(
+            features_df=self.features_df,
+            feature_names=self.feature_names,
+            figsize=figsize,
+            cmap=cmap,
+            annot=annot,
+            fmt=fmt,
+            save_path=save_path,
+            mask_diagonal=mask_diagonal
+        )
+        
+        # Store results (analysis logic stays in class)
         numeric_features = [
             col for col in self.feature_names
             if pd.api.types.is_numeric_dtype(self.features_df[col])
         ]
-        if len(numeric_features) < 2:
-            raise ValueError("Need at least 2 numeric features for correlation matrix")
         corr_matrix = self.features_df[numeric_features].corr(method='pearson')
-        mask = None
-        if mask_diagonal:
-            mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
-        fig, ax = plt.subplots(figsize=figsize)
-        sns.heatmap(
-            corr_matrix,
-            mask=mask,
-            annot=annot,
-            fmt=fmt,
-            cmap=cmap,
-            center=0,
-            vmin=-1,
-            vmax=1,
-            square=True,
-            cbar_kws={'label': 'Pearson Correlation'},
-            ax=ax
-        )
-        ax.set_title(
-            f'Intra-Feature Correlations (Pearson)\n'
-            f'{len(numeric_features)} features\n'
-            f'Measures linear relationships',
-            fontsize=12,
-            pad=20
-        )
-        plt.setp(ax.get_xticklabels(), rotation=45, ha='right')
-        plt.setp(ax.get_yticklabels(), rotation=0)
-        plt.tight_layout()
-        if save_path:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
         self.results['feature_correlations'] = {
             'method': 'pearson',
             'correlation_matrix': corr_matrix
@@ -1181,53 +1012,31 @@ class FeatureExplorer:
     ) -> Dict[str, plt.Figure]:
         """
         Plot distribution analysis for all features.
-        (Unchanged)
-        """
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Plotting distributions for {self.n_features} features")
-            print(f"{'='*70}")
         
-        figures = {}
-        for i, feature_name in enumerate(self.feature_names, 1):
-            if verbose:
-                print(f"\n[{i}/{self.n_features}] {feature_name}")
-            
-            try:
-                save_path = None
-                if save_dir:
-                    import os
-                    os.makedirs(save_dir, exist_ok=True)
-                    save_path = os.path.join(save_dir, f"{feature_name}_distribution.png")
-                feature_data = self.features_df[feature_name]
-                fig = plot_feature_distribution(
-                    feature_data=feature_data,
-                    feature_name=feature_name,
-                    figsize=figsize,
-                    bins=bins,
-                    show_stats=show_stats,
-                    save_path=save_path
-                )
-                if 'distributions' not in self.results:
-                    self.results['distributions'] = {}
-                self.results['distributions'][feature_name] = {
-                    'n_samples': len(feature_data.dropna()),
-                    'mean': feature_data.mean(),
-                    'std': feature_data.std(),
-                    'skew': feature_data.skew(),
-                    'kurtosis': feature_data.kurtosis()
-                }
-                figures[feature_name] = fig
-                if verbose:
-                    print(f"  ✓ Complete")
-            except Exception as e:
-                if verbose:
-                    print(f"  ✗ Failed: {e}")
-                continue
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Completed {len(figures)}/{self.n_features} features")
-            print(f"{'='*70}")
+        Delegates to pure function in metrics.plotting.
+        """
+        figures = plot_all_feature_distributions(
+            features_df=self.features_df,
+            feature_names=self.feature_names,
+            figsize=figsize,
+            bins=bins,
+            show_stats=show_stats,
+            save_dir=save_dir,
+            verbose=verbose
+        )
+        
+        # Store results (analysis logic stays in class)
+        if 'distributions' not in self.results:
+            self.results['distributions'] = {}
+        for feature_name in figures.keys():
+            feature_data = self.features_df[feature_name]
+            self.results['distributions'][feature_name] = {
+                'n_samples': len(feature_data.dropna()),
+                'mean': feature_data.mean(),
+                'std': feature_data.std(),
+                'skew': feature_data.skew(),
+                'kurtosis': feature_data.kurtosis()
+            }
         return figures
     
     def plot_timeseries(
@@ -1241,52 +1050,30 @@ class FeatureExplorer:
     ) -> Dict[str, plt.Figure]:
         """
         Plot time series analysis for all features.
-        (Unchanged)
-        """
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Plotting time series for {self.n_features} features")
-            print(f"{'='*70}")
         
-        figures = {}
-        for i, feature_name in enumerate(self.feature_names, 1):
-            if verbose:
-                print(f"\n[{i}/{self.n_features}] {feature_name}")
-            
-            try:
-                save_path = None
-                if save_dir:
-                    import os
-                    os.makedirs(save_dir, exist_ok=True)
-                    save_path = os.path.join(save_dir, f"{feature_name}_timeseries.png")
-                feature_data = self.features_df[feature_name]
-                fig = plot_feature_timeseries(
-                    feature_data=feature_data,
-                    feature_name=feature_name,
-                    figsize=figsize,
-                    show_rolling_mean=show_rolling_mean,
-                    rolling_window=rolling_window,
-                    show_rolling_std=show_rolling_std,
-                    save_path=save_path
-                )
-                if 'timeseries' not in self.results:
-                    self.results['timeseries'] = {}
-                self.results['timeseries'][feature_name] = {
-                    'date_range': (feature_data.index.min(), feature_data.index.max()),
-                    'n_samples': len(feature_data.dropna()),
-                    'rolling_window': rolling_window
-                }
-                figures[feature_name] = fig
-                if verbose:
-                    print(f"  ✓ Complete")
-            except Exception as e:
-                if verbose:
-                    print(f"  ✗ Failed: {e}")
-                continue
-        if verbose:
-            print(f"\n{'='*70}")
-            print(f"Completed {len(figures)}/{self.n_features} features")
-            print(f"{'='*70}")
+        Delegates to pure function in metrics.plotting.
+        """
+        figures = plot_all_feature_timeseries(
+            features_df=self.features_df,
+            feature_names=self.feature_names,
+            figsize=figsize,
+            show_rolling_mean=show_rolling_mean,
+            rolling_window=rolling_window,
+            show_rolling_std=show_rolling_std,
+            save_dir=save_dir,
+            verbose=verbose
+        )
+        
+        # Store results (analysis logic stays in class)
+        if 'timeseries' not in self.results:
+            self.results['timeseries'] = {}
+        for feature_name in figures.keys():
+            feature_data = self.features_df[feature_name]
+            self.results['timeseries'][feature_name] = {
+                'date_range': (feature_data.index.min(), feature_data.index.max()),
+                'n_samples': len(feature_data.dropna()),
+                'rolling_window': rolling_window
+            }
         return figures
     
     def plot_signal_cumsum(
@@ -1440,6 +1227,7 @@ class FeatureExplorer:
                     else:
                         gated_returns = y_clean * signals_series
                 
+                # Compute cumulative returns for summary
                 cum_returns = gated_returns.cumsum()
                 
                 # Compute metric if provided
@@ -1451,24 +1239,20 @@ class FeatureExplorer:
                     except Exception:
                         metric_value = float('nan')
                 
-                fig, ax = plt.subplots(figsize=figsize)
-                ax.plot(cum_returns.index, cum_returns.values, label='Cumulative Return')
-                ax.axhline(0.0, color='black', linewidth=1, alpha=0.5)
-                metric_str = f"{metric_value:.4f}" if not np.isnan(metric_value) else 'NA'
-                strategy_label = strategy.replace('-', ' ').title().replace(' ', '-')  # 'long-short' -> 'Long-Short'
-                ax.set_title(
-                    f"{feature_name} | CumSum(target * signal) [{strategy_label}]\n"
-                    f"Final: {cum_returns.iloc[-1]:.4f} | Metric: {metric_str}"
-                )
-                ax.set_xlabel('Date')
-                ax.set_ylabel('Cumulative Sum')
-                ax.legend()
-                plt.tight_layout()
+                # Use pure plotting function
+                save_path = None
                 if save_dir is not None:
                     save_path = os.path.join(save_dir, f"{feature_name}_signal_cumsum.png")
-                    fig.savefig(save_path, dpi=300, bbox_inches='tight')
-                if not show_plot:
-                    plt.close(fig)
+                
+                fig = plot_feature_signal_cumsum(
+                    gated_returns=gated_returns,
+                    feature_name=feature_name,
+                    strategy=strategy,
+                    metric_value=metric_value,
+                    figsize=figsize,
+                    save_path=save_path,
+                    show_plot=show_plot
+                )
                 figures[feature_name] = fig
                 summary_rows.append({
                     'feature': feature_name,

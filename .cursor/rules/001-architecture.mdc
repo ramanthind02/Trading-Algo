@@ -13,7 +13,7 @@ alwaysApply: true
 *   **Replace Primitives:** Do not use raw `int`, `str`, or `float` for domain concepts.
     *   Use `NewType` for simple wrappers (e.g., `UserId = NewType('UserId', int)`).
     *   Use Pydantic models for complex validation.
-*   **No Booleans in APIs:** Avoid passing `True/False` flags to functions. Use `Enum` to make call sites explicit.
+*   **No Booleans in public or domain-level APIs :** Avoid passing `True/False` flags to functions. Use `Enum` to make call sites explicit.
     *   *Bad:* `process_data(data, True)`
     *   *Good:* `process_data(data, Mode.ASYNC)`
 

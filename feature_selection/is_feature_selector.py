@@ -251,7 +251,7 @@ class ISFeatureSelector:
                 f"Available columns: {list(self.df.columns)}"
             )
         
-        from plotting.walkforward.walkforward_model import WalkForwardSplitter
+        from feature_selection.walkforward.walkforward_model import WalkForwardSplitter
         
         # Get data
         feature_data = self.df['feature']
@@ -462,7 +462,7 @@ class ISFeatureSelector:
             print(f"  Equity curve uses: raw_return (actual P&L)")
             print(f"{'='*70}")
         
-        from plotting.graphing.quantstats_reports import generate_tearsheet
+        from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
         
         # Create daily returns series for strategy and baseline
         # Initialize with zeros for all dates
