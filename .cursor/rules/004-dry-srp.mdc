@@ -1,0 +1,110 @@
+---
+alwaysApply: true
+---
+
+# DRY & Single Responsibility Rules
+
+## 1. The Single Responsibility Principle (SRP)
+*   **One Reason to Change:** A function or class should focus on a single concern.
+    *   *Separation:* Do not mix business logic with I/O (printing, database access).
+    *   *Separation:* Do not mix data transformation with error handling policies.
+*   **The "And" Rule:** If your function name contains "And" (e.g., `fetch_and_process_and_save`), break it into three smaller functions and compose them.
+*   **Atomic Functions:** Ideally, a function should either:
+    1.  Do work (calculation/transformation).
+    2.  Coordinate work (call other functions).
+    *   *Never both.*
+
+## 2. DRY (Don't Repeat Yourself) - Strategic Application
+*   **Semantic vs. Accidental Duplication:**
+    *   *Eliminate:* Logic duplication (same algorithm, same business rule).
+    *   *Tolerate:* Visual duplication (code looks similar but changes for different reasons). Do not couple unrelated code just because it looks alike.
+*   **Generics for Type Redundancy:**
+    *   If you have two functions identical except for the input types, use `TypeVar` and Generics instead of duplicating the function or using `Any`.
+*   **Higher-Order Functions for Logic Redundancy:**
+    *   If you have two loops doing the same iteration but different actions, extract the loop into a higher-order function (like `map` or `filter`) or a generator.
+    *   See "Policy Based Design" from the slides: Identify the changing part and inject it as a parameter.
+
+## 3. Decorators for Cross-Cutting Concerns
+*   Use Python decorators to handle repetitive "wrapping" logic that violates SRP if placed inside the function.
+*   Common uses: Logging, Retrying, Caching, Authentication, Timing.
+*   **Constraint:** Decorators must use `functools.wraps` and preserve type hints (`ParamSpec`).
+
+## Examples
+
+### SRP: Splitting Responsibilities
+**Bad (Mixed Concerns):**
+```python
+def process_user_report(user_id: int) -> None:
+    # 1. Fetching logic
+    data = db.query(f"SELECT * FROM users WHERE id={user_id}")
+    # 2. Business Logic
+    if data['age'] > 18:
+        formatted = f"User: {data['name']}"
+    # 3. I/O Logic
+    with open('report.txt', 'w') as f:
+        f.write(formatted)
+Good (Composed Pure Functions):
+code
+Python
+# Pure Logic
+def format_user(user: User) -> str:
+    return f"User: {user.name}" if user.age > 18 else "Restricted"
+
+# Orchestrator
+def generate_report(user_id: int, fetcher: Callable, saver: Callable) -> None:
+    user = fetcher(user_id)
+    report = format_user(user)
+    saver(report)
+DRY: Policy Injection (Strategy Pattern)
+Instead of writing multiple functions with slightly different logic inside the loop, write one generic function and pass the differing logic as a Policy (Callback).
+Bad (Repetitive Control Flow):
+code
+Python
+def sum_evens(nums: list[int]) -> int:
+    total = 0
+    for n in nums:
+        if n % 2 == 0: total += n
+    return total
+
+def sum_positives(nums: list[int]) -> int:
+    total = 0
+    for n in nums:
+        if n > 0: total += n
+    return total
+Good (Generic Algorithm):
+code
+Python
+from typing import Callable, Iterable, TypeVar
+
+T = TypeVar('T')
+
+# The "Algorithm" (Loop + Accumulation) lives here once
+def sum_by_criteria(items: Iterable[int], predicate: Callable[[int], bool]) -> int:
+    return sum(n for n in items if predicate(n))
+
+# Usage
+total_even = sum_by_criteria(nums, lambda x: x % 2 == 0)
+total_pos = sum_by_criteria(nums, lambda x: x > 0)
+DRY: Decorators for Boilerplate
+Good (ParamSpec for Type Safety):
+code
+Python
+from typing import Callable, TypeVar, ParamSpec
+from functools import wraps
+import time
+
+P = ParamSpec('P')
+R = TypeVar('R')
+
+def time_execution(func: Callable[P, R]) -> Callable[P, R]:
+    @wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        start = time.perf_counter()
+        result = func(*args, **kwargs)
+        print(f"{func.__name__} took {time.perf_counter() - start}s")
+        return result
+    return wrapper
+
+@time_execution
+def expensive_op(x: int) -> int:
+    return x * x
