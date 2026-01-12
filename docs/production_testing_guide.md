@@ -7,7 +7,6 @@ Quick guide for testing ForecastServer in production environment before deployme
 Bias nodes require historical candles for lookback calculations.
 
 
-
 ## Testing Strategy
 
 ### Problem
