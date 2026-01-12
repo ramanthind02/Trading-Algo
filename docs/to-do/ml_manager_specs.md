@@ -1,14 +1,15 @@
-# MLManager Portfolio Integration Specifications
+# PortfolioManager Specifications
 
-**Version**: 2.0.0  
-**Date**: 2025-01-09  
+**Version**: 3.0.0  
+**Date**: 2025-01-10  
 **Status**: Design Specification  
 
-**Major Changes in v2.0.0**:
-- **Single-Timeframe Portfolios**: Each Portfolio now manages ONE trading timeframe only
-- **Multiple Portfolios in MLManager**: MLManager can manage multiple Portfolio instances (one per timeframe)
-- **Cleaner Separation**: Features can be multi-timeframe, but trading is single-timeframe
-- **Removed `base_tf`**: No longer needed - each Portfolio knows its trading timeframe
+**Major Changes in v3.0.0**:
+- **PortfolioManager replaces MLManager**: Simpler wrapper class for managing multiple portfolios
+- **Portfolio.fit() and predict()**: Both methods accept DataFrame of candles for easy experimentation
+- **Base Models Own Bias Nodes**: Base models internally manage their own bias nodes and compute features
+- **Self-Responsible Components**: Each component (BaseModel, Ensemble, Portfolio) is responsible for its own dependencies
+- **Simplified Architecture**: No centralized bias node configuration - everything is self-contained
 
 ---
 
@@ -28,54 +29,53 @@
 
 ## Overview
 
-Transform MLManager into a complete trading system that ingests streaming market data and outputs actionable positions. The system will auto-discover required bias nodes from Portfolio ensembles, calculate features and volatility, generate forecasts, and convert to tradeable contracts.
+Create a PortfolioManager class that coordinates multiple Portfolio instances (one per trading timeframe). Each Portfolio can be fitted and used for prediction using DataFrames of candles, making experimentation and testing straightforward. Base models internally own and manage their bias nodes, eliminating the need for centralized bias node configuration.
 
 ### Goals
 
-- **Flexible Integration**: MLManager works standalone OR with Portfolio(s)
-- **Auto-Discovery**: Automatically configure bias nodes from ensemble control files
-- **Multi-Ticker Support**: Process multiple tickers sequentially with isolated state
-- **Multi-Timeframe Trading**: Support separate portfolios for different trading timeframes (D, W, M)
-- **Clean State Management**: Single `TickerState` dataclass per ticker
-- **Streaming Mode**: Real-world emulation with candle-by-candle processing
-- **Optional Contract Conversion**: PositionSizer integration for executable trades
-- **Robust Error Handling**: Graceful degradation, comprehensive logging
+- **Simple Wrapper**: PortfolioManager is a lightweight coordinator that feeds data to portfolios
+- **DataFrame-Based API**: Portfolio.fit() and predict() accept DataFrames of candles for easy testing
+- **Self-Responsible Components**: Base models own their bias nodes, ensembles own their base models
+- **Multi-Timeframe Support**: Manage multiple portfolios (one per trading timeframe)
+- **Position Sizing**: PortfolioManager owns PositionSizer for contract conversion
+- **Easy Experimentation**: Simple API for testing different portfolio configurations
 
 ### Key Design Decisions
 
-**1. Single-Timeframe Portfolios** ⭐ NEW
+**1. PortfolioManager as Simple Wrapper** ⭐ NEW
+- **Lightweight coordinator**: Just feeds data to portfolios and collects outputs
+- **No bias node management**: That responsibility moves to base models
+- **Owns PositionSizer**: Handles contract conversion at the manager level
+- **Multi-portfolio routing**: Routes candles to appropriate portfolio by timeframe
+
+**2. Portfolio.fit() and predict() Methods** ⭐ NEW
+- **DataFrame-based API**: Both methods accept `pd.DataFrame` of candles
+- **Easy experimentation**: Load data once, test different configurations
+- **Consistent interface**: Same data format for fitting and prediction
+- **Example**: `portfolio.fit(candles_df)` and `positions_df = portfolio.predict(candles_df)`
+
+**3. Base Models Own Bias Nodes** ⭐ NEW
+- **Self-contained**: Each base model internally creates and manages its required bias nodes
+- **No centralized config**: No need to discover/configure bias nodes at PortfolioManager level
+- **Automatic feature computation**: Base models compute features from candles they receive
+- **Simplified initialization**: Just pass ensembles to Portfolio, everything else is automatic
+
+**4. Self-Responsible Component Hierarchy**
+- **BaseModel**: Owns bias nodes, computes features from candles
+- **Ensemble**: Owns base models, aggregates their predictions
+- **Portfolio**: Owns ensembles, applies risk management
+- **PortfolioManager**: Owns portfolios and PositionSizer, coordinates data flow
+
+**5. Single-Timeframe Portfolios**
 - **Each Portfolio manages ONE trading timeframe only**
-  - Daily Portfolio: Generates positions when daily candles arrive
-  - Weekly Portfolio: Generates positions when weekly candles arrive
-- **Clear separation**: Features can be multi-timeframe, but trading is single-timeframe
-- **Real-world alignment**: Separate trading accounts = separate portfolios
-- **Simplified reasoning**: No ambiguity about when a portfolio trades
+- **Clear separation**: Daily portfolio trades on daily candles, weekly on weekly, etc.
+- **Independent risk parameters**: Each portfolio has its own target volatility, DM, etc.
 
-**2. Multiple Portfolios in MLManager** ⭐ NEW
-- MLManager can manage **multiple Portfolio instances** (one per timeframe)
-- When a candle arrives for timeframe T, route to Portfolio for timeframe T
-- Each Portfolio operates independently with its own risk parameters
-- Example: `portfolios={TimeFrame.D: daily_portfolio, TimeFrame.W: weekly_portfolio}`
-
-**3. Portfolio-Optional Architecture**
-- **Standalone mode** (no portfolios): Feature extraction for research/backtesting
-- **Production mode** (with portfolios): Full pipeline from features to positions
-- Maintains backward compatibility with existing research code
-
-**4. Flexible Bias Node Configuration**
-- **Auto-discovery**: Read from portfolio ensembles (production)
-- **Explicit specs**: Provide bias_node_specs directly (research)
-- **Hybrid**: Explicit specs override portfolio (testing new features)
-
-**5. Cleaner Multi-Ticker State**
-- Single `TickerState` dataclass encapsulates all per-ticker state
-- Replaces multiple parallel dictionaries (ticker_bias_nodes, ticker_bias_values, etc.)
-- Easier to reason about, test, and extend
-
-**6. Auto-Predict Control**
-- **auto_predict=True**: Automatic position generation when candles arrive (live trading)
-- **auto_predict=False**: Manual prediction via `predict_positions()` (batch processing)
-- **Removed `base_tf` concept**: Each Portfolio knows its own trading timeframe
+**6. Composition Over Configuration**
+- **PortfolioManager owns PositionSizer**: Via composition, not inheritance
+- **Portfolio owns Ensembles**: Via composition
+- **Ensemble owns BaseModels**: Via composition
+- **BaseModel owns BiasNodes**: Via composition
 
 ---
 
@@ -86,15 +86,15 @@ Transform MLManager into a complete trading system that ingests streaming market
 ```mermaid
 graph TB
     subgraph input [Market Data Input]
-        candle[Candle Data]
+        candlesDF[DataFrame of Candles]
         ticker[Ticker Symbol]
         tf[TimeFrame]
     end
     
-    subgraph mlmanager [MLManager Streaming Pipeline]
-        addCandle[add_candle ticker tf]
-        updateNodes[Update Bias Nodes per Ticker]
-        routePortfolio{Route to Portfolio?}
+    subgraph portfoliomanager [PortfolioManager]
+        routePortfolio{Route to Portfolio by TF}
+        collectOutput[Collect Outputs]
+        sizer[PositionSizer]
     end
     
     subgraph portfolios [Multiple Portfolios by Timeframe]
@@ -104,90 +104,92 @@ graph TB
     end
     
     subgraph portfolio_flow [Portfolio Processing]
-        extractFeatures[Extract Features]
-        calcVol[Calculate Volatility]
+        fit[fit candles_df]
+        predict[predict candles_df]
         ensembles[Ensembles]
         baseModels[Base Models]
+        biasNodes[Bias Nodes Owned by Base Models]
         positionFractions[Position Fractions]
     end
     
     subgraph execution [Execution Layer]
-        sizer{PositionSizer?}
         contracts[Convert to Contracts]
         fractions[Return Fractions]
     end
     
     subgraph output [Output]
-        positions[Positions Dict]
+        positionsDF[Positions DataFrame]
         telegram[Telegram Export]
     end
     
-    candle --> addCandle
-    ticker --> addCandle
-    tf --> addCandle
-    
-    addCandle --> updateNodes
-    updateNodes --> routePortfolio
+    candlesDF --> routePortfolio
+    ticker --> routePortfolio
+    tf --> routePortfolio
     
     routePortfolio -->|TF=D| portfolioD
     routePortfolio -->|TF=W| portfolioW
     routePortfolio -->|TF=M| portfolioM
     
-    portfolioD --> extractFeatures
-    portfolioW --> extractFeatures
-    portfolioM --> extractFeatures
+    portfolioD --> fit
+    portfolioW --> fit
+    portfolioM --> fit
     
-    extractFeatures --> calcVol
-    calcVol --> ensembles
-    ensembles --> baseModels
-    baseModels --> positionFractions
+    fit --> biasNodes
+    biasNodes --> baseModels
+    baseModels --> ensembles
+    ensembles --> predict
+    predict --> positionFractions
     
-    positionFractions --> sizer
-    sizer -->|Enabled| contracts
-    sizer -->|Disabled| fractions
-    
-    contracts --> positions
-    fractions --> positions
-    positions --> telegram
+    positionFractions --> collectOutput
+    collectOutput --> sizer
+    sizer --> contracts
+    contracts --> positionsDF
+    positionFractions -->|No Sizer| fractions
+    fractions --> positionsDF
+    positionsDF --> telegram
 ```
 
 ### Data Flow
 
 ```
-Market Data (Candle + Ticker + TF)
+DataFrame of Candles (with ticker, timeframe columns)
   ↓
-MLManager.add_candle(candle, ticker, tf)
-  ↓ Update bias nodes for this ticker/tf
-  ↓ Route to appropriate Portfolio based on TF:
-    ↓ If tf=D and portfolios[TimeFrame.D] exists → Daily Portfolio
-    ↓ If tf=W and portfolios[TimeFrame.W] exists → Weekly Portfolio
-    ↓ If tf=M and portfolios[TimeFrame.M] exists → Monthly Portfolio
+PortfolioManager.fit(candles_df) or predict(candles_df)
+  ↓ Route to appropriate Portfolio based on timeframe column:
+    ↓ If tf=D → portfolios[TimeFrame.D]
+    ↓ If tf=W → portfolios[TimeFrame.W]
+    ↓ If tf=M → portfolios[TimeFrame.M]
     ↓
-Portfolio[tf].predict(features, volatility, ticker)
-  ↓ → Ensemble.predict(features, ticker)
-    ↓ → BaseModel.predict(feature_values)
-    ↓ ← Binary signals {0, 1}
-  ↓ ← Forecast scores [0, 1]
+Portfolio.fit(candles_df) or predict(candles_df)
+  ↓ → Ensemble.fit(candles_df) or predict(candles_df)
+    ↓ → BaseModel.fit(candles_df) or predict(candles_df)
+      ↓ → BaseModel internally manages bias nodes
+      ↓ → Bias nodes compute features from candles
+      ↓ → BaseModel returns binary signals {0, 1}
+    ↓ ← Forecast scores [0, 1] aggregated from base models
   ↓ Apply volatility scaling, DM, instrument weights
-  ↓ ← Position fractions (% of capital)
+  ↓ ← Position fractions (% of capital) DataFrame
   ↓
-PositionSizer.calculate_positions() [optional]
+PortfolioManager collects outputs from all portfolios
+  ↓
+PositionSizer.calculate_positions(positions_df) [if enabled]
   ↓ Convert fractions to contracts
   ↓ ← Number of contracts, notional values
   ↓
-Return Positions Dict
+Return Combined Positions DataFrame
   ↓
-Telegram Export
+Telegram Export (optional)
 ```
 
 ### Multi-Timeframe Portfolio Management
 
 ```mermaid
 graph TB
-    subgraph mlmanager [MLManager]
+    subgraph portfoliomanager [PortfolioManager]
         dailyPort[Daily Portfolio]
         weeklyPort[Weekly Portfolio]
         monthlyPort[Monthly Portfolio]
+        positionSizer[PositionSizer]
     end
     
     subgraph dailyPort [Daily Portfolio TF=D]
@@ -205,127 +207,501 @@ graph TB
         monthlyRisk[Risk Params DM=1.2 Target Vol=0.12]
     end
     
-    mlmanager --> dailyPort
-    mlmanager --> weeklyPort
-    mlmanager --> monthlyPort
+    portfoliomanager --> dailyPort
+    portfoliomanager --> weeklyPort
+    portfoliomanager --> monthlyPort
+    portfoliomanager --> positionSizer
 ```
 
-### Multi-Ticker State Management
+### Component Ownership Hierarchy
 
 ```mermaid
-graph LR
-    subgraph ticker_state [Per-Ticker State Isolation]
-        ES[ES State]
-        NQ[NQ State]
-        YM[YM State]
-    end
+graph TD
+    PM[PortfolioManager]
+    PM -->|owns| PS[PositionSizer]
+    PM -->|owns| P1[Portfolio D]
+    PM -->|owns| P2[Portfolio W]
+    PM -->|owns| P3[Portfolio M]
     
-    subgraph es_state [ES Ticker]
-        esBias[Bias Nodes]
-        esValues[Bias Values]
-        esMatrix[Feature Matrix]
-    end
+    P1 -->|owns| E1[Ensemble 1]
+    P1 -->|owns| E2[Ensemble 2]
     
-    subgraph nq_state [NQ Ticker]
-        nqBias[Bias Nodes]
-        nqValues[Bias Values]
-        nqMatrix[Feature Matrix]
-    end
+    E1 -->|owns| BM1[BaseModel 1]
+    E1 -->|owns| BM2[BaseModel 2]
     
-    ES --> es_state
-    NQ --> nq_state
+    BM1 -->|owns| BN1[BiasNode RSI-14]
+    BM1 -->|owns| BN2[BiasNode ATR-252]
+    BM2 -->|owns| BN3[BiasNode Momentum-20]
     
-    es_state --> portfolios[Multiple Portfolio Instances]
-    nq_state --> portfolios
+    style PM fill:#e1f5ff
+    style P1 fill:#fff4e1
+    style E1 fill:#f0e1ff
+    style BM1 fill:#e1ffe1
+    style BN1 fill:#ffe1e1
 ```
 
 ---
 
 ## Key Components
 
-### 1. Ensemble Bias Node Discovery API
+### 1. BaseModel with Internal Bias Nodes
 
-**Purpose**: Allow ensembles to expose required bias nodes for auto-configuration
+**Purpose**: Base models own and manage their required bias nodes internally
+
+**Location**: `feature_selection/base_models/`
+
+**Key Changes**:
+- Base models create their own bias nodes during initialization
+- Base models compute features from candles internally
+- No external bias node configuration needed
+
+**New BaseModel Interface**:
+```python
+class BaseModel:
+    def __init__(self, feature_config: Dict[str, Any], ticker: Ticker):
+        """
+        Initialize base model with feature configuration.
+        
+        Creates bias nodes internally based on feature_config['bias_node_spec'].
+        
+        Parameters
+        ----------
+        feature_config : Dict[str, Any]
+            Feature configuration from control file, including:
+            - bias_node_spec: {
+                'module_name': str,
+                'timeframes': [TimeFrame],
+                'params': dict
+            }
+        ticker : Ticker
+            Ticker symbol for this base model
+        """
+        self.ticker = ticker
+        self.feature_config = feature_config
+        
+        # Create bias nodes internally
+        bias_node_spec = feature_config['bias_node_spec']
+        self.bias_nodes = {}
+        
+        for tf in bias_node_spec['timeframes']:
+            bias_node = helpers.create_bias_node(
+                bias_node_spec['module_name'],
+                ticker,
+                tf,
+                bias_node_spec['params']
+            )
+            self.bias_nodes[tf] = bias_node
+    
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """
+        Fit the base model using candles DataFrame.
+        
+        Updates internal bias nodes with candle data, then fits model.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+        """
+        # Update bias nodes for each timeframe
+        for tf, bias_node in self.bias_nodes.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            for _, row in tf_candles.iterrows():
+                candle = Candle.from_row(row)
+                bias_node.add_candle(candle)
+        
+        # Fit model using computed features
+        features = self._compute_features(candles_df)
+        # ... model fitting logic ...
+    
+    def predict(self, candles_df: pd.DataFrame) -> pd.Series:
+        """
+        Predict binary signals using candles DataFrame.
+        
+        Computes features from candles, then generates predictions.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+            
+        Returns
+        -------
+        pd.Series
+            Binary signals {0, 1} indexed by datetime
+        """
+        features = self._compute_features(candles_df)
+        # ... prediction logic ...
+        return predictions
+    
+    def _compute_features(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """Compute features from candles using internal bias nodes."""
+        # Update bias nodes
+        for tf, bias_node in self.bias_nodes.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            for _, row in tf_candles.iterrows():
+                candle = Candle.from_row(row)
+                bias_node.add_candle(candle)
+        
+        # Extract feature values from bias nodes
+        # ... feature extraction logic ...
+        return features_df
+```
+
+### 2. Ensemble with BaseModel Management
+
+**Purpose**: Ensembles own and manage their base models
 
 **Location**: `ensemble/diversified_ensemble.py`
 
-**Key Method**:
+**Key Changes**:
+- Ensembles create base models during initialization
+- Base models are loaded from feature control files
+- Ensembles coordinate fit() and predict() calls to base models
+
+**New Ensemble Interface**:
 ```python
-def get_required_bias_node_specs(self) -> List[Dict[str, Any]]:
-    """
-    Return list of bias node specs required by all base models.
+class DiversifiedEnsemble:
+    def __init__(self, ensemble_dir: str, tickers: List[Ticker]):
+        """
+        Initialize ensemble with base models.
+        
+        Loads feature control files and creates base models with their bias nodes.
+        
+        Parameters
+        ----------
+        ensemble_dir : str
+            Path to ensemble directory in vault
+        tickers : List[Ticker]
+            List of tickers this ensemble will process
+        """
+        self.ensemble_dir = ensemble_dir
+        self.tickers = tickers
+        
+        # Load base models from feature control files
+        self.base_models = {}
+        features_dir = os.path.join(ensemble_dir, 'features')
+        
+        for filename in os.listdir(features_dir):
+            if not filename.endswith('.json'):
+                continue
+            
+            filepath = os.path.join(features_dir, filename)
+            with open(filepath, 'r') as f:
+                feature_config = json.load(f)
+            
+            # Create base model for each ticker
+            for ticker in tickers:
+                base_model = BaseModel(feature_config, ticker)
+                key = (ticker, filename)
+                self.base_models[key] = base_model
     
-    Reads feature control files from vault, extracts bias_node_spec
-    from each feature, and deduplicates.
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """
+        Fit all base models using candles DataFrame.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+        """
+        for base_model in self.base_models.values():
+            base_model.fit(candles_df)
     
-    Returns
-    -------
-    List[Dict[str, Any]]
-        Each spec: {
-            'module_name': str,
-            'timeframes': [TimeFrame],
-            'params': dict
-        }
-    """
+    def predict(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Aggregate predictions from all base models.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+            
+        Returns
+        -------
+        pd.DataFrame
+            Forecast scores indexed by datetime and ticker
+        """
+        predictions = []
+        for (ticker, _), base_model in self.base_models.items():
+            ticker_candles = candles_df[candles_df['ticker'] == ticker.name]
+            pred = base_model.predict(ticker_candles)
+            predictions.append(pred)
+        
+        # Aggregate predictions
+        return self._aggregate_predictions(predictions)
 ```
 
-**Algorithm**:
-1. Get ensemble_dir from ensemble configuration
-2. List all feature control files in `{ensemble_dir}/features/`
-3. For each feature control file:
-   - Load JSON
-   - Extract `bias_node_spec`
-   - Add to specs list
-4. Deduplicate specs (same module_name + params + timeframes)
-5. Return unique specs
+### 3. Portfolio with fit() and predict() Methods
 
-### 2. Portfolio Bias Node Aggregation
-
-**Purpose**: Aggregate bias nodes from all ensembles (single-timeframe version)
+**Purpose**: Portfolio accepts DataFrame of candles for fitting and prediction
 
 **Location**: `ensemble/portfolio.py`
 
-**Key Method**:
+**Key Changes**:
+- Add `fit(candles_df)` method that accepts DataFrame of candles
+- Add `predict(candles_df)` method that accepts DataFrame of candles
+- Portfolio routes candles to appropriate ensembles based on timeframe
+- Each portfolio manages ONE trading timeframe
+
+**New Portfolio Interface**:
 ```python
-def get_required_bias_node_specs(self) -> List[Dict[str, Any]]:
-    """
-    Aggregate all bias node specs from all ensembles.
-    Always includes ATR-252 and EWSD-252 for volatility calculation.
+class Portfolio:
+    def __init__(
+        self,
+        ensembles: List[DiversifiedEnsemble],
+        trading_timeframe: TimeFrame,
+        target_volatility: float,
+        dm: float,
+        max_position_pct: float = 2.0
+    ):
+        """
+        Initialize portfolio with ensembles.
+        
+        Parameters
+        ----------
+        ensembles : List[DiversifiedEnsemble]
+            List of ensembles for this portfolio
+        trading_timeframe : TimeFrame
+            Timeframe this portfolio trades on (D, W, or M)
+        target_volatility : float
+            Target volatility for position sizing
+        dm : float
+            Diversification multiplier
+        max_position_pct : float, default=2.0
+            Maximum position size as % of capital
+        """
+        self.ensembles = ensembles
+        self.trading_timeframe = trading_timeframe
+        self.target_volatility = target_volatility
+        self.dm = dm
+        self.max_position_pct = max_position_pct
     
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """
+        Fit all ensembles using candles DataFrame.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+            Should contain candles for the trading_timeframe of this portfolio
+        """
+        # Filter candles for this portfolio's trading timeframe
+        tf_candles = candles_df[candles_df['timeframe'] == self.trading_timeframe]
+        
+        # Fit all ensembles
+        for ensemble in self.ensembles:
+            ensemble.fit(tf_candles)
+    
+    def predict(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generate position fractions using candles DataFrame.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+            Should contain candles for the trading_timeframe of this portfolio
+            
+        Returns
+        -------
+        pd.DataFrame
+            Position fractions with columns: ticker, datetime, forecast_score, position_fraction
+        """
+        # Filter candles for this portfolio's trading timeframe
+        tf_candles = candles_df[candles_df['timeframe'] == self.trading_timeframe]
+        
+        # Get predictions from all ensembles
+        ensemble_predictions = []
+        for ensemble in self.ensembles:
+            pred = ensemble.predict(tf_candles)
+            ensemble_predictions.append(pred)
+        
+        # Aggregate ensemble predictions
+        forecast_scores = self._aggregate_ensembles(ensemble_predictions)
+        
+        # Calculate volatility (from candles or features)
+        volatility = self._calculate_volatility(tf_candles)
+        
+        # Apply risk management
+        positions_df = self._apply_risk_management(
+            forecast_scores, volatility, tf_candles
+        )
+        
+        return positions_df
+```
+
+### 4. PortfolioManager - Simple Wrapper Class
+
+**Purpose**: Lightweight coordinator that feeds data to multiple portfolios
+
+**Location**: `ensemble/portfolio_manager.py` (new file)
+
+**Key Features**:
+- Owns multiple Portfolio instances (one per timeframe)
+- Owns PositionSizer for contract conversion
+- Routes candles to appropriate portfolios
+- Collects and combines outputs
+
+**PortfolioManager Interface**:
+```python
+class PortfolioManager:
+    def __init__(
+        self,
+        portfolios: Dict[TimeFrame, Portfolio],
+        position_sizer: Optional[PositionSizer] = None
+    ):
+        """
+        Initialize PortfolioManager with multiple portfolios.
+        
+        Parameters
+        ----------
+        portfolios : Dict[TimeFrame, Portfolio]
+            Portfolio instances keyed by their trading timeframe.
+            Example: {
+                TimeFrame.D: daily_portfolio,
+                TimeFrame.W: weekly_portfolio
+            }
+        position_sizer : PositionSizer, optional
+            If provided, converts position fractions to contracts
+        """
+        self.portfolios = portfolios
+        self.position_sizer = position_sizer
+    
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """
+        Fit all portfolios using candles DataFrame.
+        
+        Routes candles to appropriate portfolio based on timeframe column.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+        """
+        # Group candles by timeframe
+        for tf, portfolio in self.portfolios.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            if len(tf_candles) > 0:
+                portfolio.fit(tf_candles)
+    
+    def predict(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generate positions from all portfolios using candles DataFrame.
+        
+        Routes candles to appropriate portfolios, collects outputs, and optionally
+        converts to contracts.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+            
+        Returns
+        -------
+        pd.DataFrame
+            Combined positions from all portfolios with columns:
+            - ticker, datetime, timeframe, forecast_score, position_fraction
+            - contracts, notional_value, notional_pct (if position_sizer enabled)
+        """
+        all_positions = []
+        
+        # Get predictions from each portfolio
+        for tf, portfolio in self.portfolios.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            if len(tf_candles) > 0:
+                positions_df = portfolio.predict(tf_candles)
+                positions_df['timeframe'] = tf
+                all_positions.append(positions_df)
+        
+        # Combine all positions
+        if not all_positions:
+            return pd.DataFrame()
+        
+        combined_df = pd.concat(all_positions, ignore_index=True)
+        
+        # Optionally convert to contracts
+        if self.position_sizer:
+            try:
+                contracts_df = self.position_sizer.calculate_positions(combined_df)
+                return contracts_df
+            except Exception as e:
+                logger.error(f"PositionSizer failed: {e}. Returning fractions only.")
+                return combined_df
+        
+        return combined_df
+```
+
+### 5. PositionSizer Integration
+
+**Purpose**: Convert position fractions to tradeable contracts
+
+**Location**: `execution/position_sizer.py`
+
+**Enhancement**: Add configuration loading (unchanged from v2.0.0)
+
+**New Class Method**:
+```python
+@classmethod
+def from_config(
+    cls,
+    config_path: str,
+    capital: float,
+    ticker_variants: Dict[str, str],
+    prices: Dict[str, float],
+    rounding_method: RoundingMethod = RoundingMethod.ROUND
+) -> 'PositionSizer':
+    """
+    Load contract specs from config file.
+    
+    Parameters
+    ----------
+    config_path : str
+        Path to contract_specs.json
+    capital : float
+        Account capital in USD
+    ticker_variants : Dict[str, str]
+        Maps ticker name to variant (e.g., {'ES': 'micro', 'NQ': 'standard'})
+    prices : Dict[str, float]
+        Current market prices per ticker
+    rounding_method : RoundingMethod
+        How to round fractional contracts
+        
     Returns
     -------
-    List[Dict[str, Any]]
-        Deduplicated list of all required bias nodes
+    PositionSizer
+        Configured instance ready for use
     """
 ```
 
-**Algorithm**:
-1. Initialize empty specs list
-2. For each ensemble in `self.ensembles`:  # Now a list, not dict
-   - Call `ensemble.get_required_bias_node_specs()`
-   - Add specs to list
-3. Deduplicate across all ensembles
-4. Append mandatory specs:
-   - ATR-252: `{'module_name': 'atr', 'timeframes': [TimeFrame.D], 'params': {'lookback': 252}}`
-   - EWSD-252: `{'module_name': 'ewsd', 'timeframes': [TimeFrame.D], 'params': {'lookback': 252}}`
-5. Return aggregated list
+### 6. Contract Specs Configuration
 
-### 3. MLManager Refactoring
+**Purpose**: Define contract specifications per ticker with multiple variants
 
-**Purpose**: Enable multi-ticker streaming with optional Portfolio integration (supports multiple portfolios)
+**Location**: `deployment/config/contract_specs.json`
 
-**Location**: `feature_extraction/ml_manager.py`
-
-**Key Changes**:
-- Remove `ticker` from constructor (becomes per-candle parameter)
-- ⭐ **NEW**: Add `portfolios: Dict[TimeFrame, Portfolio]` to constructor (supports multiple portfolios)
-- Remove `base_tf` concept (no longer needed - portfolios know their trading timeframes)
-- Add `bias_node_specs: Optional[List[Dict]]` to constructor (for standalone use)
-- Add `position_sizer: Optional[PositionSizer]` to constructor
-- Use `TickerState` dataclass for cleaner per-ticker state management
-- Support both standalone (feature extraction) and portfolio (position generation) modes
-
-**New Constructor**:
+**Structure**: (unchanged from v2.0.0)
+```json
+{
+  "ES": {
+    "standard": {
+      "multiplier": 50,
+      "tick_size": 0.25,
+      "tick_value": 12.50,
+      "currency": "USD",
+      "description": "E-mini S&P 500"
+    },
+    "micro": {
+      "multiplier": 5,
+      "tick_size": 0.25,
+      "tick_value": 1.25,
+      "currency": "USD",
+      "description": "Micro E-mini S&P 500"
+    }
+  }
+}
+```
 ```python
 def __init__(
     self,
@@ -566,158 +942,230 @@ def from_config(
 
 ## Implementation Phases
 
-### Phase 1: Ensemble Bias Node Discovery API
+### Phase 1: BaseModel with Internal Bias Nodes
 
-**Estimated Effort**: 2-3 hours
+**Estimated Effort**: 4-5 hours
+
+**File**: `feature_selection/base_models/`
+
+**Tasks**:
+1. Refactor BaseModel to own bias nodes internally
+2. Add `fit(candles_df)` method
+3. Add `predict(candles_df)` method
+4. Implement feature computation from candles
+5. Update initialization to create bias nodes from feature config
+
+**Implementation**:
+```python
+class BaseModel:
+    def __init__(self, feature_config: Dict[str, Any], ticker: Ticker):
+        """Initialize with feature config, create bias nodes internally."""
+        self.ticker = ticker
+        self.feature_config = feature_config
+        
+        # Extract bias node spec from feature config
+        bias_node_spec = feature_config.get('bias_node_spec', {})
+        if not bias_node_spec:
+            raise ValueError("Feature config must include bias_node_spec")
+        
+        # Create bias nodes for each timeframe
+        self.bias_nodes = {}
+        for tf in bias_node_spec['timeframes']:
+            bias_node = helpers.create_bias_node(
+                bias_node_spec['module_name'],
+                ticker,
+                tf,
+                bias_node_spec['params']
+            )
+            self.bias_nodes[tf] = bias_node
+    
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """Fit model using candles DataFrame."""
+        # Update bias nodes
+        for tf, bias_node in self.bias_nodes.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            for _, row in tf_candles.iterrows():
+                candle = Candle.from_row(row)
+                bias_node.add_candle(candle)
+        
+        # Compute features and fit model
+        features = self._compute_features(candles_df)
+        # ... model fitting logic ...
+    
+    def predict(self, candles_df: pd.DataFrame) -> pd.Series:
+        """Predict binary signals from candles DataFrame."""
+        features = self._compute_features(candles_df)
+        # ... prediction logic ...
+        return predictions
+    
+    def _compute_features(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """Compute features from candles using internal bias nodes."""
+        # Update bias nodes with latest candles
+        for tf, bias_node in self.bias_nodes.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            for _, row in tf_candles.iterrows():
+                candle = Candle.from_row(row)
+                bias_node.add_candle(candle)
+        
+        # Extract feature values
+        feature_values = []
+        for tf, bias_node in self.bias_nodes.items():
+            values = bias_node.get_values()
+            feature_values.extend(values)
+        
+        return pd.DataFrame([feature_values], columns=self._get_feature_names())
+```
+
+**Tests**:
+```python
+def test_basemodel_creates_bias_nodes():
+    """Test BaseModel creates bias nodes on initialization"""
+    
+def test_basemodel_fit_updates_bias_nodes():
+    """Test fit() updates bias nodes with candles"""
+    
+def test_basemodel_predict_computes_features():
+    """Test predict() computes features from candles"""
+    
+def test_basemodel_multiple_timeframes():
+    """Test BaseModel handles multiple timeframes correctly"""
+```
+
+### Phase 2: Ensemble with BaseModel Management
+
+**Estimated Effort**: 3-4 hours
 
 **File**: `ensemble/diversified_ensemble.py`
 
 **Tasks**:
-1. Add `ensemble_dir` attribute (path to vault ensemble directory)
-2. Implement `get_required_bias_node_specs()` method
-3. Add deduplication logic
-4. Add validation (ensure bias_node_spec exists in control files)
+1. Refactor Ensemble to create base models from feature control files
+2. Add `fit(candles_df)` method that calls base models
+3. Add `predict(candles_df)` method that aggregates base model predictions
+4. Load base models during initialization
 
 **Implementation**:
 ```python
-def get_required_bias_node_specs(self) -> List[Dict[str, Any]]:
-    """Return list of bias node specs required by all base models."""
-    if not hasattr(self, 'ensemble_dir') or self.ensemble_dir is None:
-        raise ValueError(
-            "ensemble_dir not set. Cannot auto-discover bias nodes."
-        )
-    
-    # Read all feature control files
-    features_dir = os.path.join(self.ensemble_dir, 'features')
-    if not os.path.exists(features_dir):
-        return []
-    
-    specs = []
-    for filename in os.listdir(features_dir):
-        if not filename.endswith('.json'):
-            continue
+class DiversifiedEnsemble:
+    def __init__(self, ensemble_dir: str, tickers: List[Ticker]):
+        """Initialize ensemble, load base models from feature control files."""
+        self.ensemble_dir = ensemble_dir
+        self.tickers = tickers
         
-        filepath = os.path.join(features_dir, filename)
-        with open(filepath, 'r') as f:
-            feature_config = json.load(f)
+        # Load base models from feature control files
+        self.base_models = {}
+        features_dir = os.path.join(ensemble_dir, 'features')
         
-        bias_node_spec = feature_config.get('bias_node_spec')
-        if bias_node_spec:
-            specs.append(bias_node_spec)
+        for filename in os.listdir(features_dir):
+            if not filename.endswith('.json'):
+                continue
+            
+            filepath = os.path.join(features_dir, filename)
+            with open(filepath, 'r') as f:
+                feature_config = json.load(f)
+            
+            # Create base model for each ticker
+            for ticker in tickers:
+                base_model = BaseModel(feature_config, ticker)
+                key = (ticker, filename)
+                self.base_models[key] = base_model
     
-    # Deduplicate
-    unique_specs = []
-    seen = set()
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """Fit all base models using candles DataFrame."""
+        for base_model in self.base_models.values():
+            base_model.fit(candles_df)
     
-    for spec in specs:
-        # Create hashable key
-        key = (
-            spec['module_name'],
-            tuple(spec['timeframes']),
-            tuple(sorted(spec['params'].items()))
-        )
+    def predict(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """Aggregate predictions from all base models."""
+        predictions = []
+        for (ticker, _), base_model in self.base_models.items():
+            ticker_candles = candles_df[candles_df['ticker'] == ticker.name]
+            pred = base_model.predict(ticker_candles)
+            predictions.append(pred)
         
-        if key not in seen:
-            seen.add(key)
-            unique_specs.append(spec)
-    
-    return unique_specs
+        # Aggregate predictions
+        return self._aggregate_predictions(predictions)
 ```
 
 **Tests**:
 ```python
-def test_ensemble_bias_node_discovery_single_feature():
-    """Test discovery with single feature"""
+def test_ensemble_creates_base_models():
+    """Test ensemble creates base models from feature files"""
     
-def test_ensemble_bias_node_discovery_deduplication():
-    """Test that duplicate specs are removed"""
+def test_ensemble_fit_calls_base_models():
+    """Test fit() calls all base models"""
     
-def test_ensemble_bias_node_discovery_empty():
-    """Test empty ensemble returns empty list"""
+def test_ensemble_predict_aggregates():
+    """Test predict() aggregates base model predictions"""
+    
+def test_ensemble_multiple_tickers():
+    """Test ensemble handles multiple tickers correctly"""
 ```
 
-### Phase 2: Portfolio Bias Node Discovery
+### Phase 3: Portfolio with fit() and predict() Methods
 
-**Estimated Effort**: 1 hour
+**Estimated Effort**: 2-3 hours
 
 **File**: `ensemble/portfolio.py`
 
 **Tasks**:
-1. Implement `get_required_bias_node_specs()` method
-2. Aggregate from all ensembles
-3. Add ATR-252 and EWSD-252
-4. Deduplicate across ensembles
+1. Add `fit(candles_df)` method
+2. Add `predict(candles_df)` method
+3. Filter candles by trading timeframe
+4. Route to ensembles and aggregate results
 
 **Implementation**:
 ```python
-def get_required_bias_node_specs(self) -> List[Dict[str, Any]]:
-    """Aggregate all bias node specs from all ensembles."""
-    all_specs = []
+class Portfolio:
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """Fit all ensembles using candles DataFrame."""
+        # Filter candles for this portfolio's trading timeframe
+        tf_candles = candles_df[candles_df['timeframe'] == self.trading_timeframe]
+        
+        # Fit all ensembles
+        for ensemble in self.ensembles:
+            ensemble.fit(tf_candles)
     
-    # Collect from all ensembles (now a simple list)
-    for ensemble in self.ensembles:
-        specs = ensemble.get_required_bias_node_specs()
-        all_specs.extend(specs)
-    
-    # Deduplicate
-    unique_specs = []
-    seen = set()
-    
-    for spec in all_specs:
-        key = (
-            spec['module_name'],
-            tuple(spec.get('timeframes', [])),
-            tuple(sorted(spec.get('params', {}).items()))
+    def predict(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """Generate position fractions using candles DataFrame."""
+        # Filter candles for this portfolio's trading timeframe
+        tf_candles = candles_df[candles_df['timeframe'] == self.trading_timeframe]
+        
+        # Get predictions from all ensembles
+        ensemble_predictions = []
+        for ensemble in self.ensembles:
+            pred = ensemble.predict(tf_candles)
+            ensemble_predictions.append(pred)
+        
+        # Aggregate ensemble predictions
+        forecast_scores = self._aggregate_ensembles(ensemble_predictions)
+        
+        # Calculate volatility (from candles or features)
+        volatility = self._calculate_volatility(tf_candles)
+        
+        # Apply risk management
+        positions_df = self._apply_risk_management(
+            forecast_scores, volatility, tf_candles
         )
         
-        if key not in seen:
-            seen.add(key)
-            unique_specs.append(spec)
-    
-    # Always include ATR-252 and EWSD-252 for volatility
-    mandatory_specs = [
-        {
-            'module_name': 'atr',
-            'timeframes': [TimeFrame.D],
-            'params': {'lookback': 252}
-        },
-        {
-            'module_name': 'ewsd',
-            'timeframes': [TimeFrame.D],
-            'params': {'lookback': 252}
-        }
-    ]
-    
-    # Add mandatory specs if not already present
-    for mandatory_spec in mandatory_specs:
-        key = (
-            mandatory_spec['module_name'],
-            tuple(mandatory_spec['timeframes']),
-            tuple(sorted(mandatory_spec['params'].items()))
-        )
-        
-        if key not in seen:
-            unique_specs.append(mandatory_spec)
-    
-    return unique_specs
+        return positions_df
 ```
 
 **Tests**:
 ```python
-def test_portfolio_aggregates_from_multiple_ensembles():
-    """Test aggregation across ensembles (single-timeframe)"""
+def test_portfolio_fit_filters_timeframe():
+    """Test fit() only uses candles for trading timeframe"""
     
-def test_portfolio_includes_atr_ewsd():
-    """Test ATR-252 and EWSD-252 always included"""
+def test_portfolio_predict_generates_positions():
+    """Test predict() generates position fractions"""
     
-def test_portfolio_deduplicates_across_ensembles():
-    """Test deduplication works across ensembles"""
-
-def test_portfolio_has_single_trading_timeframe():
-    """Test that Portfolio enforces single trading timeframe"""
+def test_portfolio_multiple_ensembles():
+    """Test portfolio aggregates from multiple ensembles"""
+    
+def test_portfolio_risk_management():
+    """Test risk management is applied correctly"""
 ```
 
-### Phase 3: Contract Specs Configuration
+### Phase 4: PortfolioManager Implementation
 
 **Estimated Effort**: 2 hours
 
@@ -810,25 +1258,171 @@ def test_position_sizer_from_config_missing_price():
     """Test missing price raises error"""
 ```
 
-### Phase 4: MLManager Multi-Ticker State
+### Phase 4: PortfolioManager Implementation
 
-**Estimated Effort**: 4-5 hours
+**Estimated Effort**: 2-3 hours
 
-**File**: `feature_extraction/ml_manager.py`
+**File**: `ensemble/portfolio_manager.py` (new file)
 
-**Major Refactoring**:
+**Tasks**:
+1. Create PortfolioManager class
+2. Implement `fit(candles_df)` method
+3. Implement `predict(candles_df)` method
+4. Add PositionSizer integration
+5. Route candles to appropriate portfolios by timeframe
 
-1. **New Constructor**:
+**Implementation**:
 ```python
-def __init__(
-    self,
-    portfolios: Optional[Dict[TimeFrame, Portfolio]] = None,
-    bias_node_specs: Optional[List[Dict[str, Any]]] = None,
-    position_sizer: Optional[PositionSizer] = None,
-    build_matrix: bool = False,
-    auto_predict: bool = True
-):
-    """Initialize MLManager with optional Portfolios."""
+class PortfolioManager:
+    def __init__(
+        self,
+        portfolios: Dict[TimeFrame, Portfolio],
+        position_sizer: Optional[PositionSizer] = None
+    ):
+        """
+        Initialize PortfolioManager with multiple portfolios.
+        
+        Parameters
+        ----------
+        portfolios : Dict[TimeFrame, Portfolio]
+            Portfolio instances keyed by their trading timeframe
+        position_sizer : PositionSizer, optional
+            If provided, converts position fractions to contracts
+        """
+        self.portfolios = portfolios
+        self.position_sizer = position_sizer
+    
+    def fit(self, candles_df: pd.DataFrame) -> None:
+        """Fit all portfolios using candles DataFrame."""
+        for tf, portfolio in self.portfolios.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            if len(tf_candles) > 0:
+                portfolio.fit(tf_candles)
+    
+    def predict(self, candles_df: pd.DataFrame) -> pd.DataFrame:
+        """Generate positions from all portfolios."""
+        all_positions = []
+        
+        for tf, portfolio in self.portfolios.items():
+            tf_candles = candles_df[candles_df['timeframe'] == tf]
+            if len(tf_candles) > 0:
+                positions_df = portfolio.predict(tf_candles)
+                positions_df['timeframe'] = tf
+                all_positions.append(positions_df)
+        
+        if not all_positions:
+            return pd.DataFrame()
+        
+        combined_df = pd.concat(all_positions, ignore_index=True)
+        
+        # Optionally convert to contracts
+        if self.position_sizer:
+            try:
+                contracts_df = self.position_sizer.calculate_positions(combined_df)
+                return contracts_df
+            except Exception as e:
+                logger.error(f"PositionSizer failed: {e}. Returning fractions only.")
+                return combined_df
+        
+        return combined_df
+```
+
+**Tests**:
+```python
+def test_portfolio_manager_fit_routes_to_portfolios():
+    """Test fit() routes candles to appropriate portfolios"""
+    
+def test_portfolio_manager_predict_combines_outputs():
+    """Test predict() combines outputs from all portfolios"""
+    
+def test_portfolio_manager_with_position_sizer():
+    """Test contract conversion when position_sizer provided"""
+    
+def test_portfolio_manager_multiple_timeframes():
+    """Test handling multiple timeframes correctly"""
+```
+
+### Phase 5: Contract Specs and PositionSizer (if needed)
+
+**Estimated Effort**: 1-2 hours (if PositionSizer.from_config() not already implemented)
+
+**Files**: 
+- `deployment/config/contract_specs.json` (if not exists)
+- `execution/position_sizer.py` (enhance if needed)
+
+**Tasks**: Same as Phase 3 in v2.0.0 (unchanged)
+
+### Phase 6: Integration Tests
+
+**Estimated Effort**: 3-4 hours
+
+**File**: `tests/test_portfolio_manager.py` (new)
+
+**Test Suite**:
+```python
+class TestPortfolioManager:
+    """End-to-end integration tests for PortfolioManager."""
+    
+    def test_single_portfolio_fit_predict(self):
+        """Test fit and predict with single portfolio"""
+        pass
+    
+    def test_multiple_portfolios(self):
+        """Test multiple portfolios (D, W, M)"""
+        pass
+    
+    def test_with_position_sizer(self):
+        """Test contract conversion"""
+        pass
+    
+    def test_dataframe_format(self):
+        """Test candles DataFrame format requirements"""
+        pass
+```
+
+### Phase 7: Documentation Updates
+
+**Estimated Effort**: 1-2 hours
+
+**File**: `docs/to-do/ml_manager_specs.md` (this file)
+
+Update remaining sections to reflect PortfolioManager instead of MLManager.
+
+---
+
+## Total Estimated Effort
+
+| Phase | Description | Hours |
+|-------|-------------|-------|
+| 1 | BaseModel with Internal Bias Nodes | 4-5 |
+| 2 | Ensemble with BaseModel Management | 3-4 |
+| 3 | Portfolio with fit() and predict() | 2-3 |
+| 4 | PortfolioManager Implementation | 2-3 |
+| 5 | Contract Specs and PositionSizer | 1-2 |
+| 6 | Integration Tests | 3-4 |
+| 7 | Documentation Updates | 1-2 |
+| **Total** | | **16-23 hours** |
+
+**Timeline**: ~2-3 days of focused work
+
+---
+
+## Success Criteria
+
+- ✅ Base models own and manage their bias nodes internally
+- ✅ Ensembles create base models from feature control files
+- ✅ Portfolio has fit() and predict() methods accepting DataFrames
+- ✅ PortfolioManager coordinates multiple portfolios
+- ✅ PortfolioManager owns PositionSizer for contract conversion
+- ✅ No centralized bias node configuration needed
+- ✅ Easy experimentation with DataFrame-based API
+- ✅ Full unit test coverage (>90%)
+- ✅ Integration tests pass
+- ✅ Documentation complete with examples
+
+---
+
+**End of Specification Document**
     self.portfolios = portfolios
     self.position_sizer = position_sizer
     self.build_matrix = build_matrix

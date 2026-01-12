@@ -3,8 +3,8 @@
 > **📖 This Document**: Context, design principles, formulas, and examples  
 > **🔨 For Implementation**: See [implementation_specs.md](./implementation_specs.md)
 
-**Version**: 4.0.0  
-**Date**: 2025-01-08  
+**Version**: 6.0.0  
+**Date**: 2025-01-09  
 **Status**: Specification (Context & Design)  
 **Implementation**: See `implementation_specs.md`
 
@@ -14,6 +14,8 @@
 - **v3.2.0**: Removed forecast scalar (redundant - multiply by 10 then divide by 10). Raw forecasts in [0, 1] are used directly as multipliers. Removed forecast capping (max raw forecast is 1.0, so no capping needed).
 - **v3.3.0**: Updated to use Carver's blended volatility estimate (70% EWMA-32 + 30% 10-year average) instead of simple EWSD-30. Added comprehensive unit testing guide with buy/hold scenarios for easier validation.
 - **v4.0.0**: Split into two documents: `forecast_specs.md` (context, design, formulas, examples) and `implementation_specs.md` (concrete build tasks, method signatures, unit tests). Better organization for understanding vs. building.
+- **v5.0.0**: **MAJOR RESTRUCTURE**: Ensembles now perform risk management per base model (volatility scaling). New Weight layer combines all base model forecasts using weight vector (inverse correlation). Portfolio layer becomes minimal (mostly pass-through). This solves signal dilution when ensembles have different numbers of base models.
+- **v6.0.0**: **FDM & IDM SEPARATION**: Split single DM into FDM (Forecast Diversification Multiplier) at Weight layer and IDM (Instrument Diversification Multiplier) at Portfolio layer, following Carver's approach. FDM based on forecast value correlations, IDM based on instrument return correlations.
 
 ---
 
@@ -22,11 +24,12 @@
 1. [Architecture Overview](#architecture-overview)
 2. [Layer 1: Base Models](#layer-1-base-models)
 3. [Layer 2: Ensemble](#layer-2-ensemble)
-4. [Layer 3: Portfolio](#layer-3-portfolio)
-5. [Layer 4: Execution](#layer-4-execution)
-6. [Complete Workflow Example](#complete-workflow-example)
-7. [Practical Guide: Tuning Diversification Multiplier (DM)](#practical-guide-tuning-diversification-multiplier-dm)
-8. [Unit Testing Guide: Buy/Hold Scenarios](#unit-testing-guide-buyhold-scenarios)
+4. [Layer 3: Weight Layer](#layer-3-weight-layer)
+5. [Layer 4: Portfolio](#layer-4-portfolio)
+6. [Layer 5: Execution](#layer-5-execution)
+7. [Complete Workflow Example](#complete-workflow-example)
+8. [Practical Guide: Tuning Diversification Multiplier (DM)](#practical-guide-tuning-diversification-multiplier-dm)
+9. [Unit Testing Guide: Buy/Hold Scenarios](#unit-testing-guide-buyhold-scenarios)
 
 ---
 
@@ -43,21 +46,30 @@ Our system follows a **functional, layered architecture** where each layer has a
 │  ├─ Input:  Raw features (EWMAC, RSI, Momentum, etc.)      │
 │  └─ Output: Binary signals {0, 1}                           │
 │                                                              │
-│  Layer 2: Ensemble                                           │
+│  Layer 2: Ensemble (Risk Management per Model)               │
 │  ├─ Input:  Binary signals from base models                 │
-│  └─ Output: Raw forecast scores [0, 1], exposure fraction   │
+│  ├─ Process: Volatility scaling per base model             │
+│  │           (assumes signal=1, uses model's avg exposure)  │
+│  └─ Output: Vector of forecasts (one per base model)        │
 │                                                              │
-│  Layer 3: Portfolio (Risk Management Hub)                    │
-│  ├─ Input:  Raw forecasts, volatility (blended)            │
-│  ├─ Process: Vol-scale, DM                                 │
+│  Layer 3: Weight Layer (Signal Combination)                 │
+│  ├─ Input:  Forecast vectors from all ensembles             │
+│  ├─ Process: Combine using weight vector                   │
+│  │           Apply FDM (forecast value correlations)       │
+│  └─ Output: Combined forecast per instrument (FDM-scaled)   │
+│                                                              │
+│  Layer 4: Portfolio (Minimal - Pass-through)                │
+│  ├─ Input:  Combined forecasts (FDM-scaled)                │
+│  ├─ Process: Instrument weighting, IDM, capping (optional) │
 │  └─ Output: Position fractions (% of capital)               │
 │                                                              │
-│  Layer 4: Execution                                          │
+│  Layer 5: Execution                                          │
 │  ├─ Input:  Position fractions, contract specs              │
 │  └─ Output: Number of contracts to trade                    │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
+
 
 ### Design Principles
 
@@ -66,76 +78,104 @@ Our system follows a **functional, layered architecture** where each layer has a
 3. **Immutable Data**: Use frozen dataclasses and return new objects
 4. **Type Safety**: Full type hints on all interfaces
 5. **Testability**: Each layer can be tested independently
-6. **Portfolio as Risk Hub**: All standardization, scaling, and diversification happens at portfolio level
-   - **Why**: Ensembles already use inverse correlation weights for base model diversification
-   - **Benefit**: Cleaner separation - ensembles combine signals, portfolio manages risk
-   - **Simplicity**: Single point of control for all risk parameters (DM, caps)
+6. **Ensemble as Risk Manager**: Each ensemble performs risk management on its base models
+7. **Weight Layer for Combination**: All base model forecasts are combined at weight layer using pluggable methods
 
-### Key Architectural Decision: Diversification at Portfolio Level
+### Key Architectural Decision: Risk Management at Ensemble Level
 
-**Why move diversification and capping to Portfolio?**
+**Why move risk management to Ensemble layer?**
 
-1. **Inverse correlation weights already handle base model diversification**
-   - Ensemble layer calculates sophisticated weights based on signal correlations
-   - These weights naturally boost diversification benefits
-   - Adding diversification scaling at ensemble level would be redundant
+1. **Solves Signal Dilution Problem**
+   - **Problem**: If Ensemble A has 10 base models and Ensemble B has 2 base models, averaging ensemble forecasts causes signal dilution
+   - **Example**: All A active (10/10) + half B active (1/2) → average = 0.75, even though 11/12 models are active
+   - **Solution**: Don't combine at ensemble level. Instead, output vector of forecasts (one per base model) and combine all base models at weight layer
 
 2. **Cleaner separation of concerns**
-   - **Ensemble**: "Which signals should I combine?"
-   - **Portfolio**: "How much risk should I take?"
+   - **Ensemble**: "How much risk per base model?" (volatility scaling per model)
+   - **Weight Layer**: "How to combine all base models?" (inverse correlation, linear model, etc.)
+   - **Portfolio**: "How to allocate across instruments?" (instrument weighting, capping)
    
-3. **Single point of control**
-   - All risk parameters (DM, position_cap) managed in one place
-   - Easier to tune and backtest
-   - Clearer for ensemble averaging (raw [0,1] range is natural to average)
+3. **Pluggable combination methods**
+   - Weight layer can use different methods: inverse correlation, linear models, ML models
+   - Easy to experiment with different combination strategies
+   - Ensembles just organize similar signals, don't combine them
 
-4. **Matches Carver's philosophy**
-   - Carver applies diversification multipliers after combining forecasts, not during signal generation
-   - Our portfolio layer is analogous to Carver's position sizing system
+4. **Per-model risk management**
+   - Each base model gets its own volatility-adjusted forecast
+   - Uses model's average exposure fraction for proper scaling
+   - More granular control over risk allocation
 
-### Diversification Multiplier (DM)
+### Forecast Diversification Multiplier (FDM)
 
-**Purpose**: The Diversification Multiplier (DM) is a **scaling factor** that increases position sizes to account for diversification benefits, allowing us to hit our target portfolio volatility.
+**Purpose**: The Forecast Diversification Multiplier (FDM) is a **scaling factor** applied at the Weight layer that increases combined forecast strength to account for diversification benefits when multiple base model forecasts are combined.
 
 **The Problem Without It**:
-- If we treat all strategies and instruments as if they were perfectly correlated, we under-allocate capital
-- Example: 10 uncorrelated strategies across 5 instruments have much lower portfolio volatility than if they were perfectly correlated
-- Without scaling up, we'd miss our target volatility (e.g., target 20%, realize only 10%)
+- When multiple base model forecasts are combined, the resulting combined forecast is typically weaker than if all models agreed perfectly
+- Example: 10 base models with average correlation 0.3 → combined forecast is "muffled" by diversification
+- Without FDM, we under-utilize the signal strength of our base models
 
 **The Solution**:
-- **DM** accounts for diversification across:
-  - Base models within ensembles (inverse correlation weights already help)
-  - Multiple ensembles (different trading styles)
+- **FDM** accounts for diversification across:
+  - Base models within ensembles
+  - Base models across different ensembles
+  - Low correlation between forecast values (not just signals)
+
+**Calculation Method** (Carver's Approach):
+- Based on **correlation matrix of forecast values** (not binary signals)
+- Calculated during `fit()` from training data
+- Formula: $\text{FDM} = \sqrt{\frac{1}{\bar{\rho} + \epsilon}}$ where $\bar{\rho}$ is mean forecast correlation
+- **Capped at 2.0** to prevent excessive scaling
+
+**Typical Values** (from Carver):
+- 2 trading rules: ~1.02 FDM
+- 6 trading rules: ~1.27 FDM
+- 30 trading rules: ~1.81 FDM
+
+**Key Insight**: FDM is **global** (same for all instruments) because it's about how forecasts combine, not instrument-specific properties.
+
+### Instrument Diversification Multiplier (IDM)
+
+**Purpose**: The Instrument Diversification Multiplier (IDM) is a **scaling factor** applied at the Portfolio layer that increases position sizes to account for portfolio-level diversification benefits across multiple instruments.
+
+**The Problem Without It**:
+- A diversified portfolio of many instruments has lower realized volatility than the sum of individual instrument risks
+- Example: 10 uncorrelated instruments → portfolio volatility much lower than if perfectly correlated
+- Without IDM, we'd miss our target portfolio volatility (e.g., target 20%, realize only 12%)
+
+**The Solution**:
+- **IDM** accounts for diversification across:
   - Different instruments (NQ, ES, GC, CL)
   - Different asset classes (equities, commodities, FX)
-  - Low correlation between strategies and instruments
+  - Low correlation between instrument returns
 
-**Why a Single Multiplier?**
-- **Simpler**: One parameter instead of two (FDM and IDM)
-- **Same goal**: Both strategy and instrument diversification reduce portfolio volatility
-- **Easier to tune**: Fit directly from past performance
-- **Less overfitting risk**: Single parameter is less prone to overfitting than multiple correlated parameters
+**Calculation Method** (Carver's Approach):
+- Based on **correlation matrix of instrument returns** (not forecasts)
+- Calculated during `fit()` from historical returns
+- Formula: $\text{IDM} = \sqrt{\frac{1}{\bar{\rho} + \epsilon}}$ where $\bar{\rho}$ is mean return correlation
+- **Capped at 2.5** to prevent excessive leverage
 
-**Implementation Strategy** (Simple Fitting from Past Performance):
+**Typical Values** (from Carver):
+- 2 instruments: ~1.20 IDM
+- 10 instruments: ~2.20 IDM
+- 30+ instruments: ~2.50 IDM (capped)
 
-1. **Phase 1: Start Conservative** (Initial)
-   - DM = 1.0 (no scaling)
-   - Run backtests and measure realized volatility
-   - Likely outcome: Under-allocation (realized vol < target vol)
+**Key Insight**: IDM is **global** (applied to all instruments) because it's a portfolio-level property, not instrument-specific.
 
-2. **Phase 2: Simple Fitting** (Recommended)
-   - Calculate optimal DM from backtest results:
-     $$\text{DM}_{\text{optimal}} = \frac{\text{target volatility}}{\text{realized volatility}}$$
-   - This is a trivial form of fitting that won't overfit
-   - Example: Target 20%, Realized 12% → DM = 1.67
-   - Re-run backtests with fitted DM to validate
+### Why Two Separate Multipliers?
 
-3. **Phase 3: Refinement** (Optional)
-   - Monitor realized volatility over time
-   - Adjust DM if portfolio composition changes significantly
-   - Can use rolling window to adapt to changing market conditions
+**Separation of Concerns**:
+- **FDM**: Handles forecast-level diversification (how signals combine)
+- **IDM**: Handles instrument-level diversification (how instruments combine)
 
-**Key Insight**: This is a **simple tuning parameter** that can be directly estimated from past performance. The fitting is trivial (one division) and won't overfit because it's just scaling to match a target.
+**Different Data Sources**:
+- **FDM**: Uses forecast value correlations (from Weight layer training)
+- **IDM**: Uses instrument return correlations (from Portfolio historical data)
+
+**Different Caps**:
+- **FDM**: Capped at 2.0 (forecast strength restoration)
+- **IDM**: Capped at 2.5 (portfolio leverage control)
+
+**Mathematical Correctness**: While multiplication is commutative, separating FDM and IDM makes the logic clearer and aligns with Carver's proven framework.
 
 ### Weighting Strategy
 
@@ -159,7 +199,7 @@ Our system follows a **functional, layered architecture** where each layer has a
 $$\sigma_{\text{blended}} = 0.70 \times \sigma_{\text{short}} + 0.30 \times \sigma_{\text{long}}$$
 
 Where:
-- $\sigma_{\text{short}}$: **Short-run estimate** = Exponentially Weighted Moving Average (EWMA) with **32-day span**
+- $\sigma_{\text{short}}$: **Short-run estimate** = Exponentially Weighted Standard Deviation (EWSD) with **32-day span**
 - $\sigma_{\text{long}}$: **Long-run estimate** = **10-year rolling average**
 
 **Why This Matters**:
@@ -236,111 +276,97 @@ Where:
 
 ### Responsibility
 
-**Combine base model signals** into a standardized forecast score that represents signal strength.
+**Perform risk management on each individual base model** and output a vector of volatility-adjusted forecasts (one per base model). Ensembles organize similar signals together but do NOT combine them.
 
 ### Current Implementation
 
-⚠️ **Status**: Needs refactoring (currently does volatility scaling, which should be at Portfolio layer)
+⚠️ **Status**: Needs major refactoring - now performs risk management per base model instead of combining signals
 
 ### Input
 
 From predict():
 - `X`: DataFrame with raw features
 - `ticker`: Instrument ticker symbols
+- `volatility`: Blended volatility per instrument (annualized, 70% EWMA-32 + 30% 10-year average)
 - `normalization_data`: Optional normalization data for base models
 
 ### Output
 
 DataFrame with columns:
 - `ticker`: Instrument identifier
-- `forecast_score`: Raw combined forecast (unitless, avg ≈ $\bar{h}$, range [0, 1])
-- `exposure_fraction`: Average exposure fraction $\bar{h}$
+- `model_name`: Base model identifier (one row per base model)
+- `forecast`: Volatility-adjusted forecast for this base model (0 if signal inactive)
+- `signal`: Binary signal from base model {0, 1}
+
+**Key Change**: Output is now a **vector** (one row per base model) instead of a single combined forecast.
+
+**Note**: Exposure fraction $h_i$ is used internally to calculate the forecast but is not included in the output (it's already incorporated into the forecast value).
 
 ### Formula
 
-#### Step 1: Combine Binary Signals
+#### Step 1: Get Binary Signals from Base Models
 
-For each instrument at time $t$:
+For each base model $i$ at time $t$:
+- $X_{i,t} \in \{0, 1\}$: Binary signal from base model $i$
 
-$$F_{\text{raw}} = \sum_{i=1}^{N_{\text{models}}} X_{i,t} \cdot w_i$$
+#### Step 2: Calculate Volatility-Adjusted Forecast Per Model
+
+For each base model $i$, calculate the forecast assuming signal=1:
+
+$$F_{i,\text{vol-adjusted}} = \frac{\tau}{\sigma_{\text{blended}} \times \sqrt{h_i}}$$
 
 Where:
-- $X_{i,t} \in \{0, 1\}$: Binary signal from base model $i$ at time $t$
-- $w_i$: Diversification weight for model $i$
-- $\sum_{i=1}^{N} w_i = 1$: Weights sum to 1
+- $\tau$: Target annual portfolio volatility (e.g., 0.20 = 20%)
+- $\sigma_{\text{blended}}$: Instrument's blended annualized volatility (70% EWMA-32 + 30% 10-year average)
+- $h_i$: Exposure fraction for model $i$ (fraction of time in market, typically $\approx \frac{1}{n\_bins}$)
 
-#### Step 2: Calculate Diversification Weights
+**Intuition**: This calculates the position size we would take if this model's signal were active (signal=1). The $\sqrt{h_i}$ adjustment accounts for sparse signals having lower realized volatility.
 
-Weights are based on **inverse correlation** between models (sophisticated approach that automatically adapts to signal correlations):
+#### Step 3: Apply Signal
 
-$$w_i = \frac{d_i}{\sum_{j=1}^{N} d_j}$$
+For each base model $i$:
 
-Where diversification score:
+$$F_i = \begin{cases}
+F_{i,\text{vol-adjusted}} & \text{if } X_{i,t} = 1 \\
+0 & \text{if } X_{i,t} = 0
+\end{cases}$$
 
-$$d_i = \frac{1}{1 + \bar{\rho}_i}$$
+**Key Design Decision**: We calculate the forecast assuming signal=1, then multiply by the actual signal. This ensures inactive models contribute 0, while active models contribute their full volatility-adjusted forecast.
 
-And $\bar{\rho}_i$ is the average absolute correlation between model $i$ and all other models.
+#### Step 4: Return Vector of Forecasts
 
-**Calculation method**:
-1. Build correlation matrix of binary signals $X_i$ over training period
-2. For each model $i$, calculate average absolute correlation with all other models
-3. Convert to diversification score (inverse relationship)
-4. Normalize to sum to 1.0
+Output one row per base model with:
+- `forecast`: $F_i$ (volatility-adjusted forecast, 0 if signal inactive)
+- `signal`: $X_{i,t}$ (binary signal)
 
-**Key Insight**: This inverse correlation weighting **already accounts for diversification** at the base model level. Models with lower correlation to others get higher weights, naturally boosting diversification benefits.
+**Note**: Exposure fraction $h_i$ is used internally in Step 2 to calculate the forecast but is not included in the output. The forecast already incorporates the exposure adjustment via $\sqrt{h_i}$.
 
-**Note**: This approach is calculated during `fit()` and stored for use in `predict()`.
-
-#### Step 3: Calculate Average Exposure
-
-**Note**: This step is **our addition** to Carver's framework. Carver doesn't explicitly track exposure fraction during forecast generation, but we calculate it here for use in volatility scaling at the Portfolio layer.
-
-For active signals only:
-
-$$\bar{h}_t = \frac{1}{N_{\text{active}}} \sum_{i: X_{i,t}=1} h_i$$
-
-Where $h_i$ is the exposure fraction for model $i$ (fraction of time in market).
-
-**Why we track this**: When we later apply volatility scaling at the Portfolio layer, we need to account for the fact that sparse signals (low $h_i$) have lower realized volatility, requiring position size adjustment via $\sqrt{h}$.
-
-#### Step 4: Return Forecast Score (No Scaling, No Capping)
-
-$$F_{\text{ensemble}} = F_{\text{raw}}$$
-
-**Key Design Decision**: We do **NOT** apply any scaling, diversification multiplier, or capping at the ensemble layer. The raw forecast is passed directly to the Portfolio layer.
-
-**Why**:
-- **Weights sum to 1.0**: Since $\sum w_i = 1$, the raw forecast $F_{\text{raw}} \in [0, 1]$ with average ≈ $\bar{h}$ (exposure fraction)
-- **Diversification already handled**: Inverse correlation weights already account for base model diversification
-- **Cleaner separation**: Portfolio layer handles all scaling and diversification multipliers
-- **Ensemble averaging**: Averaging forecasts across ensembles at portfolio level works naturally with raw [0,1] range
-- **No scaling needed**: Raw forecasts can be used directly as multipliers for position sizing
+**Why Vector Output**: This allows the Weight layer to combine all base models from all ensembles using a weight vector, avoiding signal dilution when ensembles have different numbers of base models.
 
 ### Key Parameters
 
-- `target_volatility`: **REMOVED** (moves to Portfolio layer)
-- `dm`: **REMOVED** (moves to Portfolio layer)
-- **Note**: No scaling or capping needed - raw forecasts in [0, 1] are used directly
+- `target_volatility` ($\tau$): Annual portfolio volatility target (default: 0.20)
+- **Note**: Volatility calculation happens in Ensemble layer (not Portfolio)
 
 ### Implementation Notes
 
 #### What Changes from Current Code
 
+**Add to Ensemble**:
+- ✅ `volatility` parameter in predict()
+- ✅ `target_volatility` parameter
+- ✅ Volatility scaling per base model
+- ✅ Vector output (one row per base model)
+- ✅ Model name tracking in output
+
 **Remove from Ensemble**:
-- ❌ Volatility parameter in predict()
-- ❌ Division by instrument volatility
-- ❌ Multiplication by instrument weights
-- ❌ Target volatility usage
-- ❌ Diversification multiplier calculation and application
-- **Note**: No scaling or capping needed - raw forecasts in [0, 1] are used directly
+- ❌ Signal combination (moves to Weight layer)
+- ❌ Inverse correlation weights (moves to Weight layer)
+- ❌ Combined forecast calculation
 
 **Keep in Ensemble**:
-- ✅ Inverse correlation weight calculation during `fit()`
-- ✅ Binary signal combination using weights
-- ✅ Exposure fraction tracking
-
-**Add to Ensemble**:
-- ✅ Return raw forecast (no scaling) with exposure fraction
+- ✅ Base model signal generation
+- ✅ Exposure fraction tracking per model
 
 #### Method Signatures
 
@@ -349,55 +375,229 @@ def predict(
     self,
     X: pd.DataFrame,
     ticker: pd.Series,
+    volatility: Union[pd.Series, Dict[str, float]],  # Blended volatility per instrument
     normalization_data: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
-    Returns: DataFrame(['ticker', 'forecast_score', 'exposure_fraction'])
+    Returns: DataFrame(['ticker', 'model_name', 'forecast', 'signal'])
     
     Where:
-    - forecast_score: Raw combined signal in [0, 1] range
-    - exposure_fraction: Average h across active models
+    - ticker: Instrument identifier
+    - model_name: Base model identifier
+    - forecast: Volatility-adjusted forecast (0 if signal inactive)
+      This already incorporates exposure adjustment via sqrt(h_i)
+    - signal: Binary signal {0, 1}
+    
+    Note: One row per base model (vector output, not combined)
+    Note: Exposure fraction h_i is used internally but not included in output
     """
 ```
 
 ### Notes
 
-- Ensemble knows **which signals to combine** but not **portfolio risk targets** or **scaling factors**
-- Forecast scores are raw weighted sums in [0, 1] range (since weights sum to 1)
-- Inverse correlation weighting handles base model diversification
-- All standardization, scaling, and diversification multipliers happen at Portfolio layer
-- Multiple ensembles can be averaged naturally at Portfolio layer
+- Ensemble performs **risk management per base model**, not signal combination
+- Output is a **vector** (one forecast per base model), not a single combined forecast
+- Volatility calculation happens here (not in Portfolio)
+- Ensembles organize similar signals but don't combine them
+- All base models from all ensembles are combined later at Weight layer
+- This design solves signal dilution when ensembles have different numbers of base models
 
 ---
 
-## Layer 3: Portfolio
+## Layer 3: Weight Layer
 
 ### Responsibility
 
-**Convert forecast scores to position fractions** by applying volatility scaling and portfolio-level risk management.
-
-**Key Design**: Each Portfolio manages ONE trading timeframe only. For multi-timeframe trading, use multiple Portfolio instances.
+**Combine forecasts from all base models across all ensembles** using a weight vector. This is where signal combination happens.
 
 ### Current Implementation
 
-⚠️ **Status**: Needs enhancement (currently just averages predictions without volatility scaling)
+🆕 **Status**: New component to be created
 
 ### Input
 
-From predict():
-- `X`: Feature matrix
-- `ticker`: Instrument tickers
-- `volatility`: Blended volatility per instrument (annualized, 70% EWMA-32 + 30% 10-year average)
-- `normalization_data`: For ensemble base models
-
-**Note**: `timeframe` parameter is removed - Portfolio now knows its trading timeframe via constructor.
+From combine():
+- `forecast_vectors`: List of DataFrames from all ensembles
+  - Each DataFrame has columns: `['ticker', 'model_name', 'forecast', 'signal']`
+  - One row per base model
 
 ### Output
 
 DataFrame with columns:
 - `ticker`: Instrument identifier
-- `forecast_score`: Average forecast across ensembles
-- `position_fraction`: Fraction of capital to allocate (% as decimal)
+- `forecast_score`: Combined forecast (weighted sum of all base model forecasts)
+
+### Formula
+
+#### Step 1: Collect All Base Model Forecasts
+
+For each instrument, collect forecasts from **all base models across all ensembles**:
+
+$$\mathbf{F} = [F_1, F_2, \ldots, F_N]$$
+
+Where $N$ is the total number of base models across all ensembles.
+
+#### Step 2: Calculate Weight Vector
+
+Weights are based on **inverse correlation** between base models (sophisticated approach that automatically adapts to signal correlations):
+
+$$w_i = \frac{d_i}{\sum_{j=1}^{N} d_j}$$
+
+Where diversification score:
+
+$$d_i = \frac{1}{1 + \bar{\rho}_i}$$
+
+And $\bar{\rho}_i$ is the average absolute correlation between base model $i$ and all other base models.
+
+**Calculation method**:
+1. Build correlation matrix of binary signals from all base models over training period
+2. For each base model $i$, calculate average absolute correlation with all other base models
+3. Convert to diversification score (inverse relationship)
+4. Normalize to sum to 1.0
+
+**Key Insight**: This inverse correlation weighting **accounts for diversification** across all base models, regardless of which ensemble they belong to. Models with lower correlation to others get higher weights.
+
+**Note**: This approach is calculated during `fit()` and stored for use in `combine()`.
+
+#### Step 3: Combine Forecasts
+
+For each instrument at time $t$:
+
+$$F_{\text{weighted}} = \sum_{i=1}^{N} F_{i,t} \cdot w_i$$
+
+Where:
+- $F_{i,t}$: Volatility-adjusted forecast from base model $i$ (from Ensemble layer, already incorporates exposure adjustment)
+- $w_i$: Weight for base model $i$ (from inverse correlation)
+- $\sum_{i=1}^{N} w_i = 1$: Weights sum to 1
+
+**Note**: No need to track exposure fraction - it's already incorporated into each $F_{i,t}$ via the $\sqrt{h_i}$ adjustment in the Ensemble layer.
+
+#### Step 4: Apply Forecast Diversification Multiplier (FDM)
+
+After combining forecasts, apply FDM to restore forecast strength:
+
+$$F_{\text{combined}} = F_{\text{weighted}} \times \text{FDM}$$
+
+Where:
+- $\text{FDM}$: Forecast Diversification Multiplier (calculated from forecast value correlations during `fit()`)
+- FDM is **global** (same for all instruments) because it's about how forecasts combine
+- **Capped at 2.0** to prevent excessive scaling
+
+**Calculation of FDM** (during `fit()`):
+1. Extract forecast values for all base models from training data
+2. Build correlation matrix of forecast values (not binary signals)
+3. Calculate mean correlation: $\bar{\rho} = \frac{1}{N(N-1)/2} \sum_{i<j} |\rho_{i,j}|$
+4. Calculate FDM: $\text{FDM} = \sqrt{\frac{1}{\bar{\rho} + \epsilon}}$ (with small $\epsilon$ to avoid division by zero)
+5. Cap at 2.0: $\text{FDM} = \min(\text{FDM}, 2.0)$
+6. Floor negative correlations at zero (Carver's recommendation)
+
+**Intuition**: When forecasts are uncorrelated ($\bar{\rho} \approx 0$), FDM is high (~$\sqrt{1/0.01} \approx 10$), but capped at 2.0. When forecasts are highly correlated ($\bar{\rho} \approx 1$), FDM is low (~$\sqrt{1/1} = 1.0$).
+
+### Key Parameters
+
+- `weight_method`: Method for calculating weights (default: 'inverse_correlation')
+  - **'inverse_correlation'**: Use inverse correlation weights (current implementation)
+  - **'linear'**: Use linear model to learn weights (future)
+  - **'ml'**: Use ML model to learn weights (future)
+- `fdm_max`: Maximum FDM value (default: 2.0, following Carver's recommendation)
+
+### Implementation Notes
+
+#### Pluggable Weight Methods
+
+The Weight layer is designed to be **pluggable** - you can swap different combination methods:
+
+```python
+class WeightLayer:
+    def __init__(self, weight_method: str = 'inverse_correlation'):
+        self.weight_method = weight_method
+        if weight_method == 'inverse_correlation':
+            self.weighter = InverseCorrelationWeighter()
+        elif weight_method == 'linear':
+            self.weighter = LinearWeighter()
+        elif weight_method == 'ml':
+            self.weighter = MLWeighter()
+        else:
+            raise ValueError(f"Unknown weight method: {weight_method}")
+```
+
+#### Method Signatures
+
+```python
+def fit(
+    self,
+    forecast_vectors: List[pd.DataFrame],
+    signals: pd.DataFrame  # Binary signals from all base models (for weight calculation)
+) -> 'WeightLayer':
+    """
+    Fit weights and FDM from training data.
+    
+    Parameters
+    ----------
+    forecast_vectors : list[pd.DataFrame]
+        List of forecast vectors from all ensembles (training data)
+        Used for both weight calculation and FDM calculation
+    signals : pd.DataFrame
+        Binary signals from all base models (for inverse correlation weight calculation)
+        Columns: model names, rows: samples
+    
+    Returns
+    -------
+    self
+    """
+
+def combine(
+    self,
+    forecast_vectors: List[pd.DataFrame]
+) -> pd.DataFrame:
+    """
+    Combine forecasts from all base models.
+    
+    Parameters
+    ----------
+    forecast_vectors : list[pd.DataFrame]
+        List of forecast vectors from all ensembles.
+        Each DataFrame has columns: ['ticker', 'model_name', 'forecast', 'signal']
+    
+    Returns
+    -------
+    pd.DataFrame with columns: ['ticker', 'forecast_score']
+    """
+```
+
+### Notes
+
+- Weight layer combines **all base models from all ensembles** (not just within one ensemble)
+- This solves signal dilution: if Ensemble A has 10 models and Ensemble B has 2 models, all 12 models are combined with equal consideration
+- Weights are calculated based on correlations between **all base models**, not just within ensembles
+- Pluggable design allows experimentation with different combination methods
+- Inverse correlation is the default method, but linear models and ML models can be added later
+
+---
+
+## Layer 4: Portfolio
+
+### Responsibility
+
+**Minimal layer** that handles instrument weighting and optional position capping. Most risk management happens at Ensemble layer, and signal combination happens at Weight layer.
+
+**Key Design**: Each Portfolio manages ONE trading timeframe only. For multi-timeframe trading, use multiple Portfolio instances.
+
+### Current Implementation
+
+⚠️ **Status**: Needs simplification (currently does too much - most logic moves to Ensemble and Weight layers)
+
+### Input
+
+From predict():
+- `combined_forecasts`: DataFrame from Weight layer with columns `['ticker', 'forecast_score']`
+
+### Output
+
+DataFrame with columns:
+- `ticker`: Instrument identifier
+- `forecast_score`: Combined forecast from Weight layer (passed through)
+- `position_fraction`: Position fraction after instrument weighting and capping
 
 ### Architecture: Single-Timeframe Portfolio Design ⭐ NEW
 
@@ -446,113 +646,17 @@ In this case, stock indices appear in **both** ensembles, allowing them to benef
 
 ### Formula
 
-#### Step 1: Average Forecasts Across Ensembles (Equal Weight Ensembles)
+#### Step 1: Use Combined Forecast from Weight Layer
 
-For each instrument, average forecasts from **all ensembles that contain it**:
+The Weight layer has already combined all base model forecasts and applied FDM. We use this directly:
 
-$$\bar{F}_{\text{instrument}} = \frac{1}{N_{\text{ensembles,instrument}}} \sum_{j \in \text{ensembles with instrument}} F_{j,\text{instrument}}$$
+$$f_{\text{combined}} = F_{\text{combined}}$$
 
-Where $N_{\text{ensembles,instrument}}$ is the number of ensembles that trade this specific instrument.
+Where $F_{\text{combined}}$ is the combined forecast from Weight layer (already volatility-adjusted, weighted, and FDM-scaled).
 
-**Example**: If NQ appears in "Mean Reversion" and "Momentum" ensembles:
-- Forecast from Mean Reversion: $F_{\text{MR}} = 0.4$ (raw, no scaling)
-- Forecast from Momentum: $F_{\text{MOM}} = 0.3$ (raw, no scaling)
-- Average: $\bar{F}_{\text{NQ}} = \frac{0.4 + 0.3}{2} = 0.35$
+#### Step 2: Apply Instrument Weight
 
-**Key Insight**: This averaging **equates risk across ensembles**. An instrument appearing in 2 ensembles gets the average of both forecasts, not the sum. This prevents instruments in multiple ensembles from being over-weighted.
-
-#### Relationship to Carver's Framework
-
-**Carver's Approach**:
-- Each instrument has its own set of strategies (trading rules)
-- Strategies are excluded per-instrument based on cost thresholds
-- Forecast weights are recalculated per-instrument after exclusions
-
-**Our Adaptation**:
-- Ensembles (like Carver's "trading styles") are equal-weighted
-- Instruments can appear in multiple ensembles (unlike Carver's per-instrument strategy sets)
-- Forecast averaging across ensembles equates risk (similar to Carver's equal strategy weighting)
-- Instrument weights are applied at portfolio level (like Carver's handcrafting)
-
-**Key Difference**: In Carver's system, an instrument only trades strategies that are cost-effective for it. In our system, an instrument can appear in multiple ensembles, and we average the forecasts to prevent over-weighting.
-
-#### Step 2: Use Raw Forecast Directly
-
-Since raw forecasts are already in [0, 1] range and we need a multiplier for position sizing, we can use the raw forecast directly:
-
-$$f_{\text{norm}} = \bar{F}_{\text{instrument}}$$
-
-**Why no scaling needed**: 
-- Raw forecasts are in [0, 1] range (weights sum to 1, signals are binary)
-- We need a multiplier where 1.0 = maximum strength signal
-- The raw forecast already serves this purpose - no need to scale by 10 then divide by 10
-
-**Note**: This is simpler than Carver's approach where he scales to 10 then normalizes. We skip the redundant scaling step.
-
-#### Step 3: Calculate Volatility-Adjusted Position
-
-Apply the **core position sizing formula**:
-
-$$\text{position}_{\text{vol-adjusted}} = f_{\text{norm}} \times \frac{\tau}{\sigma_{\text{blended}} \times \sqrt{\bar{h}}}$$
-
-Where:
-- $f_{\text{norm}}$: Normalized forecast strength
-- $\tau$: Target annual portfolio volatility (e.g., 0.20 = 20%)
-- $\sigma_{\text{blended}}$: Instrument's blended annualized volatility (70% EWMA-32 + 30% 10-year average)
-- $\sqrt{\bar{h}}$: Square root of average exposure fraction
-
-**Intuition**: The $\sqrt{h}$ adjustment accounts for the fact that if you're only in the market 10% of the time ($h = 0.1$), your realized volatility is $\sqrt{0.1} \approx 0.316 \times$ the full-time volatility.
-
-**Why Blended Volatility**: Using Carver's blended estimate (70% short-run, 30% long-run) prevents over-leveraging during quiet periods and provides more robust risk forecasting. See [Blended Volatility Estimate](#blended-volatility-estimate) section for details.
-
-#### Step 4: Apply Diversification Multiplier (DM)
-
-$$\text{position}_{\text{diversified}} = \text{position}_{\text{vol-adjusted}} \times \text{DM}$$
-
-**Purpose**: DM is a **scaling factor** that increases position sizes to account for diversification benefits across:
-- Base models within ensembles (inverse correlation weights already help)
-- Multiple ensembles (different trading styles)
-- Different instruments (NQ, ES, GC, CL)
-- Different asset classes (equities, commodities, FX)
-- Low correlation between strategies and instruments
-
-**Why we need this**: Without DM, we would be treating all strategies and instruments as if they were perfectly correlated, leading to under-allocation. Since our strategies and instruments are **not perfectly correlated**, we can take **larger positions** while maintaining the same risk level. This scaling factor allows us to **hit our target portfolio volatility**.
-
-**Simple Fitting from Past Performance** (Recommended):
-
-The optimal DM can be directly estimated from backtest results:
-
-$$\text{DM}_{\text{optimal}} = \frac{\text{target volatility}}{\text{realized volatility}}$$
-
-**Process**:
-1. Run backtest with DM = 1.0 (no scaling)
-2. Measure realized portfolio volatility
-3. Calculate: $\text{DM} = \frac{0.20}{\text{realized\_vol}}$ (if target is 20%)
-4. Re-run backtest with fitted DM to validate
-
-**Why this works**:
-- **Trivial fitting**: Just one division, no complex optimization
-- **Won't overfit**: Single parameter, directly related to target metric
-- **Intuitive**: If realized vol is half of target, double the positions (DM = 2.0)
-- **Robust**: Works well in practice and is easy to understand
-
-**Initial Implementation**:
-
-$$\text{DM} = 1.0 \quad \text{(no scaling, conservative)}$$
-
-Start with DM = 1.0, then fit from backtest results.
-
-**Typical values** (for reference):
-- Single strategy, single instrument: DM = 1.0
-- Multiple strategies, single instrument: DM ≈ 1.2-1.8
-- Multiple strategies, multiple instruments: DM ≈ 1.5-2.5
-- Highly diversified portfolio: DM ≈ 2.0-3.0
-
-**Note**: This is a **simple tuning parameter** that can be directly estimated from past performance. The fitting is trivial and won't overfit.
-
-#### Step 5: Apply Instrument Weight
-
-$$\text{position}_{\text{weighted}} = \text{position}_{\text{diversified}} \times w_{\text{instrument}}$$
+$$\text{position}_{\text{weighted}} = f_{\text{combined}} \times w_{\text{instrument}}$$
 
 Where $w_{\text{instrument}}$ is the allocation weight for this instrument.
 
@@ -560,7 +664,7 @@ Where $w_{\text{instrument}}$ is the allocation weight for this instrument.
 
 $$w_{\text{instrument}} = \frac{1}{N_{\text{instruments}}}$$
 
-Where $N_{\text{instruments}}$ is the total number of unique instruments across all ensembles.
+Where $N_{\text{instruments}}$ is the total number of unique instruments.
 
 **Future Implementation - Carver-Style Handcrafting** (top-down allocation):
 
@@ -576,52 +680,62 @@ Where $N_{\text{instruments}}$ is the total number of unique instruments across 
 3. **Instrument Level**: Within each group, divide equally among instruments
    - Indices → NQ: 5.6%, ES: 5.6%, YM: 5.6%
 
-**Note**: These weights are **risk-agnostic**. Volatility scaling (Step 3) handles risk adjustment, so a low-volatility bond and high-volatility crypto can receive the same weight.
+**Note**: These weights are **risk-agnostic**. Volatility scaling already happened at Ensemble layer.
 
-#### Step 6: Cap Position
+#### Step 3: Apply Instrument Diversification Multiplier (IDM)
 
-$$\text{position}_{\text{final}} = \min(\text{position}_{\text{weighted}}, \text{position}_{\text{max}})$$
+After instrument weighting, apply IDM to account for portfolio-level diversification:
+
+$$\text{position}_{\text{idm}} = \text{position}_{\text{weighted}} \times \text{IDM}$$
+
+Where:
+- $\text{IDM}$: Instrument Diversification Multiplier (calculated from instrument return correlations during `fit()`)
+- IDM is **global** (applied to all instruments) because it's a portfolio-level property
+- **Capped at 2.5** to prevent excessive leverage
+
+**Calculation of IDM** (during `fit()`):
+1. Get historical returns for all instruments in the portfolio
+2. Build correlation matrix of instrument returns
+3. Calculate mean correlation: $\bar{\rho} = \frac{1}{N(N-1)/2} \sum_{i<j} |\rho_{i,j}|$
+4. Calculate IDM: $\text{IDM} = \sqrt{\frac{1}{\bar{\rho} + \epsilon}}$ (with small $\epsilon$ to avoid division by zero)
+5. Cap at 2.5: $\text{IDM} = \min(\text{IDM}, 2.5)$
+6. Floor negative correlations at zero (Carver's recommendation)
+
+**Intuition**: When instruments are uncorrelated ($\bar{\rho} \approx 0$), IDM is high, allowing more leverage safely. When instruments are highly correlated ($\bar{\rho} \approx 1$), IDM is low (~1.0), indicating less diversification benefit.
+
+#### Step 4: Cap Position (Optional)
+
+$$\text{position}_{\text{final}} = \min(\text{position}_{\text{idm}}, \text{position}_{\text{max}})$$
 
 Where $\text{position}_{\text{max}}$ is the maximum position size (e.g., 2.0 = 200% of average risk).
 
 ### Complete Formula
 
-Combining all steps:
-
 $$\boxed{
 \text{position\_fraction} = \min\left(
-  \bar{F} \times \frac{\tau}{\sigma_{\text{blended}} \times \sqrt{\bar{h}}} \times \text{DM} \times w_{\text{instr}}, 
-  \text{position}_{\text{max}}
-\right)
-}$$
-
-**Simplified notation**:
-
-$$\boxed{
-\text{position\_fraction} = \min\left(
-  f_{\text{norm}} \times \frac{\tau}{\sigma_{\text{blended}} \times \sqrt{\bar{h}}} \times \text{DM} \times w_{\text{instr}}, 
+  F_{\text{combined}} \times w_{\text{instrument}} \times \text{IDM}, 
   \text{position}_{\text{max}}
 \right)
 }$$
 
 Where:
-- $f_{\text{norm}} = \bar{F}$ (raw forecast in [0, 1] range, no scaling needed)
-- $\sigma_{\text{blended}} = 0.70 \times \sigma_{\text{EWMA-32}} + 0.30 \times \sigma_{\text{10-year}}$ (Carver's blended volatility estimate)
+- $F_{\text{combined}}$: Combined forecast from Weight layer (already volatility-adjusted, weighted, and FDM-scaled)
+- $w_{\text{instrument}}$: Instrument allocation weight
+- $\text{IDM}$: Instrument Diversification Multiplier (portfolio-level)
+- $\text{position}_{\text{max}}$: Maximum position size cap
 
 ### Key Parameters
 
-- `target_volatility` ($\tau$): Annual portfolio volatility target (default: 0.20)
-- `dm`: **Diversification Multiplier** (default: 1.0 initially, fit from backtests)
-  - Start conservative at 1.0 (no scaling)
-  - Fit from past performance: $\text{DM} = \frac{\text{target volatility}}{\text{realized volatility}}$
-  - Typical range: 1.0 - 2.5 depending on portfolio diversification
-  - Simple fitting approach won't overfit
-- `max_position_pct`: Maximum position per instrument (default: 2.0)
+- `max_position_pct`: Maximum position per instrument (default: 2.0, optional)
 - `instrument_weights`: Dict mapping ticker → weight (default: equal per instrument)
   - **Current**: Equal weight: $w_{\text{instrument}} = \frac{1}{N_{\text{instruments}}}$
   - **Future**: Carver-style handcrafting by asset class → group → instrument
+- `idm_max`: Maximum IDM value (default: 2.5, following Carver's recommendation)
 
-**Note**: No forecast scalar needed - raw forecasts are in [0, 1] and can be used directly as multipliers for position sizing.
+**Note**: Risk management is distributed across layers:
+- **Ensemble layer**: Volatility scaling per base model
+- **Weight layer**: Forecast combination and FDM application
+- **Portfolio layer**: Instrument weighting, IDM application, and optional capping
 
 ### Implementation Notes
 
@@ -648,73 +762,85 @@ Where:
 ```python
 def __init__(
     self,
-    ensembles: List[Ensemble],  # Changed from Dict[TimeFrame, List[Ensemble]]
-    trading_timeframe: TimeFrame,  # NEW: Explicit trading timeframe
-    target_volatility: float = 0.20,
-    dm: float = 1.0,
-    max_position_pct: float = 2.0,
-    instrument_weights: Optional[Dict[str, float]] = None
+    weight_layer: WeightLayer,  # NEW: Weight layer for combining forecasts
+    trading_timeframe: TimeFrame,  # Explicit trading timeframe
+    max_position_pct: Optional[float] = None,  # Optional position cap
+    instrument_weights: Optional[Dict[str, float]] = None,  # Optional instrument weights
+    idm_max: float = 2.5  # Maximum IDM value (Carver's recommendation)
 ):
     """
     Create a Portfolio for a SINGLE trading timeframe.
     
     Parameters
     ----------
-    ensembles : List[Ensemble]
-        List of ensemble models (no longer organized by timeframe)
+    weight_layer : WeightLayer
+        Weight layer that combines forecasts from all ensembles
     trading_timeframe : TimeFrame
         The timeframe this portfolio trades on (e.g., TimeFrame.D for daily)
-    target_volatility : float
-        Target annual portfolio volatility
-    dm : float
-        Diversification Multiplier
-    max_position_pct : float
-        Maximum position size per instrument
+    max_position_pct : float, optional
+        Maximum position size per instrument. If None, no capping.
     instrument_weights : Dict[str, float], optional
         Weight for each instrument. If None, equal weight.
+    idm_max : float, default=2.5
+        Maximum IDM value (capped to prevent excessive leverage)
     """
 ```
 
 #### Method Signatures
 
 ```python
+def fit(
+    self,
+    instrument_returns: pd.DataFrame  # Historical returns for IDM calculation
+) -> 'Portfolio':
+    """
+    Fit IDM from historical instrument returns.
+    
+    Parameters
+    ----------
+    instrument_returns : pd.DataFrame
+        Historical returns for all instruments.
+        Columns: instrument tickers, rows: time periods
+    
+    Returns
+    -------
+    self
+    """
+
 def predict(
     self,
-    X: pd.DataFrame,
-    ticker: pd.Series,
-    volatility: pd.Series,  # Blended volatility per instrument (70% EWMA-32 + 30% 10-year)
-    normalization_data: Optional[pd.DataFrame] = None
+    combined_forecasts: pd.DataFrame  # From Weight layer
 ) -> pd.DataFrame:
     """
     Returns: DataFrame(['ticker', 'forecast_score', 'position_fraction'])
     
-    Note: timeframe parameter removed - Portfolio knows its trading timeframe
+    Parameters
+    ----------
+    combined_forecasts : pd.DataFrame
+        Combined forecasts from Weight layer with columns:
+        ['ticker', 'forecast_score']
+        (Already FDM-scaled)
     """
 ```
 
 ### Notes
 
-- **Single-timeframe design**: Each Portfolio manages ONE trading timeframe only ⭐ NEW
+- **Minimal responsibility**: Portfolio handles instrument allocation, IDM application, and optional capping
+- **Single-timeframe design**: Each Portfolio manages ONE trading timeframe only
   - For multi-timeframe trading, use multiple Portfolio instances
-  - MLManager routes candles to appropriate portfolio based on timeframe
-- Portfolio is the **central hub** for all scaling and diversification
-- Uses raw forecasts directly (no scaling needed - they're already in [0, 1] range)
-- Applies **DM** (diversification multiplier, default 1.0) to scale for all diversification benefits
-  - Accounts for both strategy and instrument diversification
-  - Simple fitting: $\text{DM} = \frac{\text{target volatility}}{\text{realized volatility}}$
-  - Trivial fitting approach won't overfit
-- Uses blended volatility estimate (70% EWMA-32, 30% 10-year average) for robust risk management
-- Position fractions can exceed 1.0 (e.g., 1.5 = 150% of capital allocated)
-- Capping at position level only (e.g., max_position_pct = 2.0)
-- **Ensembles are equal-weighted** (not instruments)
-- **Instruments can appear in multiple ensembles** - forecasts are averaged to equate risk
-- **Instrument weighting**: Currently equal per instrument, future: Carver-style handcrafting by asset class
-- **Clear separation**: Ensemble handles signal combination, Portfolio handles risk management
-- **Simple tuning**: DM is a single parameter that can be directly estimated from past performance
+- **Instrument weighting**: Applies allocation weights across instruments (equal weight by default)
+- **IDM application**: Applies Instrument Diversification Multiplier to account for portfolio-level diversification
+- **Optional capping**: Can cap positions at max_position_pct if specified
+- **No volatility scaling**: Volatility scaling happens at Ensemble layer
+- **No FDM application**: FDM is applied at Weight layer
+- **Clear separation**: 
+  - Ensemble: Risk management per base model (volatility scaling)
+  - Weight Layer: Signal combination and FDM application
+  - Portfolio: Instrument allocation, IDM application, and capping
 
 ---
 
-## Layer 4: Execution
+## Layer 5: Execution
 
 ### Responsibility
 
@@ -787,8 +913,9 @@ N_i = f_{i,t} \times \frac{\tau \times \text{Capital} \times w_i \times \text{DM
 }$$
 
 **Our implementation separates this into**:
-- Forecast generation: $f_{i,t}$ (raw forecast in [0, 1], used directly)
-- Position fraction: $\frac{\tau \times w_i \times \text{DM}}{\sigma\%_i \times \sqrt{h_i}}$
+- Forecast generation: $f_{i,t}$ (volatility-adjusted per base model)
+- Forecast combination: $F_{\text{combined}} = \left(\sum F_i \cdot w_i\right) \times \text{FDM}$ (at Weight layer)
+- Position fraction: $F_{\text{combined}} \times w_{\text{instrument}} \times \text{IDM}$ (at Portfolio layer)
 - Contract sizing: $\frac{\text{position\_fraction} \times \text{Capital}}{\text{Price}_i \times \text{Multiplier}_i \times \text{FX}_i}$
 
 ### Key Parameters
@@ -854,10 +981,11 @@ If $N_{\text{final}} = 0$:
 **Parameters**:
 - Capital: $1,000,000 
 - Target Volatility ($\tau$): 20% annual
-- DM: 3.0 
+- FDM: 1.5 (calculated from forecast correlations, capped at 2.0)
+- IDM: 2.0 (calculated from instrument return correlations, capped at 2.5)
 - Instrument weighting: Equal (5 unique instruments: NQ, ES, YM, GC, CL)
 
-**Note**: This example uses DM=3.0 to demonstrate the full workflow. In initial implementation, start with DM=1.0, then fit from backtest results using $\text{DM} = \frac{\text{target volatility}}{\text{realized volatility}}$. Raw forecasts are used directly (no scaling needed).
+**Note**: This example uses FDM=1.5 and IDM=2.0 to demonstrate the full workflow. In initial implementation, these are calculated from correlation matrices during `fit()`.
 
 **Market Conditions** (for this example):
 - NQ: Strong mean reversion signal, weak momentum
@@ -888,47 +1016,43 @@ signals_MR = [1, 0, 1, 1, 0, 0, 0, 1, 0, 0]  # 4/10 active
 signals_MOM = [0, 0, 0, 1, 0, 0, 1, 0, 0, 0]  # 2/10 active
 ```
 
-##### Layer 2: Ensemble → Forecast Score
+##### Layer 2: Ensemble → Forecast Vectors
 
-**Mean Reversion Ensemble**:
-- Diversification weights: $w = [0.12, 0.08, 0.15, 0.10, 0.09, 0.11, 0.08, 0.13, 0.07, 0.07]$
-- Raw forecast: $F_{\text{raw,MR}} = (1 \times 0.12) + (1 \times 0.15) + (1 \times 0.10) + (1 \times 0.13) = 0.50$
-- Average exposure: $\bar{h}_{\text{MR}} = \frac{4 \times 0.1}{4} = 0.1$
-- **Ensemble output**: $F_{\text{MR}} = 0.50$ (raw, no scaling)
+**Mean Reversion Ensemble** (10 base models, 4 active):
+- Each active model gets volatility-adjusted forecast: $F_i = \frac{0.20}{0.25 \times \sqrt{0.1}} \approx 2.53$
+- **Ensemble output**: Vector of 10 forecasts (4 active with value 2.53, 6 inactive with value 0)
 
-**Momentum Ensemble**:
-- Diversification weights: $w = [0.10, 0.08, 0.12, 0.15, 0.09, 0.11, 0.14, 0.08, 0.07, 0.06]$
-- Raw forecast: $F_{\text{raw,MOM}} = (1 \times 0.15) + (1 \times 0.14) = 0.29$
-- Average exposure: $\bar{h}_{\text{MOM}} = \frac{2 \times 0.1}{2} = 0.1$
-- **Ensemble output**: $F_{\text{MOM}} = 0.29$ (raw, no scaling)
+**Momentum Ensemble** (10 base models, 2 active):
+- Each active model gets volatility-adjusted forecast: $F_i = \frac{0.20}{0.25 \times \sqrt{0.1}} \approx 2.53$
+- **Ensemble output**: Vector of 10 forecasts (2 active with value 2.53, 8 inactive with value 0)
 
-##### Layer 3: Portfolio → Position Fraction
+##### Layer 3: Weight Layer → Combined Forecast
 
-**Step 1: Average across ensembles**:
-$$\bar{F}_{\text{NQ}} = \frac{F_{\text{MR}} + F_{\text{MOM}}}{2} = \frac{0.50 + 0.29}{2} = 0.395$$
+**Step 1: Collect all base model forecasts** (20 total: 10 from MR + 10 from MOM)
 
-**Use raw forecast directly**:
-$$f_{\text{norm}} = \bar{F}_{\text{NQ}} = 0.395$$
+**Step 2: Apply inverse correlation weights**:
+- Weights calculated from signal correlations during `fit()`
+- Weighted sum: $F_{\text{weighted}} = \sum_{i=1}^{20} F_i \cdot w_i \approx 1.52$ (assuming equal weights for simplicity)
 
-**NQ parameters**:
-- Blended volatility: $\sigma_{\text{blended,NQ}} = 0.25$ (25% annualized)
-  - Short-run (EWMA-32): $\sigma_{\text{short}} = 0.24$ (24%)
-  - Long-run (10-year): $\sigma_{\text{long}} = 0.27$ (27%)
-  - Blended: $0.70 \times 0.24 + 0.30 \times 0.27 = 0.25$
-- Average exposure: $\bar{h} = 0.1$ (average of both ensembles)
+**Step 3: Apply FDM**:
+- FDM = 1.5 (calculated from forecast value correlations, capped at 2.0)
+- $F_{\text{combined}} = 1.52 \times 1.5 = 2.28$
 
-**Step 2: Volatility-adjusted position**:
-$$\text{position}_{\text{vol}} = 0.395 \times \frac{0.20}{0.25 \times \sqrt{0.1}} = 0.395 \times 2.53 = 1.00$$
+##### Layer 4: Portfolio → Position Fraction
 
-**Step 3: Apply DM**:
-$$\text{position}_{\text{div}} = 1.00 \times 3.0 = 3.00$$
+**Step 1: Use combined forecast from Weight layer**:
+$$f_{\text{combined}} = 2.28$$
 
-**Step 4: Apply instrument weight** (5 unique instruments, equal weight):
+**Step 2: Apply instrument weight** (5 unique instruments, equal weight):
 $$w_{\text{NQ}} = \frac{1}{5} = 0.20$$
-$$\text{position}_{\text{weighted}} = 3.00 \times 0.20 = 0.60$$
+$$\text{position}_{\text{weighted}} = 2.28 \times 0.20 = 0.456$$
 
-**Step 5: Cap position** (max = 2.0, already below):
-$$\text{position}_{\text{final}} = 0.60$$
+**Step 3: Apply IDM**:
+- IDM = 2.0 (calculated from instrument return correlations, capped at 2.5)
+- $\text{position}_{\text{idm}} = 0.456 \times 2.0 = 0.912$
+
+**Step 4: Cap position** (max = 2.0, already below):
+$$\text{position}_{\text{final}} = 0.912$$
 
 ##### Layer 4: Execution → Number of Contracts
 
@@ -941,18 +1065,18 @@ $$\text{position}_{\text{final}} = 0.60$$
 $$V_{\text{contract}} = 16{,}000 \times 20 \times 1.0 = \$320{,}000$$
 
 **Target allocation**:
-$$D_{\text{target}} = 0.60 \times 1{,}000{,}000 = \$600{,}000$$
+$$D_{\text{target}} = 0.912 \times 1{,}000{,}000 = \$912{,}000$$
 
 **Raw contracts**:
-$$N_{\text{raw}} = \frac{600{,}000}{320{,}000} = 1.875$$
+$$N_{\text{raw}} = \frac{912{,}000}{320{,}000} = 2.85$$
 
 **Rounded contracts**:
-$$N_{\text{final}} = \text{round}(1.875) = 2$$
+$$N_{\text{final}} = \text{round}(2.85) = 3$$
 
 **Actual notional**:
-$$V_{\text{notional}} = 2 \times 320{,}000 = \$640{,}000$$
+$$V_{\text{notional}} = 3 \times 320{,}000 = \$960{,}000$$
 
-**Result**: **2 contracts** (notional: $640k, 64% of capital)
+**Result**: **3 contracts** (notional: $960k, 96% of capital)
 
 ---
 
@@ -1207,108 +1331,45 @@ $$\text{position}_{\text{final}} = \min\left(0.42 \times \frac{0.20}{0.30 \times
 
 ---
 
-## Practical Guide: Tuning Diversification Multiplier (DM)
+## Practical Guide: Calculating FDM and IDM
 
-### Simple Fitting from Past Performance
+### Forecast Diversification Multiplier (FDM)
 
-The DM can be directly estimated from backtest results using a trivial fitting approach that won't overfit.
+FDM is calculated from forecast value correlations during Weight layer `fit()`:
 
-#### Step 1: Initial Backtest (Baseline)
+1. **Extract forecast values** from training data for all base models
+2. **Build correlation matrix** of forecast values (not binary signals)
+3. **Calculate mean correlation**: $\bar{\rho} = \frac{1}{N(N-1)/2} \sum_{i<j} |\rho_{i,j}|$
+4. **Calculate FDM**: $\text{FDM} = \sqrt{\frac{1}{\bar{\rho} + 0.01}}$ (with small epsilon)
+5. **Cap at 2.0**: $\text{FDM} = \min(\text{FDM}, 2.0)$
+6. **Floor negative correlations at zero** (Carver's recommendation)
 
-1. **Set DM to 1.0** (no scaling):
-   ```python
-   portfolio = Portfolio(
-       ensembles=[...],
-       trading_timeframe=TimeFrame.D,
-       target_volatility=0.20,
-       dm=1.0,  # No diversification scaling
-       max_position_pct=2.0
-   )
-   ```
+**Typical Values**:
+- 2 base models: ~1.02 FDM
+- 6 base models: ~1.27 FDM
+- 30 base models: ~1.81 FDM
 
-2. **Run backtest** and measure:
-   - Target volatility: 20% annual
-   - Realized volatility: ? (likely lower, e.g., 10-15%)
-   - Example: Realized = 12%
+### Instrument Diversification Multiplier (IDM)
 
-#### Step 2: Simple Fitting
+IDM is calculated from instrument return correlations during Portfolio `fit()`:
 
-3. **Calculate optimal DM**:
-   ```python
-   dm_optimal = target_volatility / realized_volatility
-   # Example: 0.20 / 0.12 = 1.67
-   ```
+1. **Get historical returns** for all instruments in the portfolio
+2. **Build correlation matrix** of instrument returns
+3. **Calculate mean correlation**: $\bar{\rho} = \frac{1}{N(N-1)/2} \sum_{i<j} |\rho_{i,j}|$
+4. **Calculate IDM**: $\text{IDM} = \sqrt{\frac{1}{\bar{\rho} + 0.01}}$ (with small epsilon)
+5. **Cap at 2.5**: $\text{IDM} = \min(\text{IDM}, 2.5)$
+6. **Floor negative correlations at zero** (Carver's recommendation)
 
-4. **Update portfolio** with fitted DM:
-   ```python
-   portfolio = Portfolio(
-       ensembles=[...],
-       trading_timeframe=TimeFrame.D,
-       target_volatility=0.20,
-       dm=1.67,  # Fitted from backtest
-       max_position_pct=2.0
-   )
-   ```
+**Typical Values**:
+- 2 instruments: ~1.20 IDM
+- 10 instruments: ~2.20 IDM
+- 30+ instruments: ~2.50 IDM (capped)
 
-5. **Re-run backtest** to validate:
-   - Should now realize volatility close to target (e.g., 19-21%)
-   - If still off, fine-tune slightly
+### Alternative: Simple Fitting from Past Performance (Legacy)
 
-#### Step 3: Validation and Monitoring
+For initial validation, you can still use the simple fitting approach:
 
-6. **Check results**:
-   - Realized volatility should be within ±2% of target
-   - Monitor over time - DM may need adjustment if portfolio composition changes
-
-7. **Red flags**:
-   - **Too high**: Realized vol >> target vol (over-leveraged), large drawdowns
-   - **Too low**: Realized vol << target vol (under-utilized), very small positions
-
-### Why This Works
-
-**Trivial Fitting**:
-- Single parameter, single division: $\text{DM} = \frac{\tau}{\sigma_{\text{realized}}}$
-- No complex optimization or multiple parameters
-- Directly related to target metric (volatility)
-
-**Won't Overfit**:
-- One parameter is much less prone to overfitting than multiple correlated parameters
-- The relationship is linear and intuitive
-- Easy to validate on out-of-sample data
-
-**Robust**:
-- Works well in practice
-- Easy to understand and explain
-- Can be updated periodically as portfolio evolves
-
-### Example Tuning Log
-
-```
-Iteration 0 (Baseline):
-  DM = 1.0
-  Target Vol: 20%, Realized Vol: 12%
-  → Under-allocated by 40%
-
-Iteration 1 (Fitted):
-  DM = 0.20 / 0.12 = 1.67
-  Target Vol: 20%, Realized Vol: 19.5%
-  → Good! Within 2% of target
-
-Final value: DM = 1.67
-```
-
-### Optional: Rolling Window Adaptation
-
-For production systems, you can update DM periodically using a rolling window:
-
-```python
-# Every quarter, refit DM from last 6 months of data
-recent_returns = get_recent_returns(window='6M')
-realized_vol = calculate_volatility(recent_returns)
-dm_updated = target_volatility / realized_vol
-```
-
-This allows DM to adapt to changing market conditions while remaining simple and robust.
+**Note**: This approach is simpler but less principled than correlation-based FDM/IDM. Recommended for initial validation only.
 
 ---
 
@@ -1332,11 +1393,12 @@ This makes it much easier to test the position sizing logic without complex sign
 - Exposure: $\bar{h} = 1.0$ (always in market)
 - Target volatility: $\tau = 0.20$ (20%)
 - Instrument volatility: $\sigma_{\text{blended}} = 0.20$ (20%)
-- DM: $1.0$ (no diversification scaling)
+- FDM: $1.0$ (no forecast diversification scaling)
+- IDM: $1.0$ (no instrument diversification scaling)
 - Instrument weight: $w = 1.0$ (single instrument)
 
 **Expected Position**:
-$$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{1.0}} \times 1.0 \times 1.0 = 1.0$$
+$$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{1.0}} \times 1.0 \times 1.0 \times 1.0 = 1.0$$
 
 **Verification**: Position fraction = 1.0 (100% of capital allocated)
 
@@ -1349,11 +1411,12 @@ $$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{1.0}} \times 1.0 \t
 - Exposure: $\bar{h} = 1.0$
 - Target volatility: $\tau = 0.20$ (20%)
 - Instrument volatility: $\sigma_{\text{blended}} = 0.40$ (40% - twice the target)
-- DM: $1.0$
+- FDM: $1.0$
+- IDM: $1.0$
 - Instrument weight: $w = 1.0$
 
 **Expected Position**:
-$$\text{position} = 1.0 \times \frac{0.20}{0.40 \times \sqrt{1.0}} \times 1.0 \times 1.0 = 0.5$$
+$$\text{position} = 1.0 \times \frac{0.20}{0.40 \times \sqrt{1.0}} \times 1.0 \times 1.0 \times 1.0 = 0.5$$
 
 **Verification**: Position fraction = 0.5 (50% of capital allocated)
 
@@ -1366,32 +1429,52 @@ $$\text{position} = 1.0 \times \frac{0.20}{0.40 \times \sqrt{1.0}} \times 1.0 \t
 - Exposure: $\bar{h} = 1.0$
 - Target volatility: $\tau = 0.20$ (20%)
 - Instrument volatility: $\sigma_{\text{blended}} = 0.10$ (10% - half the target)
-- DM: $1.0$
+- FDM: $1.0$
+- IDM: $1.0$
 - Instrument weight: $w = 1.0$
 
 **Expected Position**:
-$$\text{position} = 1.0 \times \frac{0.20}{0.10 \times \sqrt{1.0}} \times 1.0 \times 1.0 = 2.0$$
+$$\text{position} = 1.0 \times \frac{0.20}{0.10 \times \sqrt{1.0}} \times 1.0 \times 1.0 \times 1.0 = 2.0$$
 
 **Verification**: Position fraction = 2.0 (200% of capital - leverage)
 
 **Why this works**: Low volatility instrument allows larger position (with leverage) to maintain target risk.
 
-#### Scenario 4: Diversification Multiplier Effect
+#### Scenario 4: Forecast Diversification Multiplier (FDM) Effect
 
 **Setup**:
-- Forecast: $f_{\text{norm}} = 1.0$
+- Forecast: $f_{\text{norm}} = 1.0$ (after combination)
 - Exposure: $\bar{h} = 1.0$
 - Target volatility: $\tau = 0.20$ (20%)
 - Instrument volatility: $\sigma_{\text{blended}} = 0.20$ (20%)
-- DM: $2.0$ (diversification scaling)
+- FDM: $1.5$ (forecast diversification scaling)
+- IDM: $1.0$
 - Instrument weight: $w = 1.0$
 
 **Expected Position**:
-$$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{1.0}} \times 2.0 \times 1.0 = 2.0$$
+$$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{1.0}} \times 1.5 \times 1.0 \times 1.0 = 1.5$$
 
-**Verification**: Position fraction = 2.0 (200% of capital - scaled by DM)
+**Verification**: Position fraction = 1.5 (150% of capital - scaled by FDM)
 
-**Why this works**: DM increases position size to account for diversification benefits.
+**Why this works**: FDM increases forecast strength to account for diversification when combining multiple base model forecasts.
+
+#### Scenario 4b: Instrument Diversification Multiplier (IDM) Effect
+
+**Setup**:
+- Forecast: $f_{\text{norm}} = 1.0$ (after FDM scaling)
+- Exposure: $\bar{h} = 1.0$
+- Target volatility: $\tau = 0.20$ (20%)
+- Instrument volatility: $\sigma_{\text{blended}} = 0.20$ (20%)
+- FDM: $1.0$
+- IDM: $2.0$ (instrument diversification scaling)
+- Instrument weight: $w = 1.0$
+
+**Expected Position**:
+$$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{1.0}} \times 1.0 \times 2.0 \times 1.0 = 2.0$$
+
+**Verification**: Position fraction = 2.0 (200% of capital - scaled by IDM)
+
+**Why this works**: IDM increases position size to account for portfolio-level diversification benefits.
 
 #### Scenario 5: Sparse Signals (Low Exposure)
 
@@ -1400,11 +1483,12 @@ $$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{1.0}} \times 2.0 \t
 - Exposure: $\bar{h} = 0.1$ (only in market 10% of time)
 - Target volatility: $\tau = 0.20$ (20%)
 - Instrument volatility: $\sigma_{\text{blended}} = 0.20$ (20%)
-- DM: $1.0$
+- FDM: $1.0$
+- IDM: $1.0$
 - Instrument weight: $w = 1.0$
 
 **Expected Position**:
-$$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{0.1}} \times 1.0 \times 1.0 = 1.0 \times \frac{0.20}{0.0632} = 3.16$$
+$$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{0.1}} \times 1.0 \times 1.0 \times 1.0 = 1.0 \times \frac{0.20}{0.0632} = 3.16$$
 
 **Verification**: Position fraction = 3.16 (316% of capital - leverage)
 
@@ -1417,12 +1501,13 @@ $$\text{position} = 1.0 \times \frac{0.20}{0.20 \times \sqrt{0.1}} \times 1.0 \t
 - Exposure: $\bar{h} = 1.0$
 - Target volatility: $\tau = 0.20$ (20%)
 - Instrument volatility: $\sigma_{\text{blended}} = 0.05$ (5% - very low)
-- DM: $1.0$
+- FDM: $1.0$
+- IDM: $1.0$
 - Instrument weight: $w = 1.0$
 - Max position: $2.0$ (200% cap)
 
 **Uncapped Position**:
-$$\text{position}_{\text{uncapped}} = 1.0 \times \frac{0.20}{0.05 \times \sqrt{1.0}} \times 1.0 \times 1.0 = 4.0$$
+$$\text{position}_{\text{uncapped}} = 1.0 \times \frac{0.20}{0.05 \times \sqrt{1.0}} \times 1.0 \times 1.0 \times 1.0 = 4.0$$
 
 **Expected Position** (after capping):
 $$\text{position} = \min(4.0, 2.0) = 2.0$$
@@ -1450,7 +1535,8 @@ def test_buy_hold_baseline():
         exposure=exposure,
         target_vol=target_vol,
         instrument_vol=instrument_vol,
-        dm=dm,
+        fdm=fdm,
+        idm=idm,
         instrument_weight=instrument_weight
     )
     

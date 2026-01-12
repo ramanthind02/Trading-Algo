@@ -3,32 +3,44 @@
 > **🔨 This Document**: Concrete build tasks, method signatures, unit tests, and step-by-step instructions  
 > **📖 For Context**: See [forecast_specs.md](./forecast_specs.md) for design rationale, formulas, and examples
 
-**Version**: 1.0.0  
-**Date**: 2025-01-08  
+**Version**: 3.0.0  
+**Date**: 2025-01-09  
 **Status**: Ready for Implementation
 
 **Purpose**: This document contains the concrete, actionable implementation tasks for building the forecast generation and position sizing system.
+
+**Major Changes (v3.0.0)**:
+- **FDM & IDM SEPARATION**: Split single DM into FDM (Forecast Diversification Multiplier) at Weight layer and IDM (Instrument Diversification Multiplier) at Portfolio layer
+- **FDM**: Calculated from forecast value correlations, applied at Weight layer after forecast combination
+- **IDM**: Calculated from instrument return correlations, applied at Portfolio layer after instrument weighting
+- Follows Carver's proven framework with separate multipliers for forecast-level and instrument-level diversification
+
+**Major Changes (v2.0.0)**:
+- **MAJOR RESTRUCTURE**: Ensembles now perform risk management per base model (volatility scaling)
+- **NEW**: Weight Layer for combining all base model forecasts using weight vector
+- **SIMPLIFIED**: Portfolio layer becomes minimal (mostly pass-through)
+- This solves signal dilution when ensembles have different numbers of base models
 
 ---
 
 ## Table of Contents
 
-1. [Phase 1: Refactor Ensemble](#phase-1-refactor-ensemble)
-2. [Phase 2: Enhance Portfolio](#phase-2-enhance-portfolio)
-3. [Phase 3: Create Execution Layer](#phase-3-create-execution-layer)
+1. [Phase 1: Refactor Ensemble (Risk Management)](#phase-1-refactor-ensemble-risk-management)
+2. [Phase 2: Create Weight Layer](#phase-2-create-weight-layer)
+3. [Phase 3: Simplify Portfolio](#phase-3-simplify-portfolio)
 4. [Phase 4: Create Volatility Utilities](#phase-4-create-volatility-utilities)
-5. [Phase 5: Integration & Testing](#phase-5-integration--testing)
-6. [Phase 6: DM Fitting Utility](#phase-6-dm-fitting-utility)
+5. [Phase 5: Create Execution Layer](#phase-5-create-execution-layer)
+6. [Phase 6: Integration & Testing](#phase-6-integration--testing)
 
 ---
 
-## Phase 1: Refactor Ensemble
+## Phase 1: Refactor Ensemble (Risk Management)
 
-**Goal**: Simplify ensemble to only combine signals using inverse correlation weights. Remove all volatility scaling, diversification, and position sizing logic.
+**Goal**: Refactor ensemble to perform risk management per base model. Calculate volatility-adjusted forecast for each base model (assuming signal=1), output vector of forecasts (one per base model) instead of combined forecast.
 
-**Estimated Effort**: 2-3 hours
+**Estimated Effort**: 4-6 hours
 
-**⚠️ BREAKING CHANGE**: This phase changes the `predict()` return type from `np.ndarray` to `pd.DataFrame`. All calling code (including Portfolio) must be updated to handle DataFrame output.
+**⚠️ BREAKING CHANGE**: This phase changes the `predict()` return structure to a vector (one row per base model) instead of a single combined forecast. All calling code must be updated.
 
 ### Files to Modify
 
@@ -38,21 +50,21 @@
 ### Current State Analysis
 
 **What to Remove**:
-- ❌ `volatility` parameter from `predict()`
-- ❌ Division by instrument volatility
-- ❌ Multiplication by instrument weights
-- ❌ `target_volatility` usage
-- ❌ `forecast_scalar` parameter
-- ❌ Diversification multiplier (FDM) calculation and application
-- ❌ Forecast capping logic
+- ❌ Signal combination logic (moves to Weight layer)
+- ❌ Inverse correlation weight calculation (moves to Weight layer)
+- ❌ Combined forecast calculation
 
 **What to Keep**:
-- ✅ Inverse correlation weight calculation during `fit()`
-- ✅ Binary signal combination using weights
-- ✅ Exposure fraction tracking
+- ✅ Base model signal generation
+- ✅ Exposure fraction tracking per model
+- ✅ Model name tracking
 
 **What to Add**:
-- ✅ Return `exposure_fraction` column in output DataFrame
+- ✅ `volatility` parameter in `predict()`
+- ✅ `target_volatility` parameter
+- ✅ Volatility scaling per base model
+- ✅ Vector output (one row per base model)
+- ✅ Model name in output DataFrame
 
 ### Method Signature Changes
 
@@ -64,8 +76,8 @@ def predict(
     ticker: pd.Series,
     volatility: pd.Series,
     normalization_data: Optional[pd.DataFrame] = None
-) -> pd.DataFrame:
-    """Returns: DataFrame(['ticker', 'combined_forecast'])"""
+) -> np.ndarray:
+    """Returns: Array of combined forecasts"""
 ```
 
 #### After:
@@ -74,87 +86,79 @@ def predict(
     self,
     X: pd.DataFrame,
     ticker: pd.Series,
+    volatility: Union[pd.Series, Dict[str, float]],  # Blended volatility per instrument
     normalization_data: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
-    Returns: DataFrame(['ticker', 'forecast_score', 'exposure_fraction'])
+    Returns: DataFrame(['ticker', 'model_name', 'forecast', 'signal'])
     
     Where:
-    - forecast_score: Raw combined signal in [0, 1] range
-    - exposure_fraction: Average h across active models
+    - ticker: Instrument identifier
+    - model_name: Base model identifier
+    - forecast: Volatility-adjusted forecast (0 if signal inactive)
+      This already incorporates exposure adjustment via sqrt(h_i)
+    - signal: Binary signal {0, 1}
     
-    Note: This is a BREAKING CHANGE from current implementation which returns np.ndarray.
-    All calling code must be updated to handle DataFrame output.
+    Note: One row per base model (vector output, not combined)
+    Note: Exposure fraction h_i is used internally but not included in output
     """
 ```
 
 ### Implementation Steps
 
-1. **Remove volatility parameter**:
-   - Remove `volatility` from `predict()` signature
-   - Remove any volatility-related calculations
-
-2. **Simplify forecast calculation**:
+1. **Add volatility and target_volatility parameters**:
    ```python
-   # Calculate weighted sum of binary signals for each row
-   forecast_raw = []
-   for idx in range(len(binary_df)):
-       row_forecast = 0.0
-       for model_name in binary_df.columns:
-           signal = binary_df.iloc[idx][model_name]
-           if signal == 1:  # Only add weight if signal is active
-               row_forecast += self.weights_[model_name]
-       forecast_raw.append(row_forecast)
-   
-   forecast_raw = np.array(forecast_raw)
+   def __init__(
+       self,
+       target_volatility: float = 0.20,  # NEW
+       # ... other existing parameters
+   ):
+       self.target_volatility = target_volatility
    ```
-   
-   **Remove these steps** (they move to Portfolio layer):
-   - ❌ Division by volatility
-   - ❌ Multiplication by forecast scalar
-   - ❌ Multiplication by instrument weights
-   - ❌ Application of FDM
-   - ❌ Forecast capping
 
-3. **Add exposure fraction calculation**:
+2. **Calculate volatility-adjusted forecast per base model**:
    ```python
-   # For each row, calculate average exposure of active models
-   exposure_fractions = []
-   for idx in range(len(binary_df)):
-       # Get active models for this row
-       active_model_names = [
-           model_name for model_name in binary_df.columns 
-           if binary_df.iloc[idx][model_name] == 1
-       ]
+   def predict(self, X, ticker, volatility, normalization_data=None):
+       # Get binary signals from all base models
+       binary_signals = self._get_binary_signals(X, ticker, normalization_data)
        
-       # Calculate average exposure if any models are active
-       if active_model_names:
-           avg_exposure = np.mean([
-               self.model_exposure_fractions_[name] 
-               for name in active_model_names
-           ])
-       else:
-           avg_exposure = 0.0
+       # Convert volatility to dict if needed
+       vol_dict = volatility if isinstance(volatility, dict) else volatility.to_dict()
        
-       exposure_fractions.append(avg_exposure)
-   
-   # Convert to numpy array
-   exposure_fraction = np.array(exposure_fractions)
+       # For each sample and each base model, calculate forecast
+       results = []
+       for idx, (tick, row_signals) in enumerate(zip(ticker, binary_signals.iterrows())):
+           ticker_val = tick if isinstance(tick, str) else tick
+           instrument_vol = vol_dict.get(ticker_val)
+           
+           if instrument_vol is None:
+               raise ValueError(f"Missing volatility for ticker: {ticker_val}")
+           
+           # For each base model
+           for model_name, signal in row_signals[1].items():
+               base_model = self.base_models[model_name]
+               h_i = self.model_exposure_fractions_[model_name]
+               
+               # Calculate volatility-adjusted forecast (assuming signal=1)
+               forecast_if_active = (
+                   self.target_volatility / 
+                   (instrument_vol * np.sqrt(h_i))
+               )
+               
+               # Apply signal: 0 if inactive, forecast_if_active if active
+               forecast = forecast_if_active if signal == 1 else 0.0
+               
+               results.append({
+                   'ticker': ticker_val,
+                   'model_name': model_name,
+                   'forecast': forecast,
+                   'signal': int(signal)
+               })
+       
+       return pd.DataFrame(results)
    ```
 
-4. **Update output DataFrame**:
-   ```python
-   # Return DataFrame instead of numpy array (BREAKING CHANGE)
-   result = pd.DataFrame({
-       'ticker': ticker.values if isinstance(ticker, pd.Series) else ticker,
-       'forecast_score': forecast_raw,  # [0, 1] range
-       'exposure_fraction': exposure_fraction  # [0, 1] range
-   })
-   
-   return result
-   ```
-
-5. **Store model exposure fractions during fit**:
+3. **Store model exposure fractions during fit**:
    ```python
    # In fit(), store exposure fraction for each base model
    # Note: base_models is a dict[str, BaseModel] in current implementation
@@ -164,71 +168,81 @@ def predict(
    }
    ```
 
+4. **Remove signal combination logic**:
+   - Remove inverse correlation weight calculation (moves to Weight layer)
+   - Remove weighted sum of signals
+   - Keep only per-model forecast calculation
+
 ### Unit Tests
 
 Create tests in `tests/test_diversified_ensemble.py`:
 
 ```python
-def test_raw_forecast_output_range():
-    """Test that raw forecast is in [0, 1] range"""
-    ensemble = DiversifiedEnsemble(models=[...])
-    ensemble.fit(X_train, y_train, ticker_train)
+def test_vector_output_structure():
+    """Test that output is vector (one row per base model)"""
+    ensemble = DiversifiedEnsemble(target_volatility=0.20, models=[...])
+    ensemble.fit(X_train, y_train, ticker_train, volatility_train)
     
-    predictions = ensemble.predict(X_test, ticker_test)
-    
-    assert 'forecast_score' in predictions.columns
-    assert 'exposure_fraction' in predictions.columns
-    assert predictions['forecast_score'].min() >= 0.0
-    assert predictions['forecast_score'].max() <= 1.0
-
-def test_weights_sum_to_one():
-    """Test that inverse correlation weights sum to 1.0"""
-    ensemble = DiversifiedEnsemble(models=[...])
-    ensemble.fit(X_train, y_train, ticker_train)
-    
-    weights = ensemble.diversification_weights_
-    assert np.isclose(weights.sum(), 1.0)
-
-def test_all_models_active():
-    """Test forecast when all models are active"""
-    # If all models return 1 and weights sum to 1
-    # Then forecast should be 1.0
-    ensemble = DiversifiedEnsemble(models=[...])
-    ensemble.fit(X_train, y_train, ticker_train)
-    
-    # Create test data where all models will be active
-    predictions = ensemble.predict(X_all_active, ticker_test)
-    
-    assert predictions['forecast_score'].iloc[0] == 1.0
-
-def test_no_models_active():
-    """Test forecast when no models are active"""
-    # If no models return 1, forecast should be 0.0
-    ensemble = DiversifiedEnsemble(models=[...])
-    ensemble.fit(X_train, y_train, ticker_train)
-    
-    predictions = ensemble.predict(X_no_active, ticker_test)
-    
-    assert predictions['forecast_score'].iloc[0] == 0.0
-
-def test_output_structure():
-    """Test that output is DataFrame with correct structure"""
-    ensemble = DiversifiedEnsemble(models=[...])
-    ensemble.fit(X_train, y_train, ticker_train)
-    
-    predictions = ensemble.predict(X_test, ticker_test)
+    volatility = pd.Series({'TEST': 0.20})
+    predictions = ensemble.predict(X_test, ticker_test, volatility)
     
     # Check it's a DataFrame
     assert isinstance(predictions, pd.DataFrame)
     
     # Check required columns
     assert 'ticker' in predictions.columns
-    assert 'forecast_score' in predictions.columns
-    assert 'exposure_fraction' in predictions.columns
+    assert 'model_name' in predictions.columns
+    assert 'forecast' in predictions.columns
+    assert 'signal' in predictions.columns
     
-    # Check data types
-    assert predictions['forecast_score'].dtype in [np.float64, np.float32]
-    assert predictions['exposure_fraction'].dtype in [np.float64, np.float32]
+    # Check vector structure: should have one row per base model per sample
+    n_samples = len(X_test)
+    n_models = len(ensemble.base_models)
+    assert len(predictions) == n_samples * n_models
+
+def test_volatility_scaling_per_model():
+    """Test that volatility scaling is applied per base model"""
+    ensemble = DiversifiedEnsemble(target_volatility=0.20, models=[...])
+    ensemble.fit(X_train, y_train, ticker_train, volatility_train)
+    
+    # Test with matching volatility (should give forecast = 1.0 / sqrt(h))
+    volatility = pd.Series({'TEST': 0.20})
+    predictions = ensemble.predict(X_test, ticker_test, volatility)
+    
+    # For a model with h=0.1, forecast_if_active = 0.20 / (0.20 * sqrt(0.1)) ≈ 3.16
+    model_forecasts = predictions[predictions['model_name'] == 'model_0']
+    active_forecasts = model_forecasts[model_forecasts['signal'] == 1]['forecast']
+    
+    if len(active_forecasts) > 0:
+        expected = 0.20 / (0.20 * np.sqrt(0.1))
+        assert np.isclose(active_forecasts.iloc[0], expected, rtol=0.01)
+
+def test_inactive_signals_zero_forecast():
+    """Test that inactive signals have forecast = 0"""
+    ensemble = DiversifiedEnsemble(target_volatility=0.20, models=[...])
+    ensemble.fit(X_train, y_train, ticker_train, volatility_train)
+    
+    volatility = pd.Series({'TEST': 0.20})
+    predictions = ensemble.predict(X_test, ticker_test, volatility)
+    
+    # All inactive signals should have forecast = 0
+    inactive = predictions[predictions['signal'] == 0]
+    assert np.allclose(inactive['forecast'].values, 0.0)
+
+def test_exposure_fraction_per_model():
+    """Test that exposure fraction is stored per model"""
+    ensemble = DiversifiedEnsemble(target_volatility=0.20, models=[...])
+    ensemble.fit(X_train, y_train, ticker_train, volatility_train)
+    
+    # Check that model_exposure_fractions_ is populated
+    assert hasattr(ensemble, 'model_exposure_fractions_')
+    assert len(ensemble.model_exposure_fractions_) == len(ensemble.base_models)
+    
+    # Check that exposure fractions match n_bins
+    for model_name, h_i in ensemble.model_exposure_fractions_.items():
+        n_bins = ensemble.base_models[model_name].n_bins
+        expected_h = 1.0 / n_bins
+        assert np.isclose(h_i, expected_h)
 ```
 
 ### Migration Notes
@@ -245,22 +259,378 @@ predictions = ensemble.predict(X, ticker, volatility)
 # predictions is np.ndarray
 
 # NEW (after Phase 1):
-predictions = ensemble.predict(X, ticker)
-# predictions is pd.DataFrame with columns: ['ticker', 'forecast_score', 'exposure_fraction']
+predictions = ensemble.predict(X, ticker, volatility)
+# predictions is pd.DataFrame with columns: ['ticker', 'model_name', 'forecast', 'signal']
 
 # Access values:
-forecast_scores = predictions['forecast_score'].values
-exposure_fractions = predictions['exposure_fraction'].values
+forecasts = predictions['forecast'].values
 tickers = predictions['ticker'].values
+model_names = predictions['model_name'].values
 ```
 
 ---
 
-## Phase 2: Enhance Portfolio
+## Phase 2: Create Weight Layer
 
-**Goal**: Make Portfolio the central risk management hub with volatility scaling, DM application, and position capping.
+**Goal**: Create a new Weight layer that combines forecasts from all base models across all ensembles using a weight vector (inverse correlation method) and applies FDM (Forecast Diversification Multiplier).
 
-**Estimated Effort**: 6-8 hours
+**Estimated Effort**: 5-7 hours
+
+### Files to Create
+
+- `ensemble/weight_layer.py`
+- `ensemble/inverse_correlation_weighter.py`
+- `tests/test_weight_layer.py`
+
+### WeightLayer Class
+
+```python
+from typing import List, Protocol
+import pandas as pd
+import numpy as np
+
+class Weighter(Protocol):
+    """Protocol for weight calculation methods"""
+    def fit(self, signals: pd.DataFrame) -> None: ...
+    def get_weights(self) -> pd.Series: ...
+
+class WeightLayer:
+    """Combine forecasts from all base models using weight vector and apply FDM"""
+    
+    def __init__(
+        self, 
+        weight_method: str = 'inverse_correlation',
+        fdm_max: float = 2.0
+    ):
+        """
+        Parameters
+        ----------
+        weight_method : str, default='inverse_correlation'
+            Method for calculating weights. Options:
+            - 'inverse_correlation': Use inverse correlation weights
+            - 'linear': Use linear model (future)
+            - 'ml': Use ML model (future)
+        fdm_max : float, default=2.0
+            Maximum FDM value (Carver's recommendation)
+        """
+        self.weight_method = weight_method
+        self.fdm_max = fdm_max
+        if weight_method == 'inverse_correlation':
+            self.weighter = InverseCorrelationWeighter()
+        else:
+            raise ValueError(f"Unknown weight method: {weight_method}")
+        self.fdm_ = None  # Will be calculated during fit()
+    
+    def fit(
+        self,
+        forecast_vectors: List[pd.DataFrame],
+        signals: pd.DataFrame
+    ) -> 'WeightLayer':
+        """
+        Fit weights and FDM from training data.
+        
+        Parameters
+        ----------
+        forecast_vectors : list[pd.DataFrame]
+            List of forecast vectors from all ensembles (training data)
+            Each DataFrame has columns: ['ticker', 'model_name', 'forecast', 'signal']
+            Used for both weight calculation (via signals) and FDM calculation (via forecast values)
+        signals : pd.DataFrame
+            Binary signals from all base models (for inverse correlation weight calculation)
+            Columns: model names, rows: samples
+        
+        Returns
+        -------
+        self
+        """
+        # Fit the weighter (uses signals for correlation)
+        self.weighter.fit(signals)
+        
+        # Calculate FDM from forecast value correlations
+        self.fdm_ = self._calculate_fdm(forecast_vectors)
+        
+        return self
+    
+    def _calculate_fdm(self, forecast_vectors: List[pd.DataFrame]) -> float:
+        """
+        Calculate Forecast Diversification Multiplier from forecast value correlations.
+        
+        Parameters
+        ----------
+        forecast_vectors : list[pd.DataFrame]
+            List of forecast vectors from all ensembles (training data)
+        
+        Returns
+        -------
+        float
+            FDM value (capped at fdm_max)
+        """
+        # Concatenate all forecasts
+        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        
+        # Pivot: columns = model_name, rows = (ticker, sample), values = forecast
+        # Need to create a unique index for each sample
+        forecast_matrix = all_forecasts.pivot_table(
+            index=['ticker'],  # Group by ticker for now
+            columns='model_name',
+            values='forecast',
+            aggfunc='mean'  # If multiple samples per ticker, take mean
+        )
+        
+        # Calculate correlation matrix of forecast values
+        corr_matrix = forecast_matrix.corr().abs()
+        
+        # Get upper triangle (excluding diagonal)
+        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+        correlations = corr_matrix.where(mask).stack()
+        
+        # Calculate mean correlation
+        mean_corr = correlations.mean() if len(correlations) > 0 else 0.5
+        
+        # Floor negative correlations at zero (Carver's recommendation)
+        mean_corr = max(mean_corr, 0.0)
+        
+        # Calculate FDM: sqrt(1 / (mean_corr + epsilon))
+        epsilon = 0.01  # Small value to avoid division by zero
+        fdm = np.sqrt(1.0 / (mean_corr + epsilon))
+        
+        # Cap at fdm_max
+        fdm = min(fdm, self.fdm_max)
+        
+        return fdm
+    
+    def combine(
+        self,
+        forecast_vectors: List[pd.DataFrame]
+    ) -> pd.DataFrame:
+        """
+        Combine forecasts from all base models and apply FDM.
+        
+        Parameters
+        ----------
+        forecast_vectors : list[pd.DataFrame]
+            List of forecast vectors from all ensembles.
+            Each DataFrame has columns: ['ticker', 'model_name', 'forecast', 'signal']
+        
+        Returns
+        -------
+        pd.DataFrame with columns: ['ticker', 'forecast_score']
+            forecast_score is already FDM-scaled
+        """
+        if self.fdm_ is None:
+            raise ValueError("WeightLayer must be fitted before calling combine()")
+        
+        # Concatenate all forecast vectors
+        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        
+        # Get weights
+        weights = self.weighter.get_weights()
+        
+        # Group by ticker and calculate weighted sum
+        results = []
+        for ticker, group in all_forecasts.groupby('ticker'):
+            # Weighted sum of forecasts
+            forecast_weighted = (
+                group['forecast'] * group['model_name'].map(weights)
+            ).sum()
+            
+            # Apply FDM
+            forecast_score = forecast_weighted * self.fdm_
+            
+            results.append({
+                'ticker': ticker,
+                'forecast_score': forecast_score
+            })
+        
+        return pd.DataFrame(results)
+```
+
+### InverseCorrelationWeighter Class
+
+```python
+import pandas as pd
+import numpy as np
+
+class InverseCorrelationWeighter:
+    """Calculate weights based on inverse correlation"""
+    
+    def fit(self, signals: pd.DataFrame) -> None:
+        """
+        Fit weights from binary signals.
+        
+        Parameters
+        ----------
+        signals : pd.DataFrame
+            Binary signals from all base models.
+            Columns: model names, rows: samples
+        """
+        # Calculate correlation matrix
+        corr_matrix = signals.corr().abs()
+        
+        # For each model, calculate average correlation with others
+        avg_correlations = {}
+        for model_name in signals.columns:
+            other_models = [m for m in signals.columns if m != model_name]
+            avg_corr = corr_matrix.loc[model_name, other_models].mean()
+            avg_correlations[model_name] = avg_corr
+        
+        # Convert to diversification scores
+        diversification_scores = {
+            model: 1.0 / (1.0 + avg_corr)
+            for model, avg_corr in avg_correlations.items()
+        }
+        
+        # Normalize to sum to 1.0
+        total = sum(diversification_scores.values())
+        self.weights_ = pd.Series({
+            model: score / total
+            for model, score in diversification_scores.items()
+        })
+    
+    def get_weights(self) -> pd.Series:
+        """Get fitted weights"""
+        return self.weights_
+```
+
+### Unit Tests
+
+```python
+def test_weight_layer_combines_all_models():
+    """Test that Weight layer combines forecasts from all base models"""
+    # Create forecast vectors from two ensembles
+    ensemble1_forecasts = pd.DataFrame({
+        'ticker': ['TEST', 'TEST'],
+        'model_name': ['model_1', 'model_2'],
+        'forecast': [1.0, 0.5],
+        'signal': [1, 1]
+    })
+    
+    ensemble2_forecasts = pd.DataFrame({
+        'ticker': ['TEST'],
+        'model_name': ['model_3'],
+        'forecast': [0.8],
+        'signal': [1]
+    })
+    
+    # Create signals for fitting
+    signals = pd.DataFrame({
+        'model_1': [1, 0, 1],
+        'model_2': [0, 1, 1],
+        'model_3': [1, 1, 0]
+    })
+    
+    weight_layer = WeightLayer()
+    weight_layer.fit([ensemble1_forecasts, ensemble2_forecasts], signals)
+    
+    combined = weight_layer.combine([ensemble1_forecasts, ensemble2_forecasts])
+    
+    # Should have one row per unique ticker
+    assert len(combined) == 1
+    assert 'forecast_score' in combined.columns
+
+def test_inverse_correlation_weights():
+    """Test that inverse correlation weights are calculated correctly"""
+    # Create signals with known correlations
+    signals = pd.DataFrame({
+        'model_1': [1, 0, 1, 0, 1],
+        'model_2': [1, 0, 1, 0, 1],  # High correlation with model_1
+        'model_3': [0, 1, 0, 1, 0]   # Low correlation with others
+    })
+    
+    weighter = InverseCorrelationWeighter()
+    weighter.fit(signals)
+    weights = weighter.get_weights()
+    
+    # Weights should sum to 1.0
+    assert np.isclose(weights.sum(), 1.0)
+    
+    # model_3 should have higher weight (lower correlation)
+    assert weights['model_3'] > weights['model_1']
+    assert weights['model_3'] > weights['model_2']
+
+def test_fdm_calculation():
+    """Test that FDM is calculated from forecast value correlations"""
+    # Create forecast vectors with known structure
+    forecast_vectors = [
+        pd.DataFrame({
+            'ticker': ['TEST'] * 3,
+            'model_name': ['model_1', 'model_2', 'model_3'],
+            'forecast': [1.0, 0.8, 0.6],
+            'signal': [1, 1, 1]
+        })
+    ]
+    
+    signals = pd.DataFrame({
+        'model_1': [1, 0, 1],
+        'model_2': [0, 1, 1],
+        'model_3': [1, 1, 0]
+    })
+    
+    weight_layer = WeightLayer(fdm_max=2.0)
+    weight_layer.fit(forecast_vectors, signals)
+    
+    # FDM should be calculated and stored
+    assert weight_layer.fdm_ is not None
+    assert 1.0 <= weight_layer.fdm_ <= 2.0
+
+def test_fdm_application():
+    """Test that FDM is applied during combine()"""
+    forecast_vectors = [
+        pd.DataFrame({
+            'ticker': ['TEST'],
+            'model_name': ['model_1'],
+            'forecast': [1.0],
+            'signal': [1]
+        })
+    ]
+    
+    signals = pd.DataFrame({
+        'model_1': [1, 0, 1]
+    })
+    
+    weight_layer = WeightLayer(fdm_max=2.0)
+    weight_layer.fit(forecast_vectors, signals)
+    
+    # Manually set FDM for testing
+    weight_layer.fdm_ = 1.5
+    
+    combined = weight_layer.combine(forecast_vectors)
+    
+    # Forecast should be scaled by FDM
+    # If weighted sum = 1.0, then with FDM=1.5, result should be 1.5
+    assert combined['forecast_score'].iloc[0] == 1.0 * 1.5
+
+def test_fdm_capping():
+    """Test that FDM is capped at fdm_max"""
+    # Create forecasts that would give very high FDM
+    forecast_vectors = [
+        pd.DataFrame({
+            'ticker': ['TEST'] * 10,
+            'model_name': [f'model_{i}' for i in range(10)],
+            'forecast': np.random.rand(10),
+            'signal': [1] * 10
+        })
+    ]
+    
+    signals = pd.DataFrame({
+        f'model_{i}': np.random.randint(0, 2, 100)
+        for i in range(10)
+    })
+    
+    weight_layer = WeightLayer(fdm_max=2.0)
+    weight_layer.fit(forecast_vectors, signals)
+    
+    # FDM should be capped at 2.0
+    assert weight_layer.fdm_ <= 2.0
+```
+
+---
+
+## Phase 3: Simplify Portfolio
+
+**Goal**: Simplify Portfolio to minimal layer that handles instrument weighting, IDM (Instrument Diversification Multiplier) application, and optional position capping. Most risk management moved to Ensemble layer, signal combination and FDM moved to Weight layer.
+
+**Estimated Effort**: 3-4 hours
 
 **Required Imports**:
 ```python
@@ -281,33 +651,35 @@ Add to `__init__`:
 ```python
 def __init__(
     self,
-    ensembles: List[BaseEnsemble],  # Changed from dict[TimeFrame, list[BaseEnsemble]]
-    trading_timeframe: TimeFrame,  # NEW: Explicit trading timeframe
-    target_volatility: float = 0.20,  # NEW
-    dm: float = 1.0,  # NEW
-    max_position_pct: float = 2.0,  # NEW
-    instrument_weights: Optional[dict[str, float]] = None  # NEW
+    weight_layer: WeightLayer,  # NEW: Weight layer for combining forecasts
+    trading_timeframe: TimeFrame,  # Explicit trading timeframe
+    max_position_pct: Optional[float] = None,  # Optional position cap
+    instrument_weights: Optional[dict[str, float]] = None,  # Optional instrument weights
+    idm_max: float = 2.5  # Maximum IDM value (Carver's recommendation)
 ):
     """
     Create a Portfolio for a SINGLE trading timeframe.
     
     Parameters
     ----------
-    ensembles : List[BaseEnsemble]
-        List of ensemble models (no longer organized by timeframe)
+    weight_layer : WeightLayer
+        Weight layer that combines forecasts from all ensembles
     trading_timeframe : TimeFrame
-        The timeframe this portfolio trades on (e.g., TimeFrame.D for daily trading)
-    target_volatility : float, default=0.20
-        Target annual portfolio volatility (e.g., 0.20 = 20%)
-    dm : float, default=1.0
-        Diversification Multiplier. Start at 1.0, fit from backtests.
-        Typical range: 1.0-3.0
-    max_position_pct : float, default=2.0
-        Maximum position size per instrument (as decimal, e.g., 2.0 = 200%)
+        The timeframe this portfolio trades on (e.g., TimeFrame.D for daily)
+    max_position_pct : float, optional
+        Maximum position size per instrument. If None, no capping.
     instrument_weights : dict[str, float], optional
         Weight for each instrument. If None, equal weight.
         Weights should sum to 1.0
+    idm_max : float, default=2.5
+        Maximum IDM value (capped to prevent excessive leverage)
     """
+    self.weight_layer = weight_layer
+    self.trading_timeframe = trading_timeframe
+    self.max_position_pct = max_position_pct
+    self.instrument_weights = instrument_weights
+    self.idm_max = idm_max
+    self.idm_ = None  # Will be calculated during fit()
 ```
 
 ### Method Signature Changes
@@ -326,148 +698,178 @@ def predict(
 
 #### After:
 ```python
+def fit(
+    self,
+    instrument_returns: pd.DataFrame  # Historical returns for IDM calculation
+) -> 'Portfolio':
+    """
+    Fit IDM from historical instrument returns.
+    
+    Parameters
+    ----------
+    instrument_returns : pd.DataFrame
+        Historical returns for all instruments.
+        Columns: instrument tickers, rows: time periods
+    
+    Returns
+    -------
+    self
+    """
+    self.idm_ = self._calculate_idm(instrument_returns)
+    return self
+
+def _calculate_idm(self, instrument_returns: pd.DataFrame) -> float:
+    """
+    Calculate Instrument Diversification Multiplier from return correlations.
+    
+    Parameters
+    ----------
+    instrument_returns : pd.DataFrame
+        Historical returns for all instruments.
+        Columns: instrument tickers, rows: time periods
+    
+    Returns
+    -------
+    float
+        IDM value (capped at idm_max)
+    """
+    # Calculate correlation matrix of instrument returns
+    corr_matrix = instrument_returns.corr().abs()
+    
+    # Get upper triangle (excluding diagonal)
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+    correlations = corr_matrix.where(mask).stack()
+    
+    # Calculate mean correlation
+    mean_corr = correlations.mean() if len(correlations) > 0 else 0.5
+    
+    # Floor negative correlations at zero (Carver's recommendation)
+    mean_corr = max(mean_corr, 0.0)
+    
+    # Calculate IDM: sqrt(1 / (mean_corr + epsilon))
+    epsilon = 0.01  # Small value to avoid division by zero
+    idm = np.sqrt(1.0 / (mean_corr + epsilon))
+    
+    # Cap at idm_max
+    idm = min(idm, self.idm_max)
+    
+    return idm
+
 def predict(
     self,
-    X: pd.DataFrame,
-    ticker: pd.Series,
-    volatility: Union[pd.Series, Dict[str, float]],  # NEW: Blended volatility per instrument
-    normalization_data: Optional[pd.DataFrame] = None
+    combined_forecasts: pd.DataFrame  # From Weight layer
 ) -> pd.DataFrame:
     """
     Returns: DataFrame(['ticker', 'forecast_score', 'position_fraction'])
     
     Parameters
     ----------
-    X : pd.DataFrame
-        Feature matrix
-    ticker : pd.Series
-        Instrument ticker symbols
-    volatility : pd.Series or dict
-        Blended volatility per instrument (annualized).
-        If Series: Must have ticker symbols as index (will be converted to dict).
-        If dict: Maps ticker symbol (str) -> volatility value (float).
-        Formula: 0.70 * EWMA-32 + 0.30 * 10-year average
-    normalization_data : pd.DataFrame, optional
-        For ensemble base models
+    combined_forecasts : pd.DataFrame
+        Combined forecasts from Weight layer.
+        Columns: ['ticker', 'forecast_score']
+        (Already FDM-scaled)
     
     Returns
     -------
     pd.DataFrame with columns:
         - ticker: Instrument identifier
-        - forecast_score: Average raw forecast across ensembles
-        - position_fraction: Fraction of capital to allocate
-    
-    Notes
-    -----
-    timeframe parameter removed - Portfolio now knows its trading timeframe
+        - forecast_score: Combined forecast from Weight layer (passed through)
+        - position_fraction: Position fraction after instrument weighting, IDM, and capping
     """
+    if self.idm_ is None:
+        raise ValueError("Portfolio must be fitted before calling predict()")
 ```
 
 ### Implementation Steps
 
-#### Step 1: Average Ensemble Forecasts
+#### Step 1: Apply Instrument Weight
 
 ```python
-def _average_ensemble_forecasts(
+def _apply_instrument_weights(
     self,
-    ensemble_predictions: List[pd.DataFrame]
+    combined_forecasts: pd.DataFrame
 ) -> pd.DataFrame:
     """
-    Average raw forecasts across ensembles for each instrument.
+    Apply instrument weights to combined forecasts.
     
     Parameters
     ----------
-    ensemble_predictions : list[pd.DataFrame]
-        List of predictions from each ensemble.
-        Each DataFrame has columns: ['ticker', 'forecast_score', 'exposure_fraction']
-        (Note: Ensembles now return DataFrames, not numpy arrays)
+    combined_forecasts : pd.DataFrame
+        Combined forecasts from Weight layer.
+        Columns: ['ticker', 'forecast_score']
     
     Returns
     -------
-    pd.DataFrame with columns: ['ticker', 'forecast_avg', 'exposure_avg']
+    pd.DataFrame with columns: ['ticker', 'forecast_score', 'position_weighted']
     """
-    if not ensemble_predictions:
-        return pd.DataFrame(columns=['ticker', 'forecast_avg', 'exposure_avg'])
+    df = combined_forecasts.copy()
     
-    # Concatenate all ensemble predictions
-    all_forecasts = pd.concat(ensemble_predictions, ignore_index=True)
-    
-    # Group by ticker and average
-    averaged = all_forecasts.groupby('ticker', as_index=False).agg({
-        'forecast_score': 'mean',
-        'exposure_fraction': 'mean'
-    })
-    
-    averaged.rename(columns={
-        'forecast_score': 'forecast_avg',
-        'exposure_fraction': 'exposure_avg'
-    }, inplace=True)
-    
-    return averaged
-```
-
-#### Step 2: Calculate Position Fractions
-
-```python
-from typing import Union, Dict
-
-def _calculate_position_fractions(
-    self,
-    forecasts: pd.DataFrame,
-    volatility: Union[pd.Series, Dict[str, float]]
-) -> pd.DataFrame:
-    """
-    Convert forecasts to position fractions using volatility scaling.
-    
-    Parameters
-    ----------
-    forecasts : pd.DataFrame
-        Columns: ['ticker', 'forecast_avg', 'exposure_avg']
-    volatility : pd.Series or dict
-        Blended volatility per ticker (annualized).
-        If Series, must have ticker symbols as index.
-        If dict, maps ticker -> volatility value.
-    
-    Returns
-    -------
-    pd.DataFrame with columns: ['ticker', 'forecast_avg', 'position_fraction']
-    """
-    # Merge volatility data
-    df = forecasts.copy()
-    
-    # Convert volatility to dict for mapping if needed
-    vol_dict = volatility if isinstance(volatility, dict) else volatility.to_dict()
-    df['volatility'] = df['ticker'].map(vol_dict)
-    
-    # Step 1: Use raw forecast directly (no scaling)
-    df['f_norm'] = df['forecast_avg']
-    
-    # Step 2: Calculate volatility-adjusted position
-    # position_vol = f_norm * (tau / (sigma_blended * sqrt(h)))
-    df['position_vol'] = (
-        df['f_norm'] * 
-        (self.target_volatility / (df['volatility'] * np.sqrt(df['exposure_avg'])))
-    )
-    
-    # Step 3: Apply diversification multiplier
-    df['position_dm'] = df['position_vol'] * self.dm
-    
-    # Step 4: Apply instrument weights
+    # Apply instrument weights
     if self.instrument_weights is None:
         # Equal weight per unique instrument
         unique_instruments = df['ticker'].nunique()
         instrument_weight = 1.0 / unique_instruments if unique_instruments > 0 else 0.0
         df['instrument_weight'] = instrument_weight
-        df['position_weighted'] = df['position_dm'] * df['instrument_weight']
     else:
         df['instrument_weight'] = df['ticker'].map(self.instrument_weights)
-        df['position_weighted'] = df['position_dm'] * df['instrument_weight']
     
-    # Step 5: Cap position
-    df['position_fraction'] = df['position_weighted'].clip(upper=self.max_position_pct)
+    # Weight the forecast
+    df['position_weighted'] = df['forecast_score'] * df['instrument_weight']
     
-    # Return only necessary columns
-    return df[['ticker', 'forecast_avg', 'position_fraction']]
+    return df
+```
+
+#### Step 2: Apply Instrument Diversification Multiplier (IDM)
+
+```python
+def _apply_idm(
+    self,
+    positions: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Apply IDM to account for portfolio-level diversification.
+    
+    Parameters
+    ----------
+    positions : pd.DataFrame
+        Columns: ['ticker', 'forecast_score', 'position_weighted']
+    
+    Returns
+    -------
+    pd.DataFrame with columns: ['ticker', 'forecast_score', 'position_idm']
+    """
+    df = positions.copy()
+    df['position_idm'] = df['position_weighted'] * self.idm_
+    return df
+```
+
+#### Step 3: Apply Position Cap (Optional)
+
+```python
+def _apply_position_cap(
+    self,
+    positions: pd.DataFrame
+) -> pd.DataFrame:
+    """
+    Apply position cap if specified.
+    
+    Parameters
+    ----------
+    positions : pd.DataFrame
+        Columns: ['ticker', 'forecast_score', 'position_idm']
+    
+    Returns
+    -------
+    pd.DataFrame with columns: ['ticker', 'forecast_score', 'position_fraction']
+    """
+    df = positions.copy()
+    
+    if self.max_position_pct is not None:
+        df['position_fraction'] = df['position_idm'].clip(upper=self.max_position_pct)
+    else:
+        df['position_fraction'] = df['position_idm']
+    
+    return df[['ticker', 'forecast_score', 'position_fraction']]
 ```
 
 #### Step 3: Update predict() method
@@ -475,54 +877,40 @@ def _calculate_position_fractions(
 ```python
 def predict(
     self,
-    X: pd.DataFrame,
-    ticker: pd.Series,
-    volatility: Union[pd.Series, Dict[str, float]],
-    normalization_data: Optional[pd.DataFrame] = None
+    combined_forecasts: pd.DataFrame  # From Weight layer
 ) -> pd.DataFrame:
-    """Main prediction method"""
+    """
+    Main prediction method - applies instrument weighting and optional capping.
     
-    # Validate and convert volatility to consistent format
-    if isinstance(volatility, pd.Series):
-        # Series must have ticker symbols as index
-        vol_dict = volatility.to_dict()
-    elif isinstance(volatility, dict):
-        vol_dict = volatility
-    else:
-        raise ValueError(
-            f"volatility must be pd.Series or dict, got {type(volatility)}"
-        )
+    Parameters
+    ----------
+    combined_forecasts : pd.DataFrame
+        Combined forecasts from Weight layer.
+        Columns: ['ticker', 'forecast_score']
     
-    # Validate all tickers have volatility values
-    missing_vols = set(ticker.unique()) - set(vol_dict.keys())
-    if missing_vols:
-        raise ValueError(
-            f"Missing volatility values for tickers: {missing_vols}"
-        )
+    Returns
+    -------
+    pd.DataFrame with columns: ['ticker', 'forecast_score', 'position_fraction']
+    """
+    # Validate input
+    if not isinstance(combined_forecasts, pd.DataFrame):
+        raise ValueError(f"combined_forecasts must be pd.DataFrame, got {type(combined_forecasts)}")
     
-    # Get predictions from each ensemble (now a simple list, not dict)
-    # Each ensemble.predict() now returns DataFrame with columns:
-    # ['ticker', 'forecast_score', 'exposure_fraction']
-    ensemble_predictions = []
-    for ensemble in self.ensembles:
-        pred = ensemble.predict(X, ticker, normalization_data)
-        # Validate output structure
-        if not isinstance(pred, pd.DataFrame):
-            raise ValueError(f"Ensemble returned {type(pred)}, expected pd.DataFrame")
-        if not all(col in pred.columns for col in ['ticker', 'forecast_score', 'exposure_fraction']):
-            raise ValueError(f"Ensemble output missing required columns")
-        ensemble_predictions.append(pred)
+    required_cols = ['ticker', 'forecast_score']
+    missing_cols = set(required_cols) - set(combined_forecasts.columns)
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
     
-    # Average forecasts across ensembles
-    averaged_forecasts = self._average_ensemble_forecasts(ensemble_predictions)
+    # Apply instrument weights
+    weighted = self._apply_instrument_weights(combined_forecasts)
     
-    # Calculate position fractions (pass vol_dict for consistent format)
-    positions = self._calculate_position_fractions(averaged_forecasts, vol_dict)
+    # Apply IDM
+    idm_scaled = self._apply_idm(weighted)
     
-    # Rename for output
-    positions.rename(columns={'forecast_avg': 'forecast_score'}, inplace=True)
+    # Apply position cap (if specified)
+    result = self._apply_position_cap(idm_scaled)
     
-    return positions[['ticker', 'forecast_score', 'position_fraction']]
+    return result
 ```
 
 ### Unit Tests (Buy/Hold Scenarios)
@@ -530,176 +918,142 @@ def predict(
 Create tests in `tests/test_portfolio.py`:
 
 ```python
-def test_buy_hold_baseline():
-    """Test perfect buy/hold: target vol = instrument vol, h=1, DM=1"""
+def test_instrument_weighting():
+    """Test that instrument weights are applied correctly"""
+    weight_layer = WeightLayer()
+    weight_layer.fit(...)  # Fit with training data
+    
     portfolio = Portfolio(
-        ensembles=[mock_ensemble],
+        weight_layer=weight_layer,
         trading_timeframe=TimeFrame.DAILY,
-        target_volatility=0.20,
-        dm=1.0,
-        max_position_pct=2.0
+        max_position_pct=None,  # No capping
+        instrument_weights=None  # Equal weight
     )
     
-    # Mock ensemble returns forecast=1.0, exposure=1.0
-    mock_ensemble.predict.return_value = pd.DataFrame({
+    # Combined forecast from Weight layer
+    combined_forecasts = pd.DataFrame({
         'ticker': ['TEST'],
-        'forecast_score': [1.0],
-        'exposure_fraction': [1.0]
+        'forecast_score': [1.0]
     })
     
-    # Volatility matches target
-    volatility = pd.Series({'TEST': 0.20})
+    result = portfolio.predict(combined_forecasts)
     
-    result = portfolio.predict(X_test, ticker_test, volatility)
-    
-    # Expected: 1.0 * (0.20 / (0.20 * sqrt(1.0))) * 1.0 * 1.0 = 1.0
+    # With 1 instrument, equal weight = 1.0, so position = 1.0 * 1.0 = 1.0
     assert np.isclose(result['position_fraction'].iloc[0], 1.0)
-
-def test_buy_hold_high_volatility():
-    """Test buy/hold with 2x volatility instrument"""
-    portfolio = Portfolio(
-        ensembles=[mock_ensemble],
-        trading_timeframe=TimeFrame.DAILY,
-        target_volatility=0.20,
-        dm=1.0,
-        max_position_pct=2.0
-    )
-    
-    mock_ensemble.predict.return_value = pd.DataFrame({
-        'ticker': ['TEST'],
-        'forecast_score': [1.0],
-        'exposure_fraction': [1.0]
-    })
-    
-    # Volatility is 2x target
-    volatility = pd.Series({'TEST': 0.40})
-    
-    result = portfolio.predict(X_test, ticker_test, volatility)
-    
-    # Expected: 1.0 * (0.20 / (0.40 * sqrt(1.0))) * 1.0 * 1.0 = 0.5
-    assert np.isclose(result['position_fraction'].iloc[0], 0.5)
-
-def test_buy_hold_low_volatility():
-    """Test buy/hold with 0.5x volatility instrument (leverage)"""
-    portfolio = Portfolio(
-        ensembles=[mock_ensemble],
-        trading_timeframe=TimeFrame.DAILY,
-        target_volatility=0.20,
-        dm=1.0,
-        max_position_pct=2.0
-    )
-    
-    mock_ensemble.predict.return_value = pd.DataFrame({
-        'ticker': ['TEST'],
-        'forecast_score': [1.0],
-        'exposure_fraction': [1.0]
-    })
-    
-    # Volatility is 0.5x target
-    volatility = pd.Series({'TEST': 0.10})
-    
-    result = portfolio.predict(X_test, ticker_test, volatility)
-    
-    # Expected: 1.0 * (0.20 / (0.10 * sqrt(1.0))) * 1.0 * 1.0 = 2.0
-    assert np.isclose(result['position_fraction'].iloc[0], 2.0)
-
-def test_diversification_multiplier():
-    """Test DM scaling effect"""
-    portfolio = Portfolio(
-        ensembles=[mock_ensemble],
-        trading_timeframe=TimeFrame.DAILY,
-        target_volatility=0.20,
-        dm=2.0,  # 2x scaling
-        max_position_pct=2.0
-    )
-    
-    mock_ensemble.predict.return_value = pd.DataFrame({
-        'ticker': ['TEST'],
-        'forecast_score': [1.0],
-        'exposure_fraction': [1.0]
-    })
-    
-    volatility = pd.Series({'TEST': 0.20})
-    
-    result = portfolio.predict(X_test, ticker_test, volatility)
-    
-    # Expected: 1.0 * (0.20 / (0.20 * sqrt(1.0))) * 2.0 * 1.0 = 2.0
-    assert np.isclose(result['position_fraction'].iloc[0], 2.0)
-
-def test_sparse_signals():
-    """Test sparse signals with low exposure fraction"""
-    portfolio = Portfolio(
-        ensembles=[mock_ensemble],
-        trading_timeframe=TimeFrame.DAILY,
-        target_volatility=0.20,
-        dm=1.0,
-        max_position_pct=3.5
-    )
-    
-    mock_ensemble.predict.return_value = pd.DataFrame({
-        'ticker': ['TEST'],
-        'forecast_score': [1.0],
-        'exposure_fraction': [0.1]  # Only in market 10% of time
-    })
-    
-    volatility = pd.Series({'TEST': 0.20})
-    
-    result = portfolio.predict(X_test, ticker_test, volatility)
-    
-    # Expected: 1.0 * (0.20 / (0.20 * sqrt(0.1))) * 1.0 * 1.0
-    # = 1.0 * (0.20 / 0.0632) = 3.16
-    expected = 1.0 * (0.20 / (0.20 * np.sqrt(0.1)))
-    assert np.isclose(result['position_fraction'].iloc[0], expected, rtol=0.01)
-
-def test_position_capping():
-    """Test that position is capped at max_position_pct"""
-    portfolio = Portfolio(
-        ensembles=[mock_ensemble],
-        trading_timeframe=TimeFrame.DAILY,
-        target_volatility=0.20,
-        dm=1.0,
-        max_position_pct=2.0  # Cap at 2.0
-    )
-    
-    mock_ensemble.predict.return_value = pd.DataFrame({
-        'ticker': ['TEST'],
-        'forecast_score': [1.0],
-        'exposure_fraction': [1.0]
-    })
-    
-    # Very low volatility would give 4.0 uncapped
-    volatility = pd.Series({'TEST': 0.05})
-    
-    result = portfolio.predict(X_test, ticker_test, volatility)
-    
-    # Should be capped at 2.0
-    assert np.isclose(result['position_fraction'].iloc[0], 2.0)
 
 def test_multiple_instruments_equal_weight():
     """Test equal weighting across multiple instruments"""
+    weight_layer = WeightLayer()
+    weight_layer.fit(...)
+    
     portfolio = Portfolio(
-        ensembles=[mock_ensemble],
+        weight_layer=weight_layer,
         trading_timeframe=TimeFrame.DAILY,
-        target_volatility=0.20,
-        dm=1.0,
-        max_position_pct=2.0
+        max_position_pct=None,
+        instrument_weights=None  # Equal weight
     )
     
-    # Two instruments with same forecast/exposure
-    mock_ensemble.predict.return_value = pd.DataFrame({
+    # Two instruments with same forecast
+    combined_forecasts = pd.DataFrame({
         'ticker': ['TEST1', 'TEST2'],
-        'forecast_score': [1.0, 1.0],
-        'exposure_fraction': [1.0, 1.0]
+        'forecast_score': [1.0, 1.0]
     })
     
-    volatility = pd.Series({'TEST1': 0.20, 'TEST2': 0.20})
-    
-    result = portfolio.predict(X_test, ticker_test, volatility)
+    result = portfolio.predict(combined_forecasts)
     
     # Each should get 0.5 weight (1/2 instruments)
-    # Position = 1.0 * (0.20 / 0.20) * 1.0 * 0.5 = 0.5
+    # Position = 1.0 * 0.5 = 0.5
     assert len(result) == 2
     assert np.allclose(result['position_fraction'].values, [0.5, 0.5])
+
+def test_custom_instrument_weights():
+    """Test custom instrument weights"""
+    weight_layer = WeightLayer()
+    weight_layer.fit(...)
+    
+    portfolio = Portfolio(
+        weight_layer=weight_layer,
+        trading_timeframe=TimeFrame.DAILY,
+        max_position_pct=None,
+        instrument_weights={'TEST1': 0.7, 'TEST2': 0.3}
+    )
+    
+    combined_forecasts = pd.DataFrame({
+        'ticker': ['TEST1', 'TEST2'],
+        'forecast_score': [1.0, 1.0]
+    })
+    
+    result = portfolio.predict(combined_forecasts)
+    
+    # TEST1: 1.0 * 0.7 = 0.7
+    # TEST2: 1.0 * 0.3 = 0.3
+    assert np.isclose(result[result['ticker'] == 'TEST1']['position_fraction'].iloc[0], 0.7)
+    assert np.isclose(result[result['ticker'] == 'TEST2']['position_fraction'].iloc[0], 0.3)
+
+def test_idm_application():
+    """Test that IDM is applied after instrument weighting"""
+    weight_layer = WeightLayer()
+    weight_layer.fit(...)
+    
+    # Create returns for IDM calculation
+    instrument_returns = pd.DataFrame({
+        'TEST1': np.random.normal(0, 0.01, 1000),
+        'TEST2': np.random.normal(0, 0.01, 1000)
+    })
+    
+    portfolio = Portfolio(
+        weight_layer=weight_layer,
+        trading_timeframe=TimeFrame.DAILY,
+        max_position_pct=None,
+        idm_max=2.5
+    )
+    
+    # Fit to calculate IDM
+    portfolio.fit(instrument_returns)
+    
+    # Manually set IDM for testing
+    portfolio.idm_ = 2.0
+    
+    combined_forecasts = pd.DataFrame({
+        'ticker': ['TEST1'],
+        'forecast_score': [1.0]
+    })
+    
+    result = portfolio.predict(combined_forecasts)
+    
+    # With single instrument, weight=1.0, forecast=1.0, IDM=2.0
+    # Position = 1.0 * 1.0 * 2.0 = 2.0
+    assert np.isclose(result['position_fraction'].iloc[0], 2.0)
+
+def test_position_capping():
+    """Test that position is capped at max_position_pct"""
+    weight_layer = WeightLayer()
+    weight_layer.fit(...)
+    
+    instrument_returns = pd.DataFrame({
+        'TEST': np.random.normal(0, 0.01, 1000)
+    })
+    
+    portfolio = Portfolio(
+        weight_layer=weight_layer,
+        trading_timeframe=TimeFrame.DAILY,
+        max_position_pct=2.0,  # Cap at 2.0
+        idm_max=2.5
+    )
+    
+    portfolio.fit(instrument_returns)
+    portfolio.idm_ = 3.0  # High IDM that would exceed cap
+    
+    # Forecast that would give 4.0 uncapped (with IDM=3.0)
+    combined_forecasts = pd.DataFrame({
+        'ticker': ['TEST'],
+        'forecast_score': [1.33]  # 1.33 * 1.0 * 3.0 = 4.0
+    })
+    
+    result = portfolio.predict(combined_forecasts)
+    
+    # Should be capped at 2.0 (assuming single instrument, weight=1.0)
+    assert np.isclose(result['position_fraction'].iloc[0], 2.0)
 ```
 
 ---
@@ -1343,70 +1697,71 @@ def test_e2e_multiple_ensembles():
 
 ---
 
-## Phase 6: DM Fitting Utility
+## Phase 6: FDM/IDM Calculation Utilities (Optional)
 
-**Goal**: Create utility to fit DM from backtest results.
+**Goal**: Create utility functions for calculating FDM and IDM from correlations. These are now built into WeightLayer and Portfolio, but utilities can be useful for validation and analysis.
 
-**Estimated Effort**: 2-3 hours
+**Estimated Effort**: 1-2 hours (optional)
 
 ### Files to Create
 
 - `utils/diversification.py`
 - `tests/test_diversification.py`
 
-### DMFitter Class
+### FDM Calculator
 
 ```python
 import pandas as pd
 import numpy as np
-from typing import Optional
+from typing import List
 
-class DMFitter:
+def calculate_fdm(
+    forecast_vectors: List[pd.DataFrame],
+    fdm_max: float = 2.0
+) -> float:
     """
-    Fit Diversification Multiplier from backtest results.
+    Calculate Forecast Diversification Multiplier from forecast value correlations.
     
-    Simple fitting: DM = target_volatility / realized_volatility
+    Parameters
+    ----------
+    forecast_vectors : list[pd.DataFrame]
+        List of forecast vectors from all ensembles
+    fdm_max : float, default=2.0
+        Maximum FDM value
+    
+    Returns
+    -------
+    float
+        FDM value (capped at fdm_max)
     """
+    # Same implementation as WeightLayer._calculate_fdm()
+    # ... (see Phase 2 implementation)
+```
+
+### IDM Calculator
+
+```python
+def calculate_idm(
+    instrument_returns: pd.DataFrame,
+    idm_max: float = 2.5
+) -> float:
+    """
+    Calculate Instrument Diversification Multiplier from return correlations.
     
-    def __init__(self, target_volatility: float = 0.20):
-        """
-        Parameters
-        ----------
-        target_volatility : float, default=0.20
-            Target annual portfolio volatility
-        """
-        self.target_volatility = target_volatility
+    Parameters
+    ----------
+    instrument_returns : pd.DataFrame
+        Historical returns for all instruments
+    idm_max : float, default=2.5
+        Maximum IDM value
     
-    def fit(
-        self,
-        returns: pd.Series,
-        annualization_factor: float = 252
-    ) -> float:
-        """
-        Calculate optimal DM from realized returns.
-        
-        Parameters
-        ----------
-        returns : pd.Series
-            Daily portfolio returns
-        annualization_factor : float, default=252
-            Factor to annualize volatility
-        
-        Returns
-        -------
-        float
-            Optimal DM value
-        """
-        # Calculate realized volatility
-        realized_vol = returns.std() * np.sqrt(annualization_factor)
-        
-        # Calculate optimal DM
-        if realized_vol > 0:
-            dm_optimal = self.target_volatility / realized_vol
-        else:
-            dm_optimal = 1.0
-        
-        return dm_optimal
+    Returns
+    -------
+    float
+        IDM value (capped at idm_max)
+    """
+    # Same implementation as Portfolio._calculate_idm()
+    # ... (see Phase 3 implementation)
     
     def fit_with_validation(
         self,
@@ -1459,107 +1814,138 @@ class DMFitter:
 ### Unit Tests
 
 ```python
-def test_dm_fitting_basic():
-    """Test basic DM fitting"""
-    # Create returns with 10% annual volatility
-    np.random.seed(42)
-    daily_vol = 0.10 / np.sqrt(252)
-    returns = pd.Series(np.random.normal(0, daily_vol, 1000))
+def test_fdm_calculation():
+    """Test FDM calculation from forecast correlations"""
+    # Create forecast vectors with known correlations
+    forecast_vectors = [
+        pd.DataFrame({
+            'ticker': ['TEST'] * 3,
+            'model_name': ['model_1', 'model_2', 'model_3'],
+            'forecast': [1.0, 0.8, 0.6],
+            'signal': [1, 1, 1]
+        })
+    ]
     
-    # Fit with 20% target
-    fitter = DMFitter(target_volatility=0.20)
-    dm = fitter.fit(returns)
+    fdm = calculate_fdm(forecast_vectors, fdm_max=2.0)
     
-    # Should be approximately 0.20 / 0.10 = 2.0
-    assert 1.5 < dm < 2.5
+    # FDM should be between 1.0 and 2.0
+    assert 1.0 <= fdm <= 2.0
 
-def test_dm_fitting_with_validation():
-    """Test DM fitting with bounds"""
-    # Create very low volatility returns (would give very high DM)
+def test_idm_calculation():
+    """Test IDM calculation from return correlations"""
+    # Create returns with known correlations
     np.random.seed(42)
-    daily_vol = 0.02 / np.sqrt(252)
-    returns = pd.Series(np.random.normal(0, daily_vol, 1000))
+    returns = pd.DataFrame({
+        'NQ': np.random.normal(0, 0.01, 1000),
+        'ES': np.random.normal(0, 0.01, 1000),
+        'GC': np.random.normal(0, 0.01, 1000)
+    })
     
-    fitter = DMFitter(target_volatility=0.20)
-    result = fitter.fit_with_validation(returns, max_dm=3.0)
+    idm = calculate_idm(returns, idm_max=2.5)
     
-    # Optimal might be >5, but should be bounded at 3.0
-    assert result['dm_bounded'] <= 3.0
-    assert result['realized_vol'] < 0.05
-    assert result['target_vol'] == 0.20
+    # IDM should be between 1.0 and 2.5
+    assert 1.0 <= idm <= 2.5
 
-def test_dm_fitting_target_match():
-    """Test DM when realized matches target"""
-    # Create returns with 20% annual volatility (matches target)
-    np.random.seed(42)
-    daily_vol = 0.20 / np.sqrt(252)
-    returns = pd.Series(np.random.normal(0, daily_vol, 1000))
+def test_fdm_capping():
+    """Test that FDM is capped at fdm_max"""
+    # Create forecasts that would give very high FDM
+    # (uncorrelated forecasts)
+    forecast_vectors = [
+        pd.DataFrame({
+            'ticker': ['TEST'] * 10,
+            'model_name': [f'model_{i}' for i in range(10)],
+            'forecast': np.random.rand(10),
+            'signal': [1] * 10
+        })
+    ]
     
-    fitter = DMFitter(target_volatility=0.20)
-    dm = fitter.fit(returns)
+    fdm = calculate_fdm(forecast_vectors, fdm_max=2.0)
     
-    # Should be approximately 1.0
-    assert 0.8 < dm < 1.2
+    # Should be capped at 2.0
+    assert fdm <= 2.0
+
+def test_idm_capping():
+    """Test that IDM is capped at idm_max"""
+    # Create returns that would give very high IDM
+    # (uncorrelated instruments)
+    returns = pd.DataFrame({
+        f'INST_{i}': np.random.normal(0, 0.01, 1000)
+        for i in range(20)
+    })
+    
+    idm = calculate_idm(returns, idm_max=2.5)
+    
+    # Should be capped at 2.5
+    assert idm <= 2.5
 ```
 
 ---
 
 ## Summary Checklist
 
-### Phase 1: Ensemble ⚠️
-- [ ] Remove volatility parameter from predict()
-- [ ] Remove scaling/multiplier logic
-- [ ] Add exposure_fraction to output
-- [ ] Update tests with buy/hold scenarios
-- [ ] Verify forecast range [0, 1]
-
-### Phase 2: Portfolio ⚠️
-- [ ] Add target_volatility, dm, max_position_pct parameters
+### Phase 1: Refactor Ensemble (Risk Management) ⚠️
+- [ ] Add target_volatility parameter
 - [ ] Add volatility parameter to predict()
-- [ ] Implement position fraction calculation
-- [ ] Add unit tests (6 buy/hold scenarios)
-- [ ] Verify position sizing formula
+- [ ] Implement volatility scaling per base model
+- [ ] Change output to vector (one row per base model)
+- [ ] Add model_name to output
+- [ ] Remove signal combination logic
+- [ ] Update unit tests for vector output
 
-### Phase 3: Execution 🆕
-- [ ] Create ContractSpec dataclass
-- [ ] Create Position dataclass
-- [ ] Create PositionSizer class
-- [ ] Implement contract rounding
-- [ ] Add unit tests
+### Phase 2: Create Weight Layer 🆕
+- [ ] Create WeightLayer class
+- [ ] Create InverseCorrelationWeighter class
+- [ ] Implement fit() method for weight calculation and FDM calculation
+- [ ] Implement _calculate_fdm() method (forecast value correlations)
+- [ ] Implement combine() method for forecast combination with FDM application
+- [ ] Add unit tests for weight calculation
+- [ ] Add unit tests for FDM calculation
+- [ ] Add unit tests for forecast combination with FDM
 
-### Phase 4: Volatility 🆕
+### Phase 3: Simplify Portfolio ⚠️
+- [ ] Remove volatility scaling logic (moved to Ensemble)
+- [ ] Add fit() method for IDM calculation from instrument returns
+- [ ] Add _calculate_idm() method (instrument return correlations)
+- [ ] Add _apply_idm() method to apply IDM after instrument weighting
+- [ ] Simplify to instrument weighting, IDM application, and optional capping
+- [ ] Update to accept combined forecasts from Weight layer (already FDM-scaled)
+- [ ] Update unit tests for IDM calculation and application
+
+### Phase 4: Create Volatility Utilities 🆕
 - [ ] Create BlendedVolatility class
 - [ ] Implement EWMA-32 calculation
 - [ ] Implement 10-year rolling average
 - [ ] Add multi-ticker support
 - [ ] Add unit tests
 
-### Phase 5: Integration ✅
+### Phase 5: Create Execution Layer 🆕
+- [ ] Create ContractSpec dataclass
+- [ ] Create Position dataclass
+- [ ] Create PositionSizer class
+- [ ] Implement contract rounding
+- [ ] Add unit tests
+
+### Phase 6: Integration & Testing ✅
 - [ ] Create demo script
 - [ ] Create end-to-end tests
 - [ ] Validate complete pipeline
-- [ ] Test multiple ensembles
+- [ ] Test multiple ensembles with different numbers of base models
+- [ ] Verify signal dilution is solved
 - [ ] Document usage examples
-
-### Phase 6: DM Fitting 🔧
-- [ ] Create DMFitter class
-- [ ] Implement fitting from returns
-- [ ] Add bounds checking
-- [ ] Add validation
-- [ ] Add unit tests
 
 ---
 
 ## Total Estimated Effort
 
-- **Phase 1**: 2-3 hours
-- **Phase 2**: 6-8 hours
-- **Phase 3**: 3-4 hours
-- **Phase 4**: 3-4 hours
-- **Phase 5**: 4-6 hours
-- **Phase 6**: 2-3 hours
+- **Phase 1**: 4-6 hours (Refactor Ensemble for risk management)
+- **Phase 2**: 5-7 hours (Create Weight Layer with FDM)
+- **Phase 3**: 3-4 hours (Simplify Portfolio with IDM)
+- **Phase 4**: 3-4 hours (Create Volatility Utilities)
+- **Phase 5**: 3-4 hours (Create Execution Layer)
+- **Phase 6**: 4-6 hours (Integration & Testing)
+- **Phase 7**: 1-2 hours (FDM/IDM Utilities - optional)
 
-**Total**: 20-28 hours (~3-4 days of focused work)
+**Total**: 23-33 hours (~3-4 days of focused work)
 
 ---
 
