@@ -81,6 +81,7 @@ class DiversifiedEnsemble:
         # Fitted parameters (set during fit() or load_config())
         self.weights_ = None
         self.exposure_fractions_ = None
+        self.model_exposure_fractions_ = None  # Based on 1/n_bins per model
         self.feature_names_ = None
         self.target_volatility_ = None
         self.unique_tickers_ = None
@@ -275,6 +276,7 @@ class DiversifiedEnsemble:
             if fitted_ensemble:
                 self.weights_ = fitted_ensemble.get('weights')
                 self.exposure_fractions_ = fitted_ensemble.get('exposure_fractions')
+                self.model_exposure_fractions_ = fitted_ensemble.get('model_exposure_fractions')
                 self.feature_names_ = fitted_ensemble.get('feature_names')
                 self.target_volatility_ = fitted_ensemble.get('target_volatility')
                 self.unique_tickers_ = fitted_ensemble.get('unique_tickers')
@@ -618,13 +620,20 @@ class DiversifiedEnsemble:
         # Calculate diversified weights
         self.weights_ = self._calculate_diversified_weights(df[feature_cols])
         
-        # Calculate exposure fractions (h_i)
+        # Calculate exposure fractions (h_i) - empirical (fraction of time signal=1)
         self.exposure_fractions_ = {}
         for col in feature_cols:
             feature_data = df[col]
             # Fraction of time feature == 1
             self.exposure_fractions_[col] = feature_data.mean()
-        
+
+        # Calculate model exposure fractions based on n_bins (theoretical)
+        # h_i = 1/n_bins for each base model
+        self.model_exposure_fractions_ = {}
+        for model_name, base_model in self.base_models.items():
+            n_bins = getattr(base_model, 'n_bins', 10)
+            self.model_exposure_fractions_[model_name] = 1.0 / n_bins
+            
         # Store feature names (base model names, not column names)
         self.feature_names_ = feature_cols
         
@@ -670,17 +679,27 @@ class DiversifiedEnsemble:
         return self
     
     def predict(
-        self, 
+        self,
         X: Union[pd.DataFrame, np.ndarray],
         ticker: Union[pd.Series, np.ndarray],
-        volatility: Union[pd.Series, np.ndarray],
+        volatility: Union[pd.Series, np.ndarray, Dict[str, float]],
         normalization_data: Optional[pd.DataFrame] = None
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """
-        Generate ensemble predictions using fitted parameters.
-        
-        First gets binary signals from base models, then applies ensemble formula.
-        
+        Generate per-model forecasts for use with WeightLayer.
+
+        Returns a DataFrame with one row per (sample, base_model) combination.
+        Each row contains the volatility-adjusted forecast for that model.
+
+        The forecast is calculated as:
+            F_i = (tau / (sigma * sqrt(h_i))) * X_i
+
+        Where:
+        - tau: Target annual portfolio volatility
+        - sigma: Instrument's blended annualized volatility
+        - h_i: Exposure fraction (1/n_bins for the base model)
+        - X_i: Binary signal (0 or 1)
+
         Parameters
         ----------
         X : pd.DataFrame
@@ -688,16 +707,26 @@ class DiversifiedEnsemble:
             Must contain all required feature columns.
         ticker : pd.Series or np.ndarray
             Ticker symbols for each sample
-        volatility : pd.Series or np.ndarray  
-            Volatility values for each sample (positive values)
+        volatility : pd.Series, np.ndarray, or Dict[str, float]
+            Blended volatility values. Can be:
+            - pd.Series: Volatility for each sample (index must align with X)
+            - np.ndarray: Volatility for each sample
+            - Dict[str, float]: Mapping from ticker -> volatility
         normalization_data : pd.DataFrame, optional
             Normalization data (EWSD/ATR) for each feature column.
             Columns should match feature columns in X.
             
         Returns
         -------
-        np.ndarray
-            Array of ensemble predictions (position sizes)
+        pd.DataFrame
+            DataFrame with columns:
+            - ticker: Instrument identifier
+            - model_name: Base model identifier
+            - forecast: Volatility-adjusted forecast (0 if signal inactive)
+            - signal: Binary signal {0, 1}
+
+            Note: One row per (sample, base_model) combination.
+            Signal combination happens in WeightLayer, not here.
             
         Raises
         ------
@@ -734,11 +763,25 @@ class DiversifiedEnsemble:
         # Filter X to only required columns
         X_filtered = X[self.required_columns].copy()
         
-        # Convert ticker, volatility to Series if needed
+        # Convert ticker to Series if needed
         if isinstance(ticker, np.ndarray):
             ticker = pd.Series(ticker, index=X_filtered.index)
-        if isinstance(volatility, np.ndarray):
+
+        # Handle volatility input types
+        if isinstance(volatility, dict):
+            # Dict mapping ticker -> volatility
+            vol_dict = volatility
+        elif isinstance(volatility, np.ndarray):
+            # Array - convert to Series first, then will be handled per-sample
             volatility = pd.Series(volatility, index=X_filtered.index)
+            vol_dict = None
+        elif isinstance(volatility, pd.Series):
+            vol_dict = None
+        else:
+            raise ValueError(
+                f"volatility must be pd.Series, np.ndarray, or Dict[str, float], "
+                f"got {type(volatility)}"
+            )
         
         # Check for unseen tickers
         unseen_tickers = set(ticker.unique()) - set(self.unique_tickers_)
@@ -777,35 +820,49 @@ class DiversifiedEnsemble:
         
         # Step 2: Combine binary signals into DataFrame
         binary_df = pd.DataFrame(binary_signals, index=X_filtered.index)
-        
-        # Step 3: Apply ensemble formula: Σ((τ × w_i) / (σ_i × √h_i)) × instrument_weight
-        predictions = np.zeros(len(X_filtered))
-        
+
+        # Step 3: Calculate per-model forecasts
+        # Formula: F_i = (tau / (sigma * sqrt(h_i))) * X_i
+        results = []
+
         for row_idx in range(len(X_filtered)):
-            row_forecast = 0.0
-            vol = volatility.iloc[row_idx] if hasattr(volatility, 'iloc') else volatility[row_idx]
             tick = ticker.iloc[row_idx] if hasattr(ticker, 'iloc') else ticker[row_idx]
-            
-            # Calculate sum of active features
+
+            # Get volatility for this sample
+            if vol_dict is not None:
+                vol = vol_dict.get(tick)
+                if vol is None:
+                    raise ValueError(f"Missing volatility for ticker: {tick}")
+            else:
+                vol = volatility.iloc[row_idx] if hasattr(volatility, 'iloc') else volatility[row_idx]
+
+            # Ensure volatility is positive
+            vol = max(vol, 1e-8)
+
+            # Calculate forecast for each base model
             for model_name in self.feature_names_:
                 X_i = binary_df.iloc[row_idx, binary_df.columns.get_loc(model_name)]
-                
-                if X_i == 1:  # Feature is active
-                    w_i = self.weights_[model_name]
-                    h_i = self.exposure_fractions_[model_name]
-                    
-                    # Avoid division by zero for h_i
-                    sqrt_h_i = np.sqrt(max(h_i, 1e-8))
-                    
-                    # Calculate percent forecast for this feature
-                    percent_forecast_i = (self.target_volatility_ * w_i) / (vol * sqrt_h_i)
-                    row_forecast += percent_forecast_i
-            
-            # Apply instrument weight
-            instrument_weight = self.instrument_weights_[tick]
-            predictions[row_idx] = row_forecast * instrument_weight
-        
-        return predictions
+                signal = int(X_i)
+
+                # Get exposure fraction from model_exposure_fractions_
+                h_i = self.model_exposure_fractions_.get(model_name, 0.1)
+                sqrt_h_i = np.sqrt(max(h_i, 1e-8))
+
+                # Calculate volatility-adjusted forecast
+                # This is the forecast assuming signal=1
+                forecast_if_active = self.target_volatility_ / (vol * sqrt_h_i)
+
+                # Apply signal: 0 if inactive, forecast_if_active if active
+                forecast = forecast_if_active if signal == 1 else 0.0
+
+                results.append({
+                    'ticker': tick,
+                    'model_name': model_name,
+                    'forecast': forecast,
+                    'signal': signal
+                })
+
+        return pd.DataFrame(results)
     
     def save_config(self, filepath: Optional[str] = None) -> str:
         """
@@ -988,6 +1045,7 @@ class DiversifiedEnsemble:
             fitted_ensemble = {
                 'weights': self.weights_,
                 'exposure_fractions': self.exposure_fractions_,
+                'model_exposure_fractions': self.model_exposure_fractions_,
                 'feature_names': self.feature_names_,
                 'target_volatility': self.target_volatility_,
                 'unique_tickers': self.unique_tickers_,
