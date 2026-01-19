@@ -199,7 +199,22 @@ class BinningModelBase(ABC):
         Tuple[int, int]
             (best_long_bin, best_short_bin)
         """
-        if n_unique == 2:
+        if len(bin_stats) == 0:
+            raise ValueError(
+                "No bins with data found. This can happen if:\n"
+                "1. Feature is constant (all values are the same)\n"
+                "2. All feature values are NaN\n"
+                "3. Binning logic produced empty bins\n"
+                "Check your feature data and ensure it has variation."
+            )
+        
+        if n_unique == 1:
+            # Constant feature: all values are the same
+            # Use the single bin (bin 0) for both long and short
+            # This represents "always on" signal
+            best_long_bin = 0
+            best_short_bin = 0
+        elif n_unique == 2:
             # For binary features:
             # Long: select bin 1 (the "signal active" bin)
             # Short: select bin 0 (the "signal inactive" bin)
@@ -290,14 +305,31 @@ class BinningModelBase(ABC):
         # Create clean dataset (NO normalization - bin on raw features)
         df = pd.DataFrame({'feature': feature_data, 'target': target_data}).dropna()
         
-        if len(df) < self.n_bins * 10:
-            raise ValueError(f"Insufficient data: need at least {self.n_bins * 10} samples")
-        
-        # Check if feature is binary
+        # Check if feature is constant, binary, or has variation
         unique_values = df['feature'].unique()
         n_unique = len(unique_values)
         
-        if n_unique == 2:
+        # Adjust minimum data requirement based on feature type
+        if n_unique == 1:
+            # Constant feature: only need minimum samples (not n_bins * 10)
+            min_samples = 10
+        elif n_unique == 2:
+            # Binary feature: need at least 20 samples (2 bins * 10)
+            min_samples = 20
+        else:
+            # Regular binning: need n_bins * 10 samples
+            min_samples = self.n_bins * 10
+        
+        if len(df) < min_samples:
+            raise ValueError(f"Insufficient data: need at least {min_samples} samples (got {len(df)})")
+        
+        if n_unique == 1:
+            # Constant feature: all values are the same
+            # Create a single bin (bin 0) for all samples
+            df['bin'] = 0
+            n_bins = 1
+            self.thresholds_ = np.array([])  # No thresholds for constant feature
+        elif n_unique == 2:
             # Binary feature: create exactly 2 bins
             sorted_values = np.sort(unique_values)
             df['bin'] = (df['feature'] == sorted_values[1]).astype(int)
@@ -375,7 +407,12 @@ class BinningModelBase(ABC):
             raise ValueError(f"Unknown strategy: {strategy}. Use 'long' or 'short'")
         
         # Assign bins based on thresholds (always on RAW features)
-        bins = np.digitize(feature_data.values, self.thresholds_)
+        # Handle constant features (empty or None thresholds)
+        if self.thresholds_ is None or len(self.thresholds_) == 0:
+            # Constant feature: all values go to bin 0
+            bins = np.zeros(len(feature_data), dtype=int)
+        else:
+            bins = np.digitize(feature_data.values, self.thresholds_)
         
         # Create binary signal: 1 if in best bin, 0 otherwise
         signal = pd.Series((bins == best_bin).astype(int), index=feature_data.index)

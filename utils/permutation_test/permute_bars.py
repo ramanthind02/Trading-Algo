@@ -10,8 +10,8 @@ from functools import partial
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.enums import Ticker, TimeFrame
-from utils.helpers import load_data, create_ml_manager
-from feature_extraction.feature_extractor import extract_bias
+from utils.helpers import load_data
+
 
 def compute_profit_factor(returns: np.ndarray) -> float:
     """Compute profit factor for a series of returns.
@@ -415,128 +415,6 @@ class BarPermuteWalkForward:
         return new_df
 
 
-def _extract_features_from_bars(
-    df: pd.DataFrame,
-    ticker: Ticker,
-    start: datetime,
-    end: datetime,
-    base_tf: TimeFrame = TimeFrame.D,
-    atr_feature: str = 'atr_252_D_atr_pct_252',
-    feature_filter: Optional[List[str]] = None,
-    verbose: bool = False
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Extract features from price bars using the centralized extract_bias() function.
-    
-    This function uses the DRY principle by delegating to the centralized
-    extract_bias() function in feature_extractor.py, which handles all the
-    complexity of running the backtest and extracting features.
-    
-    Args:
-        df: DataFrame with OHLC data (columns: datetime, open, high, low, close)
-        ticker: Ticker symbol
-        start: Start date for data
-        end: End date for data
-        base_tf: Base timeframe for feature extraction
-        atr_feature: Name of ATR feature for target normalization
-        feature_filter: Optional list of feature names to compute (for performance)
-        verbose: Whether to print warnings and progress
-        
-    Returns:
-        tuple[pd.DataFrame, pd.DataFrame]: (features_df, price_df)
-            - features_df: DataFrame with extracted bias features (indexed by datetime)
-            - price_df: Original price data with target column (indexed by datetime)
-    """
-    import warnings
-    
-    # Suppress warnings during feature extraction unless verbose
-    if not verbose:
-        warnings.filterwarnings('ignore', category=FutureWarning)
-    
-    # Ensure ATR feature is always included in filter
-    if feature_filter is not None and atr_feature not in feature_filter:
-        feature_filter = feature_filter + [atr_feature]
-    
-    # Convert DataFrame to numpy array format expected by extract_bias
-    # Format: structured array with dtype=[('open', 'close', 'high', 'low', 'datetime')]
-    df_copy = df.copy()
-    
-    # Ensure datetime is in proper format
-    if 'datetime' not in df_copy.columns:
-        df_copy = df_copy.reset_index()
-    
-    # Convert datetime to Unix timestamp (seconds)
-    # Handle both tz-aware and tz-naive datetimes
-    df_copy['datetime'] = pd.to_datetime(df_copy['datetime'])
-    
-    # Remove timezone if present to avoid tz-naive/tz-aware conflicts
-    if df_copy['datetime'].dt.tz is not None:
-        df_copy['datetime'] = df_copy['datetime'].dt.tz_localize(None)
-    
-    # Convert to Unix timestamp (seconds)
-    df_copy['timestamp'] = (df_copy['datetime'] - pd.Timestamp('1970-01-01')) // pd.Timedelta('1s')
-    
-    # Create numpy structured array
-    n_bars = len(df_copy)
-    bar_data = np.zeros(n_bars, dtype=[
-        ('open', np.float32),
-        ('close', np.float32),
-        ('high', np.float32),
-        ('low', np.float32),
-        ('datetime', np.uint32)
-    ])
-    
-    bar_data['open'] = df_copy['open'].values
-    bar_data['close'] = df_copy['close'].values
-    bar_data['high'] = df_copy['high'].values
-    bar_data['low'] = df_copy['low'].values
-    bar_data['datetime'] = df_copy['timestamp'].values.astype(np.uint32)
-    
-    # Use centralized extract_bias function (DRY principle)
-    # This eliminates ~100 lines of duplicated backtest setup code
-    features_df, _ = extract_bias(
-        ticker=ticker,
-        start=start,
-        end=end,
-        feature_filter=feature_filter,
-        bar_data=bar_data  # Pass permuted bars instead of loading from disk
-    )
-    
-    # Prepare price data with target
-    price_df = df_copy[['datetime', 'open', 'high', 'low', 'close']].copy()
-    price_df['target'] = np.log(price_df['close'] / price_df['open'])
-    
-    # Normalize target by ATR feature (MANDATORY)
-    if atr_feature not in features_df.columns:
-        raise ValueError(
-            f"ATR feature '{atr_feature}' not found in extracted features. "
-            f"This is required for target normalization. Available features: {list(features_df.columns[:10])}..."
-        )
-    
-    # Set datetime as index for joining
-    price_df.set_index('datetime', inplace=True)
-    
-    # Handle timezone matching before join - features_df from extract_bias has UTC timezone
-    if features_df.index.tz is not None:
-        # Features has timezone, ensure price_df matches
-        if price_df.index.tz is None:
-            price_df.index = price_df.index.tz_localize('UTC')
-    else:
-        # Features has no timezone, ensure price_df also has none
-        if price_df.index.tz is not None:
-            price_df.index = price_df.index.tz_localize(None)
-    
-    # Now safe to join
-    temp_df = price_df.join(features_df[[atr_feature]], how='inner')
-    # Use safe division to prevent extreme outliers from zero or very small ATR
-    MIN_ATR = 1.0  # Minimum ATR threshold (~1% of typical ATR, prevents extreme values when ATR≈0)
-    price_df['target'] = temp_df['target'] / np.maximum(temp_df[atr_feature], MIN_ATR)
-    
-    # Restore warnings
-    if not verbose:
-        warnings.filterwarnings('default', category=FutureWarning)
-    
-    return features_df, price_df
 
 
 def _get_available_features(ticker: Ticker, base_tf: TimeFrame = TimeFrame.D) -> List[str]:
@@ -682,7 +560,8 @@ def bar_permutation_test(
         if feature_cols is not None:
             print(f"  Filtering to {len(feature_cols)} requested features for performance")
     
-    features_df, cols_dict = extract_bias(ticker=ticker, start=start, end=end)
+    # features_df, cols_dict = extract_bias(ticker=ticker, start=start, end=end)
+    features_df = pd.DataFrame()
     
     # Join price data with features
     price_df.set_index('datetime', inplace=True)

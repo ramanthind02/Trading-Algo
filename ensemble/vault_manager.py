@@ -433,7 +433,14 @@ def load_feature_base_models(
         # Load fitted params if available
         if model_config.get('is_fitted', False) and model_config.get('fitted_params'):
             fitted_params = model_config['fitted_params']
-            binning_model.thresholds_ = np.array(fitted_params['thresholds']) if fitted_params.get('thresholds') else None
+            # Handle thresholds: empty list/None for constant features, otherwise array
+            thresholds_data = fitted_params.get('thresholds')
+            if thresholds_data is None:
+                binning_model.thresholds_ = np.array([])  # Constant feature
+            elif len(thresholds_data) == 0:
+                binning_model.thresholds_ = np.array([])  # Constant feature (empty list)
+            else:
+                binning_model.thresholds_ = np.array(thresholds_data)
             binning_model.best_long_bin_ = fitted_params.get('best_long_bin')
             binning_model.best_short_bin_ = fitted_params.get('best_short_bin')
             binning_model.bin_stats_ = fitted_params.get('bin_stats')
