@@ -12,10 +12,10 @@ import pandas as pd
 import numpy as np
 from typing import Optional
 
-from feature_selection.base_models.base_model import BaseModel
+from feature_selection.base_models.base_model import BinningModelBase
 
 
-class QuantileBinningModel(BaseModel):
+class QuantileBinningModel(BinningModelBase):
     """
     Quantile-based binning model with sklearn-style API.
     

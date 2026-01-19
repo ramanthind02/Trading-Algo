@@ -189,7 +189,7 @@ class ISFeatureSelector:
         
         Parameters
         ----------
-        model : BaseModel
+        model : BinningModelBase
             Model to use for walk-forward analysis (e.g., QuantileBinningModel,
             DecisionTreeBinningModel). The model will be fitted on each training
             window and used to predict on test windows.

@@ -1,24 +1,31 @@
 """
 Base Models Package
 
-This package contains sklearn-style models for walk-forward analysis and feature selection.
-All models follow the sklearn estimator API with fit(), predict(), get_params(), and set_params() methods.
+This package contains models for walk-forward analysis and feature selection.
 
-Available Models:
-- BaseModel: Abstract base class defining the interface
+Available Classes:
+- BaseModel: Complete feature extraction and binning model (owns bias nodes and binning model)
+- BinningModelBase: Abstract base class for binning strategies
 - QuantileBinningModel: Quantile-based binning (unsupervised)
 - DecisionTreeBinningModel: Decision tree-based binning (supervised)
 
+Architecture:
+- BaseModel: Orchestrates bias nodes (feature extraction) and owns a BinningModel (binning logic)
+- BinningModelBase: Abstract interface for binning strategies (fit/predict pattern)
+- QuantileBinningModel/DecisionTreeBinningModel: Concrete binning implementations
+
 Author: Trading Research Team
-Date: 2025-10-23
+Date: 2025-01-07
 """
 
-from feature_selection.base_models.base_model import BaseModel
+from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.base_models.quantile_binning import QuantileBinningModel
 from feature_selection.base_models.tree_binning import DecisionTreeBinningModel
+from feature_selection.base_models.feature_base_model import BaseModel
 
 __all__ = [
-    'BaseModel',
+    'BaseModel',  # New BaseModel that owns bias nodes and binning models
+    'BinningModelBase',  # Abstract base for binning models
     'QuantileBinningModel',
     'DecisionTreeBinningModel',
 ]

@@ -19,12 +19,17 @@ import os
 from datetime import datetime
 
 
-class BaseModel(ABC):
+class BinningModelBase(ABC):
     """
-    Abstract base class for walk-forward models.
+    Abstract base class for binning models used in walk-forward analysis.
     
-    Follows sklearn-style interface with fit() and predict() methods.
+    This class defines the interface for binning strategies (quantile, tree, etc.).
+    It follows sklearn-style interface with fit() and predict() methods.
     Subclasses must implement the binning/splitting logic and prediction.
+    
+    Note: This is the base class for binning models only. For complete feature
+    extraction and binning, use the BaseModel class which owns bias nodes
+    and a binning model via composition.
     
     Parameters
     ----------

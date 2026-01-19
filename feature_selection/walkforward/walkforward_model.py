@@ -20,7 +20,7 @@ import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Callable, Any
 from datetime import datetime, timedelta
-from feature_selection.base_models.base_model import BaseModel
+from feature_selection.base_models.base_model import BinningModelBase
 
 
 class WalkForwardSplitter:
@@ -178,7 +178,7 @@ class WalkForwardSplitter:
         return split_info
 
 
-class WalkForwardModel(BaseModel):
+class WalkForwardModel(BinningModelBase):
     """
     Walk-forward wrapper for BaseModel.
     
@@ -193,7 +193,7 @@ class WalkForwardModel(BaseModel):
     
     Parameters
     ----------
-    base_model : BaseModel
+    base_model : BinningModelBase
         The model to wrap (e.g., QuantileBinningModel, DecisionTreeBinningModel)
     train_start : datetime
         Start date for initial training window
@@ -208,7 +208,7 @@ class WalkForwardModel(BaseModel):
         
     Attributes
     ----------
-    base_model : BaseModel
+    base_model : BinningModelBase
         The wrapped model
     splitter : WalkForwardSplitter
         The data splitter
@@ -246,7 +246,7 @@ class WalkForwardModel(BaseModel):
     
     def __init__(
         self,
-        base_model: BaseModel,
+        base_model: BinningModelBase,
         train_start: datetime,
         train_end: datetime,
         test_step: int,

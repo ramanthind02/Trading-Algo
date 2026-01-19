@@ -221,3 +221,5 @@ uv.lock
 
 # macOS file
 *.DS_Store
+
+venv
