@@ -223,3 +223,6 @@ uv.lock
 *.DS_Store
 
 venv
+# Claude
+.claude/settings.local.json
+tmpclaude*

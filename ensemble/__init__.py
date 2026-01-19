@@ -11,5 +11,6 @@ Date: 2025-11-23
 
 from .diversified_ensemble import DiversifiedEnsemble
 from .portfolio import Portfolio
+from .weight_layer import WeightLayer, InverseCorrelationWeighter
 
-__all__ = ['DiversifiedEnsemble', 'Portfolio']
+__all__ = ['DiversifiedEnsemble', 'Portfolio', 'WeightLayer', 'InverseCorrelationWeighter']

@@ -1,383 +1,416 @@
 """
-Portfolio Class for Managing Multiple Ensembles
+Portfolio Class for Position Sizing and Instrument Allocation
 
-This module provides a Portfolio class that manages multiple DiversifiedEnsemble
-instances, coordinates feature extraction via MLManager, filters data by timeframe
-and required columns, and combines predictions into a single DataFrame output.
+This module provides a Portfolio class that applies instrument weighting,
+Instrument Diversification Multiplier (IDM), and optional position capping
+to combined forecasts from the WeightLayer.
+
+The Portfolio is the final layer before Execution:
+    WeightLayer.combine() -> Portfolio.predict() -> PositionSizer.calculate_positions()
+
+Key responsibilities:
+1. Apply instrument weights (equal weight or custom allocation)
+2. Calculate and apply IDM from instrument return correlations
+3. Apply optional position capping
+
+Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 """
 
-import os
-import json
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Any
-from utils.enums import TimeFrame, Ticker
-import utils.helpers as helpers
-
-from .diversified_ensemble import DiversifiedEnsemble
-from .ensemble_utils import (
-    parse_control_file,
-    extract_bias_node_specs_from_control_file,
-    aggregate_bias_node_specs_from_directory
-)
+from typing import Dict, List, Optional
+from utils.enums import TimeFrame
+from .weight_layer import WeightLayer
 
 
 class Portfolio:
     """
-    Portfolio class that manages multiple DiversifiedEnsemble instances.
-    
-    The Portfolio coordinates feature extraction, filters data by timeframe
-    and required columns for each ensemble, and combines predictions into
-    a single output DataFrame.
-    
+    Portfolio class for applying instrument weighting and IDM to combined forecasts.
+
+    The Portfolio receives combined forecasts from the WeightLayer (already FDM-scaled)
+    and applies:
+    1. Instrument weights (default: equal weight per instrument)
+    2. Instrument Diversification Multiplier (IDM)
+    3. Optional position capping
+
     Parameters
     ----------
-    feature_list_dir : str
-        Path to directory containing feature_list JSON files (one per ensemble)
-    ensemble_model_dir : str, optional
-        Path to directory containing ensemble_model JSON files (for fitted models).
-        If provided, ensembles will be loaded from these files instead of feature_list files.
-    ticker : Ticker, optional
-        Ticker symbol for MLManager initialization. If None, will try to infer
-        from feature_list files or use first ticker found.
-    base_tf : TimeFrame, optional
-        Base timeframe for MLManager. If None, will use TimeFrame.D as default.
+    weight_layer : WeightLayer
+        The WeightLayer that combines forecasts from all ensembles
+    trading_timeframe : TimeFrame
+        The timeframe this portfolio trades on (e.g., TimeFrame.D for daily)
+    max_position_pct : float, optional
+        Maximum position size per instrument. If None, no capping.
+    instrument_weights : Dict[str, float], optional
+        Weight for each instrument. If None, equal weight.
+        Weights should sum to 1.0 (will be normalized if not)
+    idm_max : float, default=2.5
+        Maximum IDM value (capped to prevent excessive leverage)
+
+    Attributes
+    ----------
+    weight_layer : WeightLayer
+        The WeightLayer for forecast combination
+    trading_timeframe : TimeFrame
+        The trading timeframe
+    max_position_pct : float or None
+        Maximum position size
+    instrument_weights : Dict[str, float] or None
+        Custom instrument weights
+    idm_max : float
+        Maximum IDM value
+    idm_ : float
+        Fitted Instrument Diversification Multiplier
+    mean_return_correlation_ : float
+        Mean correlation between instrument returns (for diagnostics)
+    instruments_ : List[str]
+        List of instruments seen during fit
+    is_fitted_ : bool
+        Whether the Portfolio has been fitted
+
+    Examples
+    --------
+    >>> weight_layer = WeightLayer()
+    >>> weight_layer.fit(forecast_vectors, signals)
+    >>> portfolio = Portfolio(
+    ...     weight_layer=weight_layer,
+    ...     trading_timeframe=TimeFrame.D,
+    ...     max_position_pct=2.0
+    ... )
+    >>> portfolio.fit(instrument_returns)
+    >>> positions = portfolio.predict(combined_forecasts)
     """
     
     def __init__(
         self,
-        control_file_dir: str,
-        is_fit: bool = False,
-        ticker: Optional[Ticker] = None,
-        base_tf: TimeFrame = TimeFrame.D
+        weight_layer: Optional[WeightLayer] = None,
+        trading_timeframe: TimeFrame = TimeFrame.D,
+        max_position_pct: Optional[float] = None,
+        instrument_weights: Optional[Dict[str, float]] = None,
+        idm_max: float = 2.5
     ):
         """
-        Initialize Portfolio from control file directory.
-        
+        Initialize Portfolio.
+
         Parameters
         ----------
-        control_file_dir : str
-            Path to directory containing control file JSON files (one per ensemble)
-        is_fit : bool, default=False
-            If True, only load control files with is_fit=True (fitted ensembles).
-            If False, only load control files with is_fit=False (unfitted ensembles).
-        ticker : Ticker, optional
-            Ticker symbol for MLManager initialization. If None, will try to infer
-            from control files or use first ticker found.
-        base_tf : TimeFrame, optional
-            Base timeframe for MLManager. If None, will use TimeFrame.D as default.
+        weight_layer : WeightLayer, optional
+            Weight layer for combining forecasts. If None, Portfolio can still
+            be used for instrument weighting and IDM calculation.
+        trading_timeframe : TimeFrame, default=TimeFrame.D
+            The timeframe this portfolio trades on
+        max_position_pct : float, optional
+            Maximum position size per instrument (e.g., 2.0 = 200%)
+        instrument_weights : Dict[str, float], optional
+            Custom weights per instrument. If None, equal weight.
+        idm_max : float, default=2.5
+            Maximum IDM value (Carver's recommendation)
         """
-        self.control_file_dir = control_file_dir
-        self.is_fit = is_fit
-        self.ticker = ticker
-        self.base_tf = base_tf
-        
-        # Dictionary mapping ensemble names to (ensemble, base_tf) tuples
-        self.ensembles: Dict[str, tuple] = {}
-        
-        # Initialize ensembles from directory
-        self._initialize_ensembles()
-    
-    def _initialize_ensembles(self) -> None:
-        """
-        Initialize all ensembles from control file directory.
-        Only loads control files matching the is_fit flag.
-        """
-        if not os.path.isdir(self.control_file_dir):
-            raise FileNotFoundError(f"Control file directory not found: {self.control_file_dir}")
-        
-        # Find all JSON files in directory
-        for filename in os.listdir(self.control_file_dir):
-            if not filename.endswith('.json'):
-                continue
-            
-            filepath = os.path.join(self.control_file_dir, filename)
-            try:
-                # Parse control file to get ensemble name and base_tf
-                from .ensemble_utils import parse_control_file
-                control_file = parse_control_file(filepath)
-                metadata = control_file.get('metadata', {})
-                
-                # Check if is_fit flag matches
-                file_is_fit = metadata.get('is_fit', False)
-                if file_is_fit != self.is_fit:
-                    # Skip files that don't match the desired is_fit state
-                    continue
-                
-                # Get ensemble name from metadata or filename
-                ensemble_name = metadata.get('ensemble_name', os.path.splitext(filename)[0])
-                
-                # Get base_tf from metadata or parse from filename
-                base_tf = None
-                if 'base_tf' in metadata:
-                    tf_str = metadata['base_tf']
-                    try:
-                        base_tf = TimeFrame[tf_str]
-                    except (KeyError, AttributeError):
-                        pass
-                
-                # If not in metadata, try to parse from filename (e.g., "indices_D.json")
-                if base_tf is None:
-                    name_parts = os.path.splitext(filename)[0].split('_')
-                    if len(name_parts) > 1:
-                        tf_str = name_parts[-1]
-                        try:
-                            base_tf = TimeFrame[tf_str]
-                        except (KeyError, AttributeError):
-                            base_tf = TimeFrame.D  # Default
-                    else:
-                        base_tf = TimeFrame.D  # Default
-                
-                # Initialize ensemble
-                ensemble = DiversifiedEnsemble(
-                    control_file_path=filepath,
-                    base_tf=base_tf
-                )
-                
-                # Store ensemble
-                self.ensembles[ensemble_name] = (ensemble, base_tf)
-                
-            except (ValueError, FileNotFoundError, json.JSONDecodeError) as e:
-                # Skip files that aren't valid control files
-                continue
-    
-    def get_required_bias_nodes(self) -> List[Dict[str, Any]]:
-        """
-        Get list of bias node specifications needed by all ensembles.
-        
-        Aggregates bias node specs from all ensembles in the portfolio.
-        Each ensemble returns its required bias nodes, and they are combined
-        and deduplicated. Specs with the same module_name and params but different
-        timeframes are merged into a single spec with multiple timeframes.
-        
-        Returns
-        -------
-        List[Dict[str, Any]]
-            List of bias node specifications in format:
-            [{'module_name': str, 'timeframes': [TimeFrame], 'params': dict}, ...]
-        """
-        # Use a dict to merge specs with same module_name and params
-        # Key: (module_name, tuple of sorted params)
-        # Value: set of timeframes
-        merged_specs = {}
-        
-        # Get bias node specs from each ensemble
-        for ensemble_name, (ensemble, _) in self.ensembles.items():
-            ensemble_specs = ensemble.get_required_bias_nodes()
-            
-            # Process each spec
-            for spec in ensemble_specs:
-                module_name = spec['module_name']
-                timeframes = spec['timeframes']
-                params = spec['params']
-                
-                # Create key for merging (module_name + params, ignoring timeframes)
-                params_key = tuple(sorted(params.items()))
-                merge_key = (module_name, params_key)
-                
-                # Initialize or update the merged spec
-                if merge_key not in merged_specs:
-                    merged_specs[merge_key] = {
-                        'module_name': module_name,
-                        'timeframes': set(),
-                        'params': params
-                    }
-                
-                # Add timeframes to the set
-                for tf in timeframes:
-                    if isinstance(tf, TimeFrame):
-                        merged_specs[merge_key]['timeframes'].add(tf)
-                    else:
-                        # Convert string to TimeFrame if needed
-                        try:
-                            merged_specs[merge_key]['timeframes'].add(TimeFrame[tf])
-                        except (KeyError, AttributeError):
-                            pass
-        
-        # Convert sets to sorted lists for consistent output
-        result = []
-        for merge_key, spec in merged_specs.items():
-            # Sort timeframes for consistency
-            sorted_tfs = sorted(spec['timeframes'], key=lambda tf: tf.value if hasattr(tf, 'value') else str(tf))
-            result.append({
-                'module_name': spec['module_name'],
-                'timeframes': sorted_tfs,
-                'params': spec['params']
-            })
-        
-        return result
-    
+        self.weight_layer = weight_layer
+        self.trading_timeframe = trading_timeframe
+        self.max_position_pct = max_position_pct
+        self.instrument_weights = instrument_weights
+        self.idm_max = idm_max
+
+        # Fitted attributes
+        self.idm_: Optional[float] = None
+        self.mean_return_correlation_: Optional[float] = None
+        self.instruments_: Optional[List[str]] = None
+        self.is_fitted_: bool = False
+
     def fit(
         self,
-        X: pd.DataFrame,
-        ticker: pd.Series,
-        volatility: pd.Series,
-        y: pd.Series,
-        normalization_data: Optional[pd.DataFrame] = None
+        instrument_returns: pd.DataFrame,
+        idm_override: Optional[float] = None
     ) -> 'Portfolio':
         """
-        Fit all ensembles in the portfolio.
-        
-        Passes the full DataFrame to each ensemble, which will filter
-        by timeframe and required columns internally.
-        
+        Fit IDM from historical instrument returns.
+
+        The IDM (Instrument Diversification Multiplier) accounts for portfolio-level
+        diversification benefits. Lower correlation between instruments = higher IDM.
+
+        Formula:
+            IDM = sqrt(1 / (mean_corr + epsilon))
+            Capped at idm_max (typically 2.5)
+
         Parameters
         ----------
-        X : pd.DataFrame
-            Feature matrix with all features (all timeframes)
-        ticker : pd.Series
-            Ticker symbols for each sample
-        volatility : pd.Series
-            Volatility values for each sample
-        y : pd.Series
-            Target values (returns) for training
-        normalization_data : pd.DataFrame, optional
-            Normalization data (EWSD/ATR) for each feature column
-            
+        instrument_returns : pd.DataFrame
+            Historical returns for all instruments.
+            Columns: instrument tickers, rows: time periods
+        idm_override : float, optional
+            If provided, use this IDM value instead of calculating from returns.
+            Useful for testing or when using pre-calculated IDM.
+
         Returns
         -------
         self
-            Fitted portfolio
-            
+
         Raises
         ------
         ValueError
-            If portfolio was initialized with is_fit=True (cannot fit already fitted ensembles)
+            If instrument_returns is empty or has insufficient data
         """
-        if self.is_fit:
-            raise ValueError(
-                "Cannot fit portfolio initialized with is_fit=True. "
-                "Initialize with is_fit=False to fit ensembles."
-            )
-        
-        # Fit each ensemble - let ensembles filter data themselves
-        for ensemble_name, (ensemble, _) in self.ensembles.items():
-            ensemble.fit(
-                X=X,
-                ticker=ticker,
-                volatility=volatility,
-                y=y,
-                normalization_data=normalization_data
-            )
-        
+        if idm_override is not None:
+            self.idm_ = min(idm_override, self.idm_max)
+            self.mean_return_correlation_ = None
+            self.instruments_ = list(instrument_returns.columns) if not instrument_returns.empty else []
+            self.is_fitted_ = True
+            return self
+
+        if instrument_returns.empty:
+            raise ValueError("instrument_returns DataFrame cannot be empty")
+
+        if len(instrument_returns) < 2:
+            raise ValueError("Need at least 2 time periods to calculate IDM")
+
+        self.instruments_ = list(instrument_returns.columns)
+
+        # Calculate IDM from return correlations
+        self.idm_ = self._calculate_idm(instrument_returns)
+        self.is_fitted_ = True
+
         return self
-    
-    def predict(
-        self,
-        X: pd.DataFrame,
-        ticker: pd.Series,
-        volatility: pd.Series,
-        timeframe: TimeFrame,
-        normalization_data: Optional[pd.DataFrame] = None
-    ) -> pd.DataFrame:
+
+    def _calculate_idm(self, instrument_returns: pd.DataFrame) -> float:
         """
-        Generate predictions from ensembles matching the given timeframe and average them.
-        
-        MLManager feeds features one timeframe at a time. This method only processes
-        ensembles that match the provided timeframe. Predictions from matching ensembles
-        are averaged to produce a single prediction per sample.
-        
+        Calculate Instrument Diversification Multiplier from return correlations.
+
         Parameters
         ----------
-        X : pd.DataFrame
-            Feature matrix with features for the current timeframe only.
-            MLManager provides features for one timeframe at a time.
-        ticker : pd.Series
-            Ticker symbols for each sample
-        volatility : pd.Series
-            Volatility values for each sample
-        timeframe : TimeFrame
-            Current timeframe being processed. Only ensembles matching this timeframe
-            will be used for prediction.
-        normalization_data : pd.DataFrame, optional
-            Normalization data (EWSD/ATR) for each feature column
+        instrument_returns : pd.DataFrame
+            Historical returns for all instruments.
+            Columns: instrument tickers, rows: time periods
+
+        Returns
+        -------
+        float
+            IDM value (capped at idm_max)
+        """
+        # Handle single instrument case
+        if len(instrument_returns.columns) <= 1:
+            self.mean_return_correlation_ = 1.0
+            return 1.0
+
+        # Calculate correlation matrix of instrument returns
+        corr_matrix = instrument_returns.corr().abs()
+
+        # Get upper triangle (excluding diagonal)
+        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+        correlations = corr_matrix.where(mask).stack()
+
+        if len(correlations) == 0:
+            self.mean_return_correlation_ = 0.5
+            return min(np.sqrt(1.0 / 0.51), self.idm_max)
+
+        # Calculate mean correlation
+        mean_corr = correlations.mean()
+
+        # Floor negative correlations at zero (Carver's recommendation)
+        mean_corr = max(mean_corr, 0.0)
+
+        self.mean_return_correlation_ = mean_corr
+
+        # Calculate IDM: sqrt(1 / (mean_corr + epsilon))
+        epsilon = 0.01  # Small value to avoid division by zero
+        idm = np.sqrt(1.0 / (mean_corr + epsilon))
+
+        # Cap at idm_max
+        return min(idm, self.idm_max)
+
+    def predict(
+        self,
+        combined_forecasts: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Apply instrument weighting, IDM, and optional capping to combined forecasts.
+
+        Parameters
+        ----------
+        combined_forecasts : pd.DataFrame
+            Combined forecasts from WeightLayer.
+            Required columns: ['ticker', 'forecast_score']
+            forecast_score should already be FDM-scaled
             
         Returns
         -------
         pd.DataFrame
-            DataFrame with columns: [ticker, %_to_risk]
-            Each row represents the averaged prediction across matching ensembles for one sample.
+            DataFrame with columns:
+            - ticker: Instrument identifier
+            - forecast_score: Original forecast from WeightLayer (passed through)
+            - position_fraction: Position fraction after instrument weighting, IDM, and capping
+
+        Raises
+        ------
+        ValueError
+            If Portfolio has not been fitted or input is invalid
         """
-        if not self.ensembles:
-            # Return empty DataFrame with correct structure
-            return pd.DataFrame(columns=['ticker', '%_to_risk'])
-        
-        # Collect predictions from ensembles matching the timeframe
-        ensemble_predictions = []
-        
-        for ensemble_name, (ensemble, ensemble_tf) in self.ensembles.items():
-            # Only process ensembles that match the current timeframe
-            if ensemble_tf != timeframe:
-                continue
-            
-            # Get predictions from this ensemble
-            predictions = ensemble.predict(
-                X=X,
-                ticker=ticker,
-                volatility=volatility,
-                normalization_data=normalization_data
+        if not self.is_fitted_:
+            raise ValueError(
+                "Portfolio must be fitted before calling predict(). "
+                "Call fit() with instrument returns first."
             )
-            ensemble_predictions.append(predictions)
-        
-        # If no matching ensembles, return empty DataFrame
-        if not ensemble_predictions:
-            return pd.DataFrame(columns=['ticker', '%_to_risk'])
-        
-        # Stack predictions: each row is a sample, each column is an ensemble
-        predictions_matrix = np.column_stack(ensemble_predictions)
-        
-        # Average across ensembles (axis=1 means average across columns/ensembles)
-        averaged_predictions = np.mean(predictions_matrix, axis=1)
-        
-        # Create result DataFrame
-        result = pd.DataFrame({
-            'ticker': ticker.values if isinstance(ticker, pd.Series) else ticker,
-            '%_to_risk': averaged_predictions
-        })
-        
+
+        # Validate input
+        if not isinstance(combined_forecasts, pd.DataFrame):
+            raise ValueError(
+                f"combined_forecasts must be pd.DataFrame, got {type(combined_forecasts)}"
+            )
+
+        required_cols = ['ticker', 'forecast_score']
+        missing_cols = set(required_cols) - set(combined_forecasts.columns)
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+
+        if combined_forecasts.empty:
+            return pd.DataFrame(columns=['ticker', 'forecast_score', 'position_fraction'])
+
+        # Step 1: Apply instrument weights
+        weighted = self._apply_instrument_weights(combined_forecasts)
+
+        # Step 2: Apply IDM
+        idm_scaled = self._apply_idm(weighted)
+
+        # Step 3: Apply position cap (optional)
+        result = self._apply_position_cap(idm_scaled)
+
         return result
-    
-    def save_control_files(self, output_dir: str) -> Dict[str, str]:
+
+    def _apply_instrument_weights(
+        self,
+        combined_forecasts: pd.DataFrame
+    ) -> pd.DataFrame:
         """
-        Save all fitted ensemble control files.
-        
+        Apply instrument weights to combined forecasts.
+
         Parameters
         ----------
-        output_dir : str
-            Directory to save control files
-            
+        combined_forecasts : pd.DataFrame
+            Columns: ['ticker', 'forecast_score']
+
         Returns
         -------
-        Dict[str, str]
-            Mapping of ensemble names to saved file paths
+        pd.DataFrame
+            Columns: ['ticker', 'forecast_score', 'instrument_weight', 'position_weighted']
         """
-        os.makedirs(output_dir, exist_ok=True)
-        saved_paths = {}
-        
-        for ensemble_name, (ensemble, base_tf) in self.ensembles.items():
-            if not ensemble.is_fitted_:
-                continue
-            
-            # Create filename: {ensemble_name}_{timeframe}.json
-            filename = f"{ensemble_name}_{base_tf.name}.json"
-            filepath = os.path.join(output_dir, filename)
-            
-            ensemble.save_control_file(filepath)
-            saved_paths[ensemble_name] = filepath
-        
-        return saved_paths
-    
+        df = combined_forecasts.copy()
+
+        # Determine instrument weights
+        if self.instrument_weights is not None:
+            # Use custom weights
+            df['instrument_weight'] = df['ticker'].map(self.instrument_weights)
+
+            # Handle missing weights (instruments not in custom weights)
+            if df['instrument_weight'].isna().any():
+                missing = df[df['instrument_weight'].isna()]['ticker'].unique()
+                # Assign equal share of remaining weight
+                n_missing = len(missing)
+                used_weight = sum(self.instrument_weights.get(t, 0) for t in df['ticker'].unique() if t not in missing)
+                remaining_weight = max(1.0 - used_weight, 0.0)
+                fallback_weight = remaining_weight / n_missing if n_missing > 0 else 0.0
+                df['instrument_weight'] = df['instrument_weight'].fillna(fallback_weight)
+        else:
+            # Equal weight per unique instrument
+            unique_instruments = df['ticker'].nunique()
+            equal_weight = 1.0 / unique_instruments if unique_instruments > 0 else 0.0
+            df['instrument_weight'] = equal_weight
+
+        # Calculate weighted position
+        df['position_weighted'] = df['forecast_score'] * df['instrument_weight']
+
+        return df
+
+    def _apply_idm(
+        self,
+        positions: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Apply IDM to account for portfolio-level diversification.
+
+        Parameters
+        ----------
+        positions : pd.DataFrame
+            Columns: ['ticker', 'forecast_score', 'instrument_weight', 'position_weighted']
+
+        Returns
+        -------
+        pd.DataFrame
+            Same columns plus 'position_idm'
+        """
+        df = positions.copy()
+        df['position_idm'] = df['position_weighted'] * self.idm_
+        return df
+
+    def _apply_position_cap(
+        self,
+        positions: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Apply position cap if specified.
+
+        Parameters
+        ----------
+        positions : pd.DataFrame
+            Columns include 'position_idm'
+
+        Returns
+        -------
+        pd.DataFrame
+            Columns: ['ticker', 'forecast_score', 'position_fraction']
+        """
+        df = positions.copy()
+
+        if self.max_position_pct is not None:
+            df['position_fraction'] = df['position_idm'].clip(
+                lower=-self.max_position_pct,
+                upper=self.max_position_pct
+            )
+        else:
+            df['position_fraction'] = df['position_idm']
+
+        return df[['ticker', 'forecast_score', 'position_fraction']]
+
+    def get_diagnostics(self) -> Dict:
+        """
+        Get diagnostic information about the fitted Portfolio.
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - is_fitted: Whether Portfolio has been fitted
+            - idm: Instrument Diversification Multiplier
+            - mean_return_correlation: Mean correlation between instrument returns
+            - n_instruments: Number of instruments
+            - instruments: List of instrument tickers
+            - idm_max: Maximum allowed IDM
+            - max_position_pct: Position cap (if any)
+        """
+        return {
+            'is_fitted': self.is_fitted_,
+            'idm': self.idm_,
+            'mean_return_correlation': self.mean_return_correlation_,
+            'n_instruments': len(self.instruments_) if self.instruments_ else 0,
+            'instruments': self.instruments_,
+            'idm_max': self.idm_max,
+            'max_position_pct': self.max_position_pct,
+            'trading_timeframe': self.trading_timeframe.name if self.trading_timeframe else None
+        }
+
     def __repr__(self) -> str:
         """String representation of the portfolio."""
-        return f"Portfolio(n_ensembles={len(self.ensembles)}, base_tf={self.base_tf.name})"
-    
+        fitted_str = "fitted" if self.is_fitted_ else "not fitted"
+        return f"Portfolio({fitted_str}, timeframe={self.trading_timeframe.name}, idm={self.idm_})"
+
     def __str__(self) -> str:
         """Detailed string description of the portfolio."""
         lines = [
-            f"Portfolio",
-            f"  Ensembles: {len(self.ensembles)}",
-            f"  Base Timeframe: {self.base_tf.name}",
-            f"  Ensemble Names: {list(self.ensembles.keys())}"
+            "Portfolio",
+            f"  Trading Timeframe: {self.trading_timeframe.name}",
+            f"  Is Fitted: {self.is_fitted_}",
+            f"  IDM: {self.idm_}",
+            f"  IDM Max: {self.idm_max}",
+            f"  Max Position: {self.max_position_pct}",
+            f"  Instruments: {self.instruments_}"
         ]
         return "\n".join(lines)
-
