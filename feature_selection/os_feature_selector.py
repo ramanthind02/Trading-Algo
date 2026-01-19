@@ -17,7 +17,7 @@ Date: 2025-11-28
 
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Tuple, Dict, Any, Union, Callable
+from typing import Optional, List, Tuple, Dict, Any, Union, Callable, TYPE_CHECKING
 from datetime import datetime as dt
 from sklearn.model_selection import KFold
 
@@ -28,6 +28,12 @@ from utils.permutation_test.permutation_engine import (
     PermutationEngine, 
     FeaturePermutationStrategy
 )
+
+if TYPE_CHECKING:
+    from feature_selection.base_models.feature_base_model import BaseModel
+else:
+    # For runtime, use BinningModelBase as the base type
+    BaseModel = BinningModelBase
 
 
 class OSFeatureSelector:
