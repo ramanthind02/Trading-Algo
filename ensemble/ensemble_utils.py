@@ -12,8 +12,8 @@ from typing import Dict, List, Optional, Any
 import numpy as np
 import pandas as pd
 
-from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel
-from utils.enums import TimeFrame
+from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel, BaseModel
+from utils.enums import TimeFrame, Ticker
 import utils.helpers as helpers
 
 
@@ -356,27 +356,32 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
 
 def create_base_model_from_config(
     config: Dict[str, Any],
+    ticker: Optional[Ticker] = None,
     fitted_params: Optional[Dict[str, Any]] = None
 ) -> Any:
     """
     Factory function to create base model instances from configuration.
     
+    Creates BaseModel instances that own both bias nodes and binning models.
+    
     Parameters
     ----------
     config : Dict[str, Any]
-        Base model configuration with 'model_type' and 'constructor_params'
+        Base model configuration with 'model_type', 'constructor_params', and optionally 'bias_node_spec'
+    ticker : Ticker, optional
+        Ticker symbol for the base model. If None, will try to extract from feature_column or use default.
     fitted_params : Dict[str, Any], optional
         Fitted parameters to restore (thresholds, best bins, etc.)
         
     Returns
     -------
     BaseModel
-        Instantiated base model (fitted if fitted_params provided)
+        Instantiated BaseModel (owns bias nodes and binning model)
         
     Raises
     ------
     ValueError
-        If model_type is not supported
+        If model_type is not supported or bias_node_spec cannot be determined
     """
     model_type = config['model_type']
     constructor_params = config['constructor_params'].copy()
@@ -385,35 +390,94 @@ def create_base_model_from_config(
     strategy = config.get('strategy', 'long')
     constructor_params['strategy'] = strategy
     
-    # Remove normalize_by from constructor_params if present (it's a BaseModel param, not subclass param)
-    # Subclasses don't accept normalize_by in their __init__, it's handled by BaseModel
+    # Remove normalize_by from constructor_params if present
     constructor_params.pop('normalize_by', None)
     
-    # Create model instance
+    # Create binning model instance
     if model_type == 'QuantileBinningModel':
-        model = QuantileBinningModel(**constructor_params)
+        binning_model = QuantileBinningModel(**constructor_params)
     elif model_type == 'DecisionTreeBinningModel':
-        model = DecisionTreeBinningModel(**constructor_params)
+        binning_model = DecisionTreeBinningModel(**constructor_params)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
     
-    # Set feature_column from config (for consistency, even if model is fitted)
-    if 'feature_column' in config:
-        model.feature_column = config['feature_column']
-    
-    # Restore fitted state if provided
+    # Restore fitted state to binning model if provided
     if fitted_params is not None:
         if 'thresholds' in fitted_params and fitted_params['thresholds'] is not None:
-            model.thresholds_ = np.array(fitted_params['thresholds'])
+            binning_model.thresholds_ = np.array(fitted_params['thresholds'])
         if 'best_long_bin' in fitted_params:
-            model.best_long_bin_ = fitted_params['best_long_bin']
+            binning_model.best_long_bin_ = fitted_params['best_long_bin']
         if 'best_short_bin' in fitted_params:
-            model.best_short_bin_ = fitted_params['best_short_bin']
+            binning_model.best_short_bin_ = fitted_params['best_short_bin']
         if 'bin_stats' in fitted_params:
-            model.bin_stats_ = fitted_params['bin_stats']
-        model.is_fitted_ = True
+            binning_model.bin_stats_ = fitted_params['bin_stats']
+        binning_model.is_fitted_ = True
     
-    return model
+    # Get or extract bias_node_spec
+    bias_node_spec = config.get('bias_node_spec')
+    
+    if bias_node_spec is None:
+        # Try to extract from feature_column name
+        feature_column = config.get('feature_column')
+        if feature_column:
+            parsed = helpers.parse_feature_column_name(feature_column)
+            module_name = parsed.get('module')
+            tf_str = parsed.get('tf')
+            params = parsed.get('params', {})
+            
+            if module_name and tf_str:
+                # Convert tf string to TimeFrame enum
+                if isinstance(tf_str, str):
+                    try:
+                        tf = TimeFrame[tf_str]
+                    except (KeyError, AttributeError):
+                        raise ValueError(f"Cannot parse timeframe '{tf_str}' from feature_column")
+                else:
+                    tf = tf_str
+                
+                bias_node_spec = {
+                    'module_name': module_name,
+                    'timeframes': [tf],
+                    'params': params
+                }
+            else:
+                raise ValueError(
+                    f"Cannot extract bias_node_spec from feature_column '{feature_column}'. "
+                    f"Please provide bias_node_spec in config."
+                )
+        else:
+            raise ValueError(
+                "Cannot create BaseModel: neither 'bias_node_spec' nor 'feature_column' found in config"
+            )
+    
+    # Determine ticker
+    if ticker is None:
+        # Try to get from config or use default
+        ticker = Ticker.ES  # Default - should be provided by caller
+    
+    # Create feature_config for BaseModel
+    feature_config = {
+        'bias_node_spec': bias_node_spec,
+        'model_type': model_type,
+        'constructor_params': constructor_params,
+        'strategy': strategy
+    }
+    
+    if 'feature_column' in config:
+        feature_config['feature_column'] = config['feature_column']
+    
+    # Create BaseModel instance (owns bias nodes and binning model)
+    base_model = BaseModel(
+        feature_config=feature_config,
+        ticker=ticker,
+        binning_model=binning_model
+    )
+    
+    # Set feature_column if available
+    if 'feature_column' in config:
+        base_model.feature_column = config['feature_column']
+    
+    return base_model
 
 
 def add_feature_to_control_file(filepath: str, feature_config: Dict[str, Any], tickers: Optional[List[str]] = None) -> None:

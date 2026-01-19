@@ -66,13 +66,64 @@ class BaseModel:
     
     def __init__(
         self,
-        bias_node_spec: Dict[str, Any],
-        binning_model: BinningModelBase,
-        ticker: Ticker
+        feature_config: Dict[str, Any],
+        ticker: Ticker,
+        binning_model: Optional[BinningModelBase] = None
     ):
-        self.bias_node_spec = bias_node_spec
-        self.binning_model = binning_model
+        """
+        Initialize base model with feature configuration.
+        
+        Creates bias nodes internally based on feature_config['bias_node_spec'].
+        
+        Parameters
+        ----------
+        feature_config : Dict[str, Any]
+            Feature configuration from control file, including:
+            - bias_node_spec: {
+                'module_name': str,
+                'timeframes': [TimeFrame],
+                'params': dict
+            }
+        ticker : Ticker
+            Ticker symbol for this base model
+        binning_model : BinningModelBase, optional
+            Binning model instance. If None, will be created from feature_config.
+        """
+        self.feature_config = feature_config
         self.ticker = ticker
+        
+        # Extract bias_node_spec from feature_config
+        bias_node_spec = feature_config.get('bias_node_spec')
+        if bias_node_spec is None:
+            # Backward compatibility: if feature_config is actually bias_node_spec
+            if 'module_name' in feature_config and 'timeframes' in feature_config:
+                bias_node_spec = feature_config
+                self.feature_config = {'bias_node_spec': bias_node_spec}
+            else:
+                raise ValueError(
+                    "feature_config must include 'bias_node_spec' or be a bias_node_spec dict"
+                )
+        
+        self.bias_node_spec = bias_node_spec
+        
+        # Get or create binning model
+        if binning_model is None:
+            # Try to create from feature_config
+            from feature_selection.base_models.quantile_binning import QuantileBinningModel
+            from feature_selection.base_models.tree_binning import DecisionTreeBinningModel
+            
+            model_type = feature_config.get('model_type', 'QuantileBinningModel')
+            constructor_params = feature_config.get('constructor_params', {})
+            
+            if model_type == 'QuantileBinningModel':
+                self.binning_model = QuantileBinningModel(**constructor_params)
+            elif model_type == 'DecisionTreeBinningModel':
+                self.binning_model = DecisionTreeBinningModel(**constructor_params)
+            else:
+                # Default to QuantileBinningModel
+                self.binning_model = QuantileBinningModel()
+        else:
+            self.binning_model = binning_model
         
         # Feature column name (set after first feature extraction)
         self.feature_column: Optional[str] = None
@@ -92,6 +143,24 @@ class BaseModel:
         # Maps datetime -> feature value
         self._feature_values: Dict[Any, float] = {}
         self._feature_datetimes: List[Any] = []
+    
+    def __getattr__(self, name: str) -> Any:
+        """
+        Delegate attribute access to binning_model for compatibility.
+        
+        This allows the ensemble to access binning_model attributes
+        (is_fitted_, strategy, thresholds_, etc.) directly on BaseModel.
+        """
+        # List of attributes to delegate to binning_model
+        delegated_attrs = {
+            'is_fitted_', 'strategy', 'n_bins', 'thresholds_',
+            'best_long_bin_', 'best_short_bin_', 'bin_stats_'
+        }
+        
+        if name in delegated_attrs:
+            return getattr(self.binning_model, name)
+        
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     
     def add_candle(self, candle: Candle, tf: TimeFrame) -> None:
         """
@@ -158,7 +227,7 @@ class BaseModel:
         self,
         candles_df: pd.DataFrame,
         target_data: pd.Series
-    ) -> 'FeatureBaseModel':
+    ) -> 'BaseModel':
         """
         Fit model: update bias nodes, extract features, fit binning model.
         
@@ -176,16 +245,7 @@ class BaseModel:
         """
         # Stream candles to bias nodes
         for _, row in candles_df.iterrows():
-            candle = Candle(
-                datetime=row['datetime'],
-                open=float(row['open']),
-                high=float(row['high']),
-                low=float(row['low']),
-                close=float(row['close']),
-                volume=float(row.get('volume', 0)),
-                ticker=self.ticker,
-                tf=row['timeframe']
-            )
+            candle = Candle.from_row(row)
             self.add_candle(candle, row['timeframe'])
         
         # Extract feature
@@ -225,16 +285,7 @@ class BaseModel:
         
         # Stream candles to bias nodes
         for _, row in candles_df.iterrows():
-            candle = Candle(
-                datetime=row['datetime'],
-                open=float(row['open']),
-                high=float(row['high']),
-                low=float(row['low']),
-                close=float(row['close']),
-                volume=float(row.get('volume', 0)),
-                ticker=self.ticker,
-                tf=row['timeframe']
-            )
+            candle = Candle.from_row(row)
             self.add_candle(candle, row['timeframe'])
         
         # Extract feature (all features, but we'll slice to new ones)

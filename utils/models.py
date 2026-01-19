@@ -59,3 +59,47 @@ class Candle(BaseModel):
             ticker=self.ticker.name,
             timeframe=self.tf.name
         )
+    
+    @classmethod
+    def from_row(cls, row: 'pd.Series') -> 'Candle':
+        """
+        Create Candle from pandas Series row.
+        
+        Expected columns: datetime, open, high, low, close, volume, ticker, timeframe
+        
+        Parameters
+        ----------
+        row : pd.Series
+            DataFrame row with candle data
+            
+        Returns
+        -------
+        Candle
+            Candle instance
+        """
+        import pandas as pd
+        
+        # Handle ticker (can be string or enum)
+        ticker = row.get('ticker')
+        if isinstance(ticker, str):
+            ticker = Ticker[ticker]
+        elif ticker is None:
+            raise ValueError("ticker column is required")
+        
+        # Handle timeframe (can be string or enum)
+        tf = row.get('timeframe')
+        if isinstance(tf, str):
+            tf = TimeFrame[tf]
+        elif tf is None:
+            raise ValueError("timeframe column is required")
+        
+        return cls(
+            datetime=pd.to_datetime(row['datetime']),
+            open=float(row['open']),
+            high=float(row['high']),
+            low=float(row['low']),
+            close=float(row['close']),
+            volume=float(row.get('volume', 0)),
+            ticker=ticker,
+            tf=tf
+        )

@@ -18,6 +18,7 @@ Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 
 import numpy as np
 import pandas as pd
+import json
 from enum import Enum
 from typing import Dict, Optional, List
 from dataclasses import dataclass
@@ -153,6 +154,97 @@ class PositionSizer:
         self.capital = capital
         self.contract_specs = contract_specs
         self.rounding_method = rounding_method
+    
+    @classmethod
+    def from_config(
+        cls,
+        config_path: str,
+        capital: float,
+        ticker_variants: Dict[str, str],
+        prices: Dict[str, float],
+        rounding_method: RoundingMethod = RoundingMethod.ROUND
+    ) -> 'PositionSizer':
+        """
+        Load contract specs from config file.
+        
+        Parameters
+        ----------
+        config_path : str
+            Path to contract_specs.json
+        capital : float
+            Account capital in USD
+        ticker_variants : Dict[str, str]
+            Maps ticker name to variant (e.g., {'ES': 'micro', 'NQ': 'standard'})
+        prices : Dict[str, float]
+            Current market prices per ticker
+        rounding_method : RoundingMethod
+            How to round fractional contracts
+            
+        Returns
+        -------
+        PositionSizer
+            Configured instance ready for use
+            
+        Raises
+        ------
+        FileNotFoundError
+            If config_path doesn't exist
+        ValueError
+            If ticker not in config, variant not found, or price missing
+        """
+        # Load config
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Contract specs config file not found: {config_path}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in config file: {e}")
+        
+        # Build ContractSpec dict
+        contract_specs = {}
+        
+        for ticker_name, variant_name in ticker_variants.items():
+            # Validate ticker exists
+            if ticker_name not in config:
+                raise ValueError(
+                    f"Ticker '{ticker_name}' not found in config. "
+                    f"Available tickers: {list(config.keys())}"
+                )
+            
+            ticker_config = config[ticker_name]
+            
+            # Validate variant exists
+            if variant_name not in ticker_config:
+                raise ValueError(
+                    f"Variant '{variant_name}' not found for ticker '{ticker_name}'. "
+                    f"Available variants: {list(ticker_config.keys())}"
+                )
+            
+            variant_config = ticker_config[variant_name]
+            
+            # Get price
+            if ticker_name not in prices:
+                raise ValueError(
+                    f"Price not provided for ticker '{ticker_name}'"
+                )
+            
+            price = prices[ticker_name]
+            
+            # Create ContractSpec
+            contract_specs[ticker_name] = ContractSpec(
+                ticker=ticker_name,
+                price=price,
+                multiplier=variant_config['multiplier'],
+                fx_rate=1.0,  # Assume USD for now (can be extended)
+                min_tick=variant_config.get('tick_size', 0.25)
+            )
+        
+        return cls(
+            capital=capital,
+            contract_specs=contract_specs,
+            rounding_method=rounding_method
+        )
 
     def calculate_positions(
         self,
