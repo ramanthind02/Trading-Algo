@@ -327,10 +327,18 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             volatility=self.volatility.iloc[:10],
             normalization_data=self.normalization_data[['rsi_signal_D_lookback_14']].iloc[:10]
         )
-        
-        # Verify predictions
+
+        # Verify predictions - new vector format returns DataFrame
+        # with columns ['ticker', 'model_name', 'forecast', 'signal']
+        # One row per (sample, model) combination
+        self.assertIsInstance(predictions, pd.DataFrame)
+        self.assertIn('ticker', predictions.columns)
+        self.assertIn('model_name', predictions.columns)
+        self.assertIn('forecast', predictions.columns)
+        self.assertIn('signal', predictions.columns)
+        # 10 samples × 1 model = 10 rows
         self.assertEqual(len(predictions), 10)
-        self.assertTrue(np.all(np.isfinite(predictions)))
+        self.assertTrue(np.all(np.isfinite(predictions['forecast'])))
     
     def test_ensemble_save_control_file(self):
         """Test saving complete control file with fitted parameters."""
@@ -437,8 +445,12 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             volatility=self.volatility.iloc[:10],
             normalization_data=self.normalization_data[['rsi_signal_D_lookback_14']].iloc[:10]
         )
-        
+
+        # New vector format: DataFrame with one row per (sample, model)
+        self.assertIsInstance(predictions, pd.DataFrame)
+        # 10 samples × 1 model = 10 rows
         self.assertEqual(len(predictions), 10)
+        self.assertTrue(np.all(np.isfinite(predictions['forecast'])))
     
     def test_full_workflow(self):
         """Test complete end-to-end workflow."""
@@ -509,9 +521,12 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             volatility=self.volatility.iloc[:20],
             normalization_data=self.normalization_data[['rsi_signal_D_lookback_14', 'momentum_signal_D_lookback_20']].iloc[:20]
         )
-        
-        self.assertEqual(len(predictions), 20)
-        self.assertTrue(np.all(np.isfinite(predictions)))
+
+        # New vector format: DataFrame with one row per (sample, model)
+        self.assertIsInstance(predictions, pd.DataFrame)
+        # 20 samples × 2 models = 40 rows
+        self.assertEqual(len(predictions), 40)
+        self.assertTrue(np.all(np.isfinite(predictions['forecast'])))
     
     def test_ensemble_initialization_validation(self):
         """Test that ensemble requires control_file_path."""
