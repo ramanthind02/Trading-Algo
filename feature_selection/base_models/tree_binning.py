@@ -14,10 +14,10 @@ from typing import Optional
 import warnings
 
 from sklearn.tree import DecisionTreeRegressor
-from feature_selection.base_models.base_model import BaseModel
+from feature_selection.base_models.base_model import BinningModelBase
 
 
-class DecisionTreeBinningModel(BaseModel):
+class DecisionTreeBinningModel(BinningModelBase):
     """
     Decision tree-based binning model with sklearn-style API.
     

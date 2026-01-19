@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "to-do/forecast_specs.md",
+                "file": "to-do/vault_specs.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "forecast_specs"
+              "title": "vault_specs"
             }
           }
         ]
@@ -171,14 +171,14 @@
   },
   "active": "363c7c083b797ca3",
   "lastOpenFiles": [
-    "to-do/ml_manager_specs.md",
+    "ML pipeline overview.canvas",
+    "to-do/vault_specs.md",
     "to-do/forecast_specs.md",
+    "to-do/ml_manager_specs.md",
     "to-do/monte_carlo_testing.md",
     "to-do/forecast_implementation_specs.md",
-    "to-do/vault_specs.md",
     "to-do/ml_manager.specs",
     "to-do/implementation_specs.md",
-    "ML pipeline overview.canvas",
     "ensemble_change.md",
     "os_feature_selection.md",
     "production_testing_guide.md",

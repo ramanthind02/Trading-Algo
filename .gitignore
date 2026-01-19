@@ -222,6 +222,7 @@ uv.lock
 # macOS file
 *.DS_Store
 
+venv
 # Claude
 .claude/settings.local.json
 tmpclaude*

@@ -21,7 +21,7 @@ from typing import Optional, List, Tuple, Dict, Any, Union, Callable
 from datetime import datetime as dt
 from sklearn.model_selection import KFold
 
-from feature_selection.base_models.base_model import BaseModel
+from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.walkforward.walkforward_model import WalkForwardSplitter
 from metrics.performance import ObjectiveMetric
 from utils.permutation_test.permutation_engine import (
@@ -153,7 +153,7 @@ class OSFeatureSelector:
         
     def walkforward_test(
         self,
-        model: BaseModel,
+        model: BinningModelBase,
         objective_metric: ObjectiveMetric,
         feature_cols: Union[str, List[str]],
         train_start: dt,
@@ -176,7 +176,7 @@ class OSFeatureSelector:
         
         Parameters
         ----------
-        model : BaseModel
+        model : BinningModelBase
             Model to use for walk-forward analysis (e.g., QuantileBinningModel,
             DecisionTreeBinningModel). The model will be fitted on each training
             window and used to predict on test windows.
@@ -351,7 +351,7 @@ class OSFeatureSelector:
     
     def cv_test(
         self,
-        model: BaseModel,
+        model: BinningModelBase,
         objective_metric: ObjectiveMetric,
         feature_cols: Union[str, List[str]],
         n_splits: int = 5,
@@ -366,7 +366,7 @@ class OSFeatureSelector:
         
         Parameters
         ----------
-        model : BaseModel
+        model : BinningModelBase
             Model instance
         objective_metric : ObjectiveMetric
             Custom metric
@@ -859,7 +859,7 @@ class OSFeatureSelector:
     
     def _create_walkforward_objective_func(
         self,
-        model: BaseModel,
+        model: BinningModelBase,
         objective_metric: ObjectiveMetric,
         train_start: dt,
         train_end: dt,
@@ -909,7 +909,7 @@ class OSFeatureSelector:
     
     def _create_cv_objective_func(
         self,
-        model: BaseModel,
+        model: BinningModelBase,
         objective_metric: ObjectiveMetric,
         n_splits: int,
         strategy: str,
@@ -988,7 +988,7 @@ class OSFeatureSelector:
         self,
         feature_data: pd.Series,
         target_data: pd.Series,
-        model: BaseModel,
+        model: BinningModelBase,
         objective_metric: ObjectiveMetric,
         train_start: dt,
         train_end: dt,

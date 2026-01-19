@@ -74,3 +74,52 @@ class ResamplingMethod(Enum):
     MONTE_CARLO = "monte_carlo"  # Random permutation/shuffle without replacement
     BOOTSTRAP = "bootstrap"  # Simple bootstrap (sampling with replacement)
     BLOCK_BOOTSTRAP = "block_bootstrap"  # Block bootstrap (preserves serial correlation)
+
+
+class Direction(Enum):
+    """
+    Trading direction for ensemble strategies.
+    
+    Ensembles are separated by direction to allow portfolio-level
+    allocation between long and short strategies (e.g., 60% long, 40% short).
+    """
+    
+    LONG = 'long'
+    SHORT = 'short'
+    
+    def __str__(self) -> str:
+        """String representation returns the value."""
+        return self.value
+    
+    def __lt__(self, other):
+        """Enable sorting (LONG before SHORT)."""
+        return tuple(self.__class__).index(self) < tuple(self.__class__).index(other)
+    
+    @classmethod
+    def from_string(cls, direction_str: str) -> 'Direction':
+        """
+        Convert string to Direction enum (case-insensitive).
+        
+        Parameters
+        ----------
+        direction_str : str
+            Direction string ('long' or 'short')
+            
+        Returns
+        -------
+        Direction
+            The matching direction
+            
+        Raises
+        ------
+        ValueError
+            If direction string is invalid
+        """
+        direction_lower = direction_str.lower()
+        for direction in cls:
+            if direction.value == direction_lower:
+                return direction
+        raise ValueError(
+            f"Invalid direction: '{direction_str}'. "
+            f"Must be 'long' or 'short'"
+        )
