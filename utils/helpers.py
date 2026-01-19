@@ -277,235 +277,6 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
         raise RuntimeError(f"Error instantiating class from {module_name}: {e}")
 
 
-def get_bias_nodes(
-    ticker: Ticker,
-    bias_node_specs: Optional[List[Dict[str, Any]]] = None
-) -> Dict[str, Tuple[List[TimeFrame], Dict]]:
-    """
-    Creates a dictionary of bias strategies in the format expected by MLManager.
-    
-    Instead of hardcoding bias nodes, this function now accepts a list of bias node
-    specifications and formats them for MLManager.
-    
-    Parameters:
-    - ticker (Ticker): The ticker symbol to create bias nodes for
-    - bias_node_specs (Optional[List[Dict[str, Any]]]): List of bias node specifications.
-        Each spec should be a dict with:
-        - 'module_name' (str): Name of the bias node module (e.g., 'rsi', 'atr')
-        - 'timeframes' (List[TimeFrame]): List of timeframes to use
-        - 'params' (Dict): Parameters for the bias node
-        - 'strategy_key' (Optional[str]): Custom key, auto-generated if not provided
-        
-        If None, returns default bias nodes for backwards compatibility.
-    
-    Returns:
-    - Dict[str, Tuple[List[TimeFrame], Dict]]: A dictionary mapping strategy names to their timeframes and parameters
-    
-    Examples:
-    --------
-    >>> # Single RSI feature with lookback=14
-    >>> specs = [{
-    ...     'module_name': 'rsi',
-    ...     'timeframes': [TimeFrame.D],
-    ...     'params': {'lookback': 14},
-    ...     'strategy_key': 'rsi_14'
-    ... }]
-    >>> bias_nodes = get_bias_nodes(Ticker.SPY, bias_node_specs=specs)
-    
-    >>> # Multiple ATR features with different periods
-    >>> specs = [
-    ...     {'module_name': 'atr', 'timeframes': [TimeFrame.D], 'params': {'period': 20}},
-    ...     {'module_name': 'atr', 'timeframes': [TimeFrame.D], 'params': {'period': 50}},
-    ... ]
-    >>> bias_nodes = get_bias_nodes(Ticker.SPY, bias_node_specs=specs)
-    """
-    bias_strategies = {}
-    
-    # If no specs provided, return empty dict (fully dynamic - no defaults)
-    if bias_node_specs is None:
-        return bias_strategies
-    
-    # Always ensure ATR 252 is included for target normalization
-    # Check if ATR is already in the specs
-    has_atr_252 = False
-    for spec in bias_node_specs:
-        if spec.get('module_name') == 'atr' and spec.get('params', {}).get('period') == 252:
-            has_atr_252 = True
-            break
-    
-    # Add ATR 252 if not present
-    if not has_atr_252:
-        atr_spec = {
-            'module_name': 'atr',
-            'timeframes': [TimeFrame.D],
-            'params': {'period': 252},
-            'strategy_key': 'atr_252'
-        }
-        # Add ATR at the beginning so it's available for other features
-        bias_node_specs = [atr_spec] + list(bias_node_specs)
-    
-    # Always ensure EWSD is included for volatility estimation (Robert Carver methodology)
-    # Check if EWSD is already in the specs
-    has_ewsd = False
-    for spec in bias_node_specs:
-        if spec.get('module_name') == 'ewsd':
-            has_ewsd = True
-            break
-    
-    # Add EWSD if not present
-    if not has_ewsd:
-        ewsd_spec = {
-            'module_name': 'ewsd',
-            'timeframes': [TimeFrame.D],
-            'params': {
-                'lambda_short': 0.06061,      # 32-day span (Carver's preferred)
-                'long_run_window': 252,        # 1 year for long-run estimate
-                'blend_short_weight': 0.7,     # 70% short-run
-                'blend_long_weight': 0.3       # 30% long-run
-            },
-            'strategy_key': 'ewsd_252'
-        }
-        # Add EWSD at the beginning alongside ATR
-        bias_node_specs = [ewsd_spec] + list(bias_node_specs)
-    
-    # Process each bias node specification
-    for spec in bias_node_specs:
-        module_name = spec.get('module_name')
-        timeframes = spec.get('timeframes', [TimeFrame.D])
-        params = spec.get('params', {}).copy()  # Make a copy to avoid mutating original
-        
-        # Ensure module_name is in params for create_bias_node to access
-        # This is especially important for ts_feature which needs to know the actual module name
-        if 'module_name' not in params:
-            params['_module_name'] = module_name
-        
-        # Generate strategy key if not provided
-        if 'strategy_key' in spec:
-            strategy_key = str(spec['strategy_key'])  # Ensure it's always a string
-        else:
-            # Auto-generate key from module name and params
-            strategy_key = module_name
-            if params:
-                # For ts_feature, create a simpler key that doesn't include nested dicts
-                if module_name == 'ts_feature' or module_name == 'tsFeature':
-                    # For ts_feature, use wrapped_module + transformation + lookback for key
-                    wrapped_mod = params.get('wrapped_module', 'unknown')
-                    transform = params.get('transformation', 'unknown')
-                    lookback = params.get('lookback', 'unknown')
-                    # Ensure all values are strings (handle function objects, etc.)
-                    wrapped_mod = str(wrapped_mod) if wrapped_mod != 'unknown' else 'unknown'
-                    # If transformation is a function, get its name
-                    if callable(transform):
-                        transform = getattr(transform, '__name__', str(transform))
-                    else:
-                        transform = str(transform) if transform != 'unknown' else 'unknown'
-                    lookback = str(lookback) if lookback != 'unknown' else 'unknown'
-                    strategy_key = f"{module_name}_{wrapped_mod}_{transform}_{lookback}"
-                else:
-                    # For other modules, add param values to key for uniqueness
-                    # Filter out complex types (dicts, lists) from key generation
-                    simple_params = {k: v for k, v in params.items() 
-                                   if not isinstance(v, (dict, list)) and k != '_module_name'}
-                    if simple_params:
-                        # Convert all values to strings and sort for consistent key generation
-                        param_values = [str(v) for v in simple_params.values()]
-                        param_str = '_'.join(sorted(param_values))
-                        strategy_key = f"{module_name}_{param_str}"
-        
-        # Ensure strategy_key is always a string (safety check)
-        strategy_key = str(strategy_key) if strategy_key else str(module_name)
-        
-        bias_strategies[strategy_key] = (timeframes, params)
-    
-    return bias_strategies
-
-
-def create_ml_manager(
-    ticker: Ticker, 
-    base_tf: TimeFrame = TimeFrame.D, 
-    build_matrix: bool = True,
-    feature_filter: List[str] = None,
-    bias_node_specs: Optional[List[Dict[str, Any]]] = None
-):
-    """
-    Creates an ML Manager instance with bias nodes configured.
-    
-    This function instantiates an MLManager with bias nodes from the get_bias_nodes function.
-    Optionally filters to only include nodes needed for specified features for performance.
-    
-    Parameters:
-    - ticker (Ticker): The ticker symbol to create the ML manager for
-    - base_tf (TimeFrame): Base timeframe for the ML model, defaults to daily
-    - build_matrix (bool): Whether to construct a matrix for training, defaults to False
-    - feature_filter (List[str]): Optional list of feature names to filter bias strategies.
-                                  If provided, only bias strategies needed for these features
-                                  will be included. This significantly improves performance
-                                  when only testing a subset of features.
-    - bias_node_specs (Optional[List[Dict[str, Any]]]): List of bias node specifications.
-                                  If provided, these specific bias nodes will be used.
-                                  If None, default bias nodes will be used.
-                                  See get_bias_nodes() for specification format.
-    
-    Returns:
-    - MLManager: An instantiated ML manager with bias nodes configured
-    """
-    from feature_extraction.ml_manager import MLManager
-    
-    # Get bias strategies dictionary using our get_bias_nodes function
-    bias_strategies = get_bias_nodes(ticker, bias_node_specs=bias_node_specs)
-    
-    # Filter bias strategies if feature_filter is provided
-    if feature_filter is not None and len(feature_filter) > 0:
-        filtered_strategies = {}
-        
-        # Extract unique strategy prefixes from feature names
-        # Feature names typically follow pattern: {module_name}_{params}_{tf}_{output_name}
-        # Strategy keys in bias_strategies are like: "atr_252", "ma_diff_50", "rsi_14", etc.
-        needed_strategies = set()
-        
-        for feature_name in feature_filter:
-            # Try to match feature name to strategy keys
-            # Feature names can be complex, e.g., "atr_252_D_atr_pct_252"
-            # Strategy key would be "atr_252"
-            
-            # Try exact match first
-            if feature_name in bias_strategies:
-                needed_strategies.add(feature_name)
-                continue
-            
-            # Try to find the strategy key that this feature belongs to
-            # by checking if the strategy_key appears at the start of the feature_name
-            for strategy_key in bias_strategies.keys():
-                # Check if feature starts with strategy key followed by underscore or end
-                # This handles cases like:
-                # - "atr_252" matches "atr_252_D_atr_pct_252"
-                # - "ma_diff_50" matches "ma_diff_50_D_ma_diff_50_252"
-                if feature_name.startswith(strategy_key + '_') or feature_name == strategy_key:
-                    needed_strategies.add(strategy_key)
-                    break
-        
-        # Keep only the needed strategies
-        for strategy_key in needed_strategies:
-            if strategy_key in bias_strategies:
-                filtered_strategies[strategy_key] = bias_strategies[strategy_key]
-        
-        # Use filtered strategies if we found any matches, otherwise use all
-        # (better to compute too much than too little)
-        if len(filtered_strategies) > 0:
-            bias_strategies = filtered_strategies
-        else:
-            # No matches found - log warning but use all strategies to be safe
-            print(f"Warning: Could not match any of {len(feature_filter)} features to bias strategies, using all strategies")
-    
-    # Create the ML Manager
-    ml_manager = MLManager(
-        bias_strategies=bias_strategies,
-        ticker=ticker,
-        base_tf=base_tf,
-        build_matrix=build_matrix
-    )
-    
-    return ml_manager
 
 
 # ============================================================================
@@ -660,134 +431,6 @@ def _get_functime_function(function_name: str):
     )
 
 
-def compute_ts_features_from_ml_manager(ml_manager) -> pd.DataFrame:
-    """
-    Post-process matrix_df to compute time series features for TimeSeriesFeatureNode instances.
-    
-    This function should be called after backtest completes but before matrix_df is accessed.
-    It identifies TimeSeriesFeatureNode instances, computes their features, and updates the matrix.
-    
-    Parameters:
-    - ml_manager: MLManager instance with bias nodes
-    
-    Returns:
-    - Updated DataFrame with computed TS features
-    """
-    from nodes.ts_feature import TimeSeriesFeatureNode
-    
-    # Ensure buffer is flushed
-    ml_manager._flush_matrix_buffer()
-    
-    # Get the current matrix
-    matrix_df = ml_manager.matrix.copy()
-    
-    if len(matrix_df) == 0:
-        return matrix_df
-    
-    # Find all TimeSeriesFeatureNode instances and map to column indices
-    ts_node_column_map = {}  # Maps column name -> (ts_node, base_column_index)
-    
-    column_idx = 0
-    for idx, (tf, bias_node) in enumerate(ml_manager.bias_nodes):
-        if isinstance(bias_node, TimeSeriesFeatureNode):
-            # Get the column names that this TS node should produce
-            ts_output_names = bias_node.get_column_names()
-            
-            # Get base column names from wrapped node (for reference)
-            try:
-                base_names = bias_node.wrapped_node.get_column_names()
-            except:
-                base_names = getattr(bias_node.wrapped_node, 'columns', [])
-            
-            # Map each TS output column name to the TS node
-            for i, ts_output_name in enumerate(ts_output_names):
-                # Find the corresponding column in ml_manager.columns
-                if column_idx < len(ml_manager.columns):
-                    current_col_name = ml_manager.columns[column_idx]
-                    ts_node_column_map[current_col_name] = (bias_node, i)
-                    column_idx += 1
-        else:
-            # Regular node - skip its columns
-            try:
-                col_names = bias_node.get_column_names() if hasattr(bias_node, 'get_column_names') else getattr(bias_node, 'columns', [])
-                column_idx += len(col_names) if col_names else 1
-            except:
-                column_idx += 1
-    
-    if not ts_node_column_map:
-        # No TS feature nodes, return matrix as-is
-        return matrix_df
-    
-    # Group columns by TS node for efficient processing
-    nodes_to_process = {}
-    for col_name, (ts_node, base_idx) in ts_node_column_map.items():
-        if ts_node not in nodes_to_process:
-            nodes_to_process[ts_node] = {'columns': [], 'indices': []}
-        nodes_to_process[ts_node]['columns'].append(col_name)
-        nodes_to_process[ts_node]['indices'].append(base_idx)
-    
-    # Compute features for each TimeSeriesFeatureNode
-    for ts_node, info in nodes_to_process.items():
-        try:
-            # Compute features from stored data
-            computed_features = ts_node.compute_features_from_stored_data()
-            
-            # Get output feature names in correct order
-            output_names = ts_node.get_column_names()
-            
-            # Update each column that belongs to this TS node
-            for col_name in info['columns']:
-                # Find the corresponding output feature
-                base_idx = info['indices'][info['columns'].index(col_name)]
-                
-                # The keys in computed_features are from ts_node.output_features (simple names)
-                # not from get_column_names() (standardized names)
-                # So we need to use output_features[base_idx] to look up
-                feature_values = None
-                
-                if hasattr(ts_node, 'output_features') and base_idx < len(ts_node.output_features):
-                    # This is the key that compute_features_from_stored_data() uses
-                    output_feature_name = ts_node.output_features[base_idx]
-                    if output_feature_name in computed_features:
-                        feature_values = computed_features[output_feature_name]
-                
-                # Fallback: try base column name
-                if feature_values is None and hasattr(ts_node, 'base_column_names') and base_idx < len(ts_node.base_column_names):
-                    base_col_name = ts_node.base_column_names[base_idx]
-                    if base_col_name in computed_features:
-                        feature_values = computed_features[base_col_name]
-                
-                if feature_values is None:
-                    # Debug: print available keys
-                    available_keys = list(computed_features.keys())[:5]  # First 5 keys for debugging
-                    tried_names = []
-                    if hasattr(ts_node, 'output_features') and base_idx < len(ts_node.output_features):
-                        tried_names.append(f"output_features[{base_idx}]={ts_node.output_features[base_idx]}")
-                    if hasattr(ts_node, 'base_column_names') and base_idx < len(ts_node.base_column_names):
-                        tried_names.append(f"base_column_names[{base_idx}]={ts_node.base_column_names[base_idx]}")
-                    logger.warning(f"Could not find computed features for {col_name} (tried: {', '.join(tried_names)}). Available keys (first 5): {available_keys}")
-                    continue
-                    
-                # Align with matrix rows
-                if len(feature_values) == len(matrix_df):
-                    matrix_df[col_name] = feature_values
-                elif len(feature_values) < len(matrix_df):
-                    # Pad with NaN at the beginning (since we need lookback period)
-                    padded = [np.nan] * (len(matrix_df) - len(feature_values)) + feature_values
-                    matrix_df[col_name] = padded
-                else:
-                    # Truncate from the beginning (take the last len(matrix_df) values)
-                    matrix_df[col_name] = feature_values[-len(matrix_df):]
-                        
-        except Exception as e:
-            logger.warning(f"Error computing TS features for node {ts_node.name}: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
-            continue
-    
-    return matrix_df
-
-
 def parse_feature_column_name(name: str) -> Dict[str, Any]:
     """
     Parse standardized feature column name into components.
@@ -889,6 +532,77 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
         'tf': tf,
         'params': params
     }
+def align_candles_with_features(
+    candles_df: pd.DataFrame,
+    features_df: pd.DataFrame,
+    datetime_col: str = 'datetime'
+) -> pd.DataFrame:
+    """
+    Align candles DataFrame with features DataFrame by datetime.
+    
+    This is a standardized method for ensuring candles and features have
+    matching datetime values for proper alignment in BaseModel.fit().
+    
+    Parameters
+    ----------
+    candles_df : pd.DataFrame
+        Candles DataFrame. Can have datetime as index or column.
+        If column, must have 'datetime' column.
+    features_df : pd.DataFrame
+        Features DataFrame with datetime index (timezone-aware UTC)
+    datetime_col : str, default='datetime'
+        Name of datetime column if not using index
+        
+    Returns
+    -------
+    pd.DataFrame
+        Aligned candles DataFrame with:
+        - datetime as column (for BaseModel.fit compatibility)
+        - Columns: datetime, open, high, low, close, volume, ticker, timeframe
+        - Only rows that match features_df.index
+    """
+    # Make a copy to avoid modifying original
+    aligned = candles_df.copy()
+    
+    # If datetime is a column, temporarily set it as index for alignment
+    datetime_is_column = datetime_col in aligned.columns
+    if datetime_is_column:
+        aligned.set_index(datetime_col, inplace=True)
+    
+    # Ensure index is datetime type
+    if not isinstance(aligned.index, pd.DatetimeIndex):
+        aligned.index = pd.to_datetime(aligned.index)
+    
+    # Ensure timezone-aware (UTC) to match features
+    if aligned.index.tz is None:
+        aligned.index = aligned.index.tz_localize('UTC')
+    else:
+        aligned.index = aligned.index.tz_convert('UTC')
+    
+    # Align with features index (inner join - only matching datetimes)
+    aligned = aligned.reindex(features_df.index)
+    
+    # Drop rows with NaN in required columns
+    aligned = aligned.dropna(subset=[col for col in ['open', 'high', 'low', 'close'] if col in aligned.columns], how='all')
+    
+    # Reset index to get datetime as column (BaseModel.fit expects datetime column)
+    aligned = aligned.reset_index()
+    if 'index' in aligned.columns:
+        aligned.rename(columns={'index': datetime_col}, inplace=True)
+    
+    # Ensure required columns exist
+    required_cols = ['open', 'high', 'low', 'close', 'volume', 'ticker', 'timeframe']
+    for col in required_cols:
+        if col not in aligned.columns:
+            if col == 'volume':
+                aligned[col] = 0.0
+            elif col in ['ticker', 'timeframe']:
+                # These should be set by caller, but provide defaults
+                pass
+    
+    return aligned
+
+
 def get_ticker_list() -> List[Ticker]:
     return [
         Ticker.ES,   # CONTINUOUS E-MINI S&P 500 CONTRACT
