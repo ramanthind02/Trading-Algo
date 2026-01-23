@@ -626,6 +626,18 @@ def plot_feature_signal_cumsum(
     plt.Figure
         Matplotlib figure object
     """
+    # CRITICAL: Sort by datetime index before calculating cumulative sum
+    # This ensures chronological order for proper cumulative calculation
+    if isinstance(gated_returns.index, pd.DatetimeIndex):
+        gated_returns = gated_returns.sort_index()
+    elif hasattr(gated_returns.index, 'sort_values'):
+        # If index has sort_values method, try to sort
+        try:
+            gated_returns = gated_returns.sort_index()
+        except Exception:
+            # If sorting fails, proceed with original order
+            pass
+    
     cum_returns = gated_returns.cumsum()
     
     fig, ax = plt.subplots(figsize=figsize)

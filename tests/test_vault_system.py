@@ -165,9 +165,9 @@ class TestBaseModel:
         """Test BaseModel initialization."""
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         assert base_model.bias_node_spec == bias_node_spec
@@ -180,9 +180,9 @@ class TestBaseModel:
         """Test adding candles to BaseModel."""
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         # Add a candle
@@ -196,9 +196,9 @@ class TestBaseModel:
         """Test feature extraction from bias nodes."""
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         # Add several candles
@@ -217,9 +217,9 @@ class TestBaseModel:
         """Test BaseModel fitting."""
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         # Fit model
@@ -233,9 +233,9 @@ class TestBaseModel:
         """Test BaseModel prediction."""
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         # Fit first
@@ -346,9 +346,9 @@ class TestVaultManager:
         # Create and fit a base model
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         # Create minimal candles and targets for fitting
@@ -401,9 +401,9 @@ class TestVaultManager:
         # Create model with wrong strategy
         binning_model = QuantileBinningModel(n_bins=3, strategy='short')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         # Try to add - should fail
@@ -425,9 +425,9 @@ class TestVaultManager:
         # Create and save a model
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         np.random.seed(42)
@@ -477,9 +477,9 @@ class TestVaultManager:
         # Create and save unfitted model
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         np.random.seed(42)
@@ -537,9 +537,9 @@ class TestVaultManager:
         # Add a model
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         model_id = add_feature_to_ensemble(
@@ -572,9 +572,9 @@ class TestVaultManager:
         for i in range(3):
             binning_model = QuantileBinningModel(n_bins=3, strategy='long')
             base_model = BaseModel(
-                bias_node_spec=bias_node_spec,
+                feature_config={'bias_node_spec': bias_node_spec},
                 binning_model=binning_model,
-                ticker=Ticker.ES
+                tickers=[Ticker.ES]
             )
             
             dates = pd.date_range('2020-01-01', periods=50, freq='D')
@@ -617,9 +617,9 @@ class TestVaultManager:
         # Add a feature
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         np.random.seed(42)
@@ -662,9 +662,9 @@ class TestVaultManager:
         for n_bins in [3, 5]:
             binning_model = QuantileBinningModel(n_bins=n_bins, strategy='long')
             base_model = BaseModel(
-                bias_node_spec=bias_node_spec,
+                feature_config={'bias_node_spec': bias_node_spec},
                 binning_model=binning_model,
-                ticker=Ticker.ES
+                tickers=[Ticker.ES]
             )
             
             dates = pd.date_range('2020-01-01', periods=50, freq='D')
@@ -707,9 +707,9 @@ class TestVaultManager:
         # Add a valid feature
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         np.random.seed(42)
@@ -752,9 +752,9 @@ class TestVaultManager:
         # Create base model for ES
         binning_model = QuantileBinningModel(n_bins=3, strategy='long')
         base_model_es = BaseModel(
-            bias_node_spec=bias_node_spec,
+            feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            ticker=Ticker.ES
+            tickers=[Ticker.ES]
         )
         
         # Add feature with multiple tickers

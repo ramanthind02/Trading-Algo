@@ -27,30 +27,36 @@ class Portfolio:
     """
     Portfolio class for applying instrument weighting and IDM to combined forecasts.
 
-    The Portfolio receives combined forecasts from the WeightLayer (already FDM-scaled)
-    and applies:
+    The Portfolio uses WeightLayer to combine forecasts from all base models across all ensembles.
+    WeightLayer applies FDM (Forecast Diversification Multiplier) during combination.
+    Portfolio then applies:
     1. Instrument weights (default: equal weight per instrument)
     2. Instrument Diversification Multiplier (IDM)
     3. Optional position capping
 
     Parameters
     ----------
-    weight_layer : WeightLayer
-        The WeightLayer that combines forecasts from all ensembles
-    trading_timeframe : TimeFrame
-        The timeframe this portfolio trades on (e.g., TimeFrame.D for daily)
-    max_position_pct : float, optional
-        Maximum position size per instrument. If None, no capping.
+    ensembles : List[DiversifiedEnsemble], optional
+        List of ensembles for this portfolio (new API)
+    trading_timeframe : TimeFrame, default=TimeFrame.D
+        The timeframe this portfolio trades on
+    target_volatility : float, optional
+        Target volatility for position sizing (new API)
+    max_position_pct : float, default=2.0
+        Maximum position size per instrument (e.g., 2.0 = 200%)
+    weight_layer : WeightLayer, optional
+        Weight layer for combining forecasts. If None, creates default inverse correlation WeightLayer.
     instrument_weights : Dict[str, float], optional
-        Weight for each instrument. If None, equal weight.
-        Weights should sum to 1.0 (will be normalized if not)
+        Custom weights per instrument. If None, equal weight.
     idm_max : float, default=2.5
-        Maximum IDM value (capped to prevent excessive leverage)
+        Maximum IDM value (Carver's recommendation)
 
     Attributes
     ----------
+    ensembles : List[DiversifiedEnsemble]
+        List of ensembles for this portfolio
     weight_layer : WeightLayer
-        The WeightLayer for forecast combination
+        The WeightLayer for forecast combination (required, created if not provided)
     trading_timeframe : TimeFrame
         The trading timeframe
     max_position_pct : float or None
@@ -70,15 +76,22 @@ class Portfolio:
 
     Examples
     --------
-    >>> weight_layer = WeightLayer()
-    >>> weight_layer.fit(forecast_vectors, signals)
+    >>> # Using default WeightLayer
     >>> portfolio = Portfolio(
-    ...     weight_layer=weight_layer,
+    ...     ensembles=[ensemble1, ensemble2],
     ...     trading_timeframe=TimeFrame.D,
     ...     max_position_pct=2.0
     ... )
-    >>> portfolio.fit(instrument_returns)
-    >>> positions = portfolio.predict(combined_forecasts)
+    >>> portfolio.fit_from_candles(candles_df, target_data)
+    >>> positions = portfolio.predict_from_candles(test_candles)
+    >>> 
+    >>> # Using custom WeightLayer
+    >>> custom_weight_layer = WeightLayer(weight_method='inverse_correlation', fdm_max=2.0)
+    >>> portfolio = Portfolio(
+    ...     ensembles=[ensemble1, ensemble2],
+    ...     weight_layer=custom_weight_layer,
+    ...     trading_timeframe=TimeFrame.D
+    ... )
     """
     
     def __init__(
@@ -105,7 +118,7 @@ class Portfolio:
         max_position_pct : float, default=2.0
             Maximum position size per instrument (e.g., 2.0 = 200%)
         weight_layer : WeightLayer, optional
-            Weight layer for combining forecasts (legacy API)
+            Weight layer for combining forecasts. If None, creates default inverse correlation WeightLayer.
         instrument_weights : Dict[str, float], optional
             Custom weights per instrument. If None, equal weight.
         idm_max : float, default=2.5
@@ -116,8 +129,15 @@ class Portfolio:
         self.trading_timeframe = trading_timeframe
         self.target_volatility = target_volatility
         
-        # Legacy API: weight_layer-based
-        self.weight_layer = weight_layer
+        # WeightLayer is required - create default if not provided
+        if weight_layer is None:
+            # Create default inverse correlation WeightLayer
+            self.weight_layer = WeightLayer(
+                weight_method='inverse_correlation',
+                fdm_max=2.0
+            )
+        else:
+            self.weight_layer = weight_layer
         
         # Common attributes
         self.max_position_pct = max_position_pct
@@ -451,6 +471,9 @@ class Portfolio:
                 if self.idm_ is None:
                     self.idm_ = 1.0
                     self.mean_return_correlation_ = 1.0
+            
+            # Fit WeightLayer (calculates weights and FDM from forecast correlations)
+            self._fit_weight_layer(tf_candles)
         
         self.is_fitted_ = True
         return self
@@ -509,7 +532,7 @@ class Portfolio:
         volatility = self._calculate_volatility_from_candles(tf_candles)
         
         # Storage for granular predictions
-        ensemble_predictions_list = []
+        forecast_vectors = []  # For WeightLayer.combine()
         ensemble_predictions_dict = {}
         base_model_predictions_dict = {}
         
@@ -517,22 +540,39 @@ class Portfolio:
         for ensemble_idx, ensemble in enumerate(self.ensembles):
             # Use the new predict_from_candles method if available
             if hasattr(ensemble, 'predict_from_candles'):
-                # Determine if we need base model predictions
-                need_base_models = return_base_model_predictions
+                # Always get base model predictions to build forecast vectors for WeightLayer
+                ensemble_result = ensemble.predict_from_candles(
+                    tf_candles,
+                    volatility=volatility,  # Pass volatility for proper scaling
+                    return_base_model_predictions=True
+                )
                 
-                if need_base_models:
-                    # Get ensemble predictions with base model granularity
-                    ensemble_result = ensemble.predict_from_candles(
-                        tf_candles,
-                        volatility=volatility,  # Pass volatility for proper scaling
-                        return_base_model_predictions=True
-                    )
+                if isinstance(ensemble_result, dict):
+                    ensemble_pred = ensemble_result.get('ensemble')
+                    base_models = ensemble_result.get('base_models', {})
                     
-                    if isinstance(ensemble_result, dict):
-                        ensemble_pred = ensemble_result.get('ensemble')
-                        base_models = ensemble_result.get('base_models', {})
-                        
-                        # Store base model predictions with ensemble prefix
+                    # Build forecast vectors for WeightLayer (one per ensemble)
+                    # WeightLayer expects: ['ticker', 'model_name', 'forecast', 'signal']
+                    ensemble_forecast_vector = []
+                    for model_name, model_pred in base_models.items():
+                        if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:
+                            # Convert to WeightLayer format
+                            forecast_df = model_pred.copy()
+                            forecast_df['model_name'] = model_name
+                            forecast_df['forecast'] = forecast_df['forecast_score']
+                            # Extract signal from forecast (1 if forecast > 0, else 0)
+                            forecast_df['signal'] = (forecast_df['forecast'] > 0).astype(int)
+                            # Keep only required columns
+                            forecast_df = forecast_df[['ticker', 'datetime', 'model_name', 'forecast', 'signal']]
+                            ensemble_forecast_vector.append(forecast_df)
+                    
+                    if ensemble_forecast_vector:
+                        # Combine all base models from this ensemble into one forecast vector
+                        ensemble_vector_df = pd.concat(ensemble_forecast_vector, ignore_index=True)
+                        forecast_vectors.append(ensemble_vector_df)
+                    
+                    # Store base model predictions with ensemble prefix (for granular output)
+                    if return_base_model_predictions:
                         for model_name, model_pred in base_models.items():
                             ensemble_name = f"ensemble_{ensemble_idx}"
                             full_model_name = f"{ensemble_name}::{model_name}"
@@ -541,38 +581,29 @@ class Portfolio:
                                 model_pred, volatility, tf_candles
                             )
                             base_model_predictions_dict[full_model_name] = base_model_positions
-                    else:
-                        ensemble_pred = ensemble_result
+                    
+                    # Store ensemble-level predictions if requested
+                    if return_ensemble_predictions:
+                        ensemble_name = f"ensemble_{ensemble_idx}"
+                        # Convert to position fractions
+                        ensemble_positions = self._apply_risk_management_to_forecasts(
+                            ensemble_pred, volatility, tf_candles
+                        )
+                        ensemble_predictions_dict[ensemble_name] = ensemble_positions
                 else:
-                    ensemble_pred = ensemble.predict_from_candles(tf_candles, volatility=volatility)
-                
-                # Always append the ensemble prediction DataFrame (not dict) for aggregation
-                if isinstance(ensemble_pred, pd.DataFrame):
-                    ensemble_predictions_list.append(ensemble_pred)
-                else:
-                    # If we got a dict but didn't request base models, extract ensemble
-                    if isinstance(ensemble_pred, dict):
-                        ensemble_pred = ensemble_pred.get('ensemble', pd.DataFrame())
-                        ensemble_predictions_list.append(ensemble_pred)
-                
-                # Store ensemble-level predictions if requested
-                if return_ensemble_predictions:
-                    ensemble_name = f"ensemble_{ensemble_idx}"
-                    # Get the ensemble prediction (might be from dict or direct)
-                    if isinstance(ensemble_pred, dict):
-                        ensemble_pred_df = ensemble_pred.get('ensemble')
-                    else:
-                        ensemble_pred_df = ensemble_pred
-                    # Convert to position fractions
-                    ensemble_positions = self._apply_risk_management_to_forecasts(
-                        ensemble_pred_df, volatility, tf_candles
-                    )
-                    ensemble_predictions_dict[ensemble_name] = ensemble_positions
+                    # If ensemble doesn't return dict, it's already aggregated
+                    ensemble_pred = ensemble_result
+                    if return_ensemble_predictions:
+                        ensemble_name = f"ensemble_{ensemble_idx}"
+                        ensemble_positions = self._apply_risk_management_to_forecasts(
+                            ensemble_pred, volatility, tf_candles
+                        )
+                        ensemble_predictions_dict[ensemble_name] = ensemble_positions
             else:
                 # Fallback: use regular predict (requires features, not implemented here)
                 pass
         
-        if not ensemble_predictions_list:
+        if not forecast_vectors:
             empty_df = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score', 'position_fraction'])
             if return_ensemble_predictions or return_base_model_predictions:
                 result = {'portfolio': empty_df}
@@ -583,8 +614,18 @@ class Portfolio:
                 return result
             return empty_df
         
-        # Aggregate ensemble predictions for portfolio-level
-        forecast_scores_df = self._aggregate_ensembles(ensemble_predictions_list, tf_candles)
+        # Use WeightLayer to combine forecasts from all base models across all ensembles
+        if self.weight_layer.is_fitted_:
+            # WeightLayer is fitted - use it to combine forecasts
+            combined_forecasts = self.weight_layer.combine(forecast_vectors)
+            # Convert to format expected by _apply_risk_management (needs datetime column)
+            # WeightLayer returns ['ticker', 'forecast_score'], but we need datetime
+            # We'll merge with candles to get datetime alignment
+            forecast_scores_df = self._align_forecasts_with_candles(combined_forecasts, tf_candles)
+        else:
+            # WeightLayer not fitted - fallback to simple averaging
+            # This should not happen if fit_from_candles was called, but handle gracefully
+            forecast_scores_df = self._aggregate_ensembles_fallback(forecast_vectors, tf_candles)
         
         # Apply risk management for portfolio-level
         positions_df = self._apply_risk_management(
@@ -660,6 +701,9 @@ class Portfolio:
         # Ensure columns are in correct order
         if 'ticker' in aggregated.columns and 'datetime' in aggregated.columns:
             aggregated = aggregated[['ticker', 'datetime', 'forecast_score']]
+        
+        # Note: FDM is now applied by WeightLayer.combine(), not here
+        # This method is only used as fallback when WeightLayer is not fitted
         
         return aggregated
     
@@ -784,6 +828,193 @@ class Portfolio:
         
         return returns_df
     
+    def _fit_weight_layer(
+        self,
+        candles_df: pd.DataFrame
+    ) -> None:
+        """
+        Fit WeightLayer from forecast vectors and signals.
+        
+        Collects forecast vectors from all ensembles, extracts binary signals,
+        and fits the WeightLayer (which calculates weights and FDM).
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            Candles DataFrame for generating forecasts
+        """
+        if not self.ensembles:
+            return
+        
+        # Calculate volatility for forecast generation
+        volatility = self._calculate_volatility_from_candles(candles_df)
+        
+        # Collect forecast vectors and signals from all ensembles
+        forecast_vectors = []
+        all_signals_list = []
+        
+        for ensemble in self.ensembles:
+            if not hasattr(ensemble, 'predict_from_candles'):
+                continue
+            
+            try:
+                # Get ensemble predictions with base model granularity
+                ensemble_result = ensemble.predict_from_candles(
+                    candles_df,
+                    volatility=volatility,
+                    return_base_model_predictions=True
+                )
+                
+                if isinstance(ensemble_result, dict):
+                    base_models = ensemble_result.get('base_models', {})
+                    ensemble_forecast_vector = []
+                    
+                    for model_name, model_pred in base_models.items():
+                        if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:
+                            # Convert to WeightLayer format: ['ticker', 'model_name', 'forecast', 'signal']
+                            forecast_df = model_pred.copy()
+                            forecast_df['model_name'] = model_name
+                            forecast_df['forecast'] = forecast_df['forecast_score']
+                            # Extract signal from forecast (1 if forecast > 0, else 0)
+                            forecast_df['signal'] = (forecast_df['forecast'] > 0).astype(int)
+                            # Keep only required columns
+                            forecast_df = forecast_df[['ticker', 'datetime', 'model_name', 'forecast', 'signal']]
+                            ensemble_forecast_vector.append(forecast_df)
+                            
+                            # Extract signals for weight calculation (pivot by model_name)
+                            signal_series = forecast_df.set_index('datetime')['signal']
+                            all_signals_list.append((model_name, signal_series))
+                    
+                    if ensemble_forecast_vector:
+                        # Combine all base models from this ensemble into one forecast vector
+                        ensemble_vector_df = pd.concat(ensemble_forecast_vector, ignore_index=True)
+                        forecast_vectors.append(ensemble_vector_df)
+            except Exception:
+                # Skip this ensemble if prediction fails
+                continue
+        
+        if len(forecast_vectors) == 0:
+            # Cannot fit WeightLayer without forecast vectors
+            return
+        
+        # Build signals DataFrame for weight calculation
+        # Pivot signals by model_name (columns) and datetime (index)
+        if all_signals_list:
+            # Find common datetime index
+            common_index = all_signals_list[0][1].index
+            for _, signal_series in all_signals_list[1:]:
+                common_index = common_index.intersection(signal_series.index)
+            
+            if len(common_index) >= 2:
+                signals_df = pd.DataFrame(index=common_index)
+                for model_name, signal_series in all_signals_list:
+                    aligned_signal = signal_series.reindex(common_index)
+                    signals_df[model_name] = aligned_signal
+                
+                # Drop rows with any NaN
+                signals_df = signals_df.dropna()
+                
+                if len(signals_df) >= 2 and len(signals_df.columns) >= 1:
+                    # Fit WeightLayer
+                    try:
+                        self.weight_layer.fit(forecast_vectors, signals_df)
+                    except Exception:
+                        # If fitting fails, WeightLayer will remain unfitted
+                        # It will use defaults when combine() is called
+                        pass
+    
+    def _align_forecasts_with_candles(
+        self,
+        combined_forecasts: pd.DataFrame,
+        candles_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Align combined forecasts (from WeightLayer) with candles DataFrame.
+        
+        WeightLayer.combine() returns ['ticker', 'datetime', 'forecast_score'] if datetime is available.
+        If datetime is missing, we merge with candles to add it.
+        
+        Parameters
+        ----------
+        combined_forecasts : pd.DataFrame
+            Combined forecasts from WeightLayer with columns: ['ticker', 'forecast_score'] or ['ticker', 'datetime', 'forecast_score']
+        candles_df : pd.DataFrame
+            Candles DataFrame for datetime alignment
+            
+        Returns
+        -------
+        pd.DataFrame
+            Forecast scores with columns: ['ticker', 'datetime', 'forecast_score']
+        """
+        # If datetime is already in combined_forecasts, use it directly
+        if 'datetime' in combined_forecasts.columns:
+            # Ensure datetime is datetime type
+            combined_forecasts = combined_forecasts.copy()
+            combined_forecasts['datetime'] = pd.to_datetime(combined_forecasts['datetime'])
+            return combined_forecasts[['ticker', 'datetime', 'forecast_score']]
+        
+        # Fallback: datetime not in combined_forecasts, merge with candles
+        # Group candles by ticker and get unique datetimes
+        # For each ticker, assign forecast_score to all its datetimes
+        results = []
+        for ticker in combined_forecasts['ticker'].unique():
+            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            ticker_forecast = combined_forecasts[combined_forecasts['ticker'] == ticker]
+            
+            if len(ticker_forecast) > 0:
+                forecast_score = ticker_forecast.iloc[0]['forecast_score']
+            else:
+                forecast_score = 0.0
+            
+            # Assign same forecast_score to all datetimes for this ticker
+            for _, row in ticker_candles.iterrows():
+                results.append({
+                    'ticker': ticker,
+                    'datetime': pd.to_datetime(row['datetime']),
+                    'forecast_score': forecast_score
+                })
+        
+        return pd.DataFrame(results)
+    
+    def _aggregate_ensembles_fallback(
+        self,
+        forecast_vectors: List[pd.DataFrame],
+        candles_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Fallback aggregation when WeightLayer is not fitted.
+        
+        Simple averaging across all base models.
+        
+        Parameters
+        ----------
+        forecast_vectors : List[pd.DataFrame]
+            List of forecast vectors from all ensembles
+        candles_df : pd.DataFrame
+            Candles DataFrame for alignment
+            
+        Returns
+        -------
+        pd.DataFrame
+            Aggregated forecast scores with columns: ['ticker', 'datetime', 'forecast_score']
+        """
+        if not forecast_vectors:
+            return pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
+        
+        # Combine all forecast vectors
+        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        
+        # Group by (datetime, ticker) and take mean of forecast
+        if 'ticker' in all_forecasts.columns and 'datetime' in all_forecasts.columns:
+            aggregated = all_forecasts.groupby(['datetime', 'ticker'])['forecast'].mean().reset_index()
+            aggregated.columns = ['datetime', 'ticker', 'forecast_score']
+            aggregated = aggregated[['ticker', 'datetime', 'forecast_score']]
+        else:
+            # Fallback
+            aggregated = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
+        
+        return aggregated
+    
     def _apply_risk_management_to_forecasts(
         self,
         forecasts_df: pd.DataFrame,
@@ -845,10 +1076,8 @@ class Portfolio:
                 else:
                     forecast_score = 0.0
             
-            # Forecasts are already volatility-adjusted from Ensemble
-            # No need to apply volatility scaling again
-            # Just apply IDM (Instrument Diversification Multiplier)
-            # Use calculated idm_ if available, otherwise default to 1.0
+            # Forecasts are already volatility-adjusted from Ensemble and FDM-scaled from aggregation
+            # Apply IDM (Instrument Diversification Multiplier)
             idm_value = self.idm_ if self.idm_ is not None else 1.0
             scaled_forecast = forecast_score * idm_value
             
@@ -939,10 +1168,8 @@ class Portfolio:
                 else:
                     forecast_score = 0.0
             
-            # Forecasts are already volatility-adjusted from Ensemble
-            # No need to apply volatility scaling again
-            # Just apply IDM (Instrument Diversification Multiplier)
-            # Use calculated idm_ if available, otherwise default to 1.0
+            # Forecasts are already volatility-adjusted from Ensemble and FDM-scaled from aggregation
+            # Apply IDM (Instrument Diversification Multiplier)
             idm_value = self.idm_ if self.idm_ is not None else 1.0
             scaled_forecast = forecast_score * idm_value
             
@@ -984,15 +1211,19 @@ class Portfolio:
             - is_fitted: Whether Portfolio has been fitted
             - idm: Instrument Diversification Multiplier
             - mean_return_correlation: Mean correlation between instrument returns
+            - fdm: Forecast Diversification Multiplier
+            - mean_forecast_correlation: Mean correlation between forecast values
             - n_instruments: Number of instruments
             - instruments: List of instrument tickers
             - idm_max: Maximum allowed IDM
+            - fdm_max: Maximum allowed FDM
             - max_position_pct: Position cap (if any)
         """
         return {
             'is_fitted': self.is_fitted_,
             'idm': self.idm_,
             'mean_return_correlation': self.mean_return_correlation_,
+            'weight_layer': self.weight_layer.get_diagnostics() if self.weight_layer else None,
             'n_instruments': len(self.instruments_) if self.instruments_ else 0,
             'instruments': self.instruments_,
             'idm_max': self.idm_max,

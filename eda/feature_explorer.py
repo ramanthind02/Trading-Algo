@@ -1170,9 +1170,14 @@ class FeatureExplorer:
             X = self.features_df[feature_name]
             y = target_series
             
-            valid_mask = ~(X.isna() | y.isna())
-            X_clean = X[valid_mask]
-            y_clean = y[valid_mask]
+            # Align X and y to same index before filtering
+            common_index = X.index.intersection(y.index)
+            X_aligned = X.reindex(common_index)
+            y_aligned = y.reindex(common_index)
+            
+            valid_mask = ~(X_aligned.isna() | y_aligned.isna())
+            X_clean = X_aligned[valid_mask]
+            y_clean = y_aligned[valid_mask]
             
             if len(X_clean) < 5:
                 if verbose:
@@ -1182,39 +1187,81 @@ class FeatureExplorer:
             try:
                 # Generate signals: use model if provided, otherwise use feature series directly
                 if base_model is not None:
-                    base_model.fit(X_clean, y_clean)
+                    # Check if this is a BaseModel (requires candles, not feature series)
+                    is_base_model = hasattr(base_model, 'bias_nodes') and hasattr(base_model, 'binning_model')
                     
-                    if strategy == 'long-short':
-                        # Get signals for both long and short bins
-                        long_signals = base_model.predict(X_clean, strategy='long')
-                        short_signals = base_model.predict(X_clean, strategy='short')
-                        
-                        if isinstance(long_signals, (pd.Series, pd.DataFrame)):
-                            long_signals = long_signals.squeeze()
+                    if is_base_model:
+                        # BaseModel requires candles for fit/predict, but we only have feature series
+                        # If model is already fitted, use binning_model directly
+                        if hasattr(base_model, 'is_fitted_') and base_model.is_fitted_:
+                            # Use binning model directly with feature series
+                            if strategy == 'long-short':
+                                long_signals = base_model.binning_model.predict(X_clean, strategy='long')
+                                short_signals = base_model.binning_model.predict(X_clean, strategy='short')
+                                
+                                if isinstance(long_signals, (pd.Series, pd.DataFrame)):
+                                    long_signals = long_signals.squeeze()
+                                else:
+                                    long_signals = pd.Series(long_signals, index=X_clean.index)
+                                
+                                if isinstance(short_signals, (pd.Series, pd.DataFrame)):
+                                    short_signals = short_signals.squeeze()
+                                else:
+                                    short_signals = pd.Series(short_signals, index=X_clean.index)
+                                
+                                gated_returns = (y_clean * long_signals) + (-y_clean * short_signals)
+                                signals_series = long_signals + short_signals
+                            else:
+                                signals_series = base_model.binning_model.predict(X_clean, strategy=strategy)
+                                if isinstance(signals_series, (pd.Series, pd.DataFrame)):
+                                    signals_series = signals_series.squeeze()
+                                else:
+                                    signals_series = pd.Series(signals_series, index=X_clean.index)
+                                
+                                if strategy == 'short':
+                                    gated_returns = -y_clean * signals_series
+                                else:
+                                    gated_returns = y_clean * signals_series
                         else:
-                            long_signals = pd.Series(long_signals, index=X_clean.index)
-                        
-                        if isinstance(short_signals, (pd.Series, pd.DataFrame)):
-                            short_signals = short_signals.squeeze()
-                        else:
-                            short_signals = pd.Series(short_signals, index=X_clean.index)
-                        
-                        # Long positions: use returns as-is
-                        # Short positions: negate returns (shorting profits from negative returns)
-                        gated_returns = (y_clean * long_signals) + (-y_clean * short_signals)
-                        signals_series = long_signals + short_signals  # For summary stats
+                            # Model not fitted - skip this feature
+                            if verbose:
+                                print(f"  ✗ BaseModel not fitted. Fit the model first before using plot_signal_cumsum.")
+                            continue
                     else:
-                        signals = base_model.predict(X_clean, strategy=strategy)
-                        if isinstance(signals, (pd.Series, pd.DataFrame)):
-                            signals_series = signals.squeeze()
-                        else:
-                            signals_series = pd.Series(signals, index=X_clean.index)
+                        # Regular model (sklearn-style API)
+                        base_model.fit(X_clean, y_clean)
                         
-                        # For short strategy, negate returns (shorting profits from negative returns)
-                        if strategy == 'short':
-                            gated_returns = -y_clean * signals_series
+                        if strategy == 'long-short':
+                            # Get signals for both long and short bins
+                            long_signals = base_model.predict(X_clean, strategy='long')
+                            short_signals = base_model.predict(X_clean, strategy='short')
+                            
+                            if isinstance(long_signals, (pd.Series, pd.DataFrame)):
+                                long_signals = long_signals.squeeze()
+                            else:
+                                long_signals = pd.Series(long_signals, index=X_clean.index)
+                            
+                            if isinstance(short_signals, (pd.Series, pd.DataFrame)):
+                                short_signals = short_signals.squeeze()
+                            else:
+                                short_signals = pd.Series(short_signals, index=X_clean.index)
+                            
+                            # Long positions: use returns as-is
+                            # Short positions: negate returns (shorting profits from negative returns)
+                            gated_returns = (y_clean * long_signals) + (-y_clean * short_signals)
+                            signals_series = long_signals + short_signals  # For summary stats
                         else:
-                            gated_returns = y_clean * signals_series
+                            signals = base_model.predict(X_clean, strategy=strategy)
+                            if isinstance(signals, (pd.Series, pd.DataFrame)):
+                                signals_series = signals.squeeze()
+                            else:
+                                signals_series = pd.Series(signals, index=X_clean.index)
+                            
+                            # For short strategy, negate returns (shorting profits from negative returns)
+                            if strategy == 'short':
+                                gated_returns = -y_clean * signals_series
+                            else:
+                                gated_returns = y_clean * signals_series
                 else:
                     # Use feature series directly as signals (for binary features)
                     signals_series = X_clean
@@ -1227,7 +1274,20 @@ class FeatureExplorer:
                     else:
                         gated_returns = y_clean * signals_series
                 
-                # Compute cumulative returns for summary
+                # CRITICAL: Sort by datetime index before calculating cumulative sum
+                # This ensures chronological order, especially important for multi-ticker data
+                # where datetime index might not be sorted or have duplicates
+                if isinstance(gated_returns.index, pd.DatetimeIndex):
+                    gated_returns = gated_returns.sort_index()
+                elif hasattr(gated_returns.index, 'sort_values'):
+                    # If index has sort_values method (e.g., MultiIndex), try to sort
+                    try:
+                        gated_returns = gated_returns.sort_index()
+                    except Exception:
+                        # If sorting fails, at least ensure we have a consistent order
+                        pass
+                
+                # Compute cumulative returns for summary (now in chronological order)
                 cum_returns = gated_returns.cumsum()
                 
                 # Compute metric if provided
@@ -1239,7 +1299,7 @@ class FeatureExplorer:
                     except Exception:
                         metric_value = float('nan')
                 
-                # Use pure plotting function
+                # Use pure plotting function (with sorted data)
                 save_path = None
                 if save_dir is not None:
                     save_path = os.path.join(save_dir, f"{feature_name}_signal_cumsum.png")

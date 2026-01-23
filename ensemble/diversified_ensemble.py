@@ -304,6 +304,7 @@ class DiversifiedEnsemble:
             fitted_params = fitted_base_models.get(model_name)
             
             # Create base model instance
+            # create_base_model_from_config will use tickers from model_config if available
             base_model = create_base_model_from_config(model_config, fitted_params=fitted_params)
             
             # Store model

@@ -458,10 +458,28 @@ def create_base_model_from_config(
                 "Cannot create BaseModel: neither 'bias_node_spec' nor 'feature_column' found in config"
             )
     
-    # Determine ticker
-    if ticker is None:
-        # Try to get from config or use default
-        ticker = Ticker.ES  # Default - should be provided by caller
+    # Determine tickers (prefer config, then ticker parameter, then default)
+    if 'tickers' in config:
+        # Use tickers from config (for multi-ticker models loaded from vault)
+        tickers_from_config = config['tickers']
+        if isinstance(tickers_from_config, list):
+            # Convert ticker strings to Ticker enums if needed
+            if tickers_from_config and isinstance(tickers_from_config[0], str):
+                tickers_list = [Ticker[t] for t in tickers_from_config]
+            else:
+                tickers_list = tickers_from_config
+        else:
+            # Single ticker provided as string or enum
+            if isinstance(tickers_from_config, str):
+                tickers_list = [Ticker[tickers_from_config]]
+            else:
+                tickers_list = [tickers_from_config]
+    elif ticker is not None:
+        # Use provided ticker parameter
+        tickers_list = [ticker]
+    else:
+        # Default fallback
+        tickers_list = [Ticker.ES]
     
     # Create feature_config for BaseModel
     feature_config = {
@@ -475,9 +493,10 @@ def create_base_model_from_config(
         feature_config['feature_column'] = config['feature_column']
     
     # Create BaseModel instance (owns bias nodes and binning model)
+    # BaseModel expects tickers parameter (list of tickers for multi-ticker support)
     base_model = BaseModel(
         feature_config=feature_config,
-        ticker=ticker,
+        tickers=tickers_list,
         binning_model=binning_model
     )
     

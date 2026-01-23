@@ -858,10 +858,12 @@ def load_feature_base_models(
             binning_model.is_fitted_ = True
         
         # Create BaseModel instance for each ticker (bias nodes are ticker-specific)
+        # Note: BaseModel now accepts tickers (plural) for multi-ticker support
+        # For backward compatibility, we create one model per ticker
         for ticker in tickers:
             base_model = BaseModel(
                 feature_config=feature_config_copy,
-                ticker=ticker,
+                tickers=[ticker],  # Pass as list (BaseModel expects tickers parameter)
                 binning_model=binning_model
             )
             base_model.feature_column = feature_column
@@ -1409,6 +1411,8 @@ def load_ensemble_from_vault(
         all_tickers.update(feature_tickers)
         
         # Convert base_models to control file format
+        # Include tickers in each model config so models know which tickers they support
+        feature_tickers = feature_config.get('tickers', ensemble_config.get('tickers', []))
         for model in feature_config.get('base_models', []):
             base_model_config = {
                 'name': model['model_name'],
@@ -1416,7 +1420,8 @@ def load_ensemble_from_vault(
                 'model_type': model['binning_model_type'],
                 'strategy': model['strategy'],
                 'constructor_params': model['binning_model_params'],
-                'bias_node_spec': feature_config['bias_node_spec']
+                'bias_node_spec': feature_config['bias_node_spec'],
+                'tickers': feature_tickers  # Include tickers so model knows which tickers it supports
             }
             base_models_config.append(base_model_config)
     

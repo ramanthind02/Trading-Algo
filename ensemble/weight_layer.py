@@ -179,7 +179,7 @@ class WeightLayer:
     def __init__(
         self,
         weight_method: str = 'inverse_correlation',
-        fdm_max: float = 2.0
+        fdm_max: float = 2.5
     ):
         self.weight_method = weight_method
         self.fdm_max = fdm_max
@@ -254,27 +254,90 @@ class WeightLayer:
             FDM = sqrt(1 / (mean_corr + epsilon))
             Capped at fdm_max (typically 2.0)
         
-        For now, hardcoded to 1.0 as requested.
-        TODO: Implement correlation-based FDM calculation when needed.
+        Steps:
+        1. Extract forecast values for all base models
+        2. Build correlation matrix of forecast values (not binary signals)
+        3. Calculate mean correlation
+        4. Calculate FDM: sqrt(1 / (mean_corr + epsilon))
+        5. Cap at fdm_max
 
         Parameters
         ----------
         forecast_vectors : list[pd.DataFrame]
-            List of forecast vectors from all ensembles
+            List of forecast vectors from all ensembles.
+            Each DataFrame has columns: ['ticker', 'model_name', 'forecast', 'signal']
 
         Returns
         -------
         float
-            FDM value (hardcoded to 1.0 for now)
+            FDM value (capped at fdm_max)
         """
-        # Hardcoded to 1.0 for now
-        self.mean_forecast_correlation_ = 0.0  # Not used when hardcoded
-        return 1.0
+        if not forecast_vectors:
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
         
-        # Future implementation:
-        # Concatenate all forecasts
-        # all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
-        # ... (rest of correlation-based calculation)
+        # Concatenate all forecast vectors
+        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        
+        if all_forecasts.empty:
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        # Extract forecast values for all base models
+        # Pivot by model_name (columns) and datetime (index)
+        # Need to align by (datetime, ticker) or just datetime
+        # For simplicity, group by datetime and take mean per model (across tickers)
+        # Or better: group by (datetime, ticker) and pivot by model_name
+        
+        # Group by datetime and model_name, then pivot
+        if 'datetime' in all_forecasts.columns and 'model_name' in all_forecasts.columns:
+            # Pivot: datetime x model_name -> forecast values
+            forecast_pivot = all_forecasts.pivot_table(
+                index='datetime',
+                columns='model_name',
+                values='forecast',
+                aggfunc='mean'  # If multiple tickers, take mean
+            )
+        else:
+            # Fallback: cannot calculate correlation
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        # Drop rows with any NaN (need complete data for correlation)
+        forecast_pivot = forecast_pivot.dropna()
+        
+        if len(forecast_pivot) < 2 or len(forecast_pivot.columns) < 2:
+            # Need at least 2 time periods and 2 models
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        # Build correlation matrix of forecast values
+        corr_matrix = forecast_pivot.corr()
+        
+        # Floor negative correlations at zero (Carver's recommendation)
+        corr_matrix = corr_matrix.clip(lower=0.0)
+        
+        # Calculate mean correlation (excluding diagonal)
+        # Get upper triangle (excluding diagonal) and calculate mean
+        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+        correlations = corr_matrix.where(mask).stack()
+        
+        if len(correlations) == 0:
+            # No correlations to calculate
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        mean_correlation = correlations.mean()
+        self.mean_forecast_correlation_ = mean_correlation
+        
+        # Calculate FDM: sqrt(1 / (mean_correlation + epsilon))
+        epsilon = 0.01  # Small epsilon to avoid division by zero
+        fdm = np.sqrt(1.0 / (mean_correlation + epsilon))
+        
+        # Cap at fdm_max
+        fdm = min(fdm, self.fdm_max)
+        
+        return float(fdm)
 
     def combine(
         self,
@@ -329,10 +392,17 @@ class WeightLayer:
         # Calculate weighted forecast per row
         all_forecasts['weighted_forecast'] = all_forecasts['forecast'] * all_forecasts['weight']
 
-        # Group by ticker and sum weighted forecasts
-        combined = all_forecasts.groupby('ticker', as_index=False).agg({
-            'weighted_forecast': 'sum'
-        })
+        # Group by (datetime, ticker) and sum weighted forecasts
+        # This preserves datetime information for proper alignment
+        if 'datetime' in all_forecasts.columns:
+            combined = all_forecasts.groupby(['datetime', 'ticker'], as_index=False).agg({
+                'weighted_forecast': 'sum'
+            })
+        else:
+            # Fallback: group by ticker only (loses datetime info)
+            combined = all_forecasts.groupby('ticker', as_index=False).agg({
+                'weighted_forecast': 'sum'
+            })
 
         # Apply FDM
         combined['forecast_score'] = combined['weighted_forecast'] * self.fdm_
@@ -340,8 +410,11 @@ class WeightLayer:
         # Cap forecast_score at 2.0 (per spec: max position is 2.0)
         combined['forecast_score'] = combined['forecast_score'].clip(upper=2.0, lower=-2.0)
 
-        # Return only required columns
-        return combined[['ticker', 'forecast_score']]
+        # Return required columns (preserve datetime if available)
+        if 'datetime' in combined.columns:
+            return combined[['ticker', 'datetime', 'forecast_score']]
+        else:
+            return combined[['ticker', 'forecast_score']]
 
     def get_diagnostics(self) -> Dict:
         """
