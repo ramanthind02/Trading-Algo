@@ -18,7 +18,7 @@ Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from utils.enums import TimeFrame
 from .weight_layer import WeightLayer
 
@@ -86,7 +86,6 @@ class Portfolio:
         ensembles: Optional[List] = None,
         trading_timeframe: TimeFrame = TimeFrame.D,
         target_volatility: Optional[float] = None,
-        dm: Optional[float] = None,
         max_position_pct: float = 2.0,
         weight_layer: Optional[WeightLayer] = None,
         instrument_weights: Optional[Dict[str, float]] = None,
@@ -103,8 +102,6 @@ class Portfolio:
             The timeframe this portfolio trades on
         target_volatility : float, optional
             Target volatility for position sizing (new API)
-        dm : float, optional
-            Diversification multiplier (new API)
         max_position_pct : float, default=2.0
             Maximum position size per instrument (e.g., 2.0 = 200%)
         weight_layer : WeightLayer, optional
@@ -118,7 +115,6 @@ class Portfolio:
         self.ensembles = ensembles if ensembles is not None else []
         self.trading_timeframe = trading_timeframe
         self.target_volatility = target_volatility
-        self.dm = dm if dm is not None else 1.0
         
         # Legacy API: weight_layer-based
         self.weight_layer = weight_layer
@@ -191,7 +187,17 @@ class Portfolio:
     def _calculate_idm(self, instrument_returns: pd.DataFrame) -> float:
         """
         Calculate Instrument Diversification Multiplier from return correlations.
-
+        
+        Formula: IDM = sqrt(1 / (mean_correlation + epsilon))
+        Where mean_correlation is calculated from the correlation matrix of instrument returns.
+        
+        Steps:
+        1. Build correlation matrix of instrument returns
+        2. Calculate mean correlation: mean(|rho_ij|) for i != j
+        3. Floor negative correlations at zero (Carver's recommendation)
+        4. Calculate IDM: sqrt(1 / (mean_correlation + epsilon))
+        5. Cap at idm_max (default 2.5)
+        
         Parameters
         ----------
         instrument_returns : pd.DataFrame
@@ -203,36 +209,38 @@ class Portfolio:
         float
             IDM value (capped at idm_max)
         """
-        # Handle single instrument case
-        if len(instrument_returns.columns) <= 1:
+        if instrument_returns.empty or len(instrument_returns.columns) < 2:
+            # Single instrument or no data: IDM = 1.0
             self.mean_return_correlation_ = 1.0
             return 1.0
-
-        # Calculate correlation matrix of instrument returns
-        corr_matrix = instrument_returns.corr().abs()
-
-        # Get upper triangle (excluding diagonal)
+        
+        # Build correlation matrix
+        corr_matrix = instrument_returns.corr()
+        
+        # Floor negative correlations at zero (Carver's recommendation)
+        corr_matrix = corr_matrix.clip(lower=0.0)
+        
+        # Calculate mean correlation (excluding diagonal)
+        # Get upper triangle (excluding diagonal) and calculate mean
         mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
         correlations = corr_matrix.where(mask).stack()
-
+        
         if len(correlations) == 0:
-            self.mean_return_correlation_ = 0.5
-            return min(np.sqrt(1.0 / 0.51), self.idm_max)
-
-        # Calculate mean correlation
-        mean_corr = correlations.mean()
-
-        # Floor negative correlations at zero (Carver's recommendation)
-        mean_corr = max(mean_corr, 0.0)
-
-        self.mean_return_correlation_ = mean_corr
-
-        # Calculate IDM: sqrt(1 / (mean_corr + epsilon))
-        epsilon = 0.01  # Small value to avoid division by zero
-        idm = np.sqrt(1.0 / (mean_corr + epsilon))
-
+            # No correlations to calculate (shouldn't happen with 2+ instruments)
+            self.mean_return_correlation_ = 1.0
+            return 1.0
+        
+        mean_correlation = correlations.mean()
+        self.mean_return_correlation_ = mean_correlation
+        
+        # Calculate IDM: sqrt(1 / (mean_correlation + epsilon))
+        epsilon = 0.01  # Small epsilon to avoid division by zero
+        idm = np.sqrt(1.0 / (mean_correlation + epsilon))
+        
         # Cap at idm_max
-        return min(idm, self.idm_max)
+        idm = min(idm, self.idm_max)
+        
+        return idm
 
     def predict(
         self,
@@ -437,15 +445,22 @@ class Portfolio:
             # Calculate returns from candles for IDM calculation
             returns_df = self._calculate_returns_from_candles(tf_candles)
             if not returns_df.empty:
-                self.fit(returns_df, idm_override=self.dm)
+                # Calculate IDM from correlations
+                self.fit(returns_df)
+                # If IDM wasn't calculated (e.g., insufficient data), default to 1.0
+                if self.idm_ is None:
+                    self.idm_ = 1.0
+                    self.mean_return_correlation_ = 1.0
         
         self.is_fitted_ = True
         return self
     
     def predict_from_candles(
         self,
-        candles_df: pd.DataFrame
-    ) -> pd.DataFrame:
+        candles_df: pd.DataFrame,
+        return_ensemble_predictions: bool = False,
+        return_base_model_predictions: bool = False
+    ) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
         Generate position fractions using candles DataFrame.
         
@@ -457,11 +472,21 @@ class Portfolio:
         candles_df : pd.DataFrame
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
             Should contain candles for the trading_timeframe of this portfolio
+        return_ensemble_predictions : bool, default=False
+            If True, return ensemble-level predictions in result dict
+        return_base_model_predictions : bool, default=False
+            If True, return base model-level predictions in result dict
             
         Returns
         -------
-        pd.DataFrame
-            Position fractions with columns: ticker, datetime, forecast_score, position_fraction
+        pd.DataFrame or Dict[str, Any]
+            If both flags are False: DataFrame with portfolio positions
+            If either flag is True: Dict with structure:
+            {
+                'portfolio': pd.DataFrame,  # Portfolio-level positions
+                'ensembles': Dict[str, pd.DataFrame],  # Only if return_ensemble_predictions=True
+                'base_models': Dict[str, pd.DataFrame]  # Only if return_base_model_predictions=True
+            }
         """
         if not self.ensembles:
             raise ValueError("No ensembles provided. Cannot predict without ensembles.")
@@ -470,63 +495,171 @@ class Portfolio:
         tf_candles = candles_df[candles_df['timeframe'] == self.trading_timeframe].copy()
         
         if tf_candles.empty:
-            return pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score', 'position_fraction'])
+            empty_df = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score', 'position_fraction'])
+            if return_ensemble_predictions or return_base_model_predictions:
+                result = {'portfolio': empty_df}
+                if return_ensemble_predictions:
+                    result['ensembles'] = {}
+                if return_base_model_predictions:
+                    result['base_models'] = {}
+                return result
+            return empty_df
+        
+        # Calculate volatility (from candles) - needed for all predictions
+        volatility = self._calculate_volatility_from_candles(tf_candles)
+        
+        # Storage for granular predictions
+        ensemble_predictions_list = []
+        ensemble_predictions_dict = {}
+        base_model_predictions_dict = {}
         
         # Get predictions from all ensembles
-        ensemble_predictions = []
-        for ensemble in self.ensembles:
+        for ensemble_idx, ensemble in enumerate(self.ensembles):
             # Use the new predict_from_candles method if available
             if hasattr(ensemble, 'predict_from_candles'):
-                pred = ensemble.predict_from_candles(tf_candles)
-                ensemble_predictions.append(pred)
+                # Determine if we need base model predictions
+                need_base_models = return_base_model_predictions
+                
+                if need_base_models:
+                    # Get ensemble predictions with base model granularity
+                    ensemble_result = ensemble.predict_from_candles(
+                        tf_candles,
+                        volatility=volatility,  # Pass volatility for proper scaling
+                        return_base_model_predictions=True
+                    )
+                    
+                    if isinstance(ensemble_result, dict):
+                        ensemble_pred = ensemble_result.get('ensemble')
+                        base_models = ensemble_result.get('base_models', {})
+                        
+                        # Store base model predictions with ensemble prefix
+                        for model_name, model_pred in base_models.items():
+                            ensemble_name = f"ensemble_{ensemble_idx}"
+                            full_model_name = f"{ensemble_name}::{model_name}"
+                            # Convert to position fractions (forecasts already volatility-adjusted)
+                            base_model_positions = self._apply_risk_management_to_forecasts(
+                                model_pred, volatility, tf_candles
+                            )
+                            base_model_predictions_dict[full_model_name] = base_model_positions
+                    else:
+                        ensemble_pred = ensemble_result
+                else:
+                    ensemble_pred = ensemble.predict_from_candles(tf_candles, volatility=volatility)
+                
+                # Always append the ensemble prediction DataFrame (not dict) for aggregation
+                if isinstance(ensemble_pred, pd.DataFrame):
+                    ensemble_predictions_list.append(ensemble_pred)
+                else:
+                    # If we got a dict but didn't request base models, extract ensemble
+                    if isinstance(ensemble_pred, dict):
+                        ensemble_pred = ensemble_pred.get('ensemble', pd.DataFrame())
+                        ensemble_predictions_list.append(ensemble_pred)
+                
+                # Store ensemble-level predictions if requested
+                if return_ensemble_predictions:
+                    ensemble_name = f"ensemble_{ensemble_idx}"
+                    # Get the ensemble prediction (might be from dict or direct)
+                    if isinstance(ensemble_pred, dict):
+                        ensemble_pred_df = ensemble_pred.get('ensemble')
+                    else:
+                        ensemble_pred_df = ensemble_pred
+                    # Convert to position fractions
+                    ensemble_positions = self._apply_risk_management_to_forecasts(
+                        ensemble_pred_df, volatility, tf_candles
+                    )
+                    ensemble_predictions_dict[ensemble_name] = ensemble_positions
             else:
                 # Fallback: use regular predict (requires features, not implemented here)
                 pass
         
-        if not ensemble_predictions:
-            return pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score', 'position_fraction'])
+        if not ensemble_predictions_list:
+            empty_df = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score', 'position_fraction'])
+            if return_ensemble_predictions or return_base_model_predictions:
+                result = {'portfolio': empty_df}
+                if return_ensemble_predictions:
+                    result['ensembles'] = {}
+                if return_base_model_predictions:
+                    result['base_models'] = {}
+                return result
+            return empty_df
         
-        # Aggregate ensemble predictions
-        forecast_scores = self._aggregate_ensembles(ensemble_predictions, tf_candles)
+        # Aggregate ensemble predictions for portfolio-level
+        forecast_scores_df = self._aggregate_ensembles(ensemble_predictions_list, tf_candles)
         
-        # Calculate volatility (from candles)
-        volatility = self._calculate_volatility_from_candles(tf_candles)
-        
-        # Apply risk management
+        # Apply risk management for portfolio-level
         positions_df = self._apply_risk_management(
-            forecast_scores, volatility, tf_candles
+            forecast_scores_df, volatility, tf_candles
         )
+        
+        # Return structure based on flags
+        if return_ensemble_predictions or return_base_model_predictions:
+            result = {'portfolio': positions_df}
+            if return_ensemble_predictions:
+                result['ensembles'] = ensemble_predictions_dict
+            if return_base_model_predictions:
+                result['base_models'] = base_model_predictions_dict
+            return result
         
         return positions_df
     
     def _aggregate_ensembles(
         self,
-        ensemble_predictions: List[pd.Series],
+        ensemble_predictions: List[pd.DataFrame],
         candles_df: pd.DataFrame
-    ) -> pd.Series:
+    ) -> pd.DataFrame:
         """
         Aggregate predictions from multiple ensembles.
         
+        Aggregates across ensembles (if multiple), but preserves ticker-level information.
+        Each ticker keeps its own forecast_score.
+        
         Parameters
         ----------
-        ensemble_predictions : List[pd.Series]
-            List of prediction series from each ensemble
+        ensemble_predictions : List[pd.DataFrame]
+            List of prediction DataFrames from each ensemble (columns: ticker, datetime, forecast_score)
         candles_df : pd.DataFrame
             Candles DataFrame for alignment
             
         Returns
         -------
-        pd.Series
-            Aggregated forecast scores indexed by datetime
+        pd.DataFrame
+            Aggregated forecast scores with columns: ticker, datetime, forecast_score
+            (aggregated across ensembles, but preserving ticker-level granularity)
         """
         if not ensemble_predictions:
-            return pd.Series(dtype=float)
+            return pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
         
-        # Combine all predictions
-        combined = pd.concat(ensemble_predictions, axis=0)
+        # Combine all predictions (DataFrames)
+        combined_df = pd.concat(ensemble_predictions, ignore_index=True)
         
-        # Group by datetime and take mean (or weighted mean if ensemble weights available)
-        aggregated = combined.groupby(combined.index).mean()
+        # Group by (datetime, ticker) and take mean of forecast_score across ensembles
+        # This preserves ticker-level information while aggregating across ensembles
+        if 'ticker' in combined_df.columns and 'datetime' in combined_df.columns:
+            # Group by (datetime, ticker) and take mean across ensembles
+            aggregated = combined_df.groupby(['datetime', 'ticker'])['forecast_score'].mean().reset_index()
+        elif 'datetime' in combined_df.columns:
+            # If no ticker column, just group by datetime
+            aggregated = combined_df.groupby('datetime')['forecast_score'].mean().reset_index()
+            # Add dummy ticker column if needed (shouldn't happen in normal flow)
+            if 'ticker' not in aggregated.columns:
+                aggregated['ticker'] = candles_df['ticker'].iloc[0] if len(candles_df) > 0 else None
+        else:
+            # Fallback: use index if datetime is index
+            if combined_df.index.name == 'datetime' or isinstance(combined_df.index, pd.DatetimeIndex):
+                aggregated = combined_df.groupby(combined_df.index)['forecast_score'].mean().reset_index()
+                aggregated.columns = ['datetime', 'forecast_score']
+            else:
+                # Last resort: try to use index as-is
+                aggregated = combined_df.set_index('datetime')['forecast_score'].groupby(level=0).mean().reset_index()
+                aggregated.columns = ['datetime', 'forecast_score']
+            
+            # Add ticker column if missing
+            if 'ticker' not in aggregated.columns:
+                aggregated['ticker'] = candles_df['ticker'].iloc[0] if len(candles_df) > 0 else None
+        
+        # Ensure columns are in correct order
+        if 'ticker' in aggregated.columns and 'datetime' in aggregated.columns:
+            aggregated = aggregated[['ticker', 'datetime', 'forecast_score']]
         
         return aggregated
     
@@ -535,40 +668,86 @@ class Portfolio:
         candles_df: pd.DataFrame
     ) -> Dict[str, float]:
         """
-        Calculate volatility from candles DataFrame.
+        Calculate blended volatility from EWSD bias nodes.
         
-        Uses ATR or EWSD if available in ensemble features, otherwise
-        estimates from price returns.
+        Creates EWSD (Exponentially Weighted Standard Deviation) nodes for each ticker
+        and streams candles to build up volatility estimates. EWSD nodes implement
+        Carver's blended volatility:
+        - 70% EWMA-32 (short-run estimate)
+        - 30% long-run historical average (10-year window)
         
         Parameters
         ----------
         candles_df : pd.DataFrame
-            Candles DataFrame
+            Candles DataFrame with columns: datetime, ticker, open, high, low, close, volume, timeframe
             
         Returns
         -------
         Dict[str, float]
-            Mapping from ticker to volatility (annualized)
+            Mapping from ticker to annualized blended volatility (as decimal, not percentage)
         """
+        from utils.enums import Ticker, TimeFrame
+        from nodes.ewsd import EWSDNode
+        from utils.models import Candle
+        import logging
+        
+        logger = logging.getLogger(__name__)
         volatility_dict = {}
         
         # Group by ticker
-        for ticker in candles_df['ticker'].unique():
-            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
-            
-            # Calculate returns
+        for ticker_name in candles_df['ticker'].unique():
+            ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
             ticker_candles = ticker_candles.sort_values('datetime')
-            ticker_candles['returns'] = ticker_candles['close'].pct_change()
             
-            # Calculate annualized volatility
-            daily_vol = ticker_candles['returns'].std()
-            annual_vol = daily_vol * np.sqrt(252)  # Annualize
+            if len(ticker_candles) == 0:
+                volatility_dict[ticker_name] = 0.20  # Default fallback
+                continue
             
-            # Use target_volatility as default if available
-            if self.target_volatility is not None:
-                volatility_dict[ticker] = self.target_volatility
-            else:
-                volatility_dict[ticker] = annual_vol if not np.isnan(annual_vol) else 0.20
+            # Convert ticker name to Ticker enum
+            try:
+                if isinstance(ticker_name, str):
+                    # Handle both 'ES' and 'Ticker.ES' formats
+                    ticker_str = ticker_name.replace('Ticker.', '') if 'Ticker.' in ticker_name else ticker_name
+                    ticker = Ticker[ticker_str]
+                else:
+                    ticker = ticker_name
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown ticker '{ticker_name}', using default volatility")
+                volatility_dict[ticker_name] = 0.20
+                continue
+            
+            # Create EWSD node for this ticker
+            ewsd_node = EWSDNode(
+                ticker=ticker,
+                tf=TimeFrame.D,  # Use daily timeframe for volatility calculation
+                lambda_short=0.06061,  # 32-day span
+                long_run_window=2520,  # 10 years (2520 trading days)
+                blend_short_weight=0.7,
+                blend_long_weight=0.3
+            )
+            
+            # Stream all candles to build up EWSD state
+            ewsd_value = None
+            for _, row in ticker_candles.iterrows():
+                candle = Candle.from_row(row)
+                ewsd_output = ewsd_node.add_candle(candle)
+                if ewsd_output and len(ewsd_output) >= 2:
+                    # ewsd_output[1] is annual_pct (in percentage)
+                    # Convert to decimal
+                    ewsd_value = ewsd_output[1] / 100.0
+            
+            # Use latest EWSD value or fallback
+            if ewsd_value is None or np.isnan(ewsd_value):
+                ticker_candles['returns'] = ticker_candles['close'].pct_change()
+                daily_vol = ticker_candles['returns'].std()
+                annual_vol = daily_vol * np.sqrt(252)  # Annualize
+                ewsd_value = annual_vol if not np.isnan(annual_vol) else 0.20
+                logger.warning(
+                    f"EWSD calculation failed for ticker '{ticker_name}'. "
+                    f"Using simple volatility calculation as fallback."
+                )
+            
+            volatility_dict[ticker_name] = ewsd_value
         
         return volatility_dict
     
@@ -605,23 +784,26 @@ class Portfolio:
         
         return returns_df
     
-    def _apply_risk_management(
+    def _apply_risk_management_to_forecasts(
         self,
-        forecast_scores: pd.Series,
+        forecasts_df: pd.DataFrame,
         volatility: Dict[str, float],
         candles_df: pd.DataFrame
     ) -> pd.DataFrame:
         """
-        Apply risk management to forecast scores.
+        Apply risk management to forecast DataFrame (for ensemble/base model level).
         
-        Applies volatility scaling, DM, and instrument weights.
+        Similar to _apply_risk_management but works with forecast DataFrames
+        that have ticker and datetime columns.
+        Note: Forecasts are already volatility-adjusted from Ensemble layer.
         
         Parameters
         ----------
-        forecast_scores : pd.Series
-            Aggregated forecast scores indexed by datetime
+        forecasts_df : pd.DataFrame
+            Forecast scores with columns: ticker, datetime, forecast_score
+            (already volatility-adjusted from Ensemble)
         volatility : Dict[str, float]
-            Volatility per ticker
+            Volatility per ticker (used for alignment, not scaling)
         candles_df : pd.DataFrame
             Candles DataFrame for alignment
             
@@ -632,33 +814,137 @@ class Portfolio:
         """
         results = []
         
-        # Align forecast scores with candles
+        # Merge forecasts with candles to align by ticker and datetime
         for _, row in candles_df.iterrows():
             dt = pd.to_datetime(row['datetime'])
             ticker = row['ticker']
             
-            # Get forecast score for this datetime
-            if dt in forecast_scores.index:
-                forecast_score = forecast_scores.loc[dt]
+            # Find matching forecast
+            matching = forecasts_df[
+                (forecasts_df['ticker'] == ticker) &
+                (pd.to_datetime(forecasts_df['datetime']) == dt)
+            ]
+            
+            if len(matching) > 0:
+                forecast_score = matching.iloc[0]['forecast_score']
             else:
-                # Find nearest datetime
-                nearest_idx = forecast_scores.index.get_indexer([dt], method='nearest')[0]
-                if nearest_idx >= 0:
-                    forecast_score = forecast_scores.iloc[nearest_idx]
+                # Try to find nearest datetime for this ticker
+                ticker_forecasts = forecasts_df[forecasts_df['ticker'] == ticker].copy()
+                if len(ticker_forecasts) > 0:
+                    ticker_forecasts['datetime'] = pd.to_datetime(ticker_forecasts['datetime'])
+                    ticker_forecasts = ticker_forecasts.set_index('datetime')
+                    if dt in ticker_forecasts.index:
+                        forecast_score = ticker_forecasts.loc[dt, 'forecast_score']
+                    else:
+                        # Find nearest
+                        nearest_idx = ticker_forecasts.index.get_indexer([dt], method='nearest')[0]
+                        if nearest_idx >= 0:
+                            forecast_score = ticker_forecasts.iloc[nearest_idx]['forecast_score']
+                        else:
+                            forecast_score = 0.0
                 else:
                     forecast_score = 0.0
             
-            # Get volatility for this ticker
-            vol = volatility.get(ticker, 0.20)
+            # Forecasts are already volatility-adjusted from Ensemble
+            # No need to apply volatility scaling again
+            # Just apply IDM (Instrument Diversification Multiplier)
+            # Use calculated idm_ if available, otherwise default to 1.0
+            idm_value = self.idm_ if self.idm_ is not None else 1.0
+            scaled_forecast = forecast_score * idm_value
             
-            # Apply volatility scaling
-            if self.target_volatility is not None and vol > 0:
-                scaled_forecast = forecast_score * (self.target_volatility / vol)
+            # Apply instrument weights
+            if self.instrument_weights is not None:
+                inst_weight = self.instrument_weights.get(ticker, 1.0)
             else:
-                scaled_forecast = forecast_score
+                # Equal weight
+                unique_tickers = candles_df['ticker'].nunique()
+                inst_weight = 1.0 / unique_tickers if unique_tickers > 0 else 1.0
             
-            # Apply DM
-            scaled_forecast = scaled_forecast * self.dm
+            position_fraction = scaled_forecast * inst_weight
+            
+            # Apply position cap
+            if self.max_position_pct is not None:
+                position_fraction = np.clip(
+                    position_fraction,
+                    -self.max_position_pct,
+                    self.max_position_pct
+                )
+            
+            results.append({
+                'ticker': ticker,
+                'datetime': dt,
+                'forecast_score': forecast_score,
+                'position_fraction': position_fraction
+            })
+        
+        return pd.DataFrame(results)
+    
+    def _apply_risk_management(
+        self,
+        forecast_scores_df: pd.DataFrame,
+        volatility: Dict[str, float],
+        candles_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Apply risk management to forecast scores.
+        
+        Applies DM (diversification multiplier) and instrument weights.
+        Note: Forecasts are already volatility-adjusted from Ensemble layer.
+        
+        Parameters
+        ----------
+        forecast_scores_df : pd.DataFrame
+            Forecast scores with columns: ticker, datetime, forecast_score
+            (already volatility-adjusted from Ensemble)
+        volatility : Dict[str, float]
+            Volatility per ticker (used for alignment, not scaling)
+        candles_df : pd.DataFrame
+            Candles DataFrame for alignment
+            
+        Returns
+        -------
+        pd.DataFrame
+            Position fractions with columns: ticker, datetime, forecast_score, position_fraction
+        """
+        results = []
+        
+        # Merge forecast scores with candles to align by ticker and datetime
+        for _, row in candles_df.iterrows():
+            dt = pd.to_datetime(row['datetime'])
+            ticker = row['ticker']
+            
+            # Find matching forecast score for this ticker and datetime
+            matching = forecast_scores_df[
+                (forecast_scores_df['ticker'] == ticker) &
+                (pd.to_datetime(forecast_scores_df['datetime']) == dt)
+            ]
+            
+            if len(matching) > 0:
+                forecast_score = matching.iloc[0]['forecast_score']
+            else:
+                # Try to find nearest datetime for this ticker
+                ticker_forecasts = forecast_scores_df[forecast_scores_df['ticker'] == ticker].copy()
+                if len(ticker_forecasts) > 0:
+                    ticker_forecasts['datetime'] = pd.to_datetime(ticker_forecasts['datetime'])
+                    ticker_forecasts = ticker_forecasts.set_index('datetime')
+                    if dt in ticker_forecasts.index:
+                        forecast_score = ticker_forecasts.loc[dt, 'forecast_score']
+                    else:
+                        # Find nearest
+                        nearest_idx = ticker_forecasts.index.get_indexer([dt], method='nearest')[0]
+                        if nearest_idx >= 0:
+                            forecast_score = ticker_forecasts.iloc[nearest_idx]['forecast_score']
+                        else:
+                            forecast_score = 0.0
+                else:
+                    forecast_score = 0.0
+            
+            # Forecasts are already volatility-adjusted from Ensemble
+            # No need to apply volatility scaling again
+            # Just apply IDM (Instrument Diversification Multiplier)
+            # Use calculated idm_ if available, otherwise default to 1.0
+            idm_value = self.idm_ if self.idm_ is not None else 1.0
+            scaled_forecast = forecast_score * idm_value
             
             # Apply instrument weights
             if self.instrument_weights is not None:

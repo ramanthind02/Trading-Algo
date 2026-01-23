@@ -416,6 +416,14 @@ def create_base_model_from_config(
     # Get or extract bias_node_spec
     bias_node_spec = config.get('bias_node_spec')
     
+    # Convert timeframes from strings to TimeFrame enums if bias_node_spec is provided
+    if bias_node_spec is not None and 'timeframes' in bias_node_spec:
+        bias_node_spec = bias_node_spec.copy()  # Don't modify original
+        bias_node_spec['timeframes'] = [
+            TimeFrame[tf] if isinstance(tf, str) else tf 
+            for tf in bias_node_spec['timeframes']
+        ]
+    
     if bias_node_spec is None:
         # Try to extract from feature_column name
         feature_column = config.get('feature_column')

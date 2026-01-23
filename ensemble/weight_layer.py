@@ -253,6 +253,9 @@ class WeightLayer:
         Formula:
             FDM = sqrt(1 / (mean_corr + epsilon))
             Capped at fdm_max (typically 2.0)
+        
+        For now, hardcoded to 1.0 as requested.
+        TODO: Implement correlation-based FDM calculation when needed.
 
         Parameters
         ----------
@@ -262,73 +265,16 @@ class WeightLayer:
         Returns
         -------
         float
-            FDM value (capped at fdm_max)
+            FDM value (hardcoded to 1.0 for now)
         """
+        # Hardcoded to 1.0 for now
+        self.mean_forecast_correlation_ = 0.0  # Not used when hardcoded
+        return 1.0
+        
+        # Future implementation:
         # Concatenate all forecasts
-        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
-
-        # Get unique model names
-        model_names = all_forecasts['model_name'].unique()
-
-        # Handle single model case
-        if len(model_names) <= 1:
-            self.mean_forecast_correlation_ = 1.0
-            return 1.0
-
-        # Pivot to get forecast matrix: rows = samples, columns = model_name
-        # Need to handle multiple tickers - create unique index
-        all_forecasts = all_forecasts.copy()
-        all_forecasts['sample_idx'] = all_forecasts.groupby(['ticker', 'model_name']).cumcount()
-
-        try:
-            forecast_matrix = all_forecasts.pivot_table(
-                index=['ticker', 'sample_idx'],
-                columns='model_name',
-                values='forecast',
-                aggfunc='first'
-            )
-        except Exception:
-            # Fallback: simple pivot without sample_idx
-            forecast_matrix = all_forecasts.pivot_table(
-                index='ticker',
-                columns='model_name',
-                values='forecast',
-                aggfunc='mean'
-            )
-
-        # Drop rows with NaN (models that don't apply to certain tickers)
-        forecast_matrix = forecast_matrix.dropna()
-
-        if len(forecast_matrix) < 2:
-            # Not enough data to calculate correlations
-            self.mean_forecast_correlation_ = 0.5
-            return min(np.sqrt(1.0 / 0.51), self.fdm_max)
-
-        # Calculate correlation matrix of forecast values
-        corr_matrix = forecast_matrix.corr().abs()
-
-        # Get upper triangle (excluding diagonal)
-        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
-        correlations = corr_matrix.where(mask).stack()
-
-        if len(correlations) == 0:
-            self.mean_forecast_correlation_ = 0.5
-            return min(np.sqrt(1.0 / 0.51), self.fdm_max)
-
-        # Calculate mean correlation
-        mean_corr = correlations.mean()
-
-        # Floor negative correlations at zero (Carver's recommendation)
-        mean_corr = max(mean_corr, 0.0)
-
-        self.mean_forecast_correlation_ = mean_corr
-
-        # Calculate FDM: sqrt(1 / (mean_corr + epsilon))
-        epsilon = 0.01  # Small value to avoid division by zero
-        fdm = np.sqrt(1.0 / (mean_corr + epsilon))
-
-        # Cap at fdm_max
-        return min(fdm, self.fdm_max)
+        # all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        # ... (rest of correlation-based calculation)
 
     def combine(
         self,
@@ -390,6 +336,9 @@ class WeightLayer:
 
         # Apply FDM
         combined['forecast_score'] = combined['weighted_forecast'] * self.fdm_
+        
+        # Cap forecast_score at 2.0 (per spec: max position is 2.0)
+        combined['forecast_score'] = combined['forecast_score'].clip(upper=2.0, lower=-2.0)
 
         # Return only required columns
         return combined[['ticker', 'forecast_score']]

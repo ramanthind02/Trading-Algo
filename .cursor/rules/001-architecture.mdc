@@ -26,6 +26,12 @@ alwaysApply: true
 *   **Sum Types:** Use `Union` (or `|` in Python 3.10+) to represent data that can be one of several distinct types.
 *   **Pattern Matching:** Use the `match`/`case` statement (Python 3.10+) to handle these types. This effectively replaces the Visitor pattern and ensures structural correctness.
 
+## 5. Development Environment
+*   **Virtual Environment:** Always use the project's virtual environment located at `venv/bin/activate`.
+    *   When running Python commands, scripts, or tests, ensure the venv is activated.
+    *   Use `source venv/bin/activate` to activate the environment before executing any Python-related operations.
+    *   All dependencies should be installed within this venv, not system-wide.
+
 ## Examples
 
 ### Immutable Data & Strong Types

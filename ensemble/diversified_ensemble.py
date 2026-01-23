@@ -16,6 +16,7 @@ import os
 from utils.enums import TimeFrame
 import utils.helpers as helpers
 from .ensemble_utils import filter_dataframe_by_timeframe
+from utils.models import Candle
 
 logger = logging.getLogger(__name__)
 
@@ -630,12 +631,29 @@ class DiversifiedEnsemble:
             # Fraction of time feature == 1
             self.exposure_fractions_[col] = feature_data.mean()
 
-        # Calculate model exposure fractions based on n_bins (theoretical)
-        # h_i = 1/n_bins for each base model
+        # Calculate model exposure fractions from actual binary signals (empirical)
+        # This accounts for non-uniform binning where bins may have different sample counts
+        # EXCEPTION: buy_hold models are always in market (h_i = 1.0)
         self.model_exposure_fractions_ = {}
         for model_name, base_model in self.base_models.items():
-            n_bins = getattr(base_model, 'n_bins', 10)
-            self.model_exposure_fractions_[model_name] = 1.0 / n_bins
+            # Check if this is a buy_hold model (always in market)
+            bias_node_spec = getattr(base_model, 'bias_node_spec', None)
+            is_buy_hold = False
+            if bias_node_spec is not None:
+                is_buy_hold = bias_node_spec.get('module_name') == 'buy_hold'
+            
+            if is_buy_hold:
+                # Buy_hold is always in market: h_i = 1.0
+                self.model_exposure_fractions_[model_name] = 1.0
+            else:
+                # Calculate from actual binary signals (fraction of time signal=1)
+                # This handles non-uniform binning correctly
+                if model_name in binary_df.columns:
+                    self.model_exposure_fractions_[model_name] = binary_df[model_name].mean()
+                else:
+                    # Fallback: use theoretical 1/n_bins if binary signals not available
+                    n_bins = getattr(base_model, 'n_bins', 10)
+                    self.model_exposure_fractions_[model_name] = 1.0 / n_bins
             
         # Store feature names (base model names, not column names)
         self.feature_names_ = feature_cols
@@ -690,7 +708,8 @@ class DiversifiedEnsemble:
         Fit all base models using candles DataFrame.
         
         This is the new DataFrame-based API for fitting ensembles.
-        Routes candles to each base model, which computes features internally.
+        Uses ensemble-level caching to extract features once per (bias_node_spec, ticker)
+        combination and reuse them across base models.
         
         Parameters
         ----------
@@ -717,11 +736,13 @@ class DiversifiedEnsemble:
                 logger.warning(f"Unknown ticker '{ticker_name}', skipping")
                 continue
             
-            # Fit each base model
-            # Note: Base models might not have ticker set correctly in current architecture
-            # So we'll fit all base models with the candles (they'll handle their own ticker internally)
+            # Fit each base model (BaseModel.fit() handles caching internally)
             for model_name, base_model in self.base_models.items():
                 try:
+                    # Skip if already fitted (e.g., loaded from vault with fitted params)
+                    if base_model.is_fitted_:
+                        continue
+                    
                     # Align target data with candles
                     ticker_target = target_data.reindex(
                         pd.to_datetime(ticker_candles['datetime']),
@@ -729,13 +750,62 @@ class DiversifiedEnsemble:
                     )
                     
                     # Fit base model with candles
-                    # BaseModel.fit() will update its internal bias nodes and fit the binning model
+                    # BaseModel.fit() will check cache and use pre-extracted features
                     base_model.fit(ticker_candles, ticker_target)
                 except Exception as e:
                     logger.error(
                         f"Error fitting base model '{model_name}' for ticker '{ticker_name}': {e}",
                         exc_info=True
                     )
+        
+        # Calculate model exposure fractions from actual binary signals (empirical)
+        # This accounts for non-uniform binning where bins may have different sample counts
+        # Generate binary signals from all base models to calculate actual exposure fractions
+        if self.model_exposure_fractions_ is None:
+            self.model_exposure_fractions_ = {}
+            
+            # Generate binary signals from all base models using training candles
+            for model_name, base_model in self.base_models.items():
+                # Check if this is a buy_hold model (always in market)
+                bias_node_spec = getattr(base_model, 'bias_node_spec', None)
+                is_buy_hold = False
+                if bias_node_spec is not None:
+                    is_buy_hold = bias_node_spec.get('module_name') == 'buy_hold'
+                
+                if is_buy_hold:
+                    # Buy_hold is always in market: h_i = 1.0
+                    self.model_exposure_fractions_[model_name] = 1.0
+                else:
+                    # Generate binary signals for this model across all tickers
+                    model_signals = []
+                    for ticker_name in candles_df['ticker'].unique():
+                        ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
+                        try:
+                            # Generate binary signals from base model
+                            pred = base_model.predict(ticker_candles)
+                            if pred is not None and len(pred) > 0:
+                                model_signals.append(pred)
+                        except Exception as e:
+                            logger.warning(
+                                f"Error generating signals for model '{model_name}' on ticker '{ticker_name}': {e}"
+                            )
+                    
+                    # Calculate exposure fraction from actual binary signals
+                    if model_signals:
+                        all_signals = pd.concat(model_signals) if len(model_signals) > 1 else model_signals[0]
+                        self.model_exposure_fractions_[model_name] = all_signals.mean()
+                    else:
+                        # Fallback: use theoretical 1/n_bins if no signals generated
+                        n_bins = getattr(base_model, 'n_bins', 10)
+                        self.model_exposure_fractions_[model_name] = 1.0 / n_bins
+                        logger.warning(
+                            f"Could not generate binary signals for model '{model_name}', "
+                            f"using theoretical exposure fraction 1/{n_bins}"
+                        )
+        
+        # Set target volatility if not already set
+        if self.target_volatility_ is None:
+            self.target_volatility_ = self.target_volatility
         
         # After fitting base models, we still need to fit the ensemble weights
         # This requires computing binary signals from all base models
@@ -744,12 +814,104 @@ class DiversifiedEnsemble:
         
         return self
     
-    def predict_from_candles(
+    def _calculate_volatility_from_candles(
         self,
         candles_df: pd.DataFrame
-    ) -> pd.DataFrame:
+    ) -> Dict[str, float]:
+        """
+        Calculate blended volatility from EWSD bias nodes per ticker.
+        
+        Creates EWSD (Exponentially Weighted Standard Deviation) nodes for each ticker
+        and streams candles to build up volatility estimates. EWSD nodes implement
+        Carver's blended volatility:
+        - 70% EWMA-32 (short-run estimate)
+        - 30% long-run historical average
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            Candles DataFrame with columns: datetime, ticker, open, high, low, close, volume, timeframe
+            
+        Returns
+        -------
+        Dict[str, float]
+            Mapping from ticker to annualized blended volatility (as decimal, not percentage)
+        """
+        from utils.enums import Ticker, TimeFrame
+        from nodes.ewsd import EWSDNode
+        from utils.models import Candle
+        
+        volatility_dict = {}
+        
+        # Group by ticker
+        for ticker_name in candles_df['ticker'].unique():
+            ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
+            ticker_candles = ticker_candles.sort_values('datetime')
+            
+            if len(ticker_candles) == 0:
+                volatility_dict[ticker_name] = 0.20  # Default fallback
+                continue
+            
+            # Convert ticker name to Ticker enum
+            try:
+                if isinstance(ticker_name, str):
+                    # Handle both 'ES' and 'Ticker.ES' formats
+                    ticker_str = ticker_name.replace('Ticker.', '') if 'Ticker.' in ticker_name else ticker_name
+                    ticker = Ticker[ticker_str]
+                else:
+                    ticker = ticker_name
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown ticker '{ticker_name}', using default volatility")
+                volatility_dict[ticker_name] = 0.20
+                continue
+            
+            # Create EWSD node for this ticker
+            ewsd_node = EWSDNode(
+                ticker=ticker,
+                tf=TimeFrame.D,  # Use daily timeframe for volatility calculation
+                lambda_short=0.06061,  # 32-day span
+                long_run_window=2520,  # 10 years (2520 trading days)
+                blend_short_weight=0.7,
+                blend_long_weight=0.3
+            )
+            
+            # Stream all candles to build up EWSD state
+            ewsd_value = None
+            for _, row in ticker_candles.iterrows():
+                candle = Candle.from_row(row)
+                ewsd_output = ewsd_node.add_candle(candle)
+                if ewsd_output and len(ewsd_output) >= 2:
+                    # ewsd_output[1] is annual_pct (in percentage)
+                    # Convert to decimal
+                    ewsd_value = ewsd_output[1] / 100.0
+            
+            # Use latest EWSD value or fallback
+            if ewsd_value is None or np.isnan(ewsd_value):
+                ticker_candles['returns'] = ticker_candles['close'].pct_change()
+                daily_vol = ticker_candles['returns'].std()
+                annual_vol = daily_vol * np.sqrt(252)  # Annualize
+                ewsd_value = annual_vol if not np.isnan(annual_vol) else 0.20
+                logger.warning(
+                    f"EWSD calculation failed for ticker '{ticker_name}'. "
+                    f"Using simple volatility calculation as fallback."
+                )
+            
+            volatility_dict[ticker_name] = ewsd_value
+        
+        return volatility_dict
+    
+    def predict_from_candles(
+        self,
+        candles_df: pd.DataFrame,
+        volatility: Optional[Dict[str, float]] = None,
+        return_base_model_predictions: bool = False
+    ) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
         Aggregate predictions from all base models using candles DataFrame.
+        
+        Applies volatility scaling per base model before aggregation:
+        F_i = (tau / (sigma * sqrt(h_i))) * X_i * N
+        where N = number of instruments (accounts for instrument weights)
         
         This is the new DataFrame-based API for prediction.
         Routes candles to each base model, which computes features and predicts internally.
@@ -758,11 +920,20 @@ class DiversifiedEnsemble:
         ----------
         candles_df : pd.DataFrame
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+        volatility : Dict[str, float], optional
+            Volatility per ticker (annualized). If None, calculated from candles.
+        return_base_model_predictions : bool, default=False
+            If True, return base model-level predictions in result dict
             
         Returns
         -------
-        pd.DataFrame
-            Forecast scores with columns: ticker, datetime, forecast_score
+        pd.DataFrame or Dict[str, Any]
+            If return_base_model_predictions=False: DataFrame with aggregated ensemble predictions
+            If return_base_model_predictions=True: Dict with structure:
+            {
+                'ensemble': pd.DataFrame,  # Aggregated ensemble predictions
+                'base_models': Dict[str, pd.DataFrame]  # Individual base model predictions
+            }
         """
         if not self.is_fitted_:
             raise ValueError(
@@ -770,60 +941,164 @@ class DiversifiedEnsemble:
                 "Call fit_from_candles() or fit() first."
             )
         
+        # Calculate or use provided volatility
+        if volatility is None:
+            volatility = self._calculate_volatility_from_candles(candles_df)
+        
         all_predictions = []
+        base_model_predictions_dict = {}
         
         # Group candles by ticker
         for ticker_name in candles_df['ticker'].unique():
             ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
             
-            # Get predictions from each base model
+            # Get ticker enum
+            try:
+                from utils.enums import Ticker
+                ticker = Ticker[ticker_name] if isinstance(ticker_name, str) else ticker_name
+            except (KeyError, AttributeError):
+                logger.warning(f"Unknown ticker '{ticker_name}', skipping")
+                continue
+            
+            # Get volatility for this ticker
+            ticker_vol = volatility.get(ticker_name, 0.20)
+            
+            # Get predictions from each base model (BaseModel.predict() handles caching internally)
             ticker_predictions = []
             for model_name, base_model in self.base_models.items():
                 try:
-                    # BaseModel.predict() returns a Series indexed by datetime
+                    # BaseModel.predict() returns a Series indexed by datetime with binary signals
+                    # BaseModel.predict() handles feature caching internally
                     pred = base_model.predict(ticker_candles)
+                    
+                    # Debug: Log prediction details
+                    if len(pred) == 0:
+                        logger.warning(
+                            f"Base model '{model_name}' returned empty predictions for ticker '{ticker_name}'. "
+                            f"Input candles: {len(ticker_candles)}"
+                        )
+                        continue
+                    
+                    # Apply volatility scaling per base model
+                    # Formula: F_i = (tau / (sigma * sqrt(h_i))) * X_i
+                    # Note: Instrument weights are applied at Portfolio layer, not here
+                    # Get exposure fraction for this model
+                    h_i = self.model_exposure_fractions_.get(model_name, 0.1)
+                    sqrt_h_i = np.sqrt(max(h_i, 1e-8))
+                    
+                    # Calculate volatility-adjusted forecast
+                    # X_i is the binary signal (pred.values)
+                    forecast_if_active = self.target_volatility_ / (ticker_vol * sqrt_h_i)
+                    
+                    # Cap forecast at 2.0 (per spec: max position is 2.0)
+                    forecast_if_active = min(forecast_if_active, 2.0)
+                    
+                    # Apply signal: forecast_if_active if signal=1, else 0
+                    volatility_adjusted_forecast = forecast_if_active * pred.values
                     
                     # Convert to DataFrame with ticker and datetime
                     pred_df = pd.DataFrame({
                         'ticker': ticker_name,
                         'datetime': pred.index,
                         'model_name': model_name,
-                        'forecast': pred.values
+                        'forecast': volatility_adjusted_forecast
                     })
                     ticker_predictions.append(pred_df)
+                    
+                    # Store base model prediction if requested
+                    if return_base_model_predictions:
+                        # Create DataFrame for this base model (volatility-adjusted)
+                        base_model_df = pd.DataFrame({
+                            'ticker': ticker_name,
+                            'datetime': pred.index,
+                            'forecast_score': volatility_adjusted_forecast
+                        })
+                        
+                        # Append to base model predictions (combine across tickers)
+                        if model_name not in base_model_predictions_dict:
+                            base_model_predictions_dict[model_name] = []
+                        base_model_predictions_dict[model_name].append(base_model_df)
+                        
                 except Exception as e:
                     logger.error(
                         f"Error predicting with base model '{model_name}' for ticker '{ticker_name}': {e}",
                         exc_info=True
                     )
             
-            if ticker_predictions:
-                # Combine predictions for this ticker
-                ticker_df = pd.concat(ticker_predictions, ignore_index=True)
+            if not ticker_predictions:
+                logger.warning(f"No ticker_predictions for ticker {ticker_name}. Base models: {list(self.base_models.keys())}")
+                continue
                 
-                # Aggregate by datetime (mean across models, or weighted if weights available)
-                if self.weights_ is not None:
-                    # Weighted aggregation
-                    def weighted_mean(group):
-                        weights = [self.weights_.get(m, 1.0/len(group)) for m in group['model_name']]
-                        return (group['forecast'] * weights).sum() / sum(weights)
-                    
-                    aggregated = ticker_df.groupby('datetime').apply(weighted_mean).reset_index()
-                    aggregated.columns = ['datetime', 'forecast_score']
-                else:
-                    # Simple mean aggregation
-                    aggregated = ticker_df.groupby('datetime')['forecast'].mean().reset_index()
-                    aggregated.columns = ['datetime', 'forecast_score']
+            # Combine predictions for this ticker
+            ticker_df = pd.concat(ticker_predictions, ignore_index=True)
+            
+            # Debug: Check if ticker_df is empty
+            if ticker_df.empty:
+                logger.warning(f"ticker_df is empty for ticker {ticker_name} after concatenating {len(ticker_predictions)} predictions")
+                continue
+            
+            # Debug: Log ticker_df info
+            logger.debug(f"ticker_df for {ticker_name}: shape={ticker_df.shape}, columns={ticker_df.columns.tolist()}, dtypes={ticker_df.dtypes.to_dict()}")
+            
+            # Aggregate by datetime (mean across models, or weighted if weights available)
+            # Note: forecasts are already volatility-adjusted, so we just aggregate them
+            if self.weights_ is not None:
+                # Weighted aggregation: calculate weighted mean per datetime
+                # First, add weights column
+                ticker_df_weighted = ticker_df.copy()
+                ticker_df_weighted['weight'] = ticker_df_weighted['model_name'].map(
+                    lambda m: self.weights_.get(m, 1.0 / len(ticker_df_weighted))
+                )
+                ticker_df_weighted['weighted_forecast'] = ticker_df_weighted['forecast'] * ticker_df_weighted['weight']
                 
-                aggregated['ticker'] = ticker_name
-                all_predictions.append(aggregated)
+                # Group by datetime and sum weighted forecasts and weights, then divide
+                grouped = ticker_df_weighted.groupby('datetime').agg({
+                    'weighted_forecast': 'sum',
+                    'weight': 'sum'
+                })
+                grouped['forecast_score'] = grouped['weighted_forecast'] / grouped['weight']
+                
+                # Convert to DataFrame with datetime as column
+                aggregated = grouped[['forecast_score']].reset_index()
+            else:
+                # Simple mean aggregation
+                aggregated_series = ticker_df.groupby('datetime')['forecast'].mean()
+                aggregated = aggregated_series.to_frame('forecast_score').reset_index()
+            
+            # Debug: Check if aggregated is empty
+            if aggregated.empty:
+                logger.warning(f"Aggregated result is empty for ticker {ticker_name}. ticker_df shape: {ticker_df.shape}")
+                continue
+            
+            aggregated['ticker'] = ticker_name
+            all_predictions.append(aggregated)
         
         if not all_predictions:
-            return pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
+            empty_df = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
+            if return_base_model_predictions:
+                return {
+                    'ensemble': empty_df,
+                    'base_models': {}
+                }
+            return empty_df
         
-        # Combine all ticker predictions
-        result = pd.concat(all_predictions, ignore_index=True)
-        return result[['ticker', 'datetime', 'forecast_score']]
+        # Combine all ticker predictions for ensemble
+        ensemble_result = pd.concat(all_predictions, ignore_index=True)
+        ensemble_result = ensemble_result[['ticker', 'datetime', 'forecast_score']]
+        
+        # Return structure based on flag
+        if return_base_model_predictions:
+            # Combine base model predictions across tickers
+            combined_base_models = {}
+            for model_name, model_dfs in base_model_predictions_dict.items():
+                combined_base_models[model_name] = pd.concat(model_dfs, ignore_index=True)
+            
+            return {
+                'ensemble': ensemble_result,
+                'base_models': combined_base_models
+            }
+        
+        return ensemble_result
     
     def predict(
         self,
@@ -843,9 +1118,11 @@ class DiversifiedEnsemble:
 
         Where:
         - tau: Target annual portfolio volatility
-        - sigma: Instrument's blended annualized volatility
+        - sigma: Instrument's blended annualized volatility (70% EWMA-32 + 30% 10-year average)
         - h_i: Exposure fraction (1/n_bins for the base model)
         - X_i: Binary signal (0 or 1)
+        
+        Note: Instrument weights are applied at Portfolio layer, not here.
 
         Parameters
         ----------
@@ -970,6 +1247,7 @@ class DiversifiedEnsemble:
 
         # Step 3: Calculate per-model forecasts
         # Formula: F_i = (tau / (sigma * sqrt(h_i))) * X_i
+        # Note: Instrument weights are applied at Portfolio layer, not here
         results = []
 
         for row_idx in range(len(X_filtered)):
@@ -997,7 +1275,11 @@ class DiversifiedEnsemble:
 
                 # Calculate volatility-adjusted forecast
                 # This is the forecast assuming signal=1
+                # Note: Instrument weights are applied at Portfolio layer, not here
                 forecast_if_active = self.target_volatility_ / (vol * sqrt_h_i)
+                
+                # Cap forecast at 2.0 (per spec: max position is 2.0)
+                forecast_if_active = min(forecast_if_active, 2.0)
 
                 # Apply signal: 0 if inactive, forecast_if_active if active
                 forecast = forecast_if_active if signal == 1 else 0.0

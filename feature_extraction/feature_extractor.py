@@ -8,8 +8,12 @@ Extracts one bias node at a time with parameter grid exploration.
 Extract features for a single bias node with multiple parameter combinations.
 Columns = parameter combinations, Rows = timestamps.
 
+Supports single or multiple tickers:
+- Single ticker: ticker=Ticker.SPY
+- Multiple tickers: ticker=[Ticker.ES, Ticker.NQ]
+
 Examples:
-    # Single parameter set
+    # Single parameter set, single ticker
     features_df, targets_df = extract_features(
         module_name='rsi',
         params={'lookback': 14},
@@ -23,11 +27,18 @@ Examples:
         ticker=Ticker.SPY
     )
     
-    # Multiple parameters with grid search
+    # Multiple tickers
+    features_df, targets_df = extract_features(
+        module_name='rsi',
+        params={'lookback': 14},
+        ticker=[Ticker.ES, Ticker.NQ]
+    )
+    
+    # Multiple parameters with grid search, multiple tickers
     features_df, targets_df = extract_features(
         module_name='cmma',
         params={'lookback': [20, 50], 'atr_length': [252]},
-        ticker=Ticker.SPY
+        ticker=[Ticker.ES, Ticker.NQ, Ticker.YM]
     )
 """
 
@@ -81,65 +92,20 @@ def _compute_targets(price_df: pd.DataFrame, atr_col: str = None, ewsd_col: str 
     }, index=price_df.index)
 
 
-def extract_features(
+def _extract_features_single_ticker(
     module_name: str,
     params: Dict[str, Any],
     ticker: Ticker,
-    start: datetime = None,
-    end: datetime = None,
-    timeframes: List[TimeFrame] = None
+    start: datetime,
+    end: datetime,
+    timeframes: List[TimeFrame]
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Extract features for a single bias node with parameter grid exploration.
+    Extract features for a single ticker.
     
-    Parameters
-    ----------
-    module_name : str
-        Name of the bias node module (e.g., 'rsi', 'atr', 'cmma')
-    params : Dict[str, Any]
-        Parameters for the bias node. Supports grid search:
-        - Single value: {'lookback': 14}
-        - List of values: {'lookback': [14, 21, 28]} -> creates columns for each
-        - Multiple params: {'lookback': [14, 21], 'period': 252} -> all combinations
-    ticker : Ticker
-        Ticker to extract features for
-    start : datetime, optional
-        Start date. Defaults to datetime(1990, 1, 1)
-    end : datetime, optional
-        End date. Defaults to datetime.now()
-    timeframes : List[TimeFrame], optional
-        Timeframes to use. Defaults to [TimeFrame.D]
-        
-    Returns
-    -------
-    Tuple[pd.DataFrame, pd.DataFrame]
-        (features_df, targets_df)
-        - features_df: Columns = parameter combinations, Rows = timestamps
-        - targets_df: Target columns (raw_return, log_return, etc.)
-        
-    Examples
-    --------
-    >>> # Single parameter
-    >>> features_df, targets_df = extract_features(
-    ...     module_name='rsi',
-    ...     params={'lookback': 14},
-    ...     ticker=Ticker.SPY
-    ... )
-    >>> 
-    >>> # Parameter grid
-    >>> features_df, targets_df = extract_features(
-    ...     module_name='rsi',
-    ...     params={'lookback': [14, 21, 28]},
-    ...     ticker=Ticker.SPY
-    ... )
+    This is a pure function that handles feature extraction for one ticker.
+    Used internally by extract_features() to process each ticker separately.
     """
-    if start is None:
-        start = datetime(1990, 1, 1)
-    if end is None:
-        end = datetime.now()
-    if timeframes is None:
-        timeframes = [TimeFrame.D]
-    
     # Load price data
     price_df = helpers.load_data(ticker, TimeFrame.D, start=start, end=end)
     price_df.set_index('datetime', inplace=True)
@@ -217,5 +183,142 @@ def extract_features(
         price_df[ewsd_col] = features_df[ewsd_col]
     
     targets_df = _compute_targets(price_df, atr_col, ewsd_col)
+    
+    return features_df, targets_df
+
+
+def extract_features(
+    module_name: str,
+    params: Dict[str, Any],
+    ticker: Union[Ticker, List[Ticker]],
+    start: datetime = None,
+    end: datetime = None,
+    timeframes: List[TimeFrame] = None,
+    use_millisecond_offset: bool = True
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Extract features for a single bias node with parameter grid exploration.
+    Supports single or multiple tickers.
+    
+    Parameters
+    ----------
+    module_name : str
+        Name of the bias node module (e.g., 'rsi', 'atr', 'cmma')
+    params : Dict[str, Any]
+        Parameters for the bias node. Supports grid search:
+        - Single value: {'lookback': 14}
+        - List of values: {'lookback': [14, 21, 28]} -> creates columns for each
+        - Multiple params: {'lookback': [14, 21], 'period': 252} -> all combinations
+    ticker : Ticker or List[Ticker]
+        Single ticker or list of tickers to extract features for
+    start : datetime, optional
+        Start date. Defaults to datetime(1990, 1, 1)
+    end : datetime, optional
+        End date. Defaults to datetime.now()
+    timeframes : List[TimeFrame], optional
+        Timeframes to use. Defaults to [TimeFrame.D]
+    use_millisecond_offset : bool, default=True
+        For multi-ticker: add millisecond offsets to avoid duplicate indices
+        
+    Returns
+    -------
+    Tuple[pd.DataFrame, pd.DataFrame]
+        (features_df, targets_df)
+        - features_df: Columns = parameter combinations, Rows = timestamps
+          Includes 'ticker' column for identification
+        - targets_df: Target columns (raw_return, log_return, etc.)
+          Includes 'ticker' column for identification
+        
+    Examples
+    --------
+    >>> # Single parameter, single ticker
+    >>> features_df, targets_df = extract_features(
+    ...     module_name='rsi',
+    ...     params={'lookback': 14},
+    ...     ticker=Ticker.SPY
+    ... )
+    >>> 
+    >>> # Parameter grid, single ticker
+    >>> features_df, targets_df = extract_features(
+    ...     module_name='rsi',
+    ...     params={'lookback': [14, 21, 28]},
+    ...     ticker=Ticker.SPY
+    ... )
+    >>> 
+    >>> # Multiple tickers
+    >>> features_df, targets_df = extract_features(
+    ...     module_name='rsi',
+    ...     params={'lookback': 14},
+    ...     ticker=[Ticker.ES, Ticker.NQ]
+    ... )
+    >>> 
+    >>> # Multiple tickers with parameter grid
+    >>> features_df, targets_df = extract_features(
+    ...     module_name='cmma',
+    ...     params={'lookback': [20, 50], 'atr_length': [252]},
+    ...     ticker=[Ticker.ES, Ticker.NQ, Ticker.YM]
+    ... )
+    """
+    if start is None:
+        start = datetime(1990, 1, 1)
+    if end is None:
+        end = datetime.now()
+    if timeframes is None:
+        timeframes = [TimeFrame.D]
+    
+    # Normalize ticker to list
+    if isinstance(ticker, Ticker):
+        tickers = [ticker]
+    else:
+        tickers = ticker
+    
+    # Single ticker path
+    if len(tickers) == 1:
+        features_df, targets_df = _extract_features_single_ticker(
+            module_name=module_name,
+            params=params,
+            ticker=tickers[0],
+            start=start,
+            end=end,
+            timeframes=timeframes
+        )
+        
+        # Add ticker column for identification
+        features_df['ticker'] = tickers[0].name
+        targets_df['ticker'] = tickers[0].name
+        
+        return features_df, targets_df
+    
+    # Multi-ticker path: extract for each ticker and concatenate
+    all_features_dfs = []
+    all_targets_dfs = []
+    
+    for ticker_idx, single_ticker in enumerate(tickers):
+        # Extract features for this ticker
+        ticker_features_df, ticker_targets_df = _extract_features_single_ticker(
+            module_name=module_name,
+            params=params,
+            ticker=single_ticker,
+            start=start,
+            end=end,
+            timeframes=timeframes
+        )
+        
+        # Add millisecond offset to avoid duplicate datetime indices
+        if use_millisecond_offset and ticker_idx > 0:
+            offset = pd.Timedelta(milliseconds=ticker_idx)
+            ticker_features_df.index = ticker_features_df.index + offset
+            ticker_targets_df.index = ticker_targets_df.index + offset
+        
+        # Add ticker column for identification
+        ticker_features_df['ticker'] = single_ticker.name
+        ticker_targets_df['ticker'] = single_ticker.name
+        
+        all_features_dfs.append(ticker_features_df)
+        all_targets_dfs.append(ticker_targets_df)
+    
+    # Concatenate all tickers' data
+    features_df = pd.concat(all_features_dfs, axis=0).sort_index()
+    targets_df = pd.concat(all_targets_dfs, axis=0).sort_index()
     
     return features_df, targets_df

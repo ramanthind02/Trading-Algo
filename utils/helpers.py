@@ -125,6 +125,84 @@ def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1
         return df
     else:
         raise FileNotFoundError(f"File {file_path} does not exist")
+
+
+def load_data_multi_ticker(
+    tickers: List[Ticker],
+    timeframe: TimeFrame,
+    start: datetime = datetime(1990, 1, 1),
+    end: datetime = datetime(2025, 12, 30),
+    use_millisecond_offset: bool = True
+) -> pd.DataFrame:
+    """
+    Load OHLC data from multiple tickers and append rows with ticker column.
+    
+    Parameters
+    ----------
+    tickers : List[Ticker]
+        List of ticker symbols to load data for
+    timeframe : TimeFrame
+        The timeframe of the OHLC data
+    start : datetime, default=datetime(1990, 1, 1)
+        Start datetime to filter from
+    end : datetime, default=datetime(2025, 12, 30)
+        End datetime to filter to
+    use_millisecond_offset : bool, default=True
+        If True, add millisecond offsets to datetime indices to avoid duplicates
+        
+    Returns
+    -------
+    pd.DataFrame
+        Combined DataFrame with all tickers' data. Includes:
+        - All OHLC columns (datetime, open, high, low, close, volume)
+        - 'ticker' column identifying the ticker for each row
+        - 'timeframe' column (same for all rows)
+        - Indexed by timestamp (with offsets if use_millisecond_offset=True)
+        
+    Examples
+    --------
+    >>> from utils.enums import Ticker, TimeFrame
+    >>> from datetime import datetime
+    >>> 
+    >>> # Load multiple tickers
+    >>> df = load_data_multi_ticker(
+    ...     tickers=[Ticker.ES, Ticker.NQ, Ticker.YM],
+    ...     timeframe=TimeFrame.D,
+    ...     start=datetime(2020, 1, 1),
+    ...     end=datetime(2024, 12, 31)
+    ... )
+    >>> 
+    >>> # DataFrame has ticker column
+    >>> print(df['ticker'].unique())  # ['ES', 'NQ', 'YM']
+    >>> print(df.columns)  # ['datetime', 'open', 'high', 'low', 'close', 'volume', 'ticker', 'timeframe']
+    """
+    all_dfs = []
+    
+    for ticker_idx, ticker in enumerate(tickers):
+        # Load data for this ticker
+        ticker_df = load_data(ticker, timeframe, start=start, end=end)
+        
+        # Reset index to get timestamp as column (we'll use datetime as index)
+        ticker_df = ticker_df.reset_index()
+        
+        # Add ticker column
+        ticker_df['ticker'] = ticker
+        ticker_df['timeframe'] = timeframe
+        
+        # Add millisecond offset to avoid duplicate datetime indices
+        if use_millisecond_offset and ticker_idx > 0:
+            offset = pd.Timedelta(milliseconds=ticker_idx)
+            ticker_df['datetime'] = ticker_df['datetime'] + offset
+        
+        all_dfs.append(ticker_df)
+    
+    # Concatenate all tickers
+    combined_df = pd.concat(all_dfs, axis=0, ignore_index=True)
+    
+    # Sort by datetime
+    combined_df = combined_df.sort_values('datetime').reset_index(drop=True)
+    
+    return combined_df
     
 
 def load_numpy_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1990, 1, 1, 0, 0, 0), end: datetime = datetime.now()) -> np.ndarray:

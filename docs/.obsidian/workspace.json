@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "to-do/ml_manager_specs.md",
+                "file": "to-do/forecast_specs.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "ml_manager_specs"
+              "title": "forecast_specs"
             }
           }
         ]
@@ -171,8 +171,8 @@
   },
   "active": "363c7c083b797ca3",
   "lastOpenFiles": [
-    "to-do/forecast_specs.md",
     "to-do/ml_manager_specs.md",
+    "to-do/forecast_specs.md",
     "to-do/prop_firm_challenge_simulator.md",
     "to-do/vault_specs.md",
     "ML pipeline overview.canvas",

@@ -459,10 +459,13 @@ class TestVaultManager:
             feature_column=base_model.feature_column
         )
         
-        assert model_id in models
-        loaded_model = models[model_id]
+        # Models are now keyed by (ticker, model_id) tuple
+        key = (Ticker.ES, model_id)
+        assert key in models
+        loaded_model = models[key]
         assert isinstance(loaded_model, BaseModel)
         assert loaded_model.binning_model.is_fitted_
+        assert loaded_model.ticker == Ticker.ES
     
     def test_update_base_model_fitted_params(self, temp_vault, bias_node_spec):
         """Test updating fitted parameters."""
@@ -520,8 +523,9 @@ class TestVaultManager:
         
         # Verify update
         models = load_feature_base_models(ensemble_dir, 'test_feature', fitted_only=True)
-        assert model_id in models
-        assert models[model_id].binning_model.is_fitted_
+        key = (Ticker.ES, model_id)
+        assert key in models
+        assert models[key].binning_model.is_fitted_
     
     def test_remove_base_model_variant(self, temp_vault, bias_node_spec):
         """Test removing base model variant."""
@@ -554,7 +558,8 @@ class TestVaultManager:
         
         # Verify removal
         models = load_feature_base_models(ensemble_dir, 'test_feature')
-        assert model_id not in models
+        key = (Ticker.ES, model_id)
+        assert key not in models
     
     def test_list_features(self, temp_vault, bias_node_spec):
         """Test listing features in ensemble."""
@@ -736,3 +741,57 @@ class TestVaultManager:
         # Test invalid directory
         with pytest.raises(ValueError):
             validate_ensemble_directory('/nonexistent/path')
+    
+    def test_multiple_tickers_in_feature_spec(self, temp_vault, bias_node_spec):
+        """Test storing and loading multiple tickers in feature spec."""
+        initialize_vault(temp_vault)
+        ensemble_dir = create_ensemble_directory(
+            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+        )
+        
+        # Create base model for ES
+        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        base_model_es = BaseModel(
+            bias_node_spec=bias_node_spec,
+            binning_model=binning_model,
+            ticker=Ticker.ES
+        )
+        
+        # Add feature with multiple tickers
+        model_id = add_feature_to_ensemble(
+            ensemble_dir=ensemble_dir,
+            feature_column='test_feature',
+            bias_node_spec=bias_node_spec,
+            base_model=base_model_es,
+            tickers=[Ticker.ES, Ticker.NQ, Ticker.YM]
+        )
+        
+        # Verify tickers are stored
+        feature_file = Path(ensemble_dir) / 'features' / 'test_feature.json'
+        with open(feature_file, 'r') as f:
+            config = json.load(f)
+        
+        assert 'tickers' in config
+        assert set(config['tickers']) == {'ES', 'NQ', 'YM'}
+        
+        # Load models - should create instances for all tickers
+        models = load_feature_base_models(ensemble_dir, 'test_feature')
+        
+        # Should have 3 models (one per ticker)
+        assert len(models) == 3
+        
+        # Verify each ticker has a model
+        assert (Ticker.ES, model_id) in models
+        assert (Ticker.NQ, model_id) in models
+        assert (Ticker.YM, model_id) in models
+        
+        # Verify each model has correct ticker
+        assert models[(Ticker.ES, model_id)].ticker == Ticker.ES
+        assert models[(Ticker.NQ, model_id)].ticker == Ticker.NQ
+        assert models[(Ticker.YM, model_id)].ticker == Ticker.YM
+        
+        # Verify all models share the same binning model config
+        es_model = models[(Ticker.ES, model_id)]
+        nq_model = models[(Ticker.NQ, model_id)]
+        assert es_model.binning_model.n_bins == nq_model.binning_model.n_bins
+        assert es_model.binning_model.strategy == nq_model.binning_model.strategy
