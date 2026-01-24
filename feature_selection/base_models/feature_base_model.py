@@ -16,7 +16,6 @@ from dataclasses import dataclass
 from utils.enums import Ticker, TimeFrame
 from utils.models import Candle
 from utils import helpers
-from utils.feature_cache import FeatureCache
 from feature_selection.base_models.base_model import BinningModelBase
 
 
@@ -261,9 +260,6 @@ class BaseModel:
         """
         Fit model: update bias nodes, extract features, fit binning model.
         
-        Uses feature cache to avoid recomputing features when multiple base models
-        share the same bias node spec, ticker, and date range.
-        
         Parameters
         ----------
         candles_df : pd.DataFrame
@@ -298,82 +294,27 @@ class BaseModel:
                     f"Model was initialized with tickers: {self.tickers}"
                 )
         
-        # Check cache first - for multi-ticker, we'll cache per ticker
-        cache = FeatureCache()
-        all_cached_features = []
-        all_ticker_candles = []
-        need_extraction = False
+        # Clear previous feature values to start fresh
+        self._feature_values.clear()
+        self._feature_datetimes.clear()
         
-        # Check cache for each ticker
+        # Stream candles to bias nodes for all tickers
         for ticker in normalized_tickers:
             ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
-            all_ticker_candles.append((ticker, ticker_candles))
             
-            cached_features = cache.get(self.bias_node_spec, ticker, ticker_candles)
-            if cached_features is not None:
-                all_cached_features.append((ticker, cached_features))
-            else:
-                need_extraction = True
+            # Extract features for this ticker
+            for _, row in ticker_candles.iterrows():
+                candle = Candle.from_row(row)
+                self.add_candle(candle, row['timeframe'], ticker=ticker)
         
-        if not need_extraction and len(all_cached_features) == len(normalized_tickers):
-            # All features cached - concatenate them
-            feature_data_list = [feat for _, feat in all_cached_features]
-            if len(feature_data_list) > 1:
-                feature_data = pd.concat(feature_data_list, axis=0).sort_index()
-                # Preserve name from first feature (they should all have the same name)
-                if feature_data_list[0].name:
-                    feature_data.name = feature_data_list[0].name
-            else:
-                feature_data = feature_data_list[0]
-        else:
-            # Need to extract features - process all tickers first, then extract once
-            # Clear previous feature values to start fresh
-            self._feature_values.clear()
-            self._feature_datetimes.clear()
-            
-            # Stream candles to bias nodes for all tickers
-            for ticker, ticker_candles in all_ticker_candles:
-                # Check if we have cached features for this ticker
-                cached_features = cache.get(self.bias_node_spec, ticker, ticker_candles)
-                if cached_features is not None:
-                    # Use cached features - add to _feature_values
-                    for dt in cached_features.index:
-                        val = cached_features.loc[dt]
-                        self._feature_values[dt] = val
-                        if dt not in self._feature_datetimes:
-                            self._feature_datetimes.append(dt)
-                else:
-                    # Extract features for this ticker
-                    for _, row in ticker_candles.iterrows():
-                        candle = Candle.from_row(row)
-                        self.add_candle(candle, row['timeframe'], ticker=ticker)
-                    
-                    # Cache the extracted features for this ticker
-                    # Extract just this ticker's features for caching
-                    ticker_feature_values = {}
-                    ticker_feature_datetimes = []
-                    for _, row in ticker_candles.iterrows():
-                        dt = pd.to_datetime(row['datetime'])
-                        if dt in self._feature_values:
-                            ticker_feature_values[dt] = self._feature_values[dt]
-                            ticker_feature_datetimes.append(dt)
-                    
-                    if ticker_feature_datetimes:
-                        ticker_features = pd.Series(
-                            [ticker_feature_values[dt] for dt in ticker_feature_datetimes],
-                            index=pd.DatetimeIndex(ticker_feature_datetimes)
-                        )
-                        cache.set(self.bias_node_spec, ticker, ticker_candles, ticker_features)
-            
-            # Extract aggregated features (all tickers)
-            feature_data = self.get_feature()
+        # Extract aggregated features (all tickers)
+        feature_data = self.get_feature()
         
         # Set feature_column from feature data
         if feature_data.name:
             self.feature_column = feature_data.name
         else:
-            # If name is missing (e.g., after concatenation), set it from self.feature_column
-            # or rebuild it
+            # If name is missing, rebuild it
             if self.feature_column is None:
                 # Rebuild column name
                 primary_tf = self.bias_node_spec['timeframes'][0]
@@ -422,7 +363,6 @@ class BaseModel:
             Predictions (binary signals or scaled positions) indexed by candle datetimes
             Returns predictions for ALL input candles, not just new ones.
         """
-        # Store state before processing (in case we need to restore)
         # Note: We don't reset state here because base models may be called multiple times
         # with different tickers, and we want to preserve historical context for features
         # that require lookback windows (e.g., moving averages, RSI, etc.)
@@ -449,80 +389,23 @@ class BaseModel:
                     f"Model was initialized with tickers: {self.tickers}"
                 )
         
-        # Check cache first - for multi-ticker, we'll cache per ticker
-        cache = FeatureCache()
-        all_ticker_candles = []
+        # Collect input datetimes
         all_input_datetimes = []
-        need_extraction = False
+        for _, row in candles_df.iterrows():
+            candle = Candle.from_row(row)
+            all_input_datetimes.append(candle.datetime)
         
-        # Check cache for each ticker and collect input datetimes
+        # Extract features for all tickers
         for ticker in normalized_tickers:
             ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
-            all_ticker_candles.append((ticker, ticker_candles))
             
-            # Extract datetimes from candles
+            # Extract features for this ticker
             for _, row in ticker_candles.iterrows():
                 candle = Candle.from_row(row)
-                all_input_datetimes.append(candle.datetime)
-            
-            cached_features = cache.get(self.bias_node_spec, ticker, ticker_candles)
-            if cached_features is None:
-                need_extraction = True
+                self.add_candle(candle, row['timeframe'], ticker=ticker)
         
-        if not need_extraction:
-            # All features cached - concatenate them
-            all_cached_features = []
-            for ticker, ticker_candles in all_ticker_candles:
-                cached_features = cache.get(self.bias_node_spec, ticker, ticker_candles)
-                if cached_features is not None:
-                    all_cached_features.append(cached_features)
-            
-            if len(all_cached_features) > 1:
-                feature_data = pd.concat(all_cached_features, axis=0).sort_index()
-            else:
-                feature_data = all_cached_features[0] if all_cached_features else pd.Series()
-        else:
-            # Need to extract features - process all tickers, then extract once
-            # Note: We don't clear _feature_values here to preserve historical context
-            # for features that require lookback windows
-            
-            # Process each ticker
-            for ticker, ticker_candles in all_ticker_candles:
-                # Check cache for this ticker
-                cached_features = cache.get(self.bias_node_spec, ticker, ticker_candles)
-                
-                if cached_features is not None:
-                    # Use cached features - add to _feature_values
-                    for dt in cached_features.index:
-                        val = cached_features.loc[dt]
-                        self._feature_values[dt] = val
-                        if dt not in self._feature_datetimes:
-                            self._feature_datetimes.append(dt)
-                else:
-                    # Extract features for this ticker
-                    for _, row in ticker_candles.iterrows():
-                        candle = Candle.from_row(row)
-                        self.add_candle(candle, row['timeframe'], ticker=ticker)
-                    
-                    # Cache the extracted features for this ticker
-                    # Extract just this ticker's features for caching
-                    ticker_feature_values = {}
-                    ticker_feature_datetimes = []
-                    for _, row in ticker_candles.iterrows():
-                        dt = pd.to_datetime(row['datetime'])
-                        if dt in self._feature_values:
-                            ticker_feature_values[dt] = self._feature_values[dt]
-                            ticker_feature_datetimes.append(dt)
-                    
-                    if ticker_feature_datetimes:
-                        ticker_features = pd.Series(
-                            [ticker_feature_values[dt] for dt in ticker_feature_datetimes],
-                            index=pd.DatetimeIndex(ticker_feature_datetimes)
-                        )
-                        cache.set(self.bias_node_spec, ticker, ticker_candles, ticker_features)
-            
-            # Extract aggregated features (all tickers)
-            feature_data = self.get_feature()
+        # Extract aggregated features (all tickers)
+        feature_data = self.get_feature()
         
         # Get feature values for the input datetimes (in order)
         # This ensures we return predictions for all input candles, even if some were seen before

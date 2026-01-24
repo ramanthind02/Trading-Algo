@@ -663,3 +663,387 @@ def plot_feature_signal_cumsum(
     
     return fig
 
+
+def combine_decile_plots(
+    features_df: pd.DataFrame,
+    targets_df: pd.DataFrame,
+    feature_names: List[str],
+    target_col: str = 'log_return',
+    n_bins: int = 10,
+    n_cols: int = 4,
+    figsize_per_plot: Tuple[int, int] = (6, 4),
+    plot_type: str = "bar",
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Combine multiple decile plots into a single figure with subplots.
+    
+    Parameters
+    ----------
+    features_df : pd.DataFrame
+        DataFrame containing feature columns
+    targets_df : pd.DataFrame
+        DataFrame containing target columns
+    feature_names : List[str]
+        List of feature names to plot
+    target_col : str, default='log_return'
+        Target column to use
+    n_bins : int, default=10
+        Number of bins for decile analysis
+    n_cols : int, default=4
+        Number of columns in the grid
+    figsize_per_plot : Tuple[int, int], default=(6, 4)
+        Size of each subplot
+    plot_type : str, default="bar"
+        Type of plot: "bar" or "line"
+    save_path : Optional[str], default=None
+        Path to save the combined figure
+        
+    Returns
+    -------
+    plt.Figure
+        Combined figure with all decile plots
+    """
+    if not feature_names:
+        raise ValueError("No features to plot")
+    
+    n_plots = len(feature_names)
+    n_rows = (n_plots + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows))
+    # Ensure axes is always a flat array for indexing
+    if n_plots == 1:
+        axes = np.array([axes])
+    elif n_rows == 1:
+        # When n_rows == 1, axes is a 1D array, ensure it's flat
+        axes = axes.flatten() if hasattr(axes, 'flatten') else np.array([axes])
+    else:
+        axes = axes.flatten()
+    
+    for idx, feature_name in enumerate(feature_names):
+        ax = axes[idx]
+        
+        try:
+            feature_data = features_df[feature_name]
+            target_data = targets_df[target_col]
+            
+            if not pd.api.types.is_numeric_dtype(feature_data):
+                ax.text(0.5, 0.5, f'{feature_name}\n(non-numeric)', 
+                       ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(feature_name, fontsize=9)
+                continue
+            
+            # Create decile plot data
+            df = pd.DataFrame({'feature': feature_data, 'target': target_data}).dropna()
+            
+            if df.empty:
+                ax.text(0.5, 0.5, f'{feature_name}\n(no data)', 
+                       ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(feature_name, fontsize=9)
+                continue
+            
+            # Create bins
+            try:
+                df['bin'] = pd.qcut(df['feature'], n_bins, labels=False, duplicates='drop')
+            except ValueError:
+                # Try with fewer bins
+                for n in range(n_bins - 1, 1, -1):
+                    try:
+                        df['bin'] = pd.qcut(df['feature'], n, labels=False, duplicates='drop')
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    ax.text(0.5, 0.5, f'{feature_name}\n(cannot bin)', 
+                           ha='center', va='center', transform=ax.transAxes)
+                    ax.set_title(feature_name, fontsize=9)
+                    continue
+            
+            # Calculate statistics
+            bin_stats = df.groupby('bin')['target'].agg(['mean', 'std', 'count'])
+            
+            # Plot
+            if plot_type == "bar":
+                bar_colors = ['#2ecc71' if val >= 0 else '#e74c3c' for val in bin_stats['mean']]
+                ax.bar(bin_stats.index + 1, bin_stats['mean'], color=bar_colors, alpha=0.8, edgecolor='black')
+            else:
+                for i, val in enumerate(bin_stats['mean']):
+                    color = '#2ecc71' if val >= 0 else '#e74c3c'
+                    ax.plot(i+1, val, 'o', color=color, markersize=6)
+                ax.plot(bin_stats.index + 1, bin_stats['mean'], '-', color='#555555', alpha=0.5, linewidth=1.5)
+            
+            ax.axhline(0, color='black', linewidth=0.8, alpha=0.5)
+            ax.set_title(feature_name, fontsize=9)
+            ax.set_xlabel('Decile', fontsize=7)
+            ax.set_ylabel('Mean Target', fontsize=7)
+            ax.grid(True, alpha=0.3)
+            ax.set_xticks(range(1, len(bin_stats) + 1))
+            
+        except Exception as e:
+            ax.text(0.5, 0.5, f'{feature_name}\n(error)', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(feature_name, fontsize=9)
+            continue
+    
+    # Hide unused subplots
+    for idx in range(n_plots, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    
+    return fig
+
+
+def combine_signal_cumsum_plots(
+    gated_returns_dict: Dict[str, pd.Series],
+    n_cols: int = 4,
+    figsize_per_plot: Tuple[int, int] = (6, 3),
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Combine multiple signal cumsum plots into a single figure with subplots.
+    
+    Parameters
+    ----------
+    gated_returns_dict : Dict[str, pd.Series]
+        Dictionary mapping feature names to gated returns series
+    n_cols : int, default=4
+        Number of columns in the grid
+    figsize_per_plot : Tuple[int, int], default=(6, 3)
+        Size of each subplot
+    save_path : Optional[str], default=None
+        Path to save the combined figure
+        
+    Returns
+    -------
+    plt.Figure
+        Combined figure with all signal cumsum plots
+    """
+    if not gated_returns_dict:
+        raise ValueError("No data to plot")
+    
+    n_plots = len(gated_returns_dict)
+    n_rows = (n_plots + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows))
+    # Ensure axes is always a flat list/array for indexing
+    if n_plots == 1:
+        axes = np.array([axes])
+    elif n_rows == 1:
+        # When n_rows == 1, axes is a 1D array, convert to list for consistent indexing
+        axes = axes.flatten() if hasattr(axes, 'flatten') else np.array([axes])
+    else:
+        axes = axes.flatten()
+    
+    for idx, (feature_name, gated_returns) in enumerate(gated_returns_dict.items()):
+        ax = axes[idx]
+        
+        try:
+            # Sort by index for proper cumulative calculation
+            if isinstance(gated_returns.index, pd.DatetimeIndex):
+                gated_returns = gated_returns.sort_index()
+            
+            cum_returns = gated_returns.cumsum()
+            
+            ax.plot(cum_returns.index, cum_returns.values, linewidth=1.5)
+            ax.axhline(0.0, color='black', linewidth=0.8, alpha=0.5)
+            ax.set_title(feature_name, fontsize=9)
+            ax.set_xlabel('Date', fontsize=7)
+            ax.set_ylabel('CumSum', fontsize=7)
+            ax.grid(True, alpha=0.3)
+            
+        except Exception as e:
+            ax.text(0.5, 0.5, f'{feature_name}\n(error)', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(feature_name, fontsize=9)
+            continue
+    
+    # Hide unused subplots
+    for idx in range(n_plots, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    
+    return fig
+
+
+def combine_distribution_plots(
+    features_df: pd.DataFrame,
+    feature_names: List[str],
+    n_cols: int = 4,
+    figsize_per_plot: Tuple[int, int] = (5, 3),
+    bins: int = 50,
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Combine multiple distribution plots into a single figure with subplots.
+    
+    Parameters
+    ----------
+    features_df : pd.DataFrame
+        DataFrame containing feature columns
+    feature_names : List[str]
+        List of feature names to plot
+    n_cols : int, default=4
+        Number of columns in the grid
+    figsize_per_plot : Tuple[int, int], default=(5, 3)
+        Size of each subplot
+    bins : int, default=50
+        Number of bins for histogram
+    save_path : Optional[str], default=None
+        Path to save the combined figure
+        
+    Returns
+    -------
+    plt.Figure
+        Combined figure with all distribution plots
+    """
+    if not feature_names:
+        raise ValueError("No features to plot")
+    
+    n_plots = len(feature_names)
+    n_rows = (n_plots + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows))
+    # Ensure axes is always a flat array for indexing
+    if n_plots == 1:
+        axes = np.array([axes])
+    elif n_rows == 1:
+        # When n_rows == 1, axes is a 1D array, ensure it's flat
+        axes = axes.flatten() if hasattr(axes, 'flatten') else np.array([axes])
+    else:
+        axes = axes.flatten()
+    
+    for idx, feature_name in enumerate(feature_names):
+        ax = axes[idx]
+        
+        try:
+            feature_data = features_df[feature_name].dropna()
+            
+            if len(feature_data) == 0:
+                ax.text(0.5, 0.5, f'{feature_name}\n(no data)', 
+                       ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(feature_name, fontsize=9)
+                continue
+            
+            ax.hist(feature_data, bins=bins, alpha=0.7, edgecolor='black', linewidth=0.5)
+            ax.set_title(feature_name, fontsize=9)
+            ax.set_xlabel('Value', fontsize=7)
+            ax.set_ylabel('Frequency', fontsize=7)
+            ax.grid(True, alpha=0.3)
+            
+        except Exception as e:
+            ax.text(0.5, 0.5, f'{feature_name}\n(error)', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(feature_name, fontsize=9)
+            continue
+    
+    # Hide unused subplots
+    for idx in range(n_plots, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    
+    return fig
+
+
+def combine_timeseries_plots(
+    features_df: pd.DataFrame,
+    feature_names: List[str],
+    n_cols: int = 4,
+    figsize_per_plot: Tuple[int, int] = (6, 3),
+    rolling_window: int = 20,
+    save_path: Optional[str] = None
+) -> plt.Figure:
+    """
+    Combine multiple timeseries plots into a single figure with subplots.
+    
+    Parameters
+    ----------
+    features_df : pd.DataFrame
+        DataFrame containing feature columns with datetime index
+    feature_names : List[str]
+        List of feature names to plot
+    n_cols : int, default=4
+        Number of columns in the grid
+    figsize_per_plot : Tuple[int, int], default=(6, 3)
+        Size of each subplot
+    rolling_window : int, default=20
+        Window size for rolling mean
+    save_path : Optional[str], default=None
+        Path to save the combined figure
+        
+    Returns
+    -------
+    plt.Figure
+        Combined figure with all timeseries plots
+    """
+    if not feature_names:
+        raise ValueError("No features to plot")
+    
+    n_plots = len(feature_names)
+    n_rows = (n_plots + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(figsize_per_plot[0] * n_cols, figsize_per_plot[1] * n_rows))
+    # Ensure axes is always a flat array for indexing
+    if n_plots == 1:
+        axes = np.array([axes])
+    elif n_rows == 1:
+        # When n_rows == 1, axes is a 1D array, ensure it's flat
+        axes = axes.flatten() if hasattr(axes, 'flatten') else np.array([axes])
+    else:
+        axes = axes.flatten()
+    
+    for idx, feature_name in enumerate(feature_names):
+        ax = axes[idx]
+        
+        try:
+            feature_data = features_df[feature_name].dropna()
+            
+            if len(feature_data) == 0:
+                ax.text(0.5, 0.5, f'{feature_name}\n(no data)', 
+                       ha='center', va='center', transform=ax.transAxes)
+                ax.set_title(feature_name, fontsize=9)
+                continue
+            
+            # Plot time series
+            ax.plot(feature_data.index, feature_data.values, alpha=0.6, linewidth=0.8, label='Value')
+            
+            # Add rolling mean if enough data
+            if len(feature_data) > rolling_window:
+                rolling_mean = feature_data.rolling(window=rolling_window).mean()
+                ax.plot(rolling_mean.index, rolling_mean.values, 
+                       color='red', linewidth=1.5, alpha=0.8, label=f'MA({rolling_window})')
+            
+            ax.set_title(feature_name, fontsize=9)
+            ax.set_xlabel('Date', fontsize=7)
+            ax.set_ylabel('Value', fontsize=7)
+            ax.grid(True, alpha=0.3)
+            ax.legend(fontsize=6)
+            
+        except Exception as e:
+            ax.text(0.5, 0.5, f'{feature_name}\n(error)', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(feature_name, fontsize=9)
+            continue
+    
+    # Hide unused subplots
+    for idx in range(n_plots, len(axes)):
+        axes[idx].axis('off')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        fig.savefig(save_path, dpi=150, bbox_inches='tight')
+    
+    return fig
+

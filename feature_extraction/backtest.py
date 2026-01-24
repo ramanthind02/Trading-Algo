@@ -6,7 +6,7 @@ sys.path.append(parent_dir)
 
 import numpy as np
 from typing import List, Optional
-from feature_extraction.ml_manager import MLManager
+
 from utils.enums import TimeFrame
 from utils.candle_fetcher import CandleFetcher
 from utils.models import Candle

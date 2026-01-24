@@ -1,0 +1,13 @@
+feature,original_criterion,pval,significant
+rsi_signal_D_lookback_5,2.7795696458278654,0.001,True
+rsi_signal_D_lookback_4,2.678141569597825,0.001,True
+rsi_signal_D_lookback_3,2.4448496926542544,0.001,True
+rsi_signal_D_lookback_7,2.299073322192977,0.002,True
+rsi_signal_D_lookback_2,2.1512559942627596,0.002,True
+rsi_signal_D_lookback_8,2.1175477385194954,0.001,True
+rsi_signal_D_lookback_6,2.0655989089075204,0.003,True
+rsi_signal_D_lookback_9,2.0613547382474873,0.002,True
+rsi_signal_D_lookback_10,1.7830268516293157,0.01,True
+rsi_signal_D_lookback_14,1.7267802082994639,0.014,True
+rsi_signal_D_lookback_12,1.6237200877442204,0.037,True
+rsi_signal_D_lookback_16,1.5030596033266062,0.05,True

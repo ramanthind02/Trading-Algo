@@ -18,9 +18,12 @@ Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 
 import pandas as pd
 import numpy as np
+import logging
 from typing import Dict, List, Optional, Union, Any
 from utils.enums import TimeFrame
 from .weight_layer import WeightLayer
+
+logger = logging.getLogger(__name__)
 
 
 class Portfolio:
@@ -206,14 +209,14 @@ class Portfolio:
 
     def _calculate_idm(self, instrument_returns: pd.DataFrame) -> float:
         """
-        Calculate Instrument Diversification Multiplier from return correlations.
+        Calculate Instrument Diversification Multiplier from instrument return correlations.
         
         Formula: IDM = sqrt(1 / (mean_correlation + epsilon))
         Where mean_correlation is calculated from the correlation matrix of instrument returns.
         
         Steps:
-        1. Build correlation matrix of instrument returns
-        2. Calculate mean correlation: mean(|rho_ij|) for i != j
+        1. Build correlation matrix of instrument returns (tickers as columns)
+        2. Calculate mean absolute correlation: mean(|rho_ij|) for i != j
         3. Floor negative correlations at zero (Carver's recommendation)
         4. Calculate IDM: sqrt(1 / (mean_correlation + epsilon))
         5. Cap at idm_max (default 2.5)
@@ -234,14 +237,17 @@ class Portfolio:
             self.mean_return_correlation_ = 1.0
             return 1.0
         
-        # Build correlation matrix
+        # Build correlation matrix of instrument returns
+        # Columns are tickers, rows are time periods
         corr_matrix = instrument_returns.corr()
         
         # Floor negative correlations at zero (Carver's recommendation)
+        # This treats negative correlations as zero (no diversification benefit from negative correlation)
         corr_matrix = corr_matrix.clip(lower=0.0)
         
         # Calculate mean correlation (excluding diagonal)
         # Get upper triangle (excluding diagonal) and calculate mean
+        # This gives us mean(|rho_ij|) for i != j as specified
         mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
         correlations = corr_matrix.where(mask).stack()
         
@@ -250,14 +256,17 @@ class Portfolio:
             self.mean_return_correlation_ = 1.0
             return 1.0
         
+        # Mean correlation: mean(|rho_ij|) for i != j
+        # Since we've already floored at zero, this is effectively mean(|rho_ij|)
         mean_correlation = correlations.mean()
         self.mean_return_correlation_ = mean_correlation
         
         # Calculate IDM: sqrt(1 / (mean_correlation + epsilon))
+        # Lower correlation = higher IDM (more diversification benefit)
         epsilon = 0.01  # Small epsilon to avoid division by zero
         idm = np.sqrt(1.0 / (mean_correlation + epsilon))
         
-        # Cap at idm_max
+        # Cap at idm_max (Carver's recommendation: 2.5)
         idm = min(idm, self.idm_max)
         
         return idm
@@ -464,13 +473,57 @@ class Portfolio:
         if target_data is not None:
             # Calculate returns from candles for IDM calculation
             returns_df = self._calculate_returns_from_candles(tf_candles)
-            if not returns_df.empty:
+            
+            # Debug logging
+            logger.debug(
+                f"IDM calculation: returns_df shape={returns_df.shape}, "
+                f"columns={list(returns_df.columns) if not returns_df.empty else []}, "
+                f"unique tickers in candles={sorted(tf_candles['ticker'].unique().tolist())}"
+            )
+            
+            if not returns_df.empty and len(returns_df.columns) >= 2:
+                # Need at least 2 instruments to calculate IDM
                 # Calculate IDM from correlations
-                self.fit(returns_df)
-                # If IDM wasn't calculated (e.g., insufficient data), default to 1.0
-                if self.idm_ is None:
+                try:
+                    self.fit(returns_df)
+                    logger.debug(
+                        f"IDM calculated successfully: IDM={self.idm_}, "
+                        f"mean_correlation={self.mean_return_correlation_}"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Error calculating IDM: {e}. Using default IDM=1.0",
+                        exc_info=True
+                    )
                     self.idm_ = 1.0
                     self.mean_return_correlation_ = 1.0
+                
+                # If IDM wasn't calculated (e.g., insufficient data), default to 1.0
+                if self.idm_ is None:
+                    logger.warning("IDM is None after fit(). Using default IDM=1.0")
+                    self.idm_ = 1.0
+                    self.mean_return_correlation_ = 1.0
+            else:
+                # Not enough instruments or empty returns - set default IDM
+                if returns_df.empty:
+                    logger.warning(
+                        f"Returns DataFrame is empty after processing. "
+                        f"Input candles: {len(tf_candles)} rows, "
+                        f"unique tickers: {sorted(tf_candles['ticker'].unique().tolist())}. "
+                        f"Cannot calculate IDM. Using default IDM=1.0"
+                    )
+                elif len(returns_df.columns) < 2:
+                    logger.warning(
+                        f"Only {len(returns_df.columns)} instrument(s) in returns DataFrame. "
+                        f"Need at least 2 instruments to calculate IDM. "
+                        f"Available tickers in candles: {sorted(tf_candles['ticker'].unique().tolist())}. "
+                        f"Using default IDM=1.0"
+                    )
+                self.idm_ = 1.0
+                self.mean_return_correlation_ = 1.0
+                # Set instruments_ from candles if not already set
+                if self.instruments_ is None:
+                    self.instruments_ = sorted(tf_candles['ticker'].unique().tolist())
             
             # Fit WeightLayer (calculates weights and FDM from forecast correlations)
             self._fit_weight_layer(tf_candles)
@@ -733,9 +786,7 @@ class Portfolio:
         from utils.enums import Ticker, TimeFrame
         from nodes.ewsd import EWSDNode
         from utils.models import Candle
-        import logging
         
-        logger = logging.getLogger(__name__)
         volatility_dict = {}
         
         # Group by ticker
@@ -813,18 +864,120 @@ class Portfolio:
             Returns DataFrame with tickers as columns, datetime as index
         """
         returns_dict = {}
+        date_ranges_dict = {}  # Store date ranges for logging
         
         for ticker in candles_df['ticker'].unique():
             ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            
+            # Ensure datetime column is properly formatted as datetime
+            ticker_candles['datetime'] = pd.to_datetime(ticker_candles['datetime'])
             ticker_candles = ticker_candles.sort_values('datetime')
+            
+            # Calculate returns
             ticker_candles['returns'] = ticker_candles['close'].pct_change()
             
-            # Set datetime as index
+            # Set datetime as index (already datetime type)
             ticker_candles = ticker_candles.set_index('datetime')
-            returns_dict[ticker] = ticker_candles['returns']
+            # Drop NaN from individual ticker (first row will be NaN from pct_change)
+            ticker_returns = ticker_candles['returns'].dropna()
+            
+            # Convert ticker to string for dictionary key (handle both enum and string)
+            if hasattr(ticker, 'name'):
+                ticker_key = ticker.name  # Ticker enum
+            elif hasattr(ticker, 'value'):
+                ticker_key = str(ticker.value)  # Fallback
+            else:
+                ticker_key = str(ticker)  # String or other
+            
+            if len(ticker_returns) > 0:
+                # Ensure datetime index is properly formatted as DatetimeIndex
+                if not isinstance(ticker_returns.index, pd.DatetimeIndex):
+                    ticker_returns.index = pd.to_datetime(ticker_returns.index)
+                
+                # Normalize datetime index to remove timezone and time components for alignment
+                # This ensures all tickers align on the same dates
+                ticker_returns.index = ticker_returns.index.normalize()
+                
+                returns_dict[ticker_key] = ticker_returns
+                date_ranges_dict[ticker_key] = (ticker_returns.index.min(), ticker_returns.index.max())
+                
+                logger.debug(
+                    f"Added returns for ticker {ticker_key}: {len(ticker_returns)} rows, "
+                    f"date range: {ticker_returns.index.min()} to {ticker_returns.index.max()}"
+                )
+            else:
+                logger.warning(f"No valid returns for ticker {ticker_key} after dropna()")
+                date_ranges_dict[ticker_key] = (None, None)
         
-        returns_df = pd.DataFrame(returns_dict)
-        returns_df = returns_df.dropna()
+        if not returns_dict:
+            logger.warning("No returns calculated for any ticker")
+            return pd.DataFrame()
+        
+        # Create DataFrame with all ticker returns
+        # This will align by datetime index (union of all datetimes)
+        # Ensure all indices are normalized and the same type before creating DataFrame
+        normalized_returns_dict = {}
+        for ticker_key, ticker_returns in returns_dict.items():
+            # Create a copy to avoid modifying original
+            normalized_returns = ticker_returns.copy()
+            
+            # Ensure index is DatetimeIndex and normalized (date-only, no time)
+            if not isinstance(normalized_returns.index, pd.DatetimeIndex):
+                normalized_returns.index = pd.to_datetime(normalized_returns.index)
+            
+            # Normalize to remove time components (ensures alignment)
+            normalized_returns.index = normalized_returns.index.normalize()
+            
+            normalized_returns_dict[ticker_key] = normalized_returns
+        
+        returns_df = pd.DataFrame(normalized_returns_dict)
+        
+        logger.debug(
+            f"Returns DataFrame created: shape={returns_df.shape}, "
+            f"columns={list(returns_df.columns)}, "
+            f"index type: {type(returns_df.index)}, "
+            f"NaN count per column: {returns_df.isna().sum().to_dict()}, "
+            f"Sample index values: {returns_df.index[:5].tolist() if len(returns_df) > 0 else 'empty'}"
+        )
+        
+        # Only drop rows where we have fewer than 2 tickers with valid returns
+        # We need at least 2 tickers for correlation calculation
+        # Use dropna with thresh=2 to keep rows with at least 2 non-NaN values
+        if len(returns_df.columns) >= 2:
+            rows_before = len(returns_df)
+            # Count non-NaN values per row
+            non_nan_per_row = returns_df.notna().sum(axis=1)
+            rows_with_2plus = (non_nan_per_row >= 2).sum()
+            
+            logger.debug(
+                f"Before dropna(thresh=2): {rows_before} rows, "
+                f"{rows_with_2plus} rows have 2+ non-NaN values"
+            )
+            
+            returns_df = returns_df.dropna(thresh=2)
+            rows_after = len(returns_df)
+            
+            if rows_after == 0:
+                # Get date ranges from stored dict (before DataFrame creation)
+                date_ranges = [(col, date_ranges_dict.get(col, (None, None))[0], date_ranges_dict.get(col, (None, None))[1]) 
+                              for col in returns_df.columns]
+                
+                logger.warning(
+                    f"Returns DataFrame is empty after dropna(thresh=2). "
+                    f"Input: {rows_before} rows, {len(returns_df.columns)} columns. "
+                    f"Only {rows_with_2plus} rows had 2+ non-NaN values. "
+                    f"This suggests tickers have no overlapping datetime indices. "
+                    f"Date ranges from individual tickers: {date_ranges}"
+                )
+            else:
+                logger.debug(
+                    f"After dropna(thresh=2): {rows_before} -> {rows_after} rows, "
+                    f"columns={list(returns_df.columns)}"
+                )
+        else:
+            # If we have fewer than 2 tickers, return empty
+            logger.warning(f"Only {len(returns_df.columns)} ticker(s) in returns DataFrame")
+            return pd.DataFrame()
         
         return returns_df
     
@@ -1211,25 +1364,89 @@ class Portfolio:
             - is_fitted: Whether Portfolio has been fitted
             - idm: Instrument Diversification Multiplier
             - mean_return_correlation: Mean correlation between instrument returns
-            - fdm: Forecast Diversification Multiplier
-            - mean_forecast_correlation: Mean correlation between forecast values
+            - fdm: Forecast Diversification Multiplier (from WeightLayer)
+            - mean_forecast_correlation: Mean correlation between forecast values (from WeightLayer)
             - n_instruments: Number of instruments
             - instruments: List of instrument tickers
             - idm_max: Maximum allowed IDM
-            - fdm_max: Maximum allowed FDM
+            - fdm_max: Maximum allowed FDM (from WeightLayer)
             - max_position_pct: Position cap (if any)
+            - weight_layer: Full WeightLayer diagnostics dict
         """
-        return {
+        weight_layer_diag = self.weight_layer.get_diagnostics() if self.weight_layer else {}
+        
+        # Flatten weight layer diagnostics for easier access
+        diagnostics = {
             'is_fitted': self.is_fitted_,
             'idm': self.idm_,
             'mean_return_correlation': self.mean_return_correlation_,
-            'weight_layer': self.weight_layer.get_diagnostics() if self.weight_layer else None,
+            'fdm': weight_layer_diag.get('fdm') if isinstance(weight_layer_diag, dict) else None,
+            'mean_forecast_correlation': weight_layer_diag.get('mean_forecast_correlation') if isinstance(weight_layer_diag, dict) else None,
             'n_instruments': len(self.instruments_) if self.instruments_ else 0,
             'instruments': self.instruments_,
             'idm_max': self.idm_max,
+            'fdm_max': weight_layer_diag.get('fdm_max') if isinstance(weight_layer_diag, dict) else None,
             'max_position_pct': self.max_position_pct,
-            'trading_timeframe': self.trading_timeframe.name if self.trading_timeframe else None
+            'trading_timeframe': self.trading_timeframe.name if self.trading_timeframe else None,
+            'weight_layer': weight_layer_diag  # Full weight layer diagnostics
         }
+        
+        return diagnostics
+    
+    def print_diagnostics(self) -> None:
+        """
+        Print comprehensive diagnostic information in a readable format.
+        
+        This method prints IDM, FDM, weight layer information, and other
+        portfolio diagnostics in a formatted way for easy inspection.
+        """
+        print("=" * 60)
+        print("PORTFOLIO DIAGNOSTICS")
+        print("=" * 60)
+        
+        print(f"\n📊 Portfolio Status:")
+        print(f"  Fitted: {self.is_fitted_}")
+        print(f"  Trading Timeframe: {self.trading_timeframe.name if self.trading_timeframe else 'N/A'}")
+        print(f"  Number of Instruments: {len(self.instruments_) if self.instruments_ else 0}")
+        print(f"  Instruments: {self.instruments_ if self.instruments_ else 'N/A'}")
+        
+        print(f"\n🎯 Instrument Diversification Multiplier (IDM):")
+        print(f"  IDM: {self.idm_ if self.idm_ is not None else 'Not calculated'}")
+        print(f"  IDM Max: {self.idm_max}")
+        print(f"  Mean Return Correlation: {self.mean_return_correlation_ if self.mean_return_correlation_ is not None else 'N/A'}")
+        
+        if self.weight_layer:
+            weight_layer_diag = self.weight_layer.get_diagnostics()
+            print(f"\n🔮 Forecast Diversification Multiplier (FDM):")
+            print(f"  FDM: {weight_layer_diag.get('fdm', 'Not calculated')}")
+            print(f"  FDM Max: {weight_layer_diag.get('fdm_max', 'N/A')}")
+            print(f"  Mean Forecast Correlation: {weight_layer_diag.get('mean_forecast_correlation', 'N/A')}")
+            
+            print(f"\n⚖️  Weight Layer:")
+            print(f"  Fitted: {weight_layer_diag.get('is_fitted', False)}")
+            print(f"  Weight Method: {weight_layer_diag.get('weight_method', 'N/A')}")
+            print(f"  Number of Models: {weight_layer_diag.get('n_models', 0)}")
+            
+            weights = weight_layer_diag.get('weights')
+            if weights and isinstance(weights, dict):
+                print(f"  Model Weights (top 5):")
+                # Filter out NaN weights and sort
+                valid_weights = {k: v for k, v in weights.items() if not pd.isna(v)}
+                if valid_weights:
+                    sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)[:5]
+                    for model_name, weight in sorted_weights:
+                        print(f"    {model_name}: {weight:.4f}")
+                else:
+                    print(f"    (All weights are NaN - check signal correlations)")
+        else:
+            print(f"\n🔮 Forecast Diversification Multiplier (FDM):")
+            print(f"  WeightLayer: Not initialized")
+        
+        print(f"\n📏 Position Sizing:")
+        print(f"  Max Position %: {self.max_position_pct}")
+        print(f"  Instrument Weights: {'Custom' if self.instrument_weights else 'Equal weight'}")
+        
+        print("=" * 60)
 
     def __repr__(self) -> str:
         """String representation of the portfolio."""

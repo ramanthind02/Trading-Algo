@@ -1,0 +1,51 @@
+======================================================================
+Feature Analysis Summary Report
+======================================================================
+Generated: 2026-01-23 16:08:02
+Date Range: 2000-01-03 to 2024-12-30
+Number of Features: 12
+Number of Samples: 20294
+Tickers: ['NQ', 'ES', 'YM', 'RTY']
+
+======================================================================
+Results Summary
+======================================================================
+
+Summary Statistics: 12 features
+Feature-Target Correlations: 12 features
+Intra-Feature Correlations: 12 features
+Decile Plots: 12 features
+Signal Cumsum Plots: 12 features
+Distribution Plots: 12 features
+Time Series Plots: 12 features
+Parameter Sensitivity: 1 analyses
+
+Permutation Test: 12 features tested, 12 significant
+
+Permutation Test p-values:
+  ✓ rsi_signal_D_lookback_5: p = 0.0010, metric = 2.7796
+  ✓ rsi_signal_D_lookback_4: p = 0.0010, metric = 2.6781
+  ✓ rsi_signal_D_lookback_3: p = 0.0010, metric = 2.4448
+  ✓ rsi_signal_D_lookback_7: p = 0.0020, metric = 2.2991
+  ✓ rsi_signal_D_lookback_2: p = 0.0020, metric = 2.1513
+  ✓ rsi_signal_D_lookback_8: p = 0.0010, metric = 2.1175
+  ✓ rsi_signal_D_lookback_6: p = 0.0030, metric = 2.0656
+  ✓ rsi_signal_D_lookback_9: p = 0.0020, metric = 2.0614
+  ✓ rsi_signal_D_lookback_10: p = 0.0100, metric = 1.7830
+  ✓ rsi_signal_D_lookback_14: p = 0.0140, metric = 1.7268
+  ✓ rsi_signal_D_lookback_12: p = 0.0370, metric = 1.6237
+  ✓ rsi_signal_D_lookback_16: p = 0.0500, metric = 1.5031
+
+======================================================================
+Top Feature-Target Correlations (Spearman)
+======================================================================
+  rsi_signal_D_lookback_16: -0.0311
+  rsi_signal_D_lookback_2: -0.0317
+  rsi_signal_D_lookback_14: -0.0321
+  rsi_signal_D_lookback_12: -0.0329
+  rsi_signal_D_lookback_3: -0.0330
+  rsi_signal_D_lookback_9: -0.0332
+  rsi_signal_D_lookback_10: -0.0332
+  rsi_signal_D_lookback_8: -0.0332
+  rsi_signal_D_lookback_4: -0.0334
+  rsi_signal_D_lookback_7: -0.0334

@@ -86,7 +86,12 @@ class InverseCorrelationWeighter:
             raise ValueError("Need at least 2 samples to calculate correlations")
 
         # Calculate correlation matrix (use absolute values)
+        # Handle constant signals (all 0 or all 1) which result in NaN correlations
         self.correlation_matrix_ = signals.corr().abs()
+        
+        # Fill NaN correlations with 0 (constant signals = zero correlation = max diversification)
+        # This happens when a signal is constant (all 0 or all 1)
+        self.correlation_matrix_ = self.correlation_matrix_.fillna(0.0)
 
         # Handle single model case
         if len(signals.columns) == 1:
@@ -99,8 +104,15 @@ class InverseCorrelationWeighter:
         avg_correlations = {}
         for model_name in signals.columns:
             other_models = [m for m in signals.columns if m != model_name]
-            avg_corr = self.correlation_matrix_.loc[model_name, other_models].mean()
-            avg_correlations[model_name] = avg_corr
+            if len(other_models) > 0:
+                avg_corr = self.correlation_matrix_.loc[model_name, other_models].mean()
+                # Handle NaN correlations (e.g., constant signals)
+                if pd.isna(avg_corr):
+                    avg_corr = 0.0  # Treat NaN as zero correlation (maximum diversification)
+                avg_correlations[model_name] = avg_corr
+            else:
+                # Single model case (shouldn't happen here, but handle gracefully)
+                avg_correlations[model_name] = 0.0
 
         # Convert to diversification scores (inverse relationship)
         # Higher correlation = lower diversification score
@@ -111,10 +123,28 @@ class InverseCorrelationWeighter:
 
         # Normalize to sum to 1.0
         total = sum(diversification_scores.values())
-        self.weights_ = pd.Series({
-            model: score / total
-            for model, score in diversification_scores.items()
-        })
+        if total > 0:
+            self.weights_ = pd.Series({
+                model: score / total
+                for model, score in diversification_scores.items()
+            })
+            # Ensure no NaN values in weights (shouldn't happen after fillna, but safety check)
+            if self.weights_.isna().any():
+                # Replace NaN with equal weights
+                n_models = len(self.weights_)
+                equal_weight = 1.0 / n_models
+                self.weights_ = self.weights_.fillna(equal_weight)
+                # Renormalize
+                total = self.weights_.sum()
+                if total > 0:
+                    self.weights_ = self.weights_ / total
+        else:
+            # Fallback: equal weights if total is zero (shouldn't happen)
+            equal_weight = 1.0 / len(signals.columns)
+            self.weights_ = pd.Series({
+                model: equal_weight
+                for model in signals.columns
+            })
 
         self.is_fitted_ = True
         return self
@@ -432,9 +462,16 @@ class WeightLayer:
         if not self.is_fitted_:
             return {'is_fitted': False}
 
+        # Convert weights to dict, handling NaN values
+        weights_dict = None
+        if self.weights_ is not None:
+            weights_dict = self.weights_.to_dict()
+            # Replace any NaN values with 0 (shouldn't happen, but safety check)
+            weights_dict = {k: (v if not pd.isna(v) else 0.0) for k, v in weights_dict.items()}
+        
         return {
             'is_fitted': True,
-            'weights': self.weights_.to_dict() if self.weights_ is not None else None,
+            'weights': weights_dict,
             'fdm': self.fdm_,
             'mean_forecast_correlation': self.mean_forecast_correlation_,
             'weight_method': self.weight_method,

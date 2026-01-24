@@ -48,7 +48,7 @@ import utils.helpers as helpers
 from utils.models import Candle
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Any, Union, Tuple
+from typing import List, Dict, Any, Union, Tuple, Optional
 from itertools import product
 
 
@@ -92,6 +92,167 @@ def _compute_targets(price_df: pd.DataFrame, atr_col: str = None, ewsd_col: str 
     }, index=price_df.index)
 
 
+def compute_forward_returns(
+    candles_df: pd.DataFrame,
+    features_df: Optional[pd.DataFrame] = None
+) -> pd.DataFrame:
+    """
+    Compute forward returns from candles DataFrame to avoid lookahead bias.
+    
+    Forward returns are calculated as: return[t] = close[t+1] / close[t]
+    This means the return at timestamp t represents the return from t to t+1.
+    The last candle per ticker is dropped since it has no forward return.
+    
+    Supports volatility scaling (ATR/EWSD normalization) when features_df is provided.
+    This is important for multi-ticker scenarios where different tickers have different
+    volatility levels (e.g., NQ is more volatile than ES).
+    
+    Parameters
+    ----------
+    candles_df : pd.DataFrame
+        DataFrame with candles. Must have columns: datetime, close, ticker
+        Should be sorted by ticker and datetime
+    features_df : pd.DataFrame, optional
+        Features dataframe containing ATR and/or EWSD columns for normalization.
+        If provided, will compute log_return_atr and log_return_ewsd.
+        ATR columns are identified by containing 'atr' and '252' in the name.
+        EWSD columns are identified by containing 'ewsd' in the name.
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns:
+        - raw_return: (close[t+1] / close[t]) - 1
+        - log_return: log(close[t+1] / close[t])
+        - log_return_atr: log_return normalized by ATR (if ATR column found in features_df)
+        - log_return_ewsd: log_return normalized by EWSD (if EWSD column found in features_df)
+        - ticker: ticker identifier
+        Indexed by datetime (same as input)
+        Last row per ticker is dropped (no forward return available)
+        
+    Examples
+    --------
+    >>> candles_df = helpers.load_data_multi_ticker(
+    ...     tickers=[Ticker.ES, Ticker.NQ],
+    ...     timeframe=TimeFrame.D,
+    ...     start=datetime(2000, 1, 1),
+    ...     end=datetime(2024, 12, 31)
+    ... )
+    >>> targets_df = compute_forward_returns(candles_df)
+    >>> print(f"Targets shape: {targets_df.shape}")
+    >>> print(f"Targets columns: {list(targets_df.columns)}")
+    """
+    targets_list = []
+    
+    for ticker in candles_df['ticker'].unique():
+        ticker_candles = candles_df[candles_df['ticker'] == ticker].copy().sort_values('datetime')
+        
+        # Calculate forward returns: return at t = close[t+1] / close[t]
+        # This represents the return from timestamp t to t+1
+        ticker_candles['next_close'] = ticker_candles['close'].shift(-1)
+        
+        # Forward log return: log(close[t+1] / close[t])
+        ticker_candles['log_return'] = np.log(ticker_candles['next_close'] / ticker_candles['close'])
+        
+        # Forward raw return: (close[t+1] / close[t]) - 1
+        ticker_candles['raw_return'] = (ticker_candles['next_close'] / ticker_candles['close']) - 1
+        
+        # Drop last row (no forward return available - no t+1 for the last candle)
+        ticker_candles = ticker_candles.dropna(subset=['log_return'])
+        
+        # Use datetime column as index (preserves millisecond offsets if use_millisecond_offset=True)
+        # The datetime column from load_data_multi_ticker already has offsets applied
+        target_index = pd.to_datetime(ticker_candles['datetime'].values)
+        # Ensure timezone is UTC to match features
+        if target_index.tz is None:
+            target_index = target_index.tz_localize('UTC')
+        else:
+            target_index = target_index.tz_convert('UTC')
+        
+        # Normalize ticker to string name to match extract_features format
+        # load_data_multi_ticker sets ticker column to enum objects, we need string names
+        if hasattr(ticker, 'name'):
+            ticker_name = ticker.name
+        elif isinstance(ticker, str):
+            ticker_name = ticker
+        else:
+            ticker_name = str(ticker)
+        
+        # Initialize target dict with basic returns
+        target_dict = {
+            'raw_return': ticker_candles['raw_return'].values,
+            'log_return': ticker_candles['log_return'].values,
+            'ticker': ticker_name
+        }
+        
+        # Add volatility-scaled returns if features_df is provided
+        if features_df is not None:
+            # Find ATR and EWSD columns for this ticker
+            # Filter features_df to this ticker if ticker column exists
+            if 'ticker' in features_df.columns:
+                ticker_features = features_df[features_df['ticker'] == ticker_name]
+            else:
+                ticker_features = features_df
+            
+            # Align features to candles by index
+            # Use merge on index to ensure proper alignment
+            ticker_features_indexed = ticker_features.set_index(ticker_features.index) if not isinstance(ticker_features.index, pd.DatetimeIndex) else ticker_features
+            
+            # Find ATR column (contains 'atr' and '252' in name)
+            atr_col = next(
+                (col for col in ticker_features_indexed.columns 
+                 if col != 'ticker' and 'atr' in col.lower() and '252' in col),
+                None
+            )
+            
+            # Find EWSD column (contains 'ewsd' in name)
+            ewsd_col = next(
+                (col for col in ticker_features_indexed.columns 
+                 if col != 'ticker' and 'ewsd' in col.lower()),
+                None
+            )
+            
+            # Align features to target_index (forward fill for missing values)
+            if len(ticker_features_indexed) > 0:
+                # Reindex to target_index, forward fill missing values
+                ticker_features_aligned = ticker_features_indexed.reindex(target_index, method='ffill')
+            else:
+                ticker_features_aligned = pd.DataFrame(index=target_index)
+            
+            # Compute ATR-normalized return
+            log_return_atr = ticker_candles['log_return'].copy()
+            if atr_col and atr_col in ticker_features_aligned.columns:
+                atr_values = ticker_features_aligned[atr_col].values
+                # ATR is typically in percentage, convert to decimal if needed
+                # Check if values are > 1 (likely percentage) or < 1 (likely decimal)
+                if len(atr_values) > 0 and not np.isnan(atr_values).all():
+                    atr_max = np.nanmax(atr_values)
+                    if atr_max > 1:
+                        atr_decimal = atr_values / 100.0
+                    else:
+                        atr_decimal = atr_values
+                    log_return_atr = ticker_candles['log_return'].values / np.maximum(atr_decimal, 0.0001)
+            target_dict['log_return_atr'] = log_return_atr
+            
+            # Compute EWSD-normalized return
+            log_return_ewsd = ticker_candles['log_return'].copy()
+            if ewsd_col and ewsd_col in ticker_features_aligned.columns:
+                ewsd_values = ticker_features_aligned[ewsd_col].values
+                # EWSD is typically in percentage, convert to decimal
+                if len(ewsd_values) > 0 and not np.isnan(ewsd_values).all():
+                    ewsd_decimal = ewsd_values / 100.0
+                    log_return_ewsd = ticker_candles['log_return'].values / np.maximum(ewsd_decimal, 0.0001)
+            target_dict['log_return_ewsd'] = log_return_ewsd
+        
+        ticker_targets = pd.DataFrame(target_dict, index=target_index)
+        targets_list.append(ticker_targets)
+    
+    # Concatenate all tickers' targets (preserves index with offsets)
+    targets_df = pd.concat(targets_list, axis=0).sort_index()
+    
+    return targets_df
+
+
 def _extract_features_single_ticker(
     module_name: str,
     params: Dict[str, Any],
@@ -109,7 +270,11 @@ def _extract_features_single_ticker(
     # Load price data
     price_df = helpers.load_data(ticker, TimeFrame.D, start=start, end=end)
     price_df.set_index('datetime', inplace=True)
-    price_df.index = price_df.index.tz_localize('UTC')
+    # Ensure timezone is UTC (may already be timezone-aware)
+    if price_df.index.tz is None:
+        price_df.index = price_df.index.tz_localize('UTC')
+    else:
+        price_df.index = price_df.index.tz_convert('UTC')
     
     # Expand parameter grid
     param_combos = _expand_param_grid(params)
@@ -173,16 +338,42 @@ def _extract_features_single_ticker(
     features_df = pd.DataFrame(feature_data, index=price_df.index, columns=column_names)
     
     # Compute targets (need ATR/EWSD if available)
+    # CRITICAL: Compute FORWARD returns to avoid lookahead bias
+    # Forward return at t = return from close[t] to close[t+1]
+    # This ensures feature[t] predicts return[t] (forward return), not intraday return
     atr_col = next((col for col in features_df.columns if 'atr' in col.lower() and '252' in col), None)
     ewsd_col = next((col for col in features_df.columns if 'ewsd' in col.lower()), None)
     
-    # Add ATR/EWSD to price_df for target computation if found
-    if atr_col:
-        price_df[atr_col] = features_df[atr_col]
-    if ewsd_col:
-        price_df[ewsd_col] = features_df[ewsd_col]
+    # Compute forward returns (not intraday returns)
+    price_df['next_close'] = price_df['close'].shift(-1)
+    forward_log_return = np.log(price_df['next_close'] / price_df['close'])
+    forward_raw_return = (price_df['next_close'] / price_df['close']) - 1
     
-    targets_df = _compute_targets(price_df, atr_col, ewsd_col)
+    # Apply ATR/EWSD normalization if available
+    log_return_atr = forward_log_return.copy()
+    if atr_col and atr_col in features_df.columns:
+        price_df[atr_col] = features_df[atr_col]
+        log_return_atr = forward_log_return / np.maximum(price_df[atr_col], 0.0001)
+    
+    log_return_ewsd = forward_log_return.copy()
+    if ewsd_col and ewsd_col in features_df.columns:
+        price_df[ewsd_col] = features_df[ewsd_col]
+        ewsd_decimal = price_df[ewsd_col] / 100.0
+        log_return_ewsd = forward_log_return / np.maximum(ewsd_decimal, 0.0001)
+    
+    # Drop last row (no forward return available)
+    targets_df = pd.DataFrame({
+        'raw_return': forward_raw_return,
+        'log_return': forward_log_return,
+        'log_return_atr': log_return_atr,
+        'log_return_ewsd': log_return_ewsd
+    }, index=price_df.index)
+    
+    # Drop rows with NaN forward returns (last row per ticker)
+    targets_df = targets_df.dropna(subset=['log_return'])
+    
+    # Align features to match targets (drop last row which has no forward return)
+    features_df = features_df.loc[targets_df.index]
     
     return features_df, targets_df
 
@@ -322,3 +513,491 @@ def extract_features(
     targets_df = pd.concat(all_targets_dfs, axis=0).sort_index()
     
     return features_df, targets_df
+
+
+def extract_features_with_forward_returns(
+    module_name: str,
+    params: Dict[str, Any],
+    ticker: Union[Ticker, List[Ticker]],
+    start: datetime = None,
+    end: datetime = None,
+    timeframes: List[TimeFrame] = None,
+    use_millisecond_offset: bool = True,
+    target_col: str = 'log_return'
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Extract features and compute forward returns automatically.
+    
+    This is a convenience wrapper around extract_features() that:
+    1. Extracts features using extract_features()
+    2. Loads candles to compute forward returns (with volatility scaling if ATR/EWSD available)
+    3. Filters features to only those with forward returns available
+    4. Returns aligned features_df and targets_df with forward returns
+    
+    Parameters
+    ----------
+    module_name : str
+        Name of the bias node module (e.g., 'rsi', 'atr', 'cmma')
+    params : Dict[str, Any]
+        Parameters for the bias node. Supports grid search:
+        - Single value: {'lookback': 14}
+        - List of values: {'lookback': [14, 21, 28]} -> creates columns for each
+        - Multiple params: {'lookback': [14, 21], 'period': 252} -> all combinations
+    ticker : Ticker or List[Ticker]
+        Single ticker or list of tickers to extract features for
+    start : datetime, optional
+        Start date. Defaults to datetime(1990, 1, 1)
+    end : datetime, optional
+        End date. Defaults to datetime.now()
+    timeframes : List[TimeFrame], optional
+        Timeframes to use. Defaults to [TimeFrame.D]
+    use_millisecond_offset : bool, default=True
+        For multi-ticker: add millisecond offsets to avoid duplicate indices
+    target_col : str, default='log_return'
+        Target column to use. Options:
+        - 'raw_return': (close[t+1] / close[t]) - 1
+        - 'log_return': log(close[t+1] / close[t])
+        - 'log_return_atr': log_return normalized by ATR (recommended for multi-ticker)
+        - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
+        
+    Returns
+    -------
+    Tuple[pd.DataFrame, pd.DataFrame]
+        (features_df, targets_df)
+        - features_df: Columns = parameter combinations, Rows = timestamps
+          Includes 'ticker' column for identification
+          Filtered to only rows with forward returns available
+        - targets_df: Target columns with forward returns (raw_return, log_return, log_return_atr, log_return_ewsd)
+          Includes 'ticker' column for identification
+          All target types are computed, but target_col indicates which one to use
+          
+    Examples
+    --------
+    >>> # Single parameter, single ticker
+    >>> features_df, targets_df = extract_features_with_forward_returns(
+    ...     module_name='rsi',
+    ...     params={'lookback': 14},
+    ...     ticker=Ticker.SPY
+    ... )
+    >>> 
+    >>> # Parameter grid, multiple tickers
+    >>> features_df, targets_df = extract_features_with_forward_returns(
+    ...     module_name='rsi',
+    ...     params={'lookback': [14, 21, 28]},
+    ...     ticker=[Ticker.ES, Ticker.NQ, Ticker.YM]
+    ... )
+    """
+    if start is None:
+        start = datetime(1990, 1, 1)
+    if end is None:
+        end = datetime.now()
+    if timeframes is None:
+        timeframes = [TimeFrame.D]
+    
+    # Normalize ticker to list
+    if isinstance(ticker, Ticker):
+        tickers = [ticker]
+    else:
+        tickers = ticker
+    
+    # Load candles to compute forward returns
+    candles_df = helpers.load_data_multi_ticker(
+        tickers=tickers,
+        timeframe=timeframes[0],  # Use first timeframe
+        start=start,
+        end=end,
+        use_millisecond_offset=use_millisecond_offset
+    )
+    
+    # STEP 1: Extract features first (needed for ATR/EWSD normalization)
+    # This gives us features with proper alignment and ATR/EWSD columns
+    features_df, _ = extract_features(
+        module_name=module_name,
+        params=params,
+        ticker=ticker,
+        start=start,
+        end=end,
+        timeframes=timeframes,
+        use_millisecond_offset=use_millisecond_offset
+    )
+    
+    # Validate that features were extracted
+    if len(features_df) == 0:
+        raise ValueError(
+            f"No features extracted. Check that data exists for tickers {tickers} "
+            f"in date range {start} to {end}"
+        )
+    
+    # STEP 2: Compute forward returns with volatility scaling (if ATR/EWSD available)
+    # Pass features_df to enable ATR/EWSD normalization for multi-ticker scenarios
+    # Note: features_df may have more rows than candles_df (before forward return filtering)
+    # We'll align them properly in STEP 3
+    targets_df = compute_forward_returns(candles_df, features_df=features_df)
+    
+    if len(targets_df) == 0:
+        raise ValueError(
+            f"No forward returns computed. Check that data exists for tickers {tickers} "
+            f"in date range {start} to {end}"
+        )
+    
+    # Validate target_col is available
+    valid_targets = ['raw_return', 'log_return', 'log_return_atr', 'log_return_ewsd']
+    if target_col not in valid_targets:
+        raise ValueError(
+            f"target_col must be one of {valid_targets}, got '{target_col}'"
+        )
+    
+    # Check if requested target column exists
+    if target_col not in targets_df.columns:
+        if target_col in ['log_return_atr', 'log_return_ewsd']:
+            raise ValueError(
+                f"Requested target_col '{target_col}' not available. "
+                f"ATR/EWSD columns not found in features. "
+                f"Available targets: {list(targets_df.columns)}"
+            )
+        else:
+            raise ValueError(
+                f"Requested target_col '{target_col}' not found in targets_df. "
+                f"Available columns: {list(targets_df.columns)}"
+            )
+    
+    # STEP 3: Align features to targets using simple merge
+    # This is foolproof: only keep rows that exist in both dataframes
+    # Targets are the source of truth (they already exclude rows without forward returns)
+    
+    # Normalize ticker columns to strings for consistent comparison
+    features_df = features_df.copy()
+    targets_df = targets_df.copy()
+    
+    # Ensure ticker columns are strings
+    if 'ticker' in features_df.columns:
+        features_df['ticker'] = features_df['ticker'].apply(
+            lambda x: x.name if hasattr(x, 'name') else str(x)
+        )
+    if 'ticker' in targets_df.columns:
+        targets_df['ticker'] = targets_df['ticker'].apply(
+            lambda x: x.name if hasattr(x, 'name') else str(x)
+        )
+    
+    # Create a merge key: use index + ticker (if present) for reliable alignment
+    # Ensure index has a name for consistent reset_index behavior
+    features_df = features_df.copy()
+    targets_df = targets_df.copy()
+    
+    if features_df.index.name is None:
+        features_df.index.name = 'datetime'
+    if targets_df.index.name is None:
+        targets_df.index.name = 'datetime'
+    
+    # Reset index temporarily to use as merge key
+    features_for_merge = features_df.reset_index()
+    targets_for_merge = targets_df.reset_index()
+    
+    # Get the datetime column name (should be 'datetime' after we set index.name)
+    datetime_col = 'datetime'
+    
+    # Verify the column exists after reset_index
+    if datetime_col not in features_for_merge.columns:
+        # If reset_index didn't create 'datetime', find the index column
+        # (it might be unnamed or have a different name)
+        index_cols = [col for col in features_for_merge.columns if col not in features_df.columns]
+        if index_cols:
+            datetime_col = index_cols[0]
+        else:
+            raise ValueError(
+                f"Could not find datetime column after reset_index. "
+                f"Features columns: {features_for_merge.columns.tolist()}, "
+                f"Targets columns: {targets_for_merge.columns.tolist()}"
+            )
+    
+    if 'ticker' in features_df.columns and 'ticker' in targets_df.columns:
+        # Multi-ticker case: merge on both index and ticker
+        # Merge on datetime index and ticker (inner join = only matching rows)
+        merged = pd.merge(
+            features_for_merge,
+            targets_for_merge[[datetime_col, 'ticker']],  # Only merge keys from targets
+            on=[datetime_col, 'ticker'],
+            how='inner',  # Only keep rows that exist in both
+            suffixes=('', '_target')
+        )
+        
+        # Set datetime back as index
+        if datetime_col in merged.columns:
+            merged = merged.set_index(datetime_col)
+        
+        # Drop the duplicate ticker column if created
+        merged = merged.drop(columns=[col for col in merged.columns if col.endswith('_target')])
+        
+        # Get aligned features (all columns except target columns)
+        target_cols = ['raw_return', 'log_return', 'log_return_atr', 'log_return_ewsd']
+        feature_cols = [col for col in merged.columns if col not in target_cols]
+        features_df_aligned = merged[feature_cols].copy()
+        
+        # Get aligned targets (merge back to get target values)
+        targets_aligned = pd.merge(
+            features_for_merge[[datetime_col, 'ticker']],
+            targets_for_merge,
+            on=[datetime_col, 'ticker'],
+            how='inner'
+        )
+        if datetime_col in targets_aligned.columns:
+            targets_aligned = targets_aligned.set_index(datetime_col)
+        
+    else:
+        # Single ticker case: merge on index only
+        # Merge on datetime index (inner join = only matching rows)
+        merged = pd.merge(
+            features_for_merge,
+            targets_for_merge[[datetime_col]],  # Only merge key from targets
+            on=datetime_col,
+            how='inner',  # Only keep rows that exist in both
+        )
+        
+        # Set datetime back as index
+        if datetime_col in merged.columns:
+            merged = merged.set_index(datetime_col)
+        
+        # Get aligned features (all columns except target columns)
+        target_cols = ['raw_return', 'log_return', 'log_return_atr', 'log_return_ewsd']
+        feature_cols = [col for col in merged.columns if col not in target_cols]
+        features_df_aligned = merged[feature_cols].copy()
+        
+        # Get aligned targets
+        targets_aligned = pd.merge(
+            features_for_merge[[datetime_col]],
+            targets_for_merge,
+            on=datetime_col,
+            how='inner'
+        )
+        if datetime_col in targets_aligned.columns:
+            targets_aligned = targets_aligned.set_index(datetime_col)
+    
+    # Validate alignment
+    if len(features_df_aligned) == 0:
+        raise ValueError(
+            "No matching rows found between features and targets after alignment. "
+            "This may indicate:\n"
+            "  1. Index mismatch (check millisecond offsets)\n"
+            "  2. Ticker mismatch (check ticker column values)\n"
+            f"  Features shape: {features_df.shape}, Targets shape: {targets_df.shape}"
+        )
+    
+    if len(features_df_aligned) != len(targets_aligned):
+        raise ValueError(
+            f"Alignment failed: features and targets have different lengths after merge. "
+            f"Features: {len(features_df_aligned)}, Targets: {len(targets_aligned)}"
+        )
+    
+    # Ensure indices match exactly
+    if not features_df_aligned.index.equals(targets_aligned.index):
+        # Reindex to ensure exact match
+        common_index = features_df_aligned.index.intersection(targets_aligned.index)
+        features_df_aligned = features_df_aligned.loc[common_index]
+        targets_aligned = targets_aligned.loc[common_index]
+    
+    return features_df_aligned, targets_aligned
+
+
+def prepare_candles_and_targets_for_basemodel(
+    candles_df: pd.DataFrame,
+    target_col: str = 'log_return'
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Prepare candles and targets for BaseModel fitting.
+    
+    This helper function:
+    1. Computes forward returns from candles
+    2. Filters candles to only those with forward returns available
+    3. Resets candles index to integer index (as expected by BaseModel.fit)
+    4. Creates target_series with proper datetime index
+    
+    Parameters
+    ----------
+    candles_df : pd.DataFrame
+        DataFrame with candles. Must have columns: datetime, close, ticker
+        Should be sorted by ticker and datetime
+    target_col : str, default='log_return'
+        Target column to extract from computed forward returns
+        
+    Returns
+    -------
+    Tuple[pd.DataFrame, pd.Series]
+        (candles_df_fit, target_series)
+        - candles_df_fit: Filtered candles with integer index (ready for BaseModel.fit)
+        - target_series: Target values as Series with datetime index
+        
+    Examples
+    --------
+    >>> candles_df = helpers.load_data_multi_ticker(
+    ...     tickers=[Ticker.ES, Ticker.NQ],
+    ...     timeframe=TimeFrame.D,
+    ...     start=datetime(2000, 1, 1),
+    ...     end=datetime(2024, 12, 31)
+    ... )
+    >>> 
+    >>> candles_fit, target_series = prepare_candles_and_targets_for_basemodel(candles_df)
+    >>> 
+    >>> # Now ready to fit BaseModel
+    >>> base_model.fit(candles_fit, target_series)
+    """
+    # Compute forward returns
+    targets_df = compute_forward_returns(candles_df)
+    
+    # Filter candles to match targets (only those with forward returns)
+    # Use simple merge approach for reliable alignment
+    candles_for_merge = candles_df.copy()
+    targets_for_merge = targets_df.reset_index()
+    
+    # Merge on datetime (and ticker if present) to get only candles with forward returns
+    if 'ticker' in candles_for_merge.columns and 'ticker' in targets_for_merge.columns:
+        # Normalize ticker columns
+        candles_for_merge['ticker'] = candles_for_merge['ticker'].apply(
+            lambda x: x.name if hasattr(x, 'name') else str(x)
+        )
+        targets_for_merge['ticker'] = targets_for_merge['ticker'].apply(
+            lambda x: x.name if hasattr(x, 'name') else str(x)
+        )
+        
+        candles_filtered = pd.merge(
+            candles_for_merge,
+            targets_for_merge[['datetime', 'ticker']],
+            on=['datetime', 'ticker'],
+            how='inner'
+        )
+    else:
+        candles_filtered = pd.merge(
+            candles_for_merge,
+            targets_for_merge[['datetime']],
+            on='datetime',
+            how='inner'
+        )
+    
+    # Reset index to integer index (BaseModel.fit expects this)
+    candles_fit = candles_filtered.reset_index(drop=True)
+    
+    # Create target_series with proper datetime index
+    # Align targets to match filtered candles
+    if 'ticker' in candles_filtered.columns and 'ticker' in targets_df.columns:
+        # Multi-ticker: merge to align
+        candles_for_target_merge = candles_filtered[['datetime', 'ticker']].copy()
+        targets_for_target_merge = targets_df.reset_index()
+        targets_aligned = pd.merge(
+            candles_for_target_merge,
+            targets_for_target_merge,
+            on=['datetime', 'ticker'],
+            how='inner'
+        )
+        target_series = pd.Series(
+            targets_aligned[target_col].values,
+            index=pd.DatetimeIndex(targets_aligned['datetime']),
+            name=target_col
+        )
+    else:
+        # Single ticker: align by datetime
+        candles_for_target_merge = candles_filtered[['datetime']].copy()
+        targets_for_target_merge = targets_df.reset_index()
+        targets_aligned = pd.merge(
+            candles_for_target_merge,
+            targets_for_target_merge,
+            on='datetime',
+            how='inner'
+        )
+        target_series = pd.Series(
+            targets_aligned[target_col].values,
+            index=pd.DatetimeIndex(targets_aligned['datetime']),
+            name=target_col
+        )
+    
+    return candles_fit, target_series
+
+
+def extract_features_for_bias_node(
+    bias_spec: Dict[str, Any],
+    ticker: Union[Ticker, List[Ticker]],
+    start: datetime = None,
+    end: datetime = None,
+    use_millisecond_offset: bool = True,
+    target_col: str = 'log_return'
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    High-level convenience function for extracting features from a bias node spec.
+    
+    This function simplifies the workflow by accepting a bias_spec dictionary
+    (as used in BaseModel) and automatically handling parameter grid expansion
+    and forward returns computation with volatility scaling.
+    
+    Parameters
+    ----------
+    bias_spec : Dict[str, Any]
+        Bias node specification with keys:
+        - 'module_name': str (e.g., 'rsi', 'cmma')
+        - 'timeframes': List[TimeFrame] (e.g., [TimeFrame.D])
+        - 'params': Dict[str, Any] (e.g., {'lookback': [2, 5, 10, 14]})
+          Supports grid search with lists
+    ticker : Ticker or List[Ticker]
+        Single ticker or list of tickers to extract features for
+    start : datetime, optional
+        Start date. Defaults to datetime(1990, 1, 1)
+    end : datetime, optional
+        End date. Defaults to datetime.now()
+    use_millisecond_offset : bool, default=True
+        For multi-ticker: add millisecond offsets to avoid duplicate indices
+    target_col : str, default='log_return'
+        Target column to use. Options:
+        - 'raw_return': (close[t+1] / close[t]) - 1
+        - 'log_return': log(close[t+1] / close[t])
+        - 'log_return_atr': log_return normalized by ATR (recommended for multi-ticker)
+        - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
+        
+    Returns
+    -------
+    Tuple[pd.DataFrame, pd.DataFrame]
+        (features_df, targets_df)
+        - features_df: Columns = parameter combinations, Rows = timestamps
+          Includes 'ticker' column for identification
+        - targets_df: Target columns with forward returns (raw_return, log_return, log_return_atr, log_return_ewsd)
+          Includes 'ticker' column for identification
+          All target types are computed, but target_col indicates which one to use
+          
+    Examples
+    --------
+    >>> bias_spec = {
+    ...     'module_name': 'rsi',
+    ...     'timeframes': [TimeFrame.D],
+    ...     'params': {'lookback': [2, 5, 10, 14]}
+    ... }
+    >>> 
+    >>> features_df, targets_df = extract_features_for_bias_node(
+    ...     bias_spec=bias_spec,
+    ...     ticker=[Ticker.ES, Ticker.NQ, Ticker.YM],
+    ...     start=datetime(2000, 1, 1),
+    ...     end=datetime(2024, 12, 31)
+    ... )
+    """
+    if start is None:
+        start = datetime(1990, 1, 1)
+    if end is None:
+        end = datetime.now()
+    
+    # Extract bias spec components
+    module_name = bias_spec.get('module_name')
+    if module_name is None:
+        raise ValueError("bias_spec must include 'module_name'")
+    
+    timeframes = bias_spec.get('timeframes', [TimeFrame.D])
+    if not isinstance(timeframes, list):
+        timeframes = [timeframes]
+    
+    params = bias_spec.get('params', {})
+    
+    # Use extract_features_with_forward_returns
+    return extract_features_with_forward_returns(
+        module_name=module_name,
+        params=params,
+        ticker=ticker,
+        start=start,
+        end=end,
+        timeframes=timeframes,
+        use_millisecond_offset=use_millisecond_offset,
+        target_col=target_col
+    )
