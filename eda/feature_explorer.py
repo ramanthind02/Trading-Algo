@@ -205,14 +205,29 @@ class FeatureExplorer:
         # Store feature metadata if available
         self.feature_metadata = self.metadata.get('feature_metadata', {})
         
-        # Extract feature names (exclude 'ticker', 'atr', and 'ewsd' columns)
-        # ATR and EWSD are normalization columns, not features to analyze
-        # Use substring search to catch all variations (e.g., "atr_252_D_atr_252_lookback2")
+        # Extract feature names (exclude 'ticker' and actual ATR/EWSD normalization columns)
+        # ATR and EWSD normalization columns are standalone columns, not features to analyze
+        # Pattern: columns that START with "atr_" or "ewsd_" as module names are normalization columns
+        # But features with "atr" or "ewsd" in parameter names (e.g., "atrLength") should be kept
+        def is_normalization_column(col: str) -> bool:
+            """Check if column is an ATR/EWSD normalization column (not a feature with atr/ewsd in params)."""
+            col_lower = col.lower()
+            # Normalization columns typically start with "atr_" or "ewsd_" as module names
+            # Or match patterns like "atr_252", "ewsd_252" at the start
+            # But NOT features like "williamsr_signal_D_atrLength_14_..." which have atr in params
+            if col_lower.startswith('atr_') or col_lower.startswith('ewsd_'):
+                return True
+            # Also check for standalone ATR/EWSD patterns (e.g., "atr_252_D", "ewsd_252_D")
+            if col_lower.startswith('atr') and ('_252' in col_lower or '_atr' in col_lower):
+                return True
+            if col_lower.startswith('ewsd') and ('_252' in col_lower or '_ewsd' in col_lower):
+                return True
+            return False
+        
         self.feature_names = [
             col for col in features_df.columns 
             if col != 'ticker' 
-            and 'atr' not in col.lower()
-            and 'ewsd' not in col.lower()
+            and not is_normalization_column(col)
         ]
         self.n_features = len(self.feature_names)
         
