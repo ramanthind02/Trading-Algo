@@ -1,0 +1,153 @@
+{
+  "feature_name": "rsi_signal_D_lookback_2",
+  "feature_column": "rsi_signal_D_lookback_2",
+  "created_at": "2026-01-23T05:39:22.532988+00:00",
+  "updated_at": "2026-01-23T05:39:22.533006+00:00",
+  "bias_node_spec": {
+    "module_name": "rsi",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "lookback": 2
+    }
+  },
+  "tickers": [
+    "ES",
+    "NQ",
+    "RTY",
+    "YM"
+  ],
+  "base_models": [
+    {
+      "model_id": "quantile_binning_10",
+      "model_name": "rsi_signal_D_lookback_2::quantile_binning_10",
+      "binning_model_type": "QuantileBinningModel",
+      "strategy": "long",
+      "binning_model_params": {
+        "n_bins": 10,
+        "selection_metric": "sortino",
+        "normalize_by": "ewsd"
+      },
+      "is_fitted": true,
+      "fitted_params": {
+        "thresholds": [
+          9.675448088372585,
+          19.960148053479138,
+          31.72804767754791,
+          46.37961718514067,
+          59.820770210574494,
+          71.36471563972425,
+          80.71188160840755,
+          88.55047867649918,
+          94.96792101055323
+        ],
+        "best_long_bin": 0,
+        "best_short_bin": 4,
+        "bin_stats": {
+          "0": {
+            "mean_return": 0.0017369487736424822,
+            "std_return": 0.01873030215736758,
+            "downside_std": 0.012806158413325797,
+            "sortino_metric": 2.1531208720647816,
+            "sortino_metric_short": -1.7459960694913332,
+            "count": 2030,
+            "feature_min": 0.035203171882969536,
+            "feature_max": 9.675448088372585
+          },
+          "1": {
+            "mean_return": 0.0007477174395803799,
+            "std_return": 0.016249008517872098,
+            "downside_std": 0.012736353108115854,
+            "sortino_metric": 0.9319501646739302,
+            "sortino_metric_short": -1.057970530478543,
+            "count": 2029,
+            "feature_min": 9.676866781484977,
+            "feature_max": 19.960148053479138
+          },
+          "2": {
+            "mean_return": 0.0004061665001720462,
+            "std_return": 0.015122490019005078,
+            "downside_std": 0.01236079410209857,
+            "sortino_metric": 0.5216245209480174,
+            "sortino_metric_short": -0.6489982563443613,
+            "count": 2029,
+            "feature_min": 19.96490552423917,
+            "feature_max": 31.72804767754791
+          },
+          "3": {
+            "mean_return": -0.00022392528607880673,
+            "std_return": 0.015240581860091017,
+            "downside_std": 0.011794622902876705,
+            "sortino_metric": -0.3013834138329346,
+            "sortino_metric_short": 0.3528434347389264,
+            "count": 2030,
+            "feature_min": 31.744959298177985,
+            "feature_max": 46.37961718514067
+          },
+          "4": {
+            "mean_return": -0.00064055892806439,
+            "std_return": 0.015050004147114186,
+            "downside_std": 0.013162014301413755,
+            "sortino_metric": -0.7725685073409099,
+            "sortino_metric_short": 1.1007913522106103,
+            "count": 2029,
+            "feature_min": 46.381368251663105,
+            "feature_max": 59.820770210574494
+          },
+          "5": {
+            "mean_return": 0.0004675203084205497,
+            "std_return": 0.01339420771945459,
+            "downside_std": 0.010511429837632681,
+            "sortino_metric": 0.7060556868435899,
+            "sortino_metric_short": -0.8021312467425904,
+            "count": 2029,
+            "feature_min": 59.82409316066845,
+            "feature_max": 71.36471563972425
+          },
+          "6": {
+            "mean_return": -8.800028476320629e-05,
+            "std_return": 0.012590533184799212,
+            "downside_std": 0.010210284712511685,
+            "sortino_metric": -0.136819026310405,
+            "sortino_metric_short": 0.1688038471193868,
+            "count": 2030,
+            "feature_min": 71.36682492691396,
+            "feature_max": 80.71188160840755
+          },
+          "7": {
+            "mean_return": 7.268494265774721e-05,
+            "std_return": 0.011126887273142986,
+            "downside_std": 0.008720847686959875,
+            "sortino_metric": 0.13230797456922086,
+            "sortino_metric_short": -0.14899426821387723,
+            "count": 2030,
+            "feature_min": 80.71354452554829,
+            "feature_max": 88.55047867649918
+          },
+          "8": {
+            "mean_return": 0.00025067274863524577,
+            "std_return": 0.010596206379710028,
+            "downside_std": 0.009870686717476611,
+            "sortino_metric": 0.4031438373029922,
+            "sortino_metric_short": -0.5939274434665813,
+            "count": 2028,
+            "feature_min": 88.55432594895895,
+            "feature_max": 94.96792101055323
+          },
+          "9": {
+            "mean_return": -0.0002358751125311561,
+            "std_return": 0.009063802853716026,
+            "downside_std": 0.008428963966870847,
+            "sortino_metric": -0.44423031633280896,
+            "sortino_metric_short": 0.6742540909976744,
+            "count": 2030,
+            "feature_min": 94.96843825468764,
+            "feature_max": 100.0
+          }
+        }
+      },
+      "fitted_at": "2026-01-23T05:39:22.532998+00:00"
+    }
+  ]
+}

@@ -10,7 +10,7 @@ Date: 2025-01-07
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 
 from utils.enums import Ticker, TimeFrame
@@ -67,7 +67,7 @@ class BaseModel:
     def __init__(
         self,
         feature_config: Dict[str, Any],
-        ticker: Ticker,
+        tickers: Union[Ticker, List[Ticker]],
         binning_model: Optional[BinningModelBase] = None
     ):
         """
@@ -84,13 +84,21 @@ class BaseModel:
                 'timeframes': [TimeFrame],
                 'params': dict
             }
-        ticker : Ticker
-            Ticker symbol for this base model
+        tickers : Union[Ticker, List[Ticker]]
+            Ticker symbol(s) for this base model. Can be a single ticker or list of tickers.
+            When multiple tickers are provided, the model is trained in aggregate across all tickers.
         binning_model : BinningModelBase, optional
             Binning model instance. If None, will be created from feature_config.
         """
         self.feature_config = feature_config
-        self.ticker = ticker
+        
+        # Normalize tickers to list
+        if isinstance(tickers, Ticker):
+            self.tickers = [tickers]
+            self.ticker = tickers  # Keep for backward compatibility
+        else:
+            self.tickers = tickers
+            self.ticker = tickers[0] if tickers else None  # Keep first for backward compatibility
         
         # Extract bias_node_spec from feature_config
         bias_node_spec = feature_config.get('bias_node_spec')
@@ -128,16 +136,18 @@ class BaseModel:
         # Feature column name (set after first feature extraction)
         self.feature_column: Optional[str] = None
         
-        # Create bias nodes internally
-        self.bias_nodes: Dict[TimeFrame, Any] = {}
-        for tf in bias_node_spec['timeframes']:
-            bias_node = helpers.create_bias_node(
-                bias_node_spec['module_name'],
-                ticker,
-                tf,
-                bias_node_spec['params']
-            )
-            self.bias_nodes[tf] = bias_node
+        # Create bias nodes internally - one per ticker and timeframe
+        # Key: (ticker, timeframe) tuple
+        self.bias_nodes: Dict[Tuple[Ticker, TimeFrame], Any] = {}
+        for ticker in self.tickers:
+            for tf in bias_node_spec['timeframes']:
+                bias_node = helpers.create_bias_node(
+                    bias_node_spec['module_name'],
+                    ticker,
+                    tf,
+                    bias_node_spec['params']
+                )
+                self.bias_nodes[(ticker, tf)] = bias_node
         
         # Track feature values as candles are added
         # Maps datetime -> feature value
@@ -162,7 +172,7 @@ class BaseModel:
         
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
     
-    def add_candle(self, candle: Candle, tf: TimeFrame) -> None:
+    def add_candle(self, candle: Candle, tf: TimeFrame, ticker: Optional[Ticker] = None) -> None:
         """
         Stream candle to appropriate bias node and track feature value.
         
@@ -172,10 +182,28 @@ class BaseModel:
             Candle to process
         tf : TimeFrame
             Timeframe for this candle
+        ticker : Optional[Ticker]
+            Ticker for this candle. If None, extracts from candle.ticker.
         """
-        if tf in self.bias_nodes:
+        # Extract ticker from candle if not provided
+        if ticker is None:
+            if hasattr(candle, 'ticker'):
+                ticker = candle.ticker
+            else:
+                raise ValueError("ticker must be provided or available in candle.ticker")
+        
+        # Convert string ticker to enum if needed
+        if isinstance(ticker, str):
+            try:
+                ticker = Ticker[ticker]
+            except (KeyError, AttributeError):
+                pass
+        
+        # Find the appropriate bias node for this ticker and timeframe
+        key = (ticker, tf)
+        if key in self.bias_nodes:
             # Get feature value from bias node (returns list, take first element)
-            result = self.bias_nodes[tf].add_candle(candle)
+            result = self.bias_nodes[key].add_candle(candle)
             if result and len(result) > 0:
                 # Store feature value indexed by candle datetime
                 self._feature_values[candle.datetime] = result[0]
@@ -194,9 +222,10 @@ class BaseModel:
         pd.Series
             Feature values with standardized column name, indexed by datetime
         """
-        # Get the primary timeframe (first one in the spec)
+        # Get the primary timeframe (first one in the spec) and first ticker
         primary_tf = self.bias_node_spec['timeframes'][0]
-        primary_node = self.bias_nodes[primary_tf]
+        primary_ticker = self.tickers[0]
+        primary_node = self.bias_nodes[(primary_ticker, primary_tf)]
         
         # Extract feature values in order of candle addition
         feature_values = [self._feature_values.get(dt, np.nan) for dt in self._feature_datetimes]
@@ -243,13 +272,66 @@ class BaseModel:
         self
             Fitted model
         """
-        # Stream candles to bias nodes
-        for _, row in candles_df.iterrows():
-            candle = Candle.from_row(row)
-            self.add_candle(candle, row['timeframe'])
+        # Extract unique tickers from candles_df
+        unique_tickers = candles_df['ticker'].unique()
         
-        # Extract feature
+        # Convert string tickers to enum if needed
+        normalized_tickers = []
+        for ticker in unique_tickers:
+            if isinstance(ticker, str):
+                try:
+                    normalized_tickers.append(Ticker[ticker])
+                except (KeyError, AttributeError):
+                    normalized_tickers.append(ticker)
+            else:
+                normalized_tickers.append(ticker)
+        
+        # Validate that all tickers in candles_df are in self.tickers
+        for ticker in normalized_tickers:
+            if ticker not in self.tickers:
+                raise ValueError(
+                    f"Ticker {ticker} in candles_df is not in model's tickers {self.tickers}. "
+                    f"Model was initialized with tickers: {self.tickers}"
+                )
+        
+        # Clear previous feature values to start fresh
+        self._feature_values.clear()
+        self._feature_datetimes.clear()
+        
+        # Stream candles to bias nodes for all tickers
+        for ticker in normalized_tickers:
+            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            
+            # Extract features for this ticker
+            for _, row in ticker_candles.iterrows():
+                candle = Candle.from_row(row)
+                self.add_candle(candle, row['timeframe'], ticker=ticker)
+        
+        # Extract aggregated features (all tickers)
         feature_data = self.get_feature()
+        
+        # Set feature_column from feature data
+        if feature_data.name:
+            self.feature_column = feature_data.name
+        else:
+            # If name is missing, rebuild it
+            if self.feature_column is None:
+                # Rebuild column name
+                primary_tf = self.bias_node_spec['timeframes'][0]
+                primary_ticker = self.tickers[0]
+                primary_node = self.bias_nodes[(primary_ticker, primary_tf)]
+                output_feature = 'signal'  # default
+                if hasattr(primary_node, 'output_features') and primary_node.output_features:
+                    output_feature = primary_node.output_features[0]
+                column_name = helpers.build_feature_column_name(
+                    module=self.bias_node_spec['module_name'],
+                    feature=output_feature,
+                    tf=primary_tf,
+                    params=self.bias_node_spec['params']
+                )
+                self.feature_column = column_name
+            # Ensure feature_data has the name
+            feature_data.name = self.feature_column
         
         # Align feature and target data
         # Both should have datetime index
@@ -279,29 +361,114 @@ class BaseModel:
         -------
         pd.Series
             Predictions (binary signals or scaled positions) indexed by candle datetimes
+            Returns predictions for ALL input candles, not just new ones.
         """
-        # Store current feature count before adding new candles
-        n_features_before = len(self._feature_datetimes)
+        # Note: We don't reset state here because base models may be called multiple times
+        # with different tickers, and we want to preserve historical context for features
+        # that require lookback windows (e.g., moving averages, RSI, etc.)
         
-        # Stream candles to bias nodes
+        # Extract unique tickers from candles_df
+        unique_tickers = candles_df['ticker'].unique()
+        
+        # Convert string tickers to enum if needed
+        normalized_tickers = []
+        for ticker in unique_tickers:
+            if isinstance(ticker, str):
+                try:
+                    normalized_tickers.append(Ticker[ticker])
+                except (KeyError, AttributeError):
+                    normalized_tickers.append(ticker)
+            else:
+                normalized_tickers.append(ticker)
+        
+        # Validate that all tickers in candles_df are in self.tickers
+        for ticker in normalized_tickers:
+            if ticker not in self.tickers:
+                raise ValueError(
+                    f"Ticker {ticker} in candles_df is not in model's tickers {self.tickers}. "
+                    f"Model was initialized with tickers: {self.tickers}"
+                )
+        
+        # Collect input datetimes
+        all_input_datetimes = []
         for _, row in candles_df.iterrows():
             candle = Candle.from_row(row)
-            self.add_candle(candle, row['timeframe'])
+            all_input_datetimes.append(candle.datetime)
         
-        # Extract feature (all features, but we'll slice to new ones)
+        # Extract features for all tickers
+        for ticker in normalized_tickers:
+            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            
+            # Extract features for this ticker
+            for _, row in ticker_candles.iterrows():
+                candle = Candle.from_row(row)
+                self.add_candle(candle, row['timeframe'], ticker=ticker)
+        
+        # Extract aggregated features (all tickers)
         feature_data = self.get_feature()
         
-        # Only predict on the new candles (slice from n_features_before onwards)
-        new_feature_data = feature_data.iloc[n_features_before:]
+        # Get feature values for the input datetimes (in order)
+        # This ensures we return predictions for all input candles, even if some were seen before
+        feature_values = []
+        feature_index = []
+        for dt in all_input_datetimes:
+            # Check if feature exists in feature_data (preferred) or in _feature_values (fallback)
+            if dt in feature_data.index:
+                feature_values.append(feature_data.loc[dt])
+                feature_index.append(dt)
+            elif dt in self._feature_values:
+                # Feature value exists but not in feature_data index (edge case)
+                feature_values.append(self._feature_values[dt])
+                feature_index.append(dt)
+            else:
+                # No feature for this datetime - this shouldn't happen if bias nodes are working
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    f"BaseModel.predict() no feature value for datetime {dt}. "
+                    f"Bias node may not have processed this candle."
+                )
+                # Use NaN as placeholder - will be handled by binning model
+                feature_values.append(np.nan)
+                feature_index.append(dt)
+        
+        if not feature_index:
+            # No features extracted at all - this is a problem, log it
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"BaseModel.predict() extracted no features for {len(all_input_datetimes)} candles. "
+                f"Feature data length: {len(feature_data)}, "
+                f"Feature datetimes: {len(self._feature_datetimes)}, "
+                f"Input datetimes: {len(all_input_datetimes)}, "
+                f"Base model tickers: {self.tickers}"
+            )
+            # Return empty Series with correct index
+            return pd.Series(dtype=float, index=pd.DatetimeIndex(all_input_datetimes))
+        
+        # Create Series with feature values for input datetimes
+        input_feature_data = pd.Series(feature_values, index=pd.DatetimeIndex(feature_index))
+        
+        # Drop NaN values before prediction (bias nodes should always return values)
+        if input_feature_data.isna().any():
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"BaseModel.predict() has {input_feature_data.isna().sum()} NaN values out of {len(input_feature_data)}. "
+                f"This indicates bias nodes are not processing all candles correctly."
+            )
+            # For now, fill NaN with 0 (or could drop them)
+            input_feature_data = input_feature_data.fillna(0.0)
         
         # Predict with binning model
-        predictions = self.binning_model.predict(new_feature_data, strategy=strategy)
+        predictions = self.binning_model.predict(input_feature_data, strategy=strategy)
         
         return predictions
     
     def save_to_vault(
         self,
-        ensemble_dir: str
+        ensemble_dir: Optional[str] = None,
+        tickers: Optional[List['Ticker']] = None
     ) -> str:
         """
         Save base model to vault.
@@ -312,8 +479,12 @@ class BaseModel:
         
         Parameters
         ----------
-        ensemble_dir : str
-            Path to ensemble directory in vault (e.g., 'vault/D/commodity_breakout_long')
+        ensemble_dir : str, optional
+            Path to ensemble directory in vault (e.g., 'vault/D/commodity_breakout_long').
+            If None, uses default ensemble directory set via set_default_ensemble_dir().
+        tickers : List[Ticker], optional
+            List of tickers this ensemble was trained on. If None, infers from self.ticker.
+            This is stored in the feature spec so base models can be created separately for each ticker.
             
         Returns
         -------
@@ -323,10 +494,12 @@ class BaseModel:
         Raises
         ------
         ValueError
-            If feature_column not set, or if strategy doesn't match ensemble direction
+            If feature_column not set, or if strategy doesn't match ensemble direction,
+            or if ensemble_dir is None and no default is set
         """
         # Import here to avoid circular dependency
         from ensemble.vault_manager import add_feature_to_ensemble
+        from utils.enums import Ticker
         
         if self.feature_column is None:
             raise ValueError(
@@ -334,10 +507,11 @@ class BaseModel:
             )
         
         model_id = add_feature_to_ensemble(
-            ensemble_dir=ensemble_dir,
             feature_column=self.feature_column,
             bias_node_spec=self.bias_node_spec,
-            base_model=self
+            base_model=self,
+            ensemble_dir=ensemble_dir,
+            tickers=tickers
         )
         
         return model_id

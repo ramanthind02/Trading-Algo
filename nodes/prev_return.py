@@ -24,8 +24,14 @@ class ReturnNode(BiasNode):
         Returns: None
         """
         super().__init__(ticker, tf)
+        # Standardized naming metadata
+        self.module_name = 'prev_return'
+        self.output_features = ['return', 'log_return', 'sign', 'is_bullish']
+        self.params = {}
         # Define the columns attribute required by the MLManager
         self.columns = ['return', "log_return", "sign", "is_bullish"]
+        # Define standardized columns
+        self.ensure_standardized_columns()
     
     def _compute_candle(self, candle: Candle) -> List:
         """

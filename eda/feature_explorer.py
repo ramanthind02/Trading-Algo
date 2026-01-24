@@ -33,6 +33,10 @@ from metrics.plotting.feature_explorer_plots import (
     plot_all_feature_distributions,
     plot_all_feature_timeseries,
     plot_feature_signal_cumsum,
+    combine_decile_plots,
+    combine_signal_cumsum_plots,
+    combine_distribution_plots,
+    combine_timeseries_plots,
 )
 from metrics.plotting.parameter_plots import (
     plot_parameter_sensitivity as plot_parameter_sensitivity_pure,
@@ -201,14 +205,29 @@ class FeatureExplorer:
         # Store feature metadata if available
         self.feature_metadata = self.metadata.get('feature_metadata', {})
         
-        # Extract feature names (exclude 'ticker', 'atr', and 'ewsd' columns)
-        # ATR and EWSD are normalization columns, not features to analyze
-        # Use substring search to catch all variations (e.g., "atr_252_D_atr_252_lookback2")
+        # Extract feature names (exclude 'ticker' and actual ATR/EWSD normalization columns)
+        # ATR and EWSD normalization columns are standalone columns, not features to analyze
+        # Pattern: columns that START with "atr_" or "ewsd_" as module names are normalization columns
+        # But features with "atr" or "ewsd" in parameter names (e.g., "atrLength") should be kept
+        def is_normalization_column(col: str) -> bool:
+            """Check if column is an ATR/EWSD normalization column (not a feature with atr/ewsd in params)."""
+            col_lower = col.lower()
+            # Normalization columns typically start with "atr_" or "ewsd_" as module names
+            # Or match patterns like "atr_252", "ewsd_252" at the start
+            # But NOT features like "williamsr_signal_D_atrLength_14_..." which have atr in params
+            if col_lower.startswith('atr_') or col_lower.startswith('ewsd_'):
+                return True
+            # Also check for standalone ATR/EWSD patterns (e.g., "atr_252_D", "ewsd_252_D")
+            if col_lower.startswith('atr') and ('_252' in col_lower or '_atr' in col_lower):
+                return True
+            if col_lower.startswith('ewsd') and ('_252' in col_lower or '_ewsd' in col_lower):
+                return True
+            return False
+        
         self.feature_names = [
             col for col in features_df.columns 
             if col != 'ticker' 
-            and 'atr' not in col.lower()
-            and 'ewsd' not in col.lower()
+            and not is_normalization_column(col)
         ]
         self.n_features = len(self.feature_names)
         
@@ -318,6 +337,34 @@ class FeatureExplorer:
                 result[module_param] = features
         
         return result
+    
+    def _has_parameterized_features(self) -> bool:
+        """
+        Check if any features have parameters (for conditional analysis).
+        
+        Returns
+        -------
+        bool
+            True if any features have parameters, False otherwise
+        """
+        return len(self._feature_groups) > 0
+    
+    def _count_parameters_per_module(self) -> Dict[str, int]:
+        """
+        Count the number of unique parameters per module.
+        
+        Returns
+        -------
+        Dict[str, int]
+            Dictionary mapping module_name to number of unique parameters
+        """
+        module_param_counts = {}
+        for (module_name, param_name), features in self._feature_groups.items():
+            if module_name not in module_param_counts:
+                module_param_counts[module_name] = set()
+            module_param_counts[module_name].add(param_name)
+        
+        return {module: len(params) for module, params in module_param_counts.items()}
 
     @staticmethod
     def _canonicalize_param_name(name: str) -> str:
@@ -1080,20 +1127,20 @@ class FeatureExplorer:
         self,
         target_col: str = 'log_return',
         features: Optional[List[str]] = None,
-        base_model: Optional[Any] = None,
+        binning_model: Optional[Any] = None,
         metric: Optional[Any] = None,
         strategy: str = 'long',
         figsize: Tuple[int, int] = (12, 6),
         save_dir: Optional[str] = None,
         show_plot: bool = True,
         verbose: bool = True
-    ) -> Tuple[Dict[str, plt.Figure], pd.DataFrame]:
+    ) -> Tuple[Dict[str, plt.Figure], pd.DataFrame, Dict[str, pd.Series]]:
         """
         Plot cumulative sum of target returns gated by model signals for each feature.
         
         For each feature, this will:
-        - If base_model is provided: Fit the base model on (feature, target) and generate binary signals
-        - If base_model is None: Use the feature series directly as signals (for features that are already binary)
+        - If binning_model is provided: Fit the binning model on (feature, target) and generate binary signals
+        - If binning_model is None: Use the feature series directly as signals (for features that are already binary)
         - Compute product: target * signal
         - Plot cumulative sum over time
         
@@ -1103,8 +1150,8 @@ class FeatureExplorer:
             Target column to multiply with signals
         features : Optional[List[str]], default=None
             Subset of features to analyze. If None, uses all features
-        base_model : Optional[Any], default=None
-            Model implementing fit(X, y) and predict(X, strategy) -> {0,1}.
+        binning_model : Optional[Any], default=None
+            Binning model instance (e.g., QuantileBinningModel) implementing fit(X, y) and predict(X, strategy) -> {0,1}.
             If None, the feature series itself is used as signals (useful for binary features).
         metric : Optional[Any], default=None
             Metric object with compute(returns) -> float for title/summary.
@@ -1114,7 +1161,7 @@ class FeatureExplorer:
             - 'long': Only take long positions when long bin is selected
             - 'short': Only take short positions when short bin is selected
             - 'long-short': Take long positions when long bin is selected, short positions when short bin is selected
-            Only used if base_model is provided
+            Only used if binning_model is provided
         figsize : Tuple[int, int], default=(12, 6)
             Figure size
         save_dir : Optional[str], default=None
@@ -1126,9 +1173,10 @@ class FeatureExplorer:
         
         Returns
         -------
-        Tuple[Dict[str, plt.Figure], pd.DataFrame]
+        Tuple[Dict[str, plt.Figure], pd.DataFrame, Dict[str, pd.Series]]
             - Mapping from feature name to matplotlib Figure
             - Summary DataFrame with final cumulative sum and metric
+            - Dictionary mapping feature name to gated returns series (for combining plots)
         """
         # Validate target
         if target_col not in self.targets_df.columns:
@@ -1146,6 +1194,7 @@ class FeatureExplorer:
         
         figures: Dict[str, plt.Figure] = {}
         summary_rows: List[Dict[str, Any]] = []
+        gated_returns_dict: Dict[str, pd.Series] = {}  # Store gated returns for combining plots
         
         target_series = self.targets_df[target_col]
         
@@ -1170,9 +1219,14 @@ class FeatureExplorer:
             X = self.features_df[feature_name]
             y = target_series
             
-            valid_mask = ~(X.isna() | y.isna())
-            X_clean = X[valid_mask]
-            y_clean = y[valid_mask]
+            # Align X and y to same index before filtering
+            common_index = X.index.intersection(y.index)
+            X_aligned = X.reindex(common_index)
+            y_aligned = y.reindex(common_index)
+            
+            valid_mask = ~(X_aligned.isna() | y_aligned.isna())
+            X_clean = X_aligned[valid_mask]
+            y_clean = y_aligned[valid_mask]
             
             if len(X_clean) < 5:
                 if verbose:
@@ -1180,14 +1234,15 @@ class FeatureExplorer:
                 continue
             
             try:
-                # Generate signals: use model if provided, otherwise use feature series directly
-                if base_model is not None:
-                    base_model.fit(X_clean, y_clean)
+                # Generate signals: use binning model if provided, otherwise use feature series directly
+                if binning_model is not None:
+                    # Fit binning model on (feature, target) for this feature
+                    binning_model.fit(X_clean, y_clean)
                     
                     if strategy == 'long-short':
                         # Get signals for both long and short bins
-                        long_signals = base_model.predict(X_clean, strategy='long')
-                        short_signals = base_model.predict(X_clean, strategy='short')
+                        long_signals = binning_model.predict(X_clean, strategy='long')
+                        short_signals = binning_model.predict(X_clean, strategy='short')
                         
                         if isinstance(long_signals, (pd.Series, pd.DataFrame)):
                             long_signals = long_signals.squeeze()
@@ -1204,7 +1259,7 @@ class FeatureExplorer:
                         gated_returns = (y_clean * long_signals) + (-y_clean * short_signals)
                         signals_series = long_signals + short_signals  # For summary stats
                     else:
-                        signals = base_model.predict(X_clean, strategy=strategy)
+                        signals = binning_model.predict(X_clean, strategy=strategy)
                         if isinstance(signals, (pd.Series, pd.DataFrame)):
                             signals_series = signals.squeeze()
                         else:
@@ -1227,7 +1282,20 @@ class FeatureExplorer:
                     else:
                         gated_returns = y_clean * signals_series
                 
-                # Compute cumulative returns for summary
+                # CRITICAL: Sort by datetime index before calculating cumulative sum
+                # This ensures chronological order, especially important for multi-ticker data
+                # where datetime index might not be sorted or have duplicates
+                if isinstance(gated_returns.index, pd.DatetimeIndex):
+                    gated_returns = gated_returns.sort_index()
+                elif hasattr(gated_returns.index, 'sort_values'):
+                    # If index has sort_values method (e.g., MultiIndex), try to sort
+                    try:
+                        gated_returns = gated_returns.sort_index()
+                    except Exception:
+                        # If sorting fails, at least ensure we have a consistent order
+                        pass
+                
+                # Compute cumulative returns for summary (now in chronological order)
                 cum_returns = gated_returns.cumsum()
                 
                 # Compute metric if provided
@@ -1239,7 +1307,7 @@ class FeatureExplorer:
                     except Exception:
                         metric_value = float('nan')
                 
-                # Use pure plotting function
+                # Use pure plotting function (with sorted data)
                 save_path = None
                 if save_dir is not None:
                     save_path = os.path.join(save_dir, f"{feature_name}_signal_cumsum.png")
@@ -1254,6 +1322,7 @@ class FeatureExplorer:
                     show_plot=show_plot
                 )
                 figures[feature_name] = fig
+                gated_returns_dict[feature_name] = gated_returns  # Store for combining plots
                 summary_rows.append({
                     'feature': feature_name,
                     'n_samples': int(len(X_clean)),
@@ -1272,11 +1341,675 @@ class FeatureExplorer:
         self.results['signal_cumsum'] = {
             'target_col': target_col,
             'strategy': strategy,
-            'model': str(base_model) if base_model is not None else 'feature_direct',
+            'model': str(binning_model) if binning_model is not None else 'feature_direct',
             'metric': str(metric) if metric is not None else 'none',
             'summary': summary_df
         }
-        return figures, summary_df
+        return figures, summary_df, gated_returns_dict
+    
+    def generate_summary_report(
+        self,
+        binning_model: Any,
+        target_col: str = 'log_return',
+        strategy: str = 'long',
+        metric: Optional[Any] = None,
+        save_dir: Optional[str] = None,
+        show_plots: bool = True,
+        verbose: bool = True,
+        permutation_test_nreps: int = 1000,
+        permutation_test_alpha: float = 0.1,
+        permutation_test_n_jobs: int = -1,
+        export_report: bool = False,
+        export_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a comprehensive summary report with all relevant analysis methods.
+        
+        This method runs all relevant analysis methods and returns a dictionary
+        with all results and figures. Methods are conditionally included based on
+        available features (e.g., parameter sensitivity only if parameterized features exist).
+        
+        Parameters
+        ----------
+        binning_model : Any
+            Binning model instance (subclass of BinningModelBase).
+            Must have fit() and predict() methods. User should configure
+            all hyperparameters (n_bins, selection_metric, etc.) before passing.
+        target_col : str, default='log_return'
+            Target column to use for analysis
+        strategy : str, default='long'
+            Strategy for signal generation: 'long', 'short', or 'long-short'
+        metric : Optional[Any], default=None
+            Metric object from metrics.performance (e.g., SortinoRatio, SharpeRatio).
+            Must have a .compute() method. If None, defaults to SortinoRatio.
+        save_dir : Optional[str], default=None
+            Directory to save plots. If None, plots are not saved.
+        show_plots : bool, default=True
+            Whether to display plots
+        verbose : bool, default=True
+            Print progress
+        permutation_test_nreps : int, default=100
+            Number of permutation replications for permutation test
+        permutation_test_alpha : float, default=0.1
+            Significance level for permutation test
+        permutation_test_n_jobs : int, default=-1
+            Number of parallel jobs for permutation test (-1 = all CPUs)
+        export_report : bool, default=False
+            Whether to export the summary report to files
+        export_path : Optional[str], default=None
+            Path to export directory. If None and export_report=True, uses save_dir.
+            Exports DataFrames to CSV and creates a summary text file.
+        
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary containing:
+            - 'summary_stats': DataFrame with basic feature statistics
+            - 'correlations': Series with feature-target correlations
+            - 'feature_correlations': DataFrame with intra-feature correlation matrix
+            - 'decile_figures': Dict of decile analysis figures
+            - 'signal_cumsum_figures': Dict of signal cumulative sum figures
+            - 'signal_cumsum_summary': DataFrame with signal performance summary
+            - 'parameter_sensitivity': Dict with parameter sensitivity results (if applicable)
+            - 'parameter_2d_surface': Dict with 2D parameter surface results (if applicable)
+            - 'distribution_figures': Dict of distribution figures
+            - 'timeseries_figures': Dict of time series figures
+            - 'permutation_test': DataFrame with permutation test results
+        """
+        if verbose:
+            print(f"\n{'='*70}")
+            print("Generating Comprehensive Feature Analysis Report")
+            print(f"{'='*70}")
+        
+        # Disable interactive mode and close all existing figures if not showing plots
+        if not show_plots:
+            import matplotlib.pyplot as plt
+            plt.ioff()  # Turn off interactive mode
+            plt.close('all')  # Close all existing figures
+        
+        # Validate binning model
+        if binning_model is None:
+            raise ValueError("binning_model is required. Please provide a binning model instance (e.g., QuantileBinningModel or DecisionTreeBinningModel) with parameters already configured.")
+        
+        # Create metric if needed
+        if metric is None:
+            from metrics.performance import SortinoRatio
+            metric = SortinoRatio(annualization_factor=252)
+        
+        # When exporting, set save_dir to export_dir so all plots get saved during generation
+        if export_report:
+            import os
+            export_dir = export_path if export_path is not None else save_dir
+            if export_dir is None:
+                import tempfile
+                export_dir = tempfile.mkdtemp(prefix='feature_explorer_report_')
+                if verbose:
+                    print(f"\n[Export] No export path specified, using temporary directory: {export_dir}")
+            # Create export directory if it doesn't exist
+            os.makedirs(export_dir, exist_ok=True)
+            # Override save_dir to ensure plots are saved during generation
+            save_dir = export_dir
+        
+        results: Dict[str, Any] = {}
+        
+        # 1. Basic summary statistics
+        if verbose:
+            print("\n[1/10] Computing basic summary statistics...")
+        results['summary_stats'] = self.get_summary()
+        if verbose:
+            print(f"  ✓ Computed statistics for {len(results['summary_stats'])} features")
+        
+        # 2. Feature-target correlations
+        if verbose:
+            print("\n[2/10] Computing feature-target correlations...")
+        results['correlations'] = self.get_correlations(target_col=target_col, method='spearman')
+        if verbose:
+            print(f"  ✓ Computed correlations for {len(results['correlations'])} features")
+        
+        # 3. Intra-feature correlations
+        if verbose:
+            print("\n[3/10] Computing intra-feature correlations...")
+        import os
+        import matplotlib.pyplot as plt
+        corr_save_path = None
+        if save_dir is not None:
+            corr_save_path = os.path.join(save_dir, 'feature_correlations.png')
+        results['feature_correlations_figure'] = self.plot_feature_correlations(
+            save_path=corr_save_path
+        )
+        if show_plots:
+            plt.show()
+        elif not export_report:
+            # Only close if not exporting (export will handle it)
+            plt.close(results['feature_correlations_figure'])
+        # Store correlation matrix in results
+        numeric_features = [
+            col for col in self.feature_names
+            if pd.api.types.is_numeric_dtype(self.features_df[col])
+        ]
+        results['feature_correlations'] = self.features_df[numeric_features].corr(method='pearson')
+        if verbose:
+            print(f"  ✓ Computed correlation matrix for {len(numeric_features)} features")
+        
+        # 4. Decile analysis
+        if verbose:
+            print("\n[4/10] Plotting decile analysis...")
+        decile_save_dir = None
+        # Only save individual files if not exporting (export will create combined file)
+        if save_dir is not None and not export_report:
+            decile_save_dir = os.path.join(save_dir, 'deciles')
+        results['decile_figures'] = self.plot_all_deciles(
+            n_bins=10,
+            target_col=target_col,
+            save_dir=decile_save_dir,
+            verbose=False
+        )
+        # Close figures if not showing plots and not exporting (export will handle closing)
+        if not show_plots and not export_report:
+            import matplotlib.pyplot as plt
+            for fig in results['decile_figures'].values():
+                plt.close(fig)
+        if verbose:
+            print(f"  ✓ Generated {len(results['decile_figures'])} decile plots")
+        
+        # 5. Signal cumulative sum
+        if verbose:
+            print("\n[5/10] Plotting signal-gated cumulative returns...")
+        signal_save_dir = None
+        # Only save individual files if not exporting (export will create combined file)
+        if save_dir is not None and not export_report:
+            signal_save_dir = os.path.join(save_dir, 'signal_cumsum')
+        signal_figures, signal_summary, signal_gated_returns = self.plot_signal_cumsum(
+            target_col=target_col,
+            binning_model=binning_model,
+            metric=metric,
+            strategy=strategy,
+            save_dir=signal_save_dir,
+            show_plot=show_plots,
+            verbose=False
+        )
+        results['signal_cumsum_figures'] = signal_figures
+        results['signal_cumsum_summary'] = signal_summary
+        results['signal_cumsum_gated_returns'] = signal_gated_returns  # Store for combining plots
+        # Close figures if not showing plots and not exporting (export will handle closing)
+        if not show_plots and not export_report:
+            import matplotlib.pyplot as plt
+            for fig in signal_figures.values():
+                plt.close(fig)
+        if verbose:
+            print(f"  ✓ Generated {len(signal_figures)} signal plots")
+        
+        # 6. Parameter sensitivity (if parameterized features exist)
+        if self._has_parameterized_features():
+            if verbose:
+                print("\n[6/10] Analyzing parameter sensitivity...")
+            param_counts = self._count_parameters_per_module()
+            results['parameter_sensitivity'] = {}
+            
+            for module_name, n_params in param_counts.items():
+                if n_params >= 1:
+                    # Get first parameter for sensitivity analysis
+                    param_groups = self.get_parameterized_features()
+                    module_params = [
+                        (module, param) for (module, param) in param_groups.keys()
+                        if module == module_name
+                    ]
+                    
+                    if module_params:
+                        first_param = module_params[0][1]
+                        try:
+                            # Get n_bins from binning_model if available
+                            n_bins = getattr(binning_model, 'n_bins', 10)
+                            param_df, param_fig = self.plot_parameter_sensitivity(
+                                module_name=module_name,
+                                param_name=first_param,
+                                target_col=target_col,
+                                metric=metric,
+                                n_bins=n_bins,
+                                base_model=binning_model,  # Note: parameter name is 'base_model' for compatibility
+                                show_plot=show_plots
+                            )
+                            results['parameter_sensitivity'][f"{module_name}_{first_param}"] = {
+                                'dataframe': param_df,
+                                'figure': param_fig
+                            }
+                            # For Plotly figures, prevent auto-display in notebooks when show_plots=False
+                            if not show_plots and hasattr(param_fig, 'update_layout'):
+                                # Update layout to prevent auto-display (Plotly might still show in notebooks)
+                                param_fig.update_layout(template=None)
+                            if verbose:
+                                print(f"  ✓ Analyzed {module_name}.{first_param} sensitivity")
+                        except Exception as e:
+                            if verbose:
+                                print(f"  ✗ Failed to analyze {module_name}.{first_param}: {e}")
+        else:
+            if verbose:
+                print("\n[6/10] Skipping parameter sensitivity (no parameterized features)")
+            results['parameter_sensitivity'] = None
+        
+        # 7. 2D parameter surface (if 2+ parameters exist)
+        if self._has_parameterized_features():
+            param_counts = self._count_parameters_per_module()
+            has_2d_params = any(n_params >= 2 for n_params in param_counts.values())
+            
+            if has_2d_params:
+                if verbose:
+                    print("\n[7/10] Analyzing 2D parameter surface...")
+                results['parameter_2d_surface'] = {}
+                
+                for module_name, n_params in param_counts.items():
+                    if n_params >= 2:
+                        # Get first two parameters for 2D analysis
+                        param_groups = self.get_parameterized_features()
+                        module_params = [
+                            (module, param) for (module, param) in param_groups.keys()
+                            if module == module_name
+                        ]
+                        
+                        if len(module_params) >= 2:
+                            param1 = module_params[0][1]
+                            param2 = module_params[1][1]
+                            try:
+                                # Get n_bins from binning_model if available
+                                n_bins = getattr(binning_model, 'n_bins', 5)
+                                surface_df, surface_fig = self.plot_2d_parameter_surface(
+                                    module_name=module_name,
+                                    param1_name=param1,
+                                    param2_name=param2,
+                                    target_col=target_col,
+                                    metric=metric,
+                                    n_bins=n_bins,
+                                    base_model=binning_model,  # Note: parameter name is 'base_model' for compatibility
+                                    show_plot=show_plots
+                                )
+                                results['parameter_2d_surface'][f"{module_name}_{param1}_{param2}"] = {
+                                    'dataframe': surface_df,
+                                    'figure': surface_fig
+                                }
+                                # For Plotly figures, prevent auto-display in notebooks when show_plots=False
+                                if not show_plots and hasattr(surface_fig, 'update_layout'):
+                                    # Update layout to prevent auto-display (Plotly might still show in notebooks)
+                                    surface_fig.update_layout(template=None)
+                                if verbose:
+                                    print(f"  ✓ Analyzed {module_name}.{param1} vs {param2} surface")
+                            except Exception as e:
+                                if verbose:
+                                    print(f"  ✗ Failed to analyze {module_name} 2D surface: {e}")
+            else:
+                if verbose:
+                    print("\n[7/10] Skipping 2D parameter surface (insufficient parameters)")
+                results['parameter_2d_surface'] = None
+        else:
+            if verbose:
+                print("\n[7/10] Skipping 2D parameter surface (no parameterized features)")
+            results['parameter_2d_surface'] = None
+        
+        # 8. Feature distributions
+        if verbose:
+            print("\n[8/10] Plotting feature distributions...")
+        dist_save_dir = None
+        # Only save individual files if not exporting (export will create combined file)
+        if save_dir is not None and not export_report:
+            dist_save_dir = os.path.join(save_dir, 'distributions')
+        results['distribution_figures'] = self.plot_distributions(
+            save_dir=dist_save_dir,
+            verbose=False
+        )
+        # Close figures if not showing plots and not exporting (export will handle closing)
+        if not show_plots and not export_report:
+            import matplotlib.pyplot as plt
+            for fig in results['distribution_figures'].values():
+                plt.close(fig)
+        if verbose:
+            print(f"  ✓ Generated {len(results['distribution_figures'])} distribution plots")
+        
+        # 9. Time series plots
+        if verbose:
+            print("\n[9/10] Plotting time series...")
+        ts_save_dir = None
+        # Only save individual files if not exporting (export will create combined file)
+        if save_dir is not None and not export_report:
+            ts_save_dir = os.path.join(save_dir, 'timeseries')
+        results['timeseries_figures'] = self.plot_timeseries(
+            save_dir=ts_save_dir,
+            verbose=False
+        )
+        # Close figures if not showing plots and not exporting (export will handle closing)
+        if not show_plots and not export_report:
+            import matplotlib.pyplot as plt
+            for fig in results['timeseries_figures'].values():
+                plt.close(fig)
+        if verbose:
+            print(f"  ✓ Generated {len(results['timeseries_figures'])} time series plots")
+        
+        # 10. Permutation test
+        if verbose:
+            print("\n[10/10] Running permutation test...")
+        try:
+            results['permutation_test'] = self.run_permutation_test(
+                target_col=target_col,
+                base_model=binning_model,
+                metric=metric,
+                nreps=permutation_test_nreps,
+                n_jobs=permutation_test_n_jobs,
+                alpha=permutation_test_alpha,
+                verbose=False
+            )
+            if verbose:
+                n_significant = results['permutation_test']['significant'].sum() if 'significant' in results['permutation_test'].columns else 0
+                print(f"  ✓ Completed permutation test for {len(results['permutation_test'])} features")
+                print(f"  ✓ Found {n_significant} significant features (p <= {permutation_test_alpha})")
+                print(f"\n  Permutation test p-values:")
+                for _, row in results['permutation_test'].iterrows():
+                    pval = row.get('pval', 'N/A')
+                    sig = '✓' if row.get('significant', False) else '✗'
+                    print(f"    {sig} {row.get('feature', 'unknown')}: p = {pval:.4f}")
+        except Exception as e:
+            if verbose:
+                print(f"  ✗ Permutation test failed: {e}")
+            results['permutation_test'] = None
+        
+        if verbose:
+            print(f"\n{'='*70}")
+            print("Summary Report Complete!")
+            print(f"{'='*70}")
+            print(f"\nResults Summary:")
+            print(f"  - Summary statistics: {len(results['summary_stats'])} features")
+            print(f"  - Feature-target correlations: {len(results['correlations'])} features")
+            print(f"  - Intra-feature correlations: {len(results.get('feature_correlations', pd.DataFrame()).columns)} features")
+            print(f"  - Decile plots: {len(results['decile_figures'])} features")
+            print(f"  - Signal cumsum plots: {len(results['signal_cumsum_figures'])} features")
+            print(f"  - Distribution plots: {len(results['distribution_figures'])} features")
+            print(f"  - Time series plots: {len(results['timeseries_figures'])} features")
+            if results.get('parameter_sensitivity'):
+                print(f"  - Parameter sensitivity: {len(results['parameter_sensitivity'])} analyses")
+            if results.get('parameter_2d_surface'):
+                print(f"  - 2D parameter surfaces: {len(results['parameter_2d_surface'])} analyses")
+            if results.get('permutation_test') is not None:
+                n_significant = results['permutation_test']['significant'].sum() if 'significant' in results['permutation_test'].columns else 0
+                print(f"  - Permutation test: {len(results['permutation_test'])} features tested, {n_significant} significant")
+                print(f"\n  Permutation test p-values:")
+                for _, row in results['permutation_test'].iterrows():
+                    pval = row.get('pval', 'N/A')
+                    sig = '✓' if row.get('significant', False) else '✗'
+                    print(f"    {sig} {row.get('feature', 'unknown')}: p = {pval:.4f}")
+        
+        # Export report if requested (plots should already be saved since save_dir was set above)
+        if export_report:
+            self._export_summary_report(results, save_dir, target_col=target_col, verbose=verbose)
+        
+        # Close all remaining figures if show_plots is False and not exporting
+        # (export function will close figures after saving them)
+        if not show_plots and not export_report:
+            import matplotlib.pyplot as plt
+            plt.close('all')
+        
+        # Re-enable interactive mode if we disabled it
+        if not show_plots:
+            import matplotlib.pyplot as plt
+            plt.ion()  # Turn interactive mode back on for future use
+        
+        return results
+    
+    def _export_summary_report(
+        self,
+        results: Dict[str, Any],
+        export_dir: str,
+        target_col: str = 'log_return',
+        verbose: bool = True
+    ) -> None:
+        """
+        Export summary report to files.
+        
+        Saves plots/figures to image files and creates a summary text file.
+        Only exports raw data (CSV) for permutation test results.
+        
+        Parameters
+        ----------
+        results : Dict[str, Any]
+            Results dictionary from generate_summary_report
+        export_dir : str
+            Directory to save exported files
+        verbose : bool, default=True
+            Print progress
+        """
+        import os
+        import matplotlib.pyplot as plt
+        from datetime import datetime
+        
+        # Create export directory if it doesn't exist
+        os.makedirs(export_dir, exist_ok=True)
+        
+        if verbose:
+            print(f"\n{'='*70}")
+            print(f"Exporting Summary Report to: {export_dir}")
+            print(f"{'='*70}")
+        
+        # 1. Export feature correlations figure (already saved during generation, but ensure it's there)
+        if 'feature_correlations_figure' in results:
+            corr_fig_path = os.path.join(export_dir, 'feature_correlations.png')
+            if not os.path.exists(corr_fig_path):
+                results['feature_correlations_figure'].savefig(corr_fig_path, dpi=150, bbox_inches='tight')
+            if verbose:
+                print(f"  ✓ Exported feature correlations plot: {corr_fig_path}")
+        
+        # 2. Export decile plots (combined into single file)
+        if 'decile_figures' in results and results['decile_figures']:
+            decile_path = os.path.join(export_dir, 'all_deciles_combined.png')
+            try:
+                feature_names = list(results['decile_figures'].keys())
+                combined_fig = combine_decile_plots(
+                    features_df=self.features_df,
+                    targets_df=self.targets_df,
+                    feature_names=feature_names,
+                    target_col=target_col,
+                    n_bins=10,
+                    n_cols=4,
+                    figsize_per_plot=(6, 4),
+                    plot_type="bar",
+                    save_path=decile_path
+                )
+                plt.close(combined_fig)
+                # Close individual figures
+                for fig in results['decile_figures'].values():
+                    plt.close(fig)
+                if verbose:
+                    print(f"  ✓ Exported combined decile plots: {decile_path} ({len(feature_names)} features)")
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Failed to combine decile plots: {e}")
+        
+        # 3. Export signal cumsum plots (combined into single file)
+        if 'signal_cumsum_figures' in results and results['signal_cumsum_figures']:
+            signal_path = os.path.join(export_dir, 'all_signal_cumsum_combined.png')
+            try:
+                if 'signal_cumsum_gated_returns' in results:
+                    combined_fig = combine_signal_cumsum_plots(
+                        gated_returns_dict=results['signal_cumsum_gated_returns'],
+                        n_cols=4,
+                        figsize_per_plot=(6, 3),
+                        save_path=signal_path
+                    )
+                    plt.close(combined_fig)
+                    # Close individual figures
+                    for fig in results['signal_cumsum_figures'].values():
+                        plt.close(fig)
+                    if verbose:
+                        print(f"  ✓ Exported combined signal cumsum plots: {signal_path} ({len(results['signal_cumsum_figures'])} features)")
+                else:
+                    if verbose:
+                        print(f"  ✗ Cannot combine signal cumsum plots: gated returns data not available")
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Failed to combine signal cumsum plots: {e}")
+        
+        # 4. Export distribution plots (combined into single file)
+        if 'distribution_figures' in results and results['distribution_figures']:
+            dist_path = os.path.join(export_dir, 'all_distributions_combined.png')
+            try:
+                feature_names = list(results['distribution_figures'].keys())
+                combined_fig = combine_distribution_plots(
+                    features_df=self.features_df,
+                    feature_names=feature_names,
+                    n_cols=4,
+                    figsize_per_plot=(5, 3),
+                    bins=50,
+                    save_path=dist_path
+                )
+                plt.close(combined_fig)
+                # Close individual figures
+                for fig in results['distribution_figures'].values():
+                    plt.close(fig)
+                if verbose:
+                    print(f"  ✓ Exported combined distribution plots: {dist_path} ({len(feature_names)} features)")
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Failed to combine distribution plots: {e}")
+        
+        # 5. Export time series plots (combined into single file)
+        if 'timeseries_figures' in results and results['timeseries_figures']:
+            ts_path = os.path.join(export_dir, 'all_timeseries_combined.png')
+            try:
+                feature_names = list(results['timeseries_figures'].keys())
+                combined_fig = combine_timeseries_plots(
+                    features_df=self.features_df,
+                    feature_names=feature_names,
+                    n_cols=4,
+                    figsize_per_plot=(6, 3),
+                    rolling_window=20,
+                    save_path=ts_path
+                )
+                plt.close(combined_fig)
+                # Close individual figures
+                for fig in results['timeseries_figures'].values():
+                    plt.close(fig)
+                if verbose:
+                    print(f"  ✓ Exported combined time series plots: {ts_path} ({len(feature_names)} features)")
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Failed to combine time series plots: {e}")
+        
+        # 6. Export parameter sensitivity plots (if available)
+        if results.get('parameter_sensitivity'):
+            param_dir = os.path.join(export_dir, 'parameter_sensitivity')
+            os.makedirs(param_dir, exist_ok=True)
+            for key, data in results['parameter_sensitivity'].items():
+                if isinstance(data, dict) and 'figure' in data:
+                    # Save plotly figure if it's a plotly figure
+                    fig = data['figure']
+                    param_path = os.path.join(param_dir, f'{key}.png')
+                    try:
+                        # Try plotly save as PNG (requires kaleido package)
+                        if hasattr(fig, 'write_image'):
+                            fig.write_image(param_path, width=1200, height=800, scale=2)
+                        else:
+                            # Fallback to HTML if write_image not available
+                            param_path = os.path.join(param_dir, f'{key}.html')
+                            fig.write_html(param_path)
+                    except (AttributeError, Exception) as e:
+                        # If it's a matplotlib figure or plotly save failed, try matplotlib save
+                        try:
+                            param_path = os.path.join(param_dir, f'{key}.png')
+                            fig.savefig(param_path, dpi=150, bbox_inches='tight')
+                            plt.close(fig)
+                        except Exception:
+                            # Last resort: save as HTML
+                            param_path = os.path.join(param_dir, f'{key}.html')
+                            fig.write_html(param_path)
+            if verbose:
+                print(f"  ✓ Exported parameter sensitivity plots: {param_dir}")
+        
+        # 7. Export 2D parameter surface plots (if available)
+        if results.get('parameter_2d_surface'):
+            surface_dir = os.path.join(export_dir, 'parameter_2d_surface')
+            os.makedirs(surface_dir, exist_ok=True)
+            for key, data in results['parameter_2d_surface'].items():
+                if isinstance(data, dict) and 'figure' in data:
+                    fig = data['figure']
+                    surface_path = os.path.join(surface_dir, f'{key}.png')
+                    try:
+                        # Try plotly save as PNG (requires kaleido package)
+                        if hasattr(fig, 'write_image'):
+                            fig.write_image(surface_path, width=1200, height=800, scale=2)
+                        else:
+                            # Fallback to HTML if write_image not available
+                            surface_path = os.path.join(surface_dir, f'{key}.html')
+                            fig.write_html(surface_path)
+                    except (AttributeError, Exception) as e:
+                        # If it's a matplotlib figure or plotly save failed, try matplotlib save
+                        try:
+                            surface_path = os.path.join(surface_dir, f'{key}.png')
+                            fig.savefig(surface_path, dpi=150, bbox_inches='tight')
+                            plt.close(fig)
+                        except Exception:
+                            # Last resort: save as HTML
+                            surface_path = os.path.join(surface_dir, f'{key}.html')
+                            fig.write_html(surface_path)
+            if verbose:
+                print(f"  ✓ Exported 2D parameter surface plots: {surface_dir}")
+        
+        # 8. Export permutation test results (ONLY raw data export)
+        if results.get('permutation_test') is not None and isinstance(results['permutation_test'], pd.DataFrame):
+            perm_path = os.path.join(export_dir, 'permutation_test_results.csv')
+            results['permutation_test'].to_csv(perm_path, index=False)
+            if verbose:
+                print(f"  ✓ Exported permutation test results (CSV): {perm_path}")
+        
+        # 8. Create summary text file
+        summary_text_path = os.path.join(export_dir, 'summary_report.txt')
+        with open(summary_text_path, 'w') as f:
+            f.write("="*70 + "\n")
+            f.write("Feature Analysis Summary Report\n")
+            f.write("="*70 + "\n")
+            f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Date Range: {self.date_range[0].date()} to {self.date_range[1].date()}\n")
+            f.write(f"Number of Features: {self.n_features}\n")
+            f.write(f"Number of Samples: {self.n_samples}\n")
+            if self.has_ticker:
+                f.write(f"Tickers: {self.tickers}\n")
+            f.write("\n" + "="*70 + "\n")
+            f.write("Results Summary\n")
+            f.write("="*70 + "\n\n")
+            
+            f.write(f"Summary Statistics: {len(results['summary_stats'])} features\n")
+            f.write(f"Feature-Target Correlations: {len(results['correlations'])} features\n")
+            f.write(f"Intra-Feature Correlations: {len(results.get('feature_correlations', pd.DataFrame()).columns)} features\n")
+            f.write(f"Decile Plots: {len(results['decile_figures'])} features\n")
+            f.write(f"Signal Cumsum Plots: {len(results['signal_cumsum_figures'])} features\n")
+            f.write(f"Distribution Plots: {len(results['distribution_figures'])} features\n")
+            f.write(f"Time Series Plots: {len(results['timeseries_figures'])} features\n")
+            
+            if results.get('parameter_sensitivity'):
+                f.write(f"Parameter Sensitivity: {len(results['parameter_sensitivity'])} analyses\n")
+            
+            if results.get('parameter_2d_surface'):
+                f.write(f"2D Parameter Surfaces: {len(results['parameter_2d_surface'])} analyses\n")
+            
+            if results.get('permutation_test') is not None:
+                n_significant = results['permutation_test']['significant'].sum() if 'significant' in results['permutation_test'].columns else 0
+                f.write(f"\nPermutation Test: {len(results['permutation_test'])} features tested, {n_significant} significant\n")
+                f.write("\nPermutation Test p-values:\n")
+                for _, row in results['permutation_test'].iterrows():
+                    pval = row.get('pval', 'N/A')
+                    sig = '✓' if row.get('significant', False) else '✗'
+                    feature_name = row.get('feature', 'unknown')
+                    original_criterion = row.get('original_criterion', 'N/A')
+                    f.write(f"  {sig} {feature_name}: p = {pval:.4f}, metric = {original_criterion:.4f}\n")
+            
+            # Add top correlations
+            if 'correlations' in results:
+                f.write("\n" + "="*70 + "\n")
+                f.write("Top Feature-Target Correlations (Spearman)\n")
+                f.write("="*70 + "\n")
+                top_corr = results['correlations'].sort_values(ascending=False).head(10)
+                for feature, corr in top_corr.items():
+                    f.write(f"  {feature}: {corr:.4f}\n")
+        
+        if verbose:
+            print(f"  ✓ Exported summary text report: {summary_text_path}")
+            print(f"\n{'='*70}")
+            print(f"Export Complete! Files saved to: {export_dir}")
+            print(f"{'='*70}")
     
     def run_permutation_test(
         self,

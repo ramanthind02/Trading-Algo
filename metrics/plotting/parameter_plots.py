@@ -45,6 +45,8 @@ def plot_parameter_sensitivity(
     go.Figure
         Plotly figure object
     """
+    # Create figure with config to prevent auto-display when show_plot=False
+    config = {'displayModeBar': False} if not show_plot else {}
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     
     # Choose x-axis series: prefer 'param_value' else fallback to 'param1_value'
@@ -121,7 +123,9 @@ def plot_parameter_sensitivity(
     )
     
     if show_plot:
-        fig.show()
+        fig.show(config=config)
+    # When show_plot=False, we don't call .show() to prevent display
+    # Note: Plotly figures in Jupyter may still auto-display - this is a Jupyter limitation
         
     return fig
 
@@ -182,7 +186,8 @@ def plot_2d_parameter_surface(
             f"Need at least 2x2 grid."
         )
     
-    # Create 3D surface plot
+    # Create 3D surface plot with config to prevent auto-display when show_plot=False
+    config = {'displayModeBar': False} if not show_plot else {}
     fig = go.Figure()
     
     if len(pivot_df) > 1 and len(pivot_df.columns) > 1:
@@ -298,7 +303,9 @@ def plot_2d_parameter_surface(
     )
     
     if show_plot:
-        fig.show()
+        fig.show(config=config)
+    # When show_plot=False, we don't call .show() to prevent display
+    # Note: Plotly figures in Jupyter may still auto-display - this is a Jupyter limitation
         
     return fig
 

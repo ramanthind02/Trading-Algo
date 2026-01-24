@@ -54,6 +54,11 @@ class WilliamsRNode(BiasNode):
         self.atr_length = atr_length
         self.compression = compression
         
+        # Standardized naming metadata
+        self.module_name = 'williamsr'
+        self.output_features = ['signal']
+        self.params = {'lookback': lookback, 'atr_length': atr_length, 'compression': compression}
+        
         # Storage for high and low prices
         self.high_prices = deque(maxlen=lookback)
         self.low_prices = deque(maxlen=lookback)
@@ -66,8 +71,8 @@ class WilliamsRNode(BiasNode):
         self.candle_count = 0
         self.front_bad = max(lookback, atr_length)
         
-        # Define the columns attribute required by the MLManager
-        self.columns = [f'williams_r_{lookback}']
+        # Define standardized columns
+        self.ensure_standardized_columns()
     
     def _compute_candle(self, candle: Candle) -> List:
         """
@@ -151,6 +156,6 @@ class WilliamsRNode(BiasNode):
             self.bias = Bias.NEUTRAL
         
         # Store the output
-        self.output = [output_value]
+        self.output.append(output_value)
         
-        return self.output
+        return [output_value]

@@ -86,7 +86,12 @@ class InverseCorrelationWeighter:
             raise ValueError("Need at least 2 samples to calculate correlations")
 
         # Calculate correlation matrix (use absolute values)
+        # Handle constant signals (all 0 or all 1) which result in NaN correlations
         self.correlation_matrix_ = signals.corr().abs()
+        
+        # Fill NaN correlations with 0 (constant signals = zero correlation = max diversification)
+        # This happens when a signal is constant (all 0 or all 1)
+        self.correlation_matrix_ = self.correlation_matrix_.fillna(0.0)
 
         # Handle single model case
         if len(signals.columns) == 1:
@@ -99,8 +104,15 @@ class InverseCorrelationWeighter:
         avg_correlations = {}
         for model_name in signals.columns:
             other_models = [m for m in signals.columns if m != model_name]
-            avg_corr = self.correlation_matrix_.loc[model_name, other_models].mean()
-            avg_correlations[model_name] = avg_corr
+            if len(other_models) > 0:
+                avg_corr = self.correlation_matrix_.loc[model_name, other_models].mean()
+                # Handle NaN correlations (e.g., constant signals)
+                if pd.isna(avg_corr):
+                    avg_corr = 0.0  # Treat NaN as zero correlation (maximum diversification)
+                avg_correlations[model_name] = avg_corr
+            else:
+                # Single model case (shouldn't happen here, but handle gracefully)
+                avg_correlations[model_name] = 0.0
 
         # Convert to diversification scores (inverse relationship)
         # Higher correlation = lower diversification score
@@ -111,10 +123,28 @@ class InverseCorrelationWeighter:
 
         # Normalize to sum to 1.0
         total = sum(diversification_scores.values())
-        self.weights_ = pd.Series({
-            model: score / total
-            for model, score in diversification_scores.items()
-        })
+        if total > 0:
+            self.weights_ = pd.Series({
+                model: score / total
+                for model, score in diversification_scores.items()
+            })
+            # Ensure no NaN values in weights (shouldn't happen after fillna, but safety check)
+            if self.weights_.isna().any():
+                # Replace NaN with equal weights
+                n_models = len(self.weights_)
+                equal_weight = 1.0 / n_models
+                self.weights_ = self.weights_.fillna(equal_weight)
+                # Renormalize
+                total = self.weights_.sum()
+                if total > 0:
+                    self.weights_ = self.weights_ / total
+        else:
+            # Fallback: equal weights if total is zero (shouldn't happen)
+            equal_weight = 1.0 / len(signals.columns)
+            self.weights_ = pd.Series({
+                model: equal_weight
+                for model in signals.columns
+            })
 
         self.is_fitted_ = True
         return self
@@ -179,7 +209,7 @@ class WeightLayer:
     def __init__(
         self,
         weight_method: str = 'inverse_correlation',
-        fdm_max: float = 2.0
+        fdm_max: float = 2.5
     ):
         self.weight_method = weight_method
         self.fdm_max = fdm_max
@@ -253,82 +283,91 @@ class WeightLayer:
         Formula:
             FDM = sqrt(1 / (mean_corr + epsilon))
             Capped at fdm_max (typically 2.0)
+        
+        Steps:
+        1. Extract forecast values for all base models
+        2. Build correlation matrix of forecast values (not binary signals)
+        3. Calculate mean correlation
+        4. Calculate FDM: sqrt(1 / (mean_corr + epsilon))
+        5. Cap at fdm_max
 
         Parameters
         ----------
         forecast_vectors : list[pd.DataFrame]
-            List of forecast vectors from all ensembles
+            List of forecast vectors from all ensembles.
+            Each DataFrame has columns: ['ticker', 'model_name', 'forecast', 'signal']
 
         Returns
         -------
         float
             FDM value (capped at fdm_max)
         """
-        # Concatenate all forecasts
-        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
-
-        # Get unique model names
-        model_names = all_forecasts['model_name'].unique()
-
-        # Handle single model case
-        if len(model_names) <= 1:
+        if not forecast_vectors:
             self.mean_forecast_correlation_ = 1.0
             return 1.0
-
-        # Pivot to get forecast matrix: rows = samples, columns = model_name
-        # Need to handle multiple tickers - create unique index
-        all_forecasts = all_forecasts.copy()
-        all_forecasts['sample_idx'] = all_forecasts.groupby(['ticker', 'model_name']).cumcount()
-
-        try:
-            forecast_matrix = all_forecasts.pivot_table(
-                index=['ticker', 'sample_idx'],
+        
+        # Concatenate all forecast vectors
+        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        
+        if all_forecasts.empty:
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        # Extract forecast values for all base models
+        # Pivot by model_name (columns) and datetime (index)
+        # Need to align by (datetime, ticker) or just datetime
+        # For simplicity, group by datetime and take mean per model (across tickers)
+        # Or better: group by (datetime, ticker) and pivot by model_name
+        
+        # Group by datetime and model_name, then pivot
+        if 'datetime' in all_forecasts.columns and 'model_name' in all_forecasts.columns:
+            # Pivot: datetime x model_name -> forecast values
+            forecast_pivot = all_forecasts.pivot_table(
+                index='datetime',
                 columns='model_name',
                 values='forecast',
-                aggfunc='first'
+                aggfunc='mean'  # If multiple tickers, take mean
             )
-        except Exception:
-            # Fallback: simple pivot without sample_idx
-            forecast_matrix = all_forecasts.pivot_table(
-                index='ticker',
-                columns='model_name',
-                values='forecast',
-                aggfunc='mean'
-            )
-
-        # Drop rows with NaN (models that don't apply to certain tickers)
-        forecast_matrix = forecast_matrix.dropna()
-
-        if len(forecast_matrix) < 2:
-            # Not enough data to calculate correlations
-            self.mean_forecast_correlation_ = 0.5
-            return min(np.sqrt(1.0 / 0.51), self.fdm_max)
-
-        # Calculate correlation matrix of forecast values
-        corr_matrix = forecast_matrix.corr().abs()
-
-        # Get upper triangle (excluding diagonal)
+        else:
+            # Fallback: cannot calculate correlation
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        # Drop rows with any NaN (need complete data for correlation)
+        forecast_pivot = forecast_pivot.dropna()
+        
+        if len(forecast_pivot) < 2 or len(forecast_pivot.columns) < 2:
+            # Need at least 2 time periods and 2 models
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        # Build correlation matrix of forecast values
+        corr_matrix = forecast_pivot.corr()
+        
+        # Floor negative correlations at zero (Carver's recommendation)
+        corr_matrix = corr_matrix.clip(lower=0.0)
+        
+        # Calculate mean correlation (excluding diagonal)
+        # Get upper triangle (excluding diagonal) and calculate mean
         mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
         correlations = corr_matrix.where(mask).stack()
-
+        
         if len(correlations) == 0:
-            self.mean_forecast_correlation_ = 0.5
-            return min(np.sqrt(1.0 / 0.51), self.fdm_max)
-
-        # Calculate mean correlation
-        mean_corr = correlations.mean()
-
-        # Floor negative correlations at zero (Carver's recommendation)
-        mean_corr = max(mean_corr, 0.0)
-
-        self.mean_forecast_correlation_ = mean_corr
-
-        # Calculate FDM: sqrt(1 / (mean_corr + epsilon))
-        epsilon = 0.01  # Small value to avoid division by zero
-        fdm = np.sqrt(1.0 / (mean_corr + epsilon))
-
+            # No correlations to calculate
+            self.mean_forecast_correlation_ = 1.0
+            return 1.0
+        
+        mean_correlation = correlations.mean()
+        self.mean_forecast_correlation_ = mean_correlation
+        
+        # Calculate FDM: sqrt(1 / (mean_correlation + epsilon))
+        epsilon = 0.01  # Small epsilon to avoid division by zero
+        fdm = np.sqrt(1.0 / (mean_correlation + epsilon))
+        
         # Cap at fdm_max
-        return min(fdm, self.fdm_max)
+        fdm = min(fdm, self.fdm_max)
+        
+        return float(fdm)
 
     def combine(
         self,
@@ -383,16 +422,29 @@ class WeightLayer:
         # Calculate weighted forecast per row
         all_forecasts['weighted_forecast'] = all_forecasts['forecast'] * all_forecasts['weight']
 
-        # Group by ticker and sum weighted forecasts
-        combined = all_forecasts.groupby('ticker', as_index=False).agg({
-            'weighted_forecast': 'sum'
-        })
+        # Group by (datetime, ticker) and sum weighted forecasts
+        # This preserves datetime information for proper alignment
+        if 'datetime' in all_forecasts.columns:
+            combined = all_forecasts.groupby(['datetime', 'ticker'], as_index=False).agg({
+                'weighted_forecast': 'sum'
+            })
+        else:
+            # Fallback: group by ticker only (loses datetime info)
+            combined = all_forecasts.groupby('ticker', as_index=False).agg({
+                'weighted_forecast': 'sum'
+            })
 
         # Apply FDM
         combined['forecast_score'] = combined['weighted_forecast'] * self.fdm_
+        
+        # Cap forecast_score at 2.0 (per spec: max position is 2.0)
+        combined['forecast_score'] = combined['forecast_score'].clip(upper=2.0, lower=-2.0)
 
-        # Return only required columns
-        return combined[['ticker', 'forecast_score']]
+        # Return required columns (preserve datetime if available)
+        if 'datetime' in combined.columns:
+            return combined[['ticker', 'datetime', 'forecast_score']]
+        else:
+            return combined[['ticker', 'forecast_score']]
 
     def get_diagnostics(self) -> Dict:
         """
@@ -410,9 +462,16 @@ class WeightLayer:
         if not self.is_fitted_:
             return {'is_fitted': False}
 
+        # Convert weights to dict, handling NaN values
+        weights_dict = None
+        if self.weights_ is not None:
+            weights_dict = self.weights_.to_dict()
+            # Replace any NaN values with 0 (shouldn't happen, but safety check)
+            weights_dict = {k: (v if not pd.isna(v) else 0.0) for k, v in weights_dict.items()}
+        
         return {
             'is_fitted': True,
-            'weights': self.weights_.to_dict() if self.weights_ is not None else None,
+            'weights': weights_dict,
             'fdm': self.fdm_,
             'mean_forecast_correlation': self.mean_forecast_correlation_,
             'weight_method': self.weight_method,
