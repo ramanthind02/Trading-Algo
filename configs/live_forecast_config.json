@@ -1,0 +1,27 @@
+{
+  "connection": {
+    "host": "127.0.0.1",
+    "port": 7496,
+    "client_id": 1
+  },
+  "account": {
+    "capital_usd": 1000
+  },
+  "instruments": {
+    "ES": {"etf": "SPY"},
+    "NQ": {"etf": "QQQ"},
+    "YM": {"etf": "DIA"},
+    "RTY": {"etf": "IWM"}
+  },
+  "portfolio": {
+    "vault_paths": [
+      "vault/D/buy_hold_long",
+      "vault/D/rsi_bias_lookback_2_long"
+    ],
+    "target_volatility": 0.10
+  },
+  "data": {
+    "lookback_days": 60,
+    "bar_size": "1 day"
+  }
+}

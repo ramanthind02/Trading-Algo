@@ -300,7 +300,11 @@ class BaseModel:
         
         # Stream candles to bias nodes for all tickers
         for ticker in normalized_tickers:
-            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            # Handle both enum and string ticker values in dataframe
+            ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
+            ticker_candles = candles_df[
+                (candles_df['ticker'] == ticker) | (candles_df['ticker'] == ticker_str)
+            ].copy()
             
             # Extract features for this ticker
             for _, row in ticker_candles.iterrows():
@@ -397,7 +401,11 @@ class BaseModel:
         
         # Extract features for all tickers
         for ticker in normalized_tickers:
-            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            # Handle both enum and string ticker values in dataframe
+            ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
+            ticker_candles = candles_df[
+                (candles_df['ticker'] == ticker) | (candles_df['ticker'] == ticker_str)
+            ].copy()
             
             # Extract features for this ticker
             for _, row in ticker_candles.iterrows():
