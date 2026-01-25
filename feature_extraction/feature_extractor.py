@@ -107,16 +107,21 @@ def compute_forward_returns(
     This is important for multi-ticker scenarios where different tickers have different
     volatility levels (e.g., NQ is more volatile than ES).
     
+    ATR and EWSD features are MANDATORY when features_df is provided. The function will
+    raise an error if ATR or EWSD columns are not found.
+    
     Parameters
     ----------
     candles_df : pd.DataFrame
         DataFrame with candles. Must have columns: datetime, close, ticker
         Should be sorted by ticker and datetime
     features_df : pd.DataFrame, optional
-        Features dataframe containing ATR and/or EWSD columns for normalization.
-        If provided, will compute log_return_atr and log_return_ewsd.
-        ATR columns are identified by containing 'atr' and '252' in the name.
-        EWSD columns are identified by containing 'ewsd' in the name.
+        Features dataframe containing ATR and EWSD columns for normalization.
+        If provided, MUST contain:
+        - An ATR column (identified by containing 'atr' and '252' in the name)
+        - An EWSD column (identified by containing 'ewsd' in the name)
+        Will compute log_return_atr and log_return_ewsd using these columns.
+        If not provided, only raw_return and log_return will be computed.
         
     Returns
     -------
@@ -124,8 +129,8 @@ def compute_forward_returns(
         DataFrame with columns:
         - raw_return: (close[t+1] / close[t]) - 1
         - log_return: log(close[t+1] / close[t])
-        - log_return_atr: log_return normalized by ATR (if ATR column found in features_df)
-        - log_return_ewsd: log_return normalized by EWSD (if EWSD column found in features_df)
+        - log_return_atr: log_return normalized by ATR (mandatory if features_df provided)
+        - log_return_ewsd: log_return normalized by EWSD (mandatory if features_df provided)
         - ticker: ticker identifier
         Indexed by datetime (same as input)
         Last row per ticker is dropped (no forward return available)
@@ -185,64 +190,93 @@ def compute_forward_returns(
             'ticker': ticker_name
         }
         
-        # Add volatility-scaled returns if features_df is provided
-        if features_df is not None:
-            # Find ATR and EWSD columns for this ticker
-            # Filter features_df to this ticker if ticker column exists
-            if 'ticker' in features_df.columns:
-                ticker_features = features_df[features_df['ticker'] == ticker_name]
-            else:
-                ticker_features = features_df
-            
-            # Align features to candles by index
-            # Use merge on index to ensure proper alignment
-            ticker_features_indexed = ticker_features.set_index(ticker_features.index) if not isinstance(ticker_features.index, pd.DatetimeIndex) else ticker_features
-            
-            # Find ATR column (contains 'atr' and '252' in name)
-            atr_col = next(
-                (col for col in ticker_features_indexed.columns 
-                 if col != 'ticker' and 'atr' in col.lower() and '252' in col),
-                None
+        # ATR and EWSD are mandatory for volatility scaling
+        # Find ATR and EWSD columns for this ticker
+        if features_df is None:
+            raise ValueError(
+                "features_df is required for ATR/EWSD normalization. "
+                "ATR and EWSD features must be extracted before computing forward returns."
             )
-            
-            # Find EWSD column (contains 'ewsd' in name)
-            ewsd_col = next(
-                (col for col in ticker_features_indexed.columns 
-                 if col != 'ticker' and 'ewsd' in col.lower()),
-                None
+        
+        # Filter features_df to this ticker if ticker column exists
+        if 'ticker' in features_df.columns:
+            ticker_features = features_df[features_df['ticker'] == ticker_name]
+        else:
+            ticker_features = features_df
+        
+        # Align features to candles by index
+        # Use merge on index to ensure proper alignment
+        ticker_features_indexed = ticker_features.set_index(ticker_features.index) if not isinstance(ticker_features.index, pd.DatetimeIndex) else ticker_features
+        
+        # Find ATR column (contains 'atr' and '252' in name)
+        atr_col = next(
+            (col for col in ticker_features_indexed.columns 
+             if col != 'ticker' and 'atr' in col.lower() and '252' in col),
+            None
+        )
+        
+        # Find EWSD column (contains 'ewsd' in name)
+        ewsd_col = next(
+            (col for col in ticker_features_indexed.columns 
+             if col != 'ticker' and 'ewsd' in col.lower()),
+            None
+        )
+        
+        # Validate that ATR and EWSD columns are found
+        if atr_col is None:
+            raise ValueError(
+                f"ATR column not found in features_df. "
+                f"Expected a column containing 'atr' and '252' in the name. "
+                f"Available columns: {list(ticker_features_indexed.columns)}"
             )
-            
-            # Align features to target_index (forward fill for missing values)
-            if len(ticker_features_indexed) > 0:
-                # Reindex to target_index, forward fill missing values
-                ticker_features_aligned = ticker_features_indexed.reindex(target_index, method='ffill')
-            else:
-                ticker_features_aligned = pd.DataFrame(index=target_index)
-            
-            # Compute ATR-normalized return
-            log_return_atr = ticker_candles['log_return'].copy()
-            if atr_col and atr_col in ticker_features_aligned.columns:
-                atr_values = ticker_features_aligned[atr_col].values
-                # ATR is typically in percentage, convert to decimal if needed
-                # Check if values are > 1 (likely percentage) or < 1 (likely decimal)
-                if len(atr_values) > 0 and not np.isnan(atr_values).all():
-                    atr_max = np.nanmax(atr_values)
-                    if atr_max > 1:
-                        atr_decimal = atr_values / 100.0
-                    else:
-                        atr_decimal = atr_values
-                    log_return_atr = ticker_candles['log_return'].values / np.maximum(atr_decimal, 0.0001)
-            target_dict['log_return_atr'] = log_return_atr
-            
-            # Compute EWSD-normalized return
-            log_return_ewsd = ticker_candles['log_return'].copy()
-            if ewsd_col and ewsd_col in ticker_features_aligned.columns:
-                ewsd_values = ticker_features_aligned[ewsd_col].values
-                # EWSD is typically in percentage, convert to decimal
-                if len(ewsd_values) > 0 and not np.isnan(ewsd_values).all():
-                    ewsd_decimal = ewsd_values / 100.0
-                    log_return_ewsd = ticker_candles['log_return'].values / np.maximum(ewsd_decimal, 0.0001)
-            target_dict['log_return_ewsd'] = log_return_ewsd
+        
+        if ewsd_col is None:
+            raise ValueError(
+                f"EWSD column not found in features_df. "
+                f"Expected a column containing 'ewsd' in the name. "
+                f"Available columns: {list(ticker_features_indexed.columns)}"
+            )
+        
+        # Align features to target_index (forward fill for missing values)
+        if len(ticker_features_indexed) > 0:
+            # Reindex to target_index, forward fill missing values
+            ticker_features_aligned = ticker_features_indexed.reindex(target_index, method='ffill')
+        else:
+            raise ValueError(
+                f"No features found for ticker {ticker_name}. "
+                f"Cannot compute volatility-scaled returns."
+            )
+        
+        # Compute ATR-normalized return (mandatory)
+        atr_values = ticker_features_aligned[atr_col].values
+        if len(atr_values) == 0 or np.isnan(atr_values).all():
+            raise ValueError(
+                f"ATR values are all NaN for ticker {ticker_name}. "
+                f"Cannot compute log_return_atr."
+            )
+        # ATR is typically in percentage, convert to decimal if needed
+        # Check if values are > 1 (likely percentage) or < 1 (likely decimal)
+        atr_max = np.nanmax(atr_values)
+        if atr_max > 1:
+            atr_decimal = atr_values / 100.0
+        else:
+            atr_decimal = atr_values
+        log_return_atr = ticker_candles['log_return'].values / np.maximum(atr_decimal, 0.0001)
+        
+        # Compute EWSD-normalized return (mandatory)
+        ewsd_values = ticker_features_aligned[ewsd_col].values
+        if len(ewsd_values) == 0 or np.isnan(ewsd_values).all():
+            raise ValueError(
+                f"EWSD values are all NaN for ticker {ticker_name}. "
+                f"Cannot compute log_return_ewsd."
+            )
+        # EWSD is typically in percentage, convert to decimal
+        ewsd_decimal = ewsd_values / 100.0
+        log_return_ewsd = ticker_candles['log_return'].values / np.maximum(ewsd_decimal, 0.0001)
+        
+        # Add volatility-scaled returns (mandatory)
+        target_dict['log_return_atr'] = log_return_atr
+        target_dict['log_return_ewsd'] = log_return_ewsd
         
         ticker_targets = pd.DataFrame(target_dict, index=target_index)
         targets_list.append(ticker_targets)
@@ -529,10 +563,12 @@ def extract_features_with_forward_returns(
     Extract features and compute forward returns automatically.
     
     This is a convenience wrapper around extract_features() that:
-    1. Extracts features using extract_features()
-    2. Loads candles to compute forward returns (with volatility scaling if ATR/EWSD available)
+    1. Extracts features using extract_features() (main module + mandatory ATR + EWSD)
+    2. Loads candles to compute forward returns (with mandatory volatility scaling)
     3. Filters features to only those with forward returns available
     4. Returns aligned features_df and targets_df with forward returns
+    
+    ATR and EWSD features are ALWAYS extracted automatically to enable volatility scaling.
     
     Parameters
     ----------
@@ -609,9 +645,9 @@ def extract_features_with_forward_returns(
         use_millisecond_offset=use_millisecond_offset
     )
     
-    # STEP 1: Extract features first (needed for ATR/EWSD normalization)
-    # This gives us features with proper alignment and ATR/EWSD columns
-    features_df, _ = extract_features(
+    # STEP 1: Extract features - ALWAYS include ATR and EWSD for volatility scaling
+    # Extract main module features
+    main_features_df, _ = extract_features(
         module_name=module_name,
         params=params,
         ticker=ticker,
@@ -621,6 +657,61 @@ def extract_features_with_forward_returns(
         use_millisecond_offset=use_millisecond_offset
     )
     
+    # Extract ATR features (mandatory for volatility scaling)
+    atr_features_df, _ = extract_features(
+        module_name='atr',
+        params={'period': 252},
+        ticker=ticker,
+        start=start,
+        end=end,
+        timeframes=timeframes,
+        use_millisecond_offset=use_millisecond_offset
+    )
+    
+    # Extract EWSD features (mandatory for volatility scaling)
+    ewsd_features_df, _ = extract_features(
+        module_name='ewsd',
+        params={},  # Use default parameters
+        ticker=ticker,
+        start=start,
+        end=end,
+        timeframes=timeframes,
+        use_millisecond_offset=use_millisecond_offset
+    )
+    
+    # Combine all features: main + ATR + EWSD
+    # Since all dataframes are extracted with the same parameters, they share the same index
+    # Use pd.concat to combine columns, which automatically aligns on index
+    
+    # Normalize ticker columns to strings for consistency
+    main_features_df = main_features_df.copy()
+    atr_features_df = atr_features_df.copy()
+    ewsd_features_df = ewsd_features_df.copy()
+    
+    for df in [main_features_df, atr_features_df, ewsd_features_df]:
+        if 'ticker' in df.columns:
+            df['ticker'] = df['ticker'].apply(
+                lambda x: x.name if hasattr(x, 'name') else str(x)
+            )
+    
+    # Select columns to merge (exclude ticker from ATR/EWSD to avoid duplication)
+    atr_cols = [col for col in atr_features_df.columns if col != 'ticker']
+    ewsd_cols = [col for col in ewsd_features_df.columns if col != 'ticker']
+    
+    # Combine: main features + ATR columns + EWSD columns
+    # pd.concat with axis=1 automatically aligns on index
+    features_to_concat = [main_features_df]
+    if atr_cols:
+        features_to_concat.append(atr_features_df[atr_cols])
+    if ewsd_cols:
+        features_to_concat.append(ewsd_features_df[ewsd_cols])
+    
+    features_df = pd.concat(features_to_concat, axis=1)
+    
+    # Ensure ticker column is present (from main_features_df)
+    if 'ticker' in main_features_df.columns and 'ticker' not in features_df.columns:
+        features_df['ticker'] = main_features_df['ticker']
+    
     # Validate that features were extracted
     if len(features_df) == 0:
         raise ValueError(
@@ -628,7 +719,7 @@ def extract_features_with_forward_returns(
             f"in date range {start} to {end}"
         )
     
-    # STEP 2: Compute forward returns with volatility scaling (if ATR/EWSD available)
+    # STEP 2: Compute forward returns with volatility scaling (ATR/EWSD are mandatory)
     # Pass features_df to enable ATR/EWSD normalization for multi-ticker scenarios
     # Note: features_df may have more rows than candles_df (before forward return filtering)
     # We'll align them properly in STEP 3

@@ -1,0 +1,3 @@
+feature,original_criterion,pval,significant
+cumulative_rsi_signal_D_avgPeriod_2_lookback_2,1.0898996858613579,0.94,False
+cumulative_rsi_signal_D_avgPeriod_2_lookback_3,1.0266823118473538,0.94,False

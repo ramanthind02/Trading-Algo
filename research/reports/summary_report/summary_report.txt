@@ -1,0 +1,33 @@
+======================================================================
+Feature Analysis Summary Report
+======================================================================
+Generated: 2026-01-24 16:08:01
+Date Range: 2000-01-04 to 2024-12-30
+Number of Features: 2
+Number of Samples: 6286
+Tickers: ['GC']
+
+======================================================================
+Results Summary
+======================================================================
+
+Summary Statistics: 2 features
+Feature-Target Correlations: 2 features
+Intra-Feature Correlations: 2 features
+Decile Plots: 2 features
+Signal Cumsum Plots: 2 features
+Distribution Plots: 2 features
+Time Series Plots: 2 features
+Parameter Sensitivity: 1 analyses
+
+Permutation Test: 2 features tested, 0 significant
+
+Permutation Test p-values:
+  ✗ cumulative_rsi_signal_D_avgPeriod_2_lookback_2: p = 0.9400, metric = 1.0899
+  ✗ cumulative_rsi_signal_D_avgPeriod_2_lookback_3: p = 0.9400, metric = 1.0267
+
+======================================================================
+Top Feature-Target Correlations (Spearman)
+======================================================================
+  cumulative_rsi_signal_D_avgPeriod_2_lookback_3: -0.0089
+  cumulative_rsi_signal_D_avgPeriod_2_lookback_2: -0.0121

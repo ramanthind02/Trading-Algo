@@ -201,7 +201,7 @@ class WeightLayer:
 
     Examples
     --------
-    >>> weight_layer = WeightLayer(fdm_max=2.0)
+    >>> weight_layer = WeightLayer(fdm_max=2.5)
     >>> weight_layer.fit(forecast_vectors, signals)
     >>> combined = weight_layer.combine(forecast_vectors)
     """

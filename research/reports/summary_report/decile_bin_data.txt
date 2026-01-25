@@ -1,0 +1,42 @@
+======================================================================
+Decile Bin Analysis: Bin Ranges and Objective Metrics
+======================================================================
+Target Column: log_return_atr
+Number of Bins: 5
+
+
+======================================================================
+Feature: cumulative_rsi_signal_D_avgPeriod_2_lookback_2
+======================================================================
+Decile     Feature_Min     Feature_Max     Mean_Target     Std_Target      Count     
+----------------------------------------------------------------------
+1          0.040826        25.318281       0.002330        0.105641        1258      
+2          25.334475       45.028181       0.003489        0.102387        1257      
+3          45.032890       62.699485       0.005640        0.105546        1257      
+4          62.715899       81.000896       0.004827        0.107262        1257      
+5          81.022462       99.998636       0.004780        0.123692        1257      
+
+Summary Statistics:
+  Total Samples: 6286
+  Mean Target Range: [0.002330, 0.005640]
+  Best Bin (Highest Mean Target): Decile 3 (Mean Target = 0.005640)
+  Worst Bin (Lowest Mean Target): Decile 1 (Mean Target = 0.002330)
+
+
+======================================================================
+Feature: cumulative_rsi_signal_D_avgPeriod_2_lookback_3
+======================================================================
+Decile     Feature_Min     Feature_Max     Mean_Target     Std_Target      Count     
+----------------------------------------------------------------------
+1          0.703802        29.922504       0.003792        0.097415        1258      
+2          29.932000       46.435427       0.001065        0.099913        1257      
+3          46.469443       60.690758       0.005848        0.114368        1257      
+4          60.709448       76.181232       0.005253        0.105554        1257      
+5          76.186231       99.926543       0.005105        0.126045        1257      
+
+Summary Statistics:
+  Total Samples: 6286
+  Mean Target Range: [0.001065, 0.005848]
+  Best Bin (Highest Mean Target): Decile 3 (Mean Target = 0.005848)
+  Worst Bin (Lowest Mean Target): Decile 2 (Mean Target = 0.001065)
+

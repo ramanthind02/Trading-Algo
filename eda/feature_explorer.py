@@ -1471,25 +1471,42 @@ class FeatureExplorer:
             print("\n[3/10] Computing intra-feature correlations...")
         import os
         import matplotlib.pyplot as plt
-        corr_save_path = None
-        if save_dir is not None:
-            corr_save_path = os.path.join(save_dir, 'feature_correlations.png')
-        results['feature_correlations_figure'] = self.plot_feature_correlations(
-            save_path=corr_save_path
-        )
-        if show_plots:
-            plt.show()
-        elif not export_report:
-            # Only close if not exporting (export will handle it)
-            plt.close(results['feature_correlations_figure'])
-        # Store correlation matrix in results
-        numeric_features = [
-            col for col in self.feature_names
-            if pd.api.types.is_numeric_dtype(self.features_df[col])
-        ]
-        results['feature_correlations'] = self.features_df[numeric_features].corr(method='pearson')
-        if verbose:
-            print(f"  ✓ Computed correlation matrix for {len(numeric_features)} features")
+        try:
+            corr_save_path = None
+            if save_dir is not None:
+                corr_save_path = os.path.join(save_dir, 'feature_correlations.png')
+            results['feature_correlations_figure'] = self.plot_feature_correlations(
+                save_path=corr_save_path
+            )
+            if show_plots:
+                plt.show()
+            elif not export_report:
+                # Only close if not exporting (export will handle it)
+                plt.close(results['feature_correlations_figure'])
+            # Store correlation matrix in results
+            numeric_features = [
+                col for col in self.feature_names
+                if pd.api.types.is_numeric_dtype(self.features_df[col])
+            ]
+            results['feature_correlations'] = self.features_df[numeric_features].corr(method='pearson')
+            if verbose:
+                print(f"  ✓ Computed correlation matrix for {len(numeric_features)} features")
+        except ValueError as e:
+            # Skip correlation matrix if insufficient features (need at least 2)
+            if "Need at least 2 numeric features" in str(e):
+                if verbose:
+                    print(f"  ⚠ Skipping intra-feature correlations: {str(e)}")
+                results['feature_correlations_figure'] = None
+                results['feature_correlations'] = None
+            else:
+                # Re-raise if it's a different ValueError
+                raise
+        except Exception as e:
+            # Log other errors but continue
+            if verbose:
+                print(f"  ✗ Failed to compute intra-feature correlations: {e}")
+            results['feature_correlations_figure'] = None
+            results['feature_correlations'] = None
         
         # 4. Decile analysis
         if verbose:
@@ -1498,12 +1515,43 @@ class FeatureExplorer:
         # Only save individual files if not exporting (export will create combined file)
         if save_dir is not None and not export_report:
             decile_save_dir = os.path.join(save_dir, 'deciles')
-        results['decile_figures'] = self.plot_all_deciles(
-            n_bins=10,
-            target_col=target_col,
-            save_dir=decile_save_dir,
-            verbose=False
-        )
+        # Get n_bins from binning_model if available
+        decile_n_bins = getattr(binning_model, 'n_bins', 10)
+        results['decile_n_bins'] = decile_n_bins  # Store for export function
+        
+        # Generate decile plots and collect bin_table data for each feature
+        results['decile_figures'] = {}
+        results['decile_bin_data'] = {}  # Store bin_table data for each feature
+        
+        target_series = self.targets_df[target_col]
+        for feature_name in self.feature_names:
+            try:
+                feature_data = self.features_df[feature_name]
+                if not pd.api.types.is_numeric_dtype(feature_data):
+                    continue
+                
+                save_path = None
+                if decile_save_dir:
+                    os.makedirs(decile_save_dir, exist_ok=True)
+                    save_path = os.path.join(decile_save_dir, f"{feature_name}_deciles.png")
+                
+                # Get both figure and bin_table
+                fig, bin_table = plot_decile_analysis(
+                    feature_data=feature_data,
+                    target_data=target_series,
+                    feature_name=feature_name,
+                    n_bins=decile_n_bins,
+                    figsize=(12, 8),
+                    plot_type="bar",
+                    save_path=save_path
+                )
+                results['decile_figures'][feature_name] = fig
+                results['decile_bin_data'][feature_name] = bin_table
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Failed to generate decile plot for {feature_name}: {e}")
+                continue
+        
         # Close figures if not showing plots and not exporting (export will handle closing)
         if not show_plots and not export_report:
             import matplotlib.pyplot as plt
@@ -1716,7 +1764,11 @@ class FeatureExplorer:
             print(f"\nResults Summary:")
             print(f"  - Summary statistics: {len(results['summary_stats'])} features")
             print(f"  - Feature-target correlations: {len(results['correlations'])} features")
-            print(f"  - Intra-feature correlations: {len(results.get('feature_correlations', pd.DataFrame()).columns)} features")
+            feature_corr = results.get('feature_correlations')
+            if feature_corr is not None and isinstance(feature_corr, pd.DataFrame):
+                print(f"  - Intra-feature correlations: {len(feature_corr.columns)} features")
+            else:
+                print(f"  - Intra-feature correlations: Skipped (insufficient features)")
             print(f"  - Decile plots: {len(results['decile_figures'])} features")
             print(f"  - Signal cumsum plots: {len(results['signal_cumsum_figures'])} features")
             print(f"  - Distribution plots: {len(results['distribution_figures'])} features")
@@ -1736,7 +1788,7 @@ class FeatureExplorer:
         
         # Export report if requested (plots should already be saved since save_dir was set above)
         if export_report:
-            self._export_summary_report(results, save_dir, target_col=target_col, verbose=verbose)
+            self._export_summary_report(results, save_dir, target_col=target_col, binning_model=binning_model, verbose=verbose)
         
         # Close all remaining figures if show_plots is False and not exporting
         # (export function will close figures after saving them)
@@ -1756,13 +1808,14 @@ class FeatureExplorer:
         results: Dict[str, Any],
         export_dir: str,
         target_col: str = 'log_return',
+        binning_model: Optional[Any] = None,
         verbose: bool = True
     ) -> None:
         """
         Export summary report to files.
         
         Saves plots/figures to image files and creates a summary text file.
-        Only exports raw data (CSV) for permutation test results.
+        Exports raw data (CSV) for permutation test results and feature data.
         
         Parameters
         ----------
@@ -1770,6 +1823,10 @@ class FeatureExplorer:
             Results dictionary from generate_summary_report
         export_dir : str
             Directory to save exported files
+        target_col : str, default='log_return'
+            Target column used for analysis
+        binning_model : Optional[Any], default=None
+            Binning model used for analysis (required for binned feature export)
         verbose : bool, default=True
             Print progress
         """
@@ -1786,108 +1843,224 @@ class FeatureExplorer:
             print(f"{'='*70}")
         
         # 1. Export feature correlations figure (already saved during generation, but ensure it's there)
-        if 'feature_correlations_figure' in results:
+        if 'feature_correlations_figure' in results and results['feature_correlations_figure'] is not None:
             corr_fig_path = os.path.join(export_dir, 'feature_correlations.png')
             if not os.path.exists(corr_fig_path):
                 results['feature_correlations_figure'].savefig(corr_fig_path, dpi=150, bbox_inches='tight')
             if verbose:
                 print(f"  ✓ Exported feature correlations plot: {corr_fig_path}")
+        elif verbose:
+            print(f"  ⚠ Skipped feature correlations plot (insufficient features)")
         
-        # 2. Export decile plots (combined into single file)
+        # 2. Export decile plots (combined into single file, or individual if only 1 feature)
         if 'decile_figures' in results and results['decile_figures']:
+            feature_names = list(results['decile_figures'].keys())
             decile_path = os.path.join(export_dir, 'all_deciles_combined.png')
-            try:
-                feature_names = list(results['decile_figures'].keys())
-                combined_fig = combine_decile_plots(
-                    features_df=self.features_df,
-                    targets_df=self.targets_df,
-                    feature_names=feature_names,
-                    target_col=target_col,
-                    n_bins=10,
-                    n_cols=4,
-                    figsize_per_plot=(6, 4),
-                    plot_type="bar",
-                    save_path=decile_path
-                )
-                plt.close(combined_fig)
-                # Close individual figures
-                for fig in results['decile_figures'].values():
+            
+            if len(feature_names) == 1:
+                # Only 1 feature: export the individual plot directly
+                try:
+                    feature_name = feature_names[0]
+                    fig = results['decile_figures'][feature_name]
+                    fig.savefig(decile_path, dpi=150, bbox_inches='tight')
                     plt.close(fig)
-                if verbose:
-                    print(f"  ✓ Exported combined decile plots: {decile_path} ({len(feature_names)} features)")
-            except Exception as e:
-                if verbose:
-                    print(f"  ✗ Failed to combine decile plots: {e}")
-        
-        # 3. Export signal cumsum plots (combined into single file)
-        if 'signal_cumsum_figures' in results and results['signal_cumsum_figures']:
-            signal_path = os.path.join(export_dir, 'all_signal_cumsum_combined.png')
-            try:
-                if 'signal_cumsum_gated_returns' in results:
-                    combined_fig = combine_signal_cumsum_plots(
-                        gated_returns_dict=results['signal_cumsum_gated_returns'],
+                    if verbose:
+                        print(f"  ✓ Exported decile plot: {decile_path} (1 feature)")
+                except Exception as e:
+                    if verbose:
+                        print(f"  ✗ Failed to export decile plot: {e}")
+            else:
+                # Multiple features: combine into single file
+                try:
+                    # Get n_bins from results (stored during generation)
+                    decile_n_bins = results.get('decile_n_bins', 10)
+                    combined_fig = combine_decile_plots(
+                        features_df=self.features_df,
+                        targets_df=self.targets_df,
+                        feature_names=feature_names,
+                        target_col=target_col,
+                        n_bins=decile_n_bins,
                         n_cols=4,
-                        figsize_per_plot=(6, 3),
-                        save_path=signal_path
+                        figsize_per_plot=(6, 4),
+                        plot_type="bar",
+                        save_path=decile_path
                     )
                     plt.close(combined_fig)
                     # Close individual figures
-                    for fig in results['signal_cumsum_figures'].values():
+                    for fig in results['decile_figures'].values():
                         plt.close(fig)
                     if verbose:
-                        print(f"  ✓ Exported combined signal cumsum plots: {signal_path} ({len(results['signal_cumsum_figures'])} features)")
-                else:
+                        print(f"  ✓ Exported combined decile plots: {decile_path} ({len(feature_names)} features)")
+                except Exception as e:
                     if verbose:
-                        print(f"  ✗ Cannot combine signal cumsum plots: gated returns data not available")
+                        print(f"  ✗ Failed to combine decile plots: {e}")
+        
+        # 2b. Export decile bin data (bin ranges and objective metrics) to text file
+        if 'decile_bin_data' in results and results['decile_bin_data']:
+            decile_data_path = os.path.join(export_dir, 'decile_bin_data.txt')
+            try:
+                with open(decile_data_path, 'w') as f:
+                    f.write("="*70 + "\n")
+                    f.write("Decile Bin Analysis: Bin Ranges and Objective Metrics\n")
+                    f.write("="*70 + "\n")
+                    f.write(f"Target Column: {target_col}\n")
+                    f.write(f"Number of Bins: {results.get('decile_n_bins', 10)}\n")
+                    f.write("\n")
+                    
+                    for feature_name in sorted(results['decile_bin_data'].keys()):
+                        bin_table = results['decile_bin_data'][feature_name]
+                        f.write("\n" + "="*70 + "\n")
+                        f.write(f"Feature: {feature_name}\n")
+                        f.write("="*70 + "\n")
+                        f.write(f"{'Decile':<10} {'Feature_Min':<15} {'Feature_Max':<15} {'Mean_Target':<15} {'Std_Target':<15} {'Count':<10}\n")
+                        f.write("-"*70 + "\n")
+                        
+                        for _, row in bin_table.iterrows():
+                            decile = row.get('Decile', 'N/A')
+                            feat_min = row.get('Feature_Min', 0)
+                            feat_max = row.get('Feature_Max', 0)
+                            mean_target = row.get('Mean_Target', 0)
+                            std_target = row.get('Std_Target', 0)
+                            count = row.get('Count', 0)
+                            
+                            f.write(f"{str(decile):<10} {feat_min:<15.6f} {feat_max:<15.6f} {mean_target:<15.6f} {std_target:<15.6f} {count:<10}\n")
+                        
+                        f.write("\n")
+                        # Add summary statistics
+                        f.write(f"Summary Statistics:\n")
+                        f.write(f"  Total Samples: {int(bin_table['Count'].sum())}\n")
+                        f.write(f"  Mean Target Range: [{bin_table['Mean_Target'].min():.6f}, {bin_table['Mean_Target'].max():.6f}]\n")
+                        best_idx = bin_table['Mean_Target'].idxmax()
+                        worst_idx = bin_table['Mean_Target'].idxmin()
+                        best_decile = bin_table.loc[best_idx, 'Decile']
+                        worst_decile = bin_table.loc[worst_idx, 'Decile']
+                        f.write(f"  Best Bin (Highest Mean Target): Decile {best_decile} "
+                               f"(Mean Target = {bin_table['Mean_Target'].max():.6f})\n")
+                        f.write(f"  Worst Bin (Lowest Mean Target): Decile {worst_decile} "
+                               f"(Mean Target = {bin_table['Mean_Target'].min():.6f})\n")
+                        f.write("\n")
+                
+                if verbose:
+                    print(f"  ✓ Exported decile bin data: {decile_data_path} ({len(results['decile_bin_data'])} features)")
             except Exception as e:
                 if verbose:
-                    print(f"  ✗ Failed to combine signal cumsum plots: {e}")
+                    print(f"  ✗ Failed to export decile bin data: {e}")
         
-        # 4. Export distribution plots (combined into single file)
+        # 3. Export signal cumsum plots (combined into single file, or individual if only 1 feature)
+        if 'signal_cumsum_figures' in results and results['signal_cumsum_figures']:
+            n_features = len(results['signal_cumsum_figures'])
+            signal_path = os.path.join(export_dir, 'all_signal_cumsum_combined.png')
+            
+            if n_features == 1:
+                # Only 1 feature: export the individual plot directly
+                try:
+                    feature_name = list(results['signal_cumsum_figures'].keys())[0]
+                    fig = results['signal_cumsum_figures'][feature_name]
+                    fig.savefig(signal_path, dpi=150, bbox_inches='tight')
+                    plt.close(fig)
+                    if verbose:
+                        print(f"  ✓ Exported signal cumsum plot: {signal_path} (1 feature)")
+                except Exception as e:
+                    if verbose:
+                        print(f"  ✗ Failed to export signal cumsum plot: {e}")
+            else:
+                # Multiple features: combine into single file
+                try:
+                    if 'signal_cumsum_gated_returns' in results:
+                        combined_fig = combine_signal_cumsum_plots(
+                            gated_returns_dict=results['signal_cumsum_gated_returns'],
+                            n_cols=4,
+                            figsize_per_plot=(6, 3),
+                            save_path=signal_path
+                        )
+                        plt.close(combined_fig)
+                        # Close individual figures
+                        for fig in results['signal_cumsum_figures'].values():
+                            plt.close(fig)
+                        if verbose:
+                            print(f"  ✓ Exported combined signal cumsum plots: {signal_path} ({n_features} features)")
+                    else:
+                        if verbose:
+                            print(f"  ✗ Cannot combine signal cumsum plots: gated returns data not available")
+                except Exception as e:
+                    if verbose:
+                        print(f"  ✗ Failed to combine signal cumsum plots: {e}")
+        
+        # 4. Export distribution plots (combined into single file, or individual if only 1 feature)
         if 'distribution_figures' in results and results['distribution_figures']:
+            feature_names = list(results['distribution_figures'].keys())
             dist_path = os.path.join(export_dir, 'all_distributions_combined.png')
-            try:
-                feature_names = list(results['distribution_figures'].keys())
-                combined_fig = combine_distribution_plots(
-                    features_df=self.features_df,
-                    feature_names=feature_names,
-                    n_cols=4,
-                    figsize_per_plot=(5, 3),
-                    bins=50,
-                    save_path=dist_path
-                )
-                plt.close(combined_fig)
-                # Close individual figures
-                for fig in results['distribution_figures'].values():
+            
+            if len(feature_names) == 1:
+                # Only 1 feature: export the individual plot directly
+                try:
+                    feature_name = feature_names[0]
+                    fig = results['distribution_figures'][feature_name]
+                    fig.savefig(dist_path, dpi=150, bbox_inches='tight')
                     plt.close(fig)
-                if verbose:
-                    print(f"  ✓ Exported combined distribution plots: {dist_path} ({len(feature_names)} features)")
-            except Exception as e:
-                if verbose:
-                    print(f"  ✗ Failed to combine distribution plots: {e}")
+                    if verbose:
+                        print(f"  ✓ Exported distribution plot: {dist_path} (1 feature)")
+                except Exception as e:
+                    if verbose:
+                        print(f"  ✗ Failed to export distribution plot: {e}")
+            else:
+                # Multiple features: combine into single file
+                try:
+                    combined_fig = combine_distribution_plots(
+                        features_df=self.features_df,
+                        feature_names=feature_names,
+                        n_cols=4,
+                        figsize_per_plot=(5, 3),
+                        bins=50,
+                        save_path=dist_path
+                    )
+                    plt.close(combined_fig)
+                    # Close individual figures
+                    for fig in results['distribution_figures'].values():
+                        plt.close(fig)
+                    if verbose:
+                        print(f"  ✓ Exported combined distribution plots: {dist_path} ({len(feature_names)} features)")
+                except Exception as e:
+                    if verbose:
+                        print(f"  ✗ Failed to combine distribution plots: {e}")
         
-        # 5. Export time series plots (combined into single file)
+        # 5. Export time series plots (combined into single file, or individual if only 1 feature)
         if 'timeseries_figures' in results and results['timeseries_figures']:
+            feature_names = list(results['timeseries_figures'].keys())
             ts_path = os.path.join(export_dir, 'all_timeseries_combined.png')
-            try:
-                feature_names = list(results['timeseries_figures'].keys())
-                combined_fig = combine_timeseries_plots(
-                    features_df=self.features_df,
-                    feature_names=feature_names,
-                    n_cols=4,
-                    figsize_per_plot=(6, 3),
-                    rolling_window=20,
-                    save_path=ts_path
-                )
-                plt.close(combined_fig)
-                # Close individual figures
-                for fig in results['timeseries_figures'].values():
+            
+            if len(feature_names) == 1:
+                # Only 1 feature: export the individual plot directly
+                try:
+                    feature_name = feature_names[0]
+                    fig = results['timeseries_figures'][feature_name]
+                    fig.savefig(ts_path, dpi=150, bbox_inches='tight')
                     plt.close(fig)
-                if verbose:
-                    print(f"  ✓ Exported combined time series plots: {ts_path} ({len(feature_names)} features)")
-            except Exception as e:
-                if verbose:
-                    print(f"  ✗ Failed to combine time series plots: {e}")
+                    if verbose:
+                        print(f"  ✓ Exported time series plot: {ts_path} (1 feature)")
+                except Exception as e:
+                    if verbose:
+                        print(f"  ✗ Failed to export time series plot: {e}")
+            else:
+                # Multiple features: combine into single file
+                try:
+                    combined_fig = combine_timeseries_plots(
+                        features_df=self.features_df,
+                        feature_names=feature_names,
+                        n_cols=4,
+                        figsize_per_plot=(6, 3),
+                        rolling_window=20,
+                        save_path=ts_path
+                    )
+                    plt.close(combined_fig)
+                    # Close individual figures
+                    for fig in results['timeseries_figures'].values():
+                        plt.close(fig)
+                    if verbose:
+                        print(f"  ✓ Exported combined time series plots: {ts_path} ({len(feature_names)} features)")
+                except Exception as e:
+                    if verbose:
+                        print(f"  ✗ Failed to combine time series plots: {e}")
         
         # 6. Export parameter sensitivity plots (if available)
         if results.get('parameter_sensitivity'):
@@ -1955,7 +2128,98 @@ class FeatureExplorer:
             if verbose:
                 print(f"  ✓ Exported permutation test results (CSV): {perm_path}")
         
-        # 8. Create summary text file
+        # 8b. Export raw features, binned features, and all targets to CSV
+        if binning_model is not None and self.feature_names:
+            try:
+                feature_data_path = os.path.join(export_dir, 'feature_data.csv')
+                
+                # Prepare data for export
+                export_data_list = []
+                
+                for feature_name in self.feature_names:
+                    if feature_name not in self.features_df.columns:
+                        continue
+                    
+                    # Get raw feature values
+                    raw_feature = self.features_df[feature_name]
+                    
+                    # Align with targets
+                    target_series = self.targets_df[target_col]
+                    common_index = raw_feature.index.intersection(target_series.index)
+                    raw_feature_aligned = raw_feature.reindex(common_index)
+                    targets_aligned = self.targets_df.reindex(common_index)
+                    
+                    # Remove NaN values for binning
+                    valid_mask = ~(raw_feature_aligned.isna() | target_series.reindex(common_index).isna())
+                    raw_feature_clean = raw_feature_aligned[valid_mask]
+                    target_series_clean = target_series.reindex(common_index)[valid_mask]
+                    
+                    if len(raw_feature_clean) < 5:
+                        continue
+                    
+                    # Fit binning model to get binned values
+                    try:
+                        binning_model.fit(raw_feature_clean, target_series_clean)
+                        
+                        # Get actual bin indices (0, 1, 2, ..., n_bins-1) using thresholds
+                        # This replicates the logic from BinningModelBase.predict()
+                        if binning_model.thresholds_ is None or len(binning_model.thresholds_) == 0:
+                            # Constant feature: all values go to bin 0
+                            binned_feature = pd.Series(np.zeros(len(raw_feature_aligned), dtype=int), index=raw_feature_aligned.index)
+                        else:
+                            # Use np.digitize to assign bins based on thresholds
+                            bin_indices = np.digitize(raw_feature_aligned.values, binning_model.thresholds_)
+                            binned_feature = pd.Series(bin_indices, index=raw_feature_aligned.index)
+                        
+                        # Also get binary signal for reference (1 if in best bin, 0 otherwise)
+                        binary_signal = binning_model.predict(raw_feature_aligned, strategy='long')
+                        if not isinstance(binary_signal, pd.Series):
+                            binary_signal = pd.Series(binary_signal, index=raw_feature_aligned.index)
+                        
+                        # Create DataFrame for this feature
+                        feature_df = pd.DataFrame({
+                            'datetime': raw_feature_aligned.index,
+                            'feature_name': feature_name,
+                            'raw_feature': raw_feature_aligned.values,
+                            'binned_feature': binned_feature.values,  # Bin index (0, 1, 2, ..., n_bins-1)
+                            'binary_signal': binary_signal.values  # Binary signal (1 if in best bin, 0 otherwise)
+                        })
+                        
+                        # Add all target columns
+                        for target_col_name in self.targets_df.columns:
+                            if target_col_name in targets_aligned.columns:
+                                feature_df[target_col_name] = targets_aligned[target_col_name].reindex(raw_feature_aligned.index).values
+                        
+                        # Add ticker if present
+                        if 'ticker' in self.features_df.columns:
+                            ticker_values = self.features_df['ticker'].reindex(raw_feature_aligned.index)
+                            feature_df['ticker'] = ticker_values.values
+                        
+                        export_data_list.append(feature_df)
+                        
+                    except Exception as e:
+                        if verbose:
+                            print(f"  ⚠ Failed to bin feature '{feature_name}': {e}")
+                        continue
+                
+                # Combine all features into single DataFrame
+                if export_data_list:
+                    combined_df = pd.concat(export_data_list, axis=0, ignore_index=True)
+                    # Sort by datetime
+                    combined_df = combined_df.sort_values('datetime')
+                    # Save to CSV
+                    combined_df.to_csv(feature_data_path, index=False)
+                    if verbose:
+                        print(f"  ✓ Exported feature data (raw, binned, targets): {feature_data_path} ({len(export_data_list)} features, {len(combined_df)} rows)")
+                else:
+                    if verbose:
+                        print(f"  ⚠ No feature data to export (all features failed binning)")
+                        
+            except Exception as e:
+                if verbose:
+                    print(f"  ✗ Failed to export feature data: {e}")
+        
+        # 9. Create summary text file
         summary_text_path = os.path.join(export_dir, 'summary_report.txt')
         with open(summary_text_path, 'w') as f:
             f.write("="*70 + "\n")
@@ -1973,7 +2237,11 @@ class FeatureExplorer:
             
             f.write(f"Summary Statistics: {len(results['summary_stats'])} features\n")
             f.write(f"Feature-Target Correlations: {len(results['correlations'])} features\n")
-            f.write(f"Intra-Feature Correlations: {len(results.get('feature_correlations', pd.DataFrame()).columns)} features\n")
+            feature_corr = results.get('feature_correlations')
+            if feature_corr is not None and isinstance(feature_corr, pd.DataFrame):
+                f.write(f"Intra-Feature Correlations: {len(feature_corr.columns)} features\n")
+            else:
+                f.write(f"Intra-Feature Correlations: Skipped (insufficient features)\n")
             f.write(f"Decile Plots: {len(results['decile_figures'])} features\n")
             f.write(f"Signal Cumsum Plots: {len(results['signal_cumsum_figures'])} features\n")
             f.write(f"Distribution Plots: {len(results['distribution_figures'])} features\n")

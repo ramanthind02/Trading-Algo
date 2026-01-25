@@ -119,6 +119,7 @@ class BaseModel:
             # Try to create from feature_config
             from feature_selection.base_models.quantile_binning import QuantileBinningModel
             from feature_selection.base_models.tree_binning import DecisionTreeBinningModel
+            from feature_selection.base_models.twobin_binning import TwoBinBinningModel
             
             model_type = feature_config.get('model_type', 'QuantileBinningModel')
             constructor_params = feature_config.get('constructor_params', {})
@@ -127,6 +128,8 @@ class BaseModel:
                 self.binning_model = QuantileBinningModel(**constructor_params)
             elif model_type == 'DecisionTreeBinningModel':
                 self.binning_model = DecisionTreeBinningModel(**constructor_params)
+            elif model_type == 'TwoBinBinningModel':
+                self.binning_model = TwoBinBinningModel(**constructor_params)
             else:
                 # Default to QuantileBinningModel
                 self.binning_model = QuantileBinningModel()
@@ -139,13 +142,32 @@ class BaseModel:
         # Create bias nodes internally - one per ticker and timeframe
         # Key: (ticker, timeframe) tuple
         self.bias_nodes: Dict[Tuple[Ticker, TimeFrame], Any] = {}
+        
+        # Extract single values from lists in params (BaseModel doesn't do grid expansion)
+        # If params contain lists, extract first value (for compatibility with extract_features_for_bias_node)
+        cleaned_params = {}
+        for key, value in bias_node_spec['params'].items():
+            if isinstance(value, list):
+                if len(value) == 0:
+                    raise ValueError(f"Parameter '{key}' has empty list. Provide at least one value.")
+                elif len(value) > 1:
+                    raise ValueError(
+                        f"Parameter '{key}' has multiple values {value}. "
+                        f"BaseModel creates one feature per parameter combination. "
+                        f"For multiple combinations, create separate BaseModel instances or use extract_features_for_bias_node()."
+                    )
+                # Extract single value from list
+                cleaned_params[key] = value[0]
+            else:
+                cleaned_params[key] = value
+        
         for ticker in self.tickers:
             for tf in bias_node_spec['timeframes']:
                 bias_node = helpers.create_bias_node(
                     bias_node_spec['module_name'],
                     ticker,
                     tf,
-                    bias_node_spec['params']
+                    cleaned_params
                 )
                 self.bias_nodes[(ticker, tf)] = bias_node
         
@@ -214,6 +236,9 @@ class BaseModel:
         """
         Extract feature from tracked bias node outputs.
         
+        For multi-ticker models, aggregates feature values across tickers by base datetime
+        (removing millisecond offsets) using mean aggregation.
+        
         Returns feature values in the order candles were added.
         The feature column name is standardized using build_feature_column_name().
         
@@ -227,9 +252,6 @@ class BaseModel:
         primary_ticker = self.tickers[0]
         primary_node = self.bias_nodes[(primary_ticker, primary_tf)]
         
-        # Extract feature values in order of candle addition
-        feature_values = [self._feature_values.get(dt, np.nan) for dt in self._feature_datetimes]
-        
         # Get standardized column name
         output_feature = 'signal'  # default
         if hasattr(primary_node, 'output_features') and primary_node.output_features:
@@ -242,12 +264,45 @@ class BaseModel:
             params=self.bias_node_spec['params']
         )
         
-        # Create series with standardized name, indexed by datetime
-        feature_series = pd.Series(
-            feature_values,
-            index=pd.DatetimeIndex(self._feature_datetimes),
-            name=column_name
-        )
+        # Handle multi-ticker aggregation
+        if len(self.tickers) > 1:
+            # Create temporary DataFrame with feature values and base datetimes
+            # Remove millisecond offsets to group by base datetime
+            feature_data = []
+            for dt in self._feature_datetimes:
+                if dt in self._feature_values:
+                    # Remove millisecond/microsecond precision to get base datetime
+                    base_dt = dt.replace(microsecond=0)
+                    feature_data.append({
+                        'datetime': base_dt,
+                        'original_datetime': dt,
+                        'value': self._feature_values[dt]
+                    })
+            
+            if not feature_data:
+                # No feature values extracted - return empty series
+                return pd.Series(dtype=float, name=column_name)
+            
+            # Create DataFrame and aggregate by base datetime (mean across tickers)
+            df = pd.DataFrame(feature_data)
+            aggregated = df.groupby('datetime')['value'].mean().sort_index()
+            
+            feature_series = pd.Series(
+                aggregated.values,
+                index=pd.DatetimeIndex(aggregated.index),
+                name=column_name
+            )
+        else:
+            # Single ticker: extract feature values in order of candle addition
+            feature_values = [self._feature_values.get(dt, np.nan) for dt in self._feature_datetimes]
+            
+            # Create series with standardized name, indexed by datetime
+            feature_series = pd.Series(
+                feature_values,
+                index=pd.DatetimeIndex(self._feature_datetimes),
+                name=column_name
+            )
+        
         self.feature_column = column_name
         
         return feature_series
@@ -299,8 +354,14 @@ class BaseModel:
         self._feature_datetimes.clear()
         
         # Stream candles to bias nodes for all tickers
+        # IMPORTANT: Sort by datetime to ensure proper sequential processing
+        # This is critical for features that require lookback windows (e.g., EWMAC, RSI)
         for ticker in normalized_tickers:
             ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            
+            # Sort by datetime to ensure sequential processing
+            if 'datetime' in ticker_candles.columns:
+                ticker_candles = ticker_candles.sort_values('datetime')
             
             # Extract features for this ticker
             for _, row in ticker_candles.iterrows():
@@ -309,6 +370,21 @@ class BaseModel:
         
         # Extract aggregated features (all tickers)
         feature_data = self.get_feature()
+        
+        # Debug: Check if we have any feature values
+        if len(feature_data) == 0:
+            raise ValueError(
+                f"No feature values extracted. This can happen if:\n"
+                f"1. Bias nodes need more candles to warm up (e.g., EWMAC with spanSlow=256 needs ~256 candles)\n"
+                f"2. All feature values are NaN\n"
+                f"3. Candles are not being streamed correctly\n"
+                f"Debug info:\n"
+                f"  - Feature datetimes tracked: {len(self._feature_datetimes)}\n"
+                f"  - Feature values stored: {len(self._feature_values)}\n"
+                f"  - Tickers: {self.tickers}\n"
+                f"  - Bias nodes: {list(self.bias_nodes.keys())}\n"
+                f"  - Candles processed: {len(candles_df)}"
+            )
         
         # Set feature_column from feature data
         if feature_data.name:
@@ -335,7 +411,76 @@ class BaseModel:
         
         # Align feature and target data
         # Both should have datetime index
+        # For multi-ticker with millisecond offsets, we need to align properly
+        # Try to align by index first, then by base datetime if needed
         aligned_target = target_data.reindex(feature_data.index)
+        
+        # Check alignment quality
+        n_aligned = aligned_target.notna().sum()
+        n_features = len(feature_data)
+        alignment_ratio = n_aligned / n_features if n_features > 0 else 0.0
+        
+        # If alignment resulted in all NaN or very poor alignment, try aligning by base datetime
+        if (aligned_target.isna().all() or alignment_ratio < 0.5) and len(target_data) > 0:
+            # Use the same method as BaseModel.get_feature() for consistency
+            # BaseModel.get_feature() uses: base_dt = dt.replace(microsecond=0)
+            # We'll use the same approach here
+            
+            # Convert indices to base datetime (remove microseconds) to match get_feature() behavior
+            def to_base_datetime(dt):
+                """Convert datetime to base datetime (remove microseconds) - matches get_feature() behavior."""
+                if isinstance(dt, pd.Timestamp):
+                    return dt.replace(microsecond=0)
+                else:
+                    return pd.to_datetime(dt).replace(microsecond=0)
+            
+            # Create base datetime indices (matching get_feature() behavior)
+            feature_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in feature_data.index])
+            target_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in target_data.index])
+            
+            # Create mapping from base datetime to feature values
+            feature_by_base = pd.Series(feature_data.values, index=feature_base_index)
+            # Group by base datetime and take mean if multiple values per base datetime
+            feature_by_base = feature_by_base.groupby(feature_by_base.index).mean()
+            
+            # Align target to base datetimes
+            target_by_base = pd.Series(target_data.values, index=target_base_index)
+            target_by_base = target_by_base.groupby(target_by_base.index).mean()  # Use mean to match feature aggregation
+            
+            # Find common base datetimes
+            common_base_dt = feature_by_base.index.intersection(target_by_base.index)
+            
+            if len(common_base_dt) == 0:
+                raise ValueError(
+                    f"Cannot align feature and target data. "
+                    f"Feature index range: {feature_data.index.min()} to {feature_data.index.max()}, "
+                    f"Target index range: {target_data.index.min()} to {target_data.index.max()}. "
+                    f"No overlapping base datetimes found."
+                )
+            
+            # Reindex both to common base datetimes
+            feature_data = feature_by_base.reindex(common_base_dt)
+            aligned_target = target_by_base.reindex(common_base_dt)
+            
+            # Validate alignment after base datetime matching
+            final_alignment_ratio = aligned_target.notna().sum() / len(feature_data) if len(feature_data) > 0 else 0.0
+            if final_alignment_ratio < 0.8:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Poor alignment after base datetime matching: {final_alignment_ratio:.1%} aligned. "
+                    f"Feature range: {feature_data.index.min()} to {feature_data.index.max()}, "
+                    f"Target range: {target_by_base.index.min()} to {target_by_base.index.max()}, "
+                    f"Common datetimes: {len(common_base_dt)}"
+                )
+        
+        # Final validation: ensure we have enough aligned data
+        final_n_aligned = aligned_target.notna().sum()
+        if final_n_aligned < 20:
+            raise ValueError(
+                f"Insufficient aligned data: {final_n_aligned} samples aligned out of {len(feature_data)} features. "
+                f"This suggests a datetime alignment issue between features and returns."
+            )
         
         # Fit binning model
         self.binning_model.fit(feature_data, aligned_target)
@@ -501,9 +646,26 @@ class BaseModel:
         from ensemble.vault_manager import add_feature_to_ensemble
         from utils.enums import Ticker
         
+        # Generate feature_column from bias_node_spec if not set (for unfitted models)
         if self.feature_column is None:
-            raise ValueError(
-                "feature_column not set. Call fit() first to set feature_column from bias node outputs."
+            # Get feature column name from bias node spec
+            primary_tf = self.bias_node_spec['timeframes'][0]
+            
+            # Try to get output feature name from bias node if available
+            # Otherwise use 'signal' as default (most common output feature)
+            output_feature = 'signal'  # default
+            if self.tickers:
+                primary_ticker = self.tickers[0]
+                primary_node = self.bias_nodes.get((primary_ticker, primary_tf))
+                if primary_node and hasattr(primary_node, 'output_features') and primary_node.output_features:
+                    output_feature = primary_node.output_features[0]
+            
+            # Build feature column name from spec
+            self.feature_column = helpers.build_feature_column_name(
+                module=self.bias_node_spec['module_name'],
+                feature=output_feature,
+                tf=primary_tf,
+                params=self.bias_node_spec['params']
             )
         
         model_id = add_feature_to_ensemble(

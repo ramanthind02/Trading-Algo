@@ -137,7 +137,7 @@ class Portfolio:
             # Create default inverse correlation WeightLayer
             self.weight_layer = WeightLayer(
                 weight_method='inverse_correlation',
-                fdm_max=2.0
+                fdm_max=2.5
             )
         else:
             self.weight_layer = weight_layer
@@ -462,12 +462,8 @@ class Portfolio:
         # Fit all ensembles
         for ensemble in self.ensembles:
             if target_data is not None:
-                # Use the new fit_from_candles method if available
-                if hasattr(ensemble, 'fit_from_candles'):
-                    ensemble.fit_from_candles(tf_candles, target_data)
-                else:
-                    # Fallback: ensembles must be pre-fitted
-                    pass
+                ensemble.fit_from_candles(tf_candles, target_data)
+
         
         # Fit IDM if we have return data
         if target_data is not None:
@@ -1445,6 +1441,95 @@ class Portfolio:
         print(f"\n📏 Position Sizing:")
         print(f"  Max Position %: {self.max_position_pct}")
         print(f"  Instrument Weights: {'Custom' if self.instrument_weights else 'Equal weight'}")
+        
+        # Print base model binning details for all ensembles
+        if self.ensembles:
+            print(f"\n🔬 Base Model Binning Details:")
+            for ensemble_idx, ensemble in enumerate(self.ensembles):
+                ensemble_name = f"Ensemble {ensemble_idx + 1}"
+                if hasattr(ensemble, 'base_models') and ensemble.base_models:
+                    print(f"\n  {ensemble_name}:")
+                    for model_name, base_model in ensemble.base_models.items():
+                        binning_model = getattr(base_model, 'binning_model', None)
+                        if binning_model is None:
+                            print(f"    {model_name}: No binning model")
+                            continue
+                        
+                        # Get binning information
+                        n_bins = getattr(binning_model, 'n_bins', 'N/A')
+                        is_fitted = getattr(binning_model, 'is_fitted_', False)
+                        strategy = getattr(binning_model, 'strategy', 'long')
+                        best_long_bin = getattr(binning_model, 'best_long_bin_', None)
+                        best_short_bin = getattr(binning_model, 'best_short_bin_', None)
+                        thresholds = getattr(binning_model, 'thresholds_', None)
+                        bin_stats = getattr(binning_model, 'bin_stats_', None)
+                        
+                        # Get feature column name if available
+                        feature_column = getattr(base_model, 'feature_column', None)
+                        
+                        print(f"    {model_name}:")
+                        if feature_column:
+                            print(f"      Feature Column: {feature_column}")
+                        print(f"      Fitted: {is_fitted}")
+                        print(f"      Strategy: {strategy}")
+                        print(f"      Number of Bins: {n_bins}")
+                        
+                        if is_fitted:
+                            # Show selected bin
+                            if strategy == 'long' and best_long_bin is not None:
+                                print(f"      ✓ Selected Bin (Long): {best_long_bin}")
+                            elif strategy == 'short' and best_short_bin is not None:
+                                print(f"      ✓ Selected Bin (Short): {best_short_bin}")
+                            
+                            # Show thresholds if available
+                            if thresholds is not None and len(thresholds) > 0:
+                                print(f"      Thresholds: {thresholds.tolist()}")
+                            elif thresholds is not None and len(thresholds) == 0:
+                                print(f"      Thresholds: [Constant feature - single bin]")
+                            
+                            # Show bin statistics
+                            if bin_stats is not None and len(bin_stats) > 0:
+                                print(f"      Bin Statistics:")
+                                # Sort bins by index (handle both string and int keys)
+                                def get_bin_key(bin_item):
+                                    key = bin_item[0]
+                                    try:
+                                        return int(key)
+                                    except (ValueError, TypeError):
+                                        return 0
+                                
+                                sorted_bins = sorted(bin_stats.items(), key=get_bin_key)
+                                for bin_idx, stats in sorted_bins:
+                                    # Convert bin_idx to int for comparison
+                                    try:
+                                        bin_idx_int = int(bin_idx)
+                                    except (ValueError, TypeError):
+                                        bin_idx_int = None
+                                    
+                                    bin_label = f"Bin {bin_idx}"
+                                    if strategy == 'long' and best_long_bin is not None and bin_idx_int == best_long_bin:
+                                        bin_label += " ⭐ (Selected)"
+                                    elif strategy == 'short' and best_short_bin is not None and bin_idx_int == best_short_bin:
+                                        bin_label += " ⭐ (Selected)"
+                                    
+                                    mean_ret = stats.get('mean_return', 'N/A')
+                                    sortino = stats.get('sortino_metric', 'N/A')
+                                    count = stats.get('count', 'N/A')
+                                    feat_min = stats.get('feature_min', 'N/A')
+                                    feat_max = stats.get('feature_max', 'N/A')
+                                    
+                                    print(f"        {bin_label}:")
+                                    print(f"          Mean Return: {mean_ret:.6f}" if isinstance(mean_ret, (int, float)) else f"          Mean Return: {mean_ret}")
+                                    print(f"          Sortino Metric: {sortino:.4f}" if isinstance(sortino, (int, float)) else f"          Sortino Metric: {sortino}")
+                                    print(f"          Sample Count: {count}" if isinstance(count, (int, float)) else f"          Sample Count: {count}")
+                                    if isinstance(feat_min, (int, float)) and isinstance(feat_max, (int, float)):
+                                        print(f"          Feature Range: [{feat_min:.4f}, {feat_max:.4f}]")
+                                    else:
+                                        print(f"          Feature Range: [{feat_min}, {feat_max}]")
+                            else:
+                                print(f"      Bin Statistics: Not available")
+                        else:
+                            print(f"      ⚠ Model not fitted yet")
         
         print("=" * 60)
 
