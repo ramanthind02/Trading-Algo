@@ -145,10 +145,6 @@ def fetch_historical_candles(
         return pd.DataFrame()
 
     # Convert bars to DataFrame - we have data regardless of wait result
-    if not client.historical_bars:
-        print(f"  Warning: No bars received for {ticker}")
-        return pd.DataFrame()
-
     rows = []
     for bar in client.historical_bars:
         # Parse date - IB returns format like "20260124"
