@@ -101,7 +101,7 @@ class IBDataClient(EClient, EWrapper):
         """Callback when connection is established and valid order ID is received."""
         self.order_id = orderId
         self.connected = True
-        print(f"✓ Connected to IB. Next valid order ID: {self.order_id}")
+        print(f"[OK] Connected to IB. Next valid order ID: {self.order_id}")
     
     def nextId(self) -> int:
         """Get next request ID."""
@@ -144,9 +144,18 @@ class IBDataClient(EClient, EWrapper):
         if errorCode in (2104, 2106, 2158):
             # These are informational connection messages, not errors
             return
-        
-        # Store error for historical data requests
-        if reqId in self.historical_data_complete or reqId > 0:
+
+        # Error 2176 is just a warning about fractional shares - not an actual error
+        if errorCode == 2176:
+            return
+
+        # Error 366 "No historical data query found" is expected after we cancel
+        # the request in historicalDataEnd - ignore it if data was already received
+        if errorCode == 366 and self.historical_data_complete.get(reqId, False):
+            return
+
+        # Store error for historical data requests (only if not already complete)
+        if reqId > 0 and not self.historical_data_complete.get(reqId, False):
             self.historical_data_error[reqId] = f"Code {errorCode}: {errorString}"
             # Mark as complete even on error so waiting loops can exit
             self.historical_data_complete[reqId] = True
@@ -351,13 +360,13 @@ class IBDataClient(EClient, EWrapper):
         start_time = time.time()
         while not self.historical_data_complete.get(req_id, False):
             if time.time() - start_time > timeout:
-                print(f"\n⚠ Timeout waiting for historical data (reqId: {req_id})")
+                print(f"\n[WARN] Timeout waiting for historical data (reqId: {req_id})")
                 return False
             time.sleep(poll_interval)
         
         # Check for errors
         if req_id in self.historical_data_error and self.historical_data_error[req_id]:
-            print(f"\n⚠ Error received for historical data (reqId: {req_id}): {self.historical_data_error[req_id]}")
+            print(f"\n[WARN] Error received for historical data (reqId: {req_id}): {self.historical_data_error[req_id]}")
             return False
         
         return True
