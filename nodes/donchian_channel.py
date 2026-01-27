@@ -1,6 +1,6 @@
 from typing import List, Tuple
 from utils.enums import TimeFrame, Ticker
-from nodes.bias_nodes import BiasNode
+from nodes import BiasNode
 from utils.models import Candle
 import collections
 
@@ -36,14 +36,21 @@ class DonchianChannel(BiasNode):
 
         self.lookback = lookback
         
-        # We need enough history to calculate the channels plus one for the current candle
-        self.required_history_len = lookback + 1
-        self.candles_history = collections.deque(maxlen=self.required_history_len)
+        # Standardized naming metadata
+        self.module_name = 'donchian'
+        self.output_features = ['signal']
+        self.params = {'lookback': lookback}
+        
+        # Number of candles needed before we can compute valid output
+        # Need lookback + 1 candles (lookback for calculation + current candle)
+        self.front_bad = lookback + 1
+        self.candles_history = collections.deque(maxlen=self.front_bad)
         
         # For tracking current position
         self.current_position = 1  # Start with long position (1=long, -1=short)
         
-        self.columns = [f'donchian_{lookback}', f'donchian_{lookback}_position']
+        # Define standardized columns
+        self.ensure_standardized_columns()
 
     def calculate_donchian_channel(self, lookback: int) -> Tuple[float, float]:
         """
@@ -81,8 +88,11 @@ class DonchianChannel(BiasNode):
         """
         self.candles_history.append(candle)
 
-        if len(self.candles_history) <= self.lookback:
-            return [float(self.current_position)]  # Return current position if not enough data
+        # Return current position if not enough data
+        if len(self.candles_history) < self.front_bad:
+            position = float(self.current_position)
+            self.output.append(position)
+            return [position]
 
         # Calculate Donchian channel
         highest_high, lowest_low = self.calculate_donchian_channel(self.lookback)
@@ -101,8 +111,7 @@ class DonchianChannel(BiasNode):
             if current_price > highest_high:
                 self.current_position = 1
         
-        # Map the current position to a string representation
-        position_str = "buy" if self.current_position == 1 else "sell"
-        
-        # Return both the numeric position and string representation
-        return [float(self.current_position), position_str]
+        # Return the numeric position
+        position = float(self.current_position)
+        self.output.append(position)
+        return [position]

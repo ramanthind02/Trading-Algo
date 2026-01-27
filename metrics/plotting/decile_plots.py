@@ -16,6 +16,86 @@ from typing import Tuple, Optional
 import warnings
 
 
+def _create_quantile_bins_robust(feature_data: pd.Series, n_bins: int) -> pd.Series:
+    """
+    Create quantile-based bins ensuring n_bins are created even with duplicate values.
+    
+    This is a robust version of pd.qcut that handles cases where many duplicate values
+    cause bins to collapse. It uses a hybrid approach:
+    1. Try qcut first
+    2. If fewer bins created, use unique value boundaries to ensure n_bins
+    3. If still not enough, use equal-width binning on the full range
+    
+    Parameters
+    ----------
+    feature_data : pd.Series
+        Feature values to bin
+    n_bins : int
+        Number of bins to create
+        
+    Returns
+    -------
+    pd.Series
+        Bin assignments for each sample
+    """
+    try:
+        bins = pd.qcut(feature_data, n_bins, labels=False, duplicates='drop')
+        n_created_bins = bins.nunique()
+        
+        # If we got fewer bins than requested, use a different approach
+        if n_created_bins < n_bins:
+            # Get unique values and create bins based on unique value boundaries
+            unique_vals = feature_data.unique()
+            n_unique = len(unique_vals)
+            
+            if n_unique <= n_bins:
+                # Not enough unique values: assign each unique value to its own bin
+                # Map unique values to bin indices
+                sorted_unique = np.sort(unique_vals)
+                bin_map = {val: idx for idx, val in enumerate(sorted_unique)}
+                bins = feature_data.map(bin_map).astype(int)
+            else:
+                # Enough unique values: try to create bins using quantiles on unique values
+                # This helps when many values are duplicates but we have enough unique values
+                quantiles = np.linspace(0, 1, n_bins + 1)
+                unique_quantiles = np.quantile(unique_vals, quantiles)
+                # Remove duplicates from quantiles
+                unique_quantiles = np.unique(unique_quantiles)
+                
+                if len(unique_quantiles) - 1 >= n_bins:
+                    # Use quantile-based thresholds on unique values
+                    bins = pd.cut(feature_data, bins=unique_quantiles, labels=False, include_lowest=True, duplicates='drop')
+                    n_created_bins = bins.nunique()
+                
+                # If still not enough bins, use equal-width binning on the full range
+                # This ensures we get the requested number of bins even if distribution is skewed
+                if n_created_bins < n_bins:
+                    bins = pd.cut(feature_data, bins=n_bins, labels=False, duplicates='drop', include_lowest=True)
+                    n_created_bins = bins.nunique()
+                    
+                    # If equal-width still doesn't work (very few unique values), 
+                    # split the data range into n_bins equal-width intervals
+                    if n_created_bins < n_bins:
+                        min_val = feature_data.min()
+                        max_val = feature_data.max()
+                        # Create n_bins equal-width intervals
+                        bin_edges = np.linspace(min_val, max_val, n_bins + 1)
+                        # Ensure first and last edges include all values
+                        bin_edges[0] = min_val - 1e-10
+                        bin_edges[-1] = max_val + 1e-10
+                        bins = pd.cut(feature_data, bins=bin_edges, labels=False, include_lowest=True, duplicates='drop')
+    except (ValueError, TypeError):
+        # Fallback: use equal-width bins on the full range
+        min_val = feature_data.min()
+        max_val = feature_data.max()
+        bin_edges = np.linspace(min_val, max_val, n_bins + 1)
+        bin_edges[0] = min_val - 1e-10
+        bin_edges[-1] = max_val + 1e-10
+        bins = pd.cut(feature_data, bins=bin_edges, labels=False, include_lowest=True, duplicates='drop')
+    
+    return bins
+
+
 def plot_decile_analysis(
     feature_data: pd.Series,
     target_data: pd.Series,
@@ -23,7 +103,9 @@ def plot_decile_analysis(
     n_bins: int = 10,
     figsize: Tuple[int, int] = (12, 8),
     plot_type: str = "bar",
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    selected_bin: Optional[int] = None,
+    strategy: Optional[str] = None
 ) -> Tuple[plt.Figure, pd.DataFrame]:
     """
     Create a decile plot showing target behavior across feature value buckets.
@@ -44,6 +126,10 @@ def plot_decile_analysis(
         Type of plot: "bar" or "line"
     save_path : Optional[str], default=None
         If provided, save the figure to this path
+    selected_bin : Optional[int], default=None
+        Bin index to highlight (0-indexed). If provided, this bin will be highlighted.
+    strategy : Optional[str], default=None
+        Strategy type ('long' or 'short') for title annotation if selected_bin is provided
         
     Returns
     -------
@@ -56,20 +142,8 @@ def plot_decile_analysis(
     if df.empty:
         raise ValueError("No valid data after dropping NaNs")
     
-    # Create bins/buckets based on feature quantiles
-    try:
-        df['bin'] = pd.qcut(df['feature'], n_bins, labels=False, duplicates='drop')
-    except ValueError as e:
-        warnings.warn(f"Could not create {n_bins} bins due to duplicate values. Using fewer bins.")
-        # Try with fewer bins
-        for n in range(n_bins - 1, 1, -1):
-            try:
-                df['bin'] = pd.qcut(df['feature'], n, labels=False, duplicates='drop')
-                break
-            except ValueError:
-                continue
-        else:
-            raise ValueError("Could not create bins even with reduced number of bins")
+    # Create bins/buckets using robust quantile binning that handles duplicates
+    df['bin'] = _create_quantile_bins_robust(df['feature'], n_bins)
     
     # Calculate statistics for each bin
     bin_stats = df.groupby('bin')['target'].agg(['mean', 'std', 'count'])
@@ -93,11 +167,37 @@ def plot_decile_analysis(
     if plot_type == "bar":
         # Color based on value (green for positive, red for negative)
         bar_colors = ['#2ecc71' if val >= 0 else '#e74c3c' for val in bin_stats['mean']]
-        ax.bar(bin_stats.index + 1, bin_stats['mean'], color=bar_colors, alpha=0.8, edgecolor='black')
+        
+        # Highlight selected bin if provided
+        edgecolors = []
+        linewidths = []
+        for bin_idx in bin_stats.index:
+            if selected_bin is not None and bin_idx == selected_bin:
+                edgecolors.append('#FFD700')  # Gold color for selected bin
+                linewidths.append(3.0)  # Thicker edge
+            else:
+                edgecolors.append('black')
+                linewidths.append(1.0)
+        
+        bars = ax.bar(bin_stats.index + 1, bin_stats['mean'], color=bar_colors, alpha=0.8, 
+                     edgecolor=edgecolors, linewidth=linewidths)
+        
+        # Add annotation for selected bin
+        if selected_bin is not None and selected_bin in bin_stats.index:
+            strategy_str = f" [{strategy.upper()}]" if strategy else ""
+            selected_mean = bin_stats['mean'].iloc[bin_stats.index.get_loc(selected_bin)]
+            ax.text(selected_bin + 1, selected_mean,
+                   f"SELECTED{strategy_str}", ha='center', va='bottom' if selected_mean >= 0 else 'top',
+                   fontsize=9, fontweight='bold', color='#FFD700',
+                   bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.7))
     else:  # line plot
-        for i, val in enumerate(bin_stats['mean']):
+        for i, (bin_idx, val) in enumerate(zip(bin_stats.index, bin_stats['mean'])):
             color = '#2ecc71' if val >= 0 else '#e74c3c'
-            ax.plot(i+1, val, 'o', color=color, markersize=10)
+            marker = 'D' if (selected_bin is not None and bin_idx == selected_bin) else 'o'
+            markersize = 12 if (selected_bin is not None and bin_idx == selected_bin) else 10
+            ax.plot(i+1, val, marker, color=color, markersize=markersize, 
+                   markeredgecolor='#FFD700' if (selected_bin is not None and bin_idx == selected_bin) else 'black',
+                   markeredgewidth=2 if (selected_bin is not None and bin_idx == selected_bin) else 1)
         ax.plot(bin_stats.index + 1, bin_stats['mean'], '-', color='#555555', alpha=0.5, linewidth=2)
     
     # Set labels and title

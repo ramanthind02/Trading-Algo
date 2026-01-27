@@ -224,9 +224,9 @@ class BinningModelBase(ABC):
             # Long: Find bin with highest Sortino ratio
             best_long_bin = max(bin_stats.keys(), key=lambda k: bin_stats[k]['sortino_metric'])
             
-            # Short: Find bin with highest Sortino ratio on negated returns
-            # (shorting profits from negative returns, so we compute Sortino on -returns)
-            best_short_bin = max(bin_stats.keys(), key=lambda k: bin_stats[k]['sortino_metric_short'])
+            # Short: Find bin with lowest Sortino ratio (worst performance = best for shorting)
+            # When shorting, we profit from negative returns, so we want the bin with worst (lowest) sortino
+            best_short_bin = min(bin_stats.keys(), key=lambda k: bin_stats[k]['sortino_metric'])
             
         elif self.selection_metric == 'mean':
             # Long: Find bin with highest mean return

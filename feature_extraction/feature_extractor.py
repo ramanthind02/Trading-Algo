@@ -97,11 +97,19 @@ def compute_forward_returns(
     features_df: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
     """
-    Compute forward returns from candles DataFrame to avoid lookahead bias.
+    Compute intraday returns from candles DataFrame and shift forward by 1 period.
     
-    Forward returns are calculated as: return[t] = close[t+1] / close[t]
-    This means the return at timestamp t represents the return from t to t+1.
-    The last candle per ticker is dropped since it has no forward return.
+    Intraday returns are calculated as: return[t] = close[t] / open[t] - 1
+    Returns are then shifted forward by 1 period so Feature[t] predicts Return[t+1],
+    where Return[t+1] = (close[t+1]/open[t+1] - 1) represents the return from open[t+1] to close[t+1].
+    
+    This avoids lookahead bias: Feature[t] (computed at end of day t using data up to close[t])
+    predicts Return[t+1] (the return for day t+1, stored at index t after shifting).
+    
+    Alignment:
+    - Feature[t] (at index t) predicts Return[t+1] (at index t)
+    - Return[t+1] = (close[t+1]/open[t+1] - 1) is the return for day t+1
+    - Last row is dropped (no forward return available)
     
     Supports volatility scaling (ATR/EWSD normalization) when features_df is provided.
     This is important for multi-ticker scenarios where different tickers have different
@@ -113,7 +121,7 @@ def compute_forward_returns(
     Parameters
     ----------
     candles_df : pd.DataFrame
-        DataFrame with candles. Must have columns: datetime, close, ticker
+        DataFrame with candles. Must have columns: datetime, open, close, ticker
         Should be sorted by ticker and datetime
     features_df : pd.DataFrame, optional
         Features dataframe containing ATR and EWSD columns for normalization.
@@ -127,12 +135,12 @@ def compute_forward_returns(
     -------
     pd.DataFrame
         DataFrame with columns:
-        - raw_return: (close[t+1] / close[t]) - 1
-        - log_return: log(close[t+1] / close[t])
-        - log_return_atr: log_return normalized by ATR (mandatory if features_df provided)
-        - log_return_ewsd: log_return normalized by EWSD (mandatory if features_df provided)
+        - raw_return: (close[t+1]/open[t+1]) - 1, shifted forward by 1 period
+        - log_return: log(close[t+1]/open[t+1]), shifted forward by 1 period
+        - log_return_atr: log_return normalized by ATR[t+1] (mandatory if features_df provided)
+        - log_return_ewsd: log_return normalized by EWSD[t+1] (mandatory if features_df provided)
         - ticker: ticker identifier
-        Indexed by datetime (same as input)
+        Indexed by datetime (aligned with features)
         Last row per ticker is dropped (no forward return available)
         
     Examples
@@ -152,27 +160,20 @@ def compute_forward_returns(
     for ticker in candles_df['ticker'].unique():
         ticker_candles = candles_df[candles_df['ticker'] == ticker].copy().sort_values('datetime')
         
-        # Calculate forward returns: return at t = close[t+1] / close[t]
-        # This represents the return from timestamp t to t+1
-        ticker_candles['next_close'] = ticker_candles['close'].shift(-1)
+        # Calculate intraday returns: return[t] = close[t] / open[t] - 1
+        # This represents the return from open[t] to close[t] (during day t)
+        ticker_candles['log_return'] = np.log(ticker_candles['close'] / ticker_candles['open'])
+        ticker_candles['raw_return'] = (ticker_candles['close'] / ticker_candles['open']) - 1
         
-        # Forward log return: log(close[t+1] / close[t])
-        ticker_candles['log_return'] = np.log(ticker_candles['next_close'] / ticker_candles['close'])
+        # Shift returns forward by 1 period so Feature[t] predicts Return[t+1]
+        # Return[t+1] = (close[t+1]/open[t+1] - 1) is the return for day t+1
+        # After shift(-1): shifted_return[t] = Return[t+1]
+        # This means Feature[t] (at index t) predicts Return[t+1] (the return for the next day)
+        ticker_candles['log_return'] = ticker_candles['log_return'].shift(-1)
+        ticker_candles['raw_return'] = ticker_candles['raw_return'].shift(-1)
         
-        # Forward raw return: (close[t+1] / close[t]) - 1
-        ticker_candles['raw_return'] = (ticker_candles['next_close'] / ticker_candles['close']) - 1
-        
-        # Drop last row (no forward return available - no t+1 for the last candle)
+        # Drop last row (no forward return available - return was shifted forward)
         ticker_candles = ticker_candles.dropna(subset=['log_return'])
-        
-        # Use datetime column as index (preserves millisecond offsets if use_millisecond_offset=True)
-        # The datetime column from load_data_multi_ticker already has offsets applied
-        target_index = pd.to_datetime(ticker_candles['datetime'].values)
-        # Ensure timezone is UTC to match features
-        if target_index.tz is None:
-            target_index = target_index.tz_localize('UTC')
-        else:
-            target_index = target_index.tz_convert('UTC')
         
         # Normalize ticker to string name to match extract_features format
         # load_data_multi_ticker sets ticker column to enum objects, we need string names
@@ -183,19 +184,12 @@ def compute_forward_returns(
         else:
             ticker_name = str(ticker)
         
-        # Initialize target dict with basic returns
-        target_dict = {
-            'raw_return': ticker_candles['raw_return'].values,
-            'log_return': ticker_candles['log_return'].values,
-            'ticker': ticker_name
-        }
-        
         # ATR and EWSD are mandatory for volatility scaling
         # Find ATR and EWSD columns for this ticker
         if features_df is None:
             raise ValueError(
                 "features_df is required for ATR/EWSD normalization. "
-                "ATR and EWSD features must be extracted before computing forward returns."
+                "ATR and EWSD features must be extracted before computing returns."
             )
         
         # Filter features_df to this ticker if ticker column exists
@@ -204,9 +198,15 @@ def compute_forward_returns(
         else:
             ticker_features = features_df
         
-        # Align features to candles by index
-        # Use merge on index to ensure proper alignment
+        # Align features to candles by index (use original index before dropping)
         ticker_features_indexed = ticker_features.set_index(ticker_features.index) if not isinstance(ticker_features.index, pd.DatetimeIndex) else ticker_features
+        
+        # Get original datetime index (before dropping first row)
+        original_datetime_index = pd.to_datetime(ticker_candles['datetime'].values)
+        if original_datetime_index.tz is None:
+            original_datetime_index = original_datetime_index.tz_localize('UTC')
+        else:
+            original_datetime_index = original_datetime_index.tz_convert('UTC')
         
         # Find ATR column (contains 'atr' and '252' in name)
         atr_col = next(
@@ -237,25 +237,54 @@ def compute_forward_returns(
                 f"Available columns: {list(ticker_features_indexed.columns)}"
             )
         
-        # Align features to target_index (forward fill for missing values)
+        # Align features to original datetime index (before dropping first row)
         if len(ticker_features_indexed) > 0:
-            # Reindex to target_index, forward fill missing values
-            ticker_features_aligned = ticker_features_indexed.reindex(target_index, method='ffill')
+            ticker_features_aligned = ticker_features_indexed.reindex(original_datetime_index, method='ffill')
         else:
             raise ValueError(
                 f"No features found for ticker {ticker_name}. "
                 f"Cannot compute volatility-scaled returns."
             )
         
+        # Get ATR and EWSD values for normalizing Return[t+1]
+        # Return[t+1] = (close[t+1]/open[t+1] - 1) should be normalized by ATR[t+1] and EWSD[t+1]
+        # After shift(-1) on returns, shifted_return[t] = Return[t+1]
+        # So we need ATR[t+1] and EWSD[t+1] to normalize it
+        # We shift ATR/EWSD forward: ATR_shifted[t] = ATR[t+1]
+        atr_series = ticker_features_aligned[atr_col].shift(-1)
+        ewsd_series = ticker_features_aligned[ewsd_col].shift(-1)
+        
+        # Use datetime column as index for targets (after dropping last row due to shift)
+        # After shifting returns forward with shift(-1) and dropping last row:
+        # - ticker_candles has indices [0, 1, 2, ..., N-1] with Return[1], Return[2], ..., Return[N]
+        # - We want to align with features at indices [0, 1, 2, ..., N-1] with Feature[0], Feature[1], ..., Feature[N-1]
+        # - Feature[t] at index t predicts Return[t+1] at index t
+        original_target_index = pd.to_datetime(ticker_candles['datetime'].values)
+        # Ensure timezone is UTC to match features
+        if original_target_index.tz is None:
+            original_target_index = original_target_index.tz_localize('UTC')
+        else:
+            original_target_index = original_target_index.tz_convert('UTC')
+        
+        # After dropping last row, ticker_candles has len(targets_df) rows
+        # The indices are already aligned: [0, 1, 2, ..., len-1]
+        # Feature[0] at index 0 predicts Return[1] at index 0
+        # Feature[1] at index 1 predicts Return[2] at index 1
+        # etc.
+        target_index = original_target_index[:len(ticker_candles)]
+        
+        # Reindex ATR/EWSD to target_index (aligned with features)
+        atr_aligned = atr_series.reindex(target_index)
+        ewsd_aligned = ewsd_series.reindex(target_index)
+        
         # Compute ATR-normalized return (mandatory)
-        atr_values = ticker_features_aligned[atr_col].values
+        atr_values = atr_aligned.values
         if len(atr_values) == 0 or np.isnan(atr_values).all():
             raise ValueError(
                 f"ATR values are all NaN for ticker {ticker_name}. "
                 f"Cannot compute log_return_atr."
             )
         # ATR is typically in percentage, convert to decimal if needed
-        # Check if values are > 1 (likely percentage) or < 1 (likely decimal)
         atr_max = np.nanmax(atr_values)
         if atr_max > 1:
             atr_decimal = atr_values / 100.0
@@ -264,7 +293,7 @@ def compute_forward_returns(
         log_return_atr = ticker_candles['log_return'].values / np.maximum(atr_decimal, 0.0001)
         
         # Compute EWSD-normalized return (mandatory)
-        ewsd_values = ticker_features_aligned[ewsd_col].values
+        ewsd_values = ewsd_aligned.values
         if len(ewsd_values) == 0 or np.isnan(ewsd_values).all():
             raise ValueError(
                 f"EWSD values are all NaN for ticker {ticker_name}. "
@@ -274,9 +303,14 @@ def compute_forward_returns(
         ewsd_decimal = ewsd_values / 100.0
         log_return_ewsd = ticker_candles['log_return'].values / np.maximum(ewsd_decimal, 0.0001)
         
-        # Add volatility-scaled returns (mandatory)
-        target_dict['log_return_atr'] = log_return_atr
-        target_dict['log_return_ewsd'] = log_return_ewsd
+        # Initialize target dict with returns
+        target_dict = {
+            'raw_return': ticker_candles['raw_return'].values,
+            'log_return': ticker_candles['log_return'].values,
+            'log_return_atr': log_return_atr,
+            'log_return_ewsd': log_return_ewsd,
+            'ticker': ticker_name
+        }
         
         ticker_targets = pd.DataFrame(target_dict, index=target_index)
         targets_list.append(ticker_targets)
@@ -372,42 +406,70 @@ def _extract_features_single_ticker(
     features_df = pd.DataFrame(feature_data, index=price_df.index, columns=column_names)
     
     # Compute targets (need ATR/EWSD if available)
-    # CRITICAL: Compute FORWARD returns to avoid lookahead bias
-    # Forward return at t = return from close[t] to close[t+1]
-    # This ensures feature[t] predicts return[t] (forward return), not intraday return
+    # CRITICAL: Avoid lookahead bias by ensuring Feature[t] predicts Return[t+1]
+    # Feature[t] is computed at end of day t using data up to close[t]
+    # Return[t+1] = (close[t+1]/open[t+1] - 1) is the return from open[t+1] to close[t+1]
+    # This ensures no lookahead: Feature[t] uses only data available at end of day t
+    # and predicts the return for the NEXT day (t+1)
     atr_col = next((col for col in features_df.columns if 'atr' in col.lower() and '252' in col), None)
     ewsd_col = next((col for col in features_df.columns if 'ewsd' in col.lower()), None)
     
-    # Compute forward returns (not intraday returns)
-    price_df['next_close'] = price_df['close'].shift(-1)
-    forward_log_return = np.log(price_df['next_close'] / price_df['close'])
-    forward_raw_return = (price_df['next_close'] / price_df['close']) - 1
+    # Compute intraday returns: Return[t] = (close[t]/open[t] - 1)
+    # This is the return DURING day t (from open to close)
+    intraday_log_return = np.log(price_df['close'] / price_df['open'])
+    intraday_raw_return = (price_df['close'] / price_df['open']) - 1
+    
+    # Shift returns forward by 1 period so Return[t+1] aligns with Feature[t]
+    # After shift: shifted_return[t] = Return[t+1] = (close[t+1]/open[t+1] - 1)
+    # This means Feature[t] (at index t) predicts Return[t+1] (the return for day t+1)
+    shifted_log_return = intraday_log_return.shift(-1)
+    shifted_raw_return = intraday_raw_return.shift(-1)
     
     # Apply ATR/EWSD normalization if available
-    log_return_atr = forward_log_return.copy()
+    # Use ATR/EWSD from the same period as the return (t+1)
+    log_return_atr = shifted_log_return.copy()
     if atr_col and atr_col in features_df.columns:
         price_df[atr_col] = features_df[atr_col]
-        log_return_atr = forward_log_return / np.maximum(price_df[atr_col], 0.0001)
+        # ATR[t+1] for normalizing Return[t+1]
+        atr_shifted = price_df[atr_col].shift(-1)
+        log_return_atr = shifted_log_return / np.maximum(atr_shifted, 0.0001)
     
-    log_return_ewsd = forward_log_return.copy()
+    log_return_ewsd = shifted_log_return.copy()
     if ewsd_col and ewsd_col in features_df.columns:
         price_df[ewsd_col] = features_df[ewsd_col]
-        ewsd_decimal = price_df[ewsd_col] / 100.0
-        log_return_ewsd = forward_log_return / np.maximum(ewsd_decimal, 0.0001)
+        # EWSD[t+1] for normalizing Return[t+1]
+        ewsd_shifted = price_df[ewsd_col].shift(-1)
+        ewsd_decimal = ewsd_shifted / 100.0
+        log_return_ewsd = shifted_log_return / np.maximum(ewsd_decimal, 0.0001)
     
-    # Drop last row (no forward return available)
+    # Create targets DataFrame
     targets_df = pd.DataFrame({
-        'raw_return': forward_raw_return,
-        'log_return': forward_log_return,
+        'raw_return': shifted_raw_return,
+        'log_return': shifted_log_return,
         'log_return_atr': log_return_atr,
         'log_return_ewsd': log_return_ewsd
     }, index=price_df.index)
     
-    # Drop rows with NaN forward returns (last row per ticker)
+    # Drop last row (no forward return available - return was shifted forward)
     targets_df = targets_df.dropna(subset=['log_return'])
     
-    # Align features to match targets (drop last row which has no forward return)
-    features_df = features_df.loc[targets_df.index]
+    # Align features to match targets
+    # After shifting forward and dropping last row:
+    # - targets_df has indices [0, 1, 2, ..., N-1] with Return[1], Return[2], ..., Return[N]
+    # - features_df has indices [0, 1, 2, ..., N] with Feature[0], Feature[1], ..., Feature[N]
+    # - We want Feature[t] to predict Return[t+1]
+    # - So Feature[0] predicts Return[1], Feature[1] predicts Return[2], etc.
+    # Solution: Keep first len(targets_df) features (drop last feature row)
+    if len(targets_df) > 0:
+        # Keep first len(targets_df) features (drop last feature row - no Return[N+1] available)
+        feature_indices = features_df.index[:len(targets_df)]
+        features_df = features_df.loc[feature_indices]
+        
+        # Targets already have correct indices [0, 1, 2, ..., len-1]
+        # These correspond to Return[1], Return[2], ..., Return[len]
+        # Features at indices [0, 1, 2, ..., len-1] correspond to Feature[0], Feature[1], ..., Feature[len-1]
+        # So Feature[t] at index t predicts Return[t+1] at index t
+        # No need to change targets_df.index - it's already aligned correctly
     
     return features_df, targets_df
 
@@ -560,15 +622,21 @@ def extract_features_with_forward_returns(
     target_col: str = 'log_return'
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Extract features and compute forward returns automatically.
+    Extract features and compute intraday returns (shifted forward) automatically.
     
     This is a convenience wrapper around extract_features() that:
     1. Extracts features using extract_features() (main module + mandatory ATR + EWSD)
-    2. Loads candles to compute forward returns (with mandatory volatility scaling)
-    3. Filters features to only those with forward returns available
-    4. Returns aligned features_df and targets_df with forward returns
+    2. Loads candles to compute intraday returns (close/open) and shifts them forward by 1 period
+    3. Filters features to only those with shifted returns available
+    4. Returns aligned features_df and targets_df with shifted intraday returns
     
     ATR and EWSD features are ALWAYS extracted automatically to enable volatility scaling.
+    
+    Return calculation:
+    - Intraday return: Return[t] = (close[t]/open[t] - 1)
+    - Shifted forward: shifted_return[t] = Return[t+1] = (close[t+1]/open[t+1] - 1)
+    - Feature[t] (at index t) predicts Return[t+1] (return from open[t+1] to close[t+1])
+    - This avoids lookahead bias: Feature[t] uses only data up to close[t], predicts next day's return
     
     Parameters
     ----------
@@ -591,8 +659,8 @@ def extract_features_with_forward_returns(
         For multi-ticker: add millisecond offsets to avoid duplicate indices
     target_col : str, default='log_return'
         Target column to use. Options:
-        - 'raw_return': (close[t+1] / close[t]) - 1
-        - 'log_return': log(close[t+1] / close[t])
+        - 'raw_return': (close[t+1]/open[t+1]) - 1, shifted forward by 1 period
+        - 'log_return': log(close[t+1]/open[t+1]), shifted forward by 1 period
         - 'log_return_atr': log_return normalized by ATR (recommended for multi-ticker)
         - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
         
@@ -602,8 +670,8 @@ def extract_features_with_forward_returns(
         (features_df, targets_df)
         - features_df: Columns = parameter combinations, Rows = timestamps
           Includes 'ticker' column for identification
-          Filtered to only rows with forward returns available
-        - targets_df: Target columns with forward returns (raw_return, log_return, log_return_atr, log_return_ewsd)
+          Filtered to only rows with forward returns available (last row dropped)
+        - targets_df: Target columns with shifted intraday returns (raw_return, log_return, log_return_atr, log_return_ewsd)
           Includes 'ticker' column for identification
           All target types are computed, but target_col indicates which one to use
           
@@ -1015,7 +1083,13 @@ def extract_features_for_bias_node(
     
     This function simplifies the workflow by accepting a bias_spec dictionary
     (as used in BaseModel) and automatically handling parameter grid expansion
-    and forward returns computation with volatility scaling.
+    and intraday returns computation (shifted forward) with volatility scaling.
+    
+    Return calculation:
+    - Intraday return: Return[t] = (close[t]/open[t] - 1)
+    - Shifted forward: shifted_return[t] = Return[t+1] = (close[t+1]/open[t+1] - 1)
+    - Feature[t] (at index t) predicts Return[t+1] (return from open[t+1] to close[t+1])
+    - This avoids lookahead bias: Feature[t] uses only data up to close[t], predicts next day's return
     
     Parameters
     ----------
@@ -1035,8 +1109,8 @@ def extract_features_for_bias_node(
         For multi-ticker: add millisecond offsets to avoid duplicate indices
     target_col : str, default='log_return'
         Target column to use. Options:
-        - 'raw_return': (close[t+1] / close[t]) - 1
-        - 'log_return': log(close[t+1] / close[t])
+        - 'raw_return': (close[t+1]/open[t+1]) - 1, shifted forward by 1 period
+        - 'log_return': log(close[t+1]/open[t+1]), shifted forward by 1 period
         - 'log_return_atr': log_return normalized by ATR (recommended for multi-ticker)
         - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
         
@@ -1046,7 +1120,8 @@ def extract_features_for_bias_node(
         (features_df, targets_df)
         - features_df: Columns = parameter combinations, Rows = timestamps
           Includes 'ticker' column for identification
-        - targets_df: Target columns with forward returns (raw_return, log_return, log_return_atr, log_return_ewsd)
+          Last row dropped (no forward return available)
+        - targets_df: Target columns with shifted intraday returns (raw_return, log_return, log_return_atr, log_return_ewsd)
           Includes 'ticker' column for identification
           All target types are computed, but target_col indicates which one to use
           

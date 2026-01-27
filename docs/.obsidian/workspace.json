@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "to-do/forecast_specs.md",
+                "file": "to-do/forecast_implementation_specs.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "forecast_specs"
+              "title": "forecast_implementation_specs"
             }
           }
         ]
@@ -171,27 +171,41 @@
   },
   "active": "363c7c083b797ca3",
   "lastOpenFiles": [
-    "to-do/ml_manager_specs.md",
+    "to-do/param_sens.md",
+    "bias_nodes/to-do/adaptive_rsi.md",
+    "bias_nodes/to-do/rsi_percentile.md",
+    "bias_nodes/to-do/stoch_rsi.md",
+    "bias_nodes/to-do/supretrend_cross.md",
+    "bias_nodes/to-do/tsi.md",
+    "bias_nodes/to-do/b%.md",
+    "bias_nodes/to-do/double_7.md",
+    "bias_nodes/to-do/cycle_rsi.md",
+    "bias_nodes/to-do/zscore_rsi.md",
+    "bias_nodes/to-do/rei.md",
+    "bias_nodes/to-do/casey_c%.md",
+    "bias_nodes/to-do/rsi_signal.md",
+    "bias_nodes/to-do/rsi_signal",
+    "bias_nodes/to-do/Untitled.md",
+    "bias_nodes/to-do/detrend_rsi.md",
+    "bias_nodes/base_bias_node_specs.md",
+    "to-do/forecast_implementation_specs.md",
+    "bias_nodes/vault",
+    "bias_nodes/to-do",
+    "bias_nodes",
     "to-do/forecast_specs.md",
+    "to-do/ml_manager_specs.md",
     "to-do/prop_firm_challenge_simulator.md",
     "to-do/vault_specs.md",
     "ML pipeline overview.canvas",
     "to-do/monte_carlo_testing.md",
-    "to-do/forecast_implementation_specs.md",
     "to-do/ml_manager.specs",
     "to-do/implementation_specs.md",
     "ensemble_change.md",
     "os_feature_selection.md",
     "production_testing_guide.md",
     "Base model",
-    "EDA/In-Sample Binning.md",
     "EDA/Untitled",
-    "EDA/Feature distribution.md",
-    "Untitled",
     "EDA",
-    "Feature engineering/Trading ideas.md",
-    "Feature engineering/Raw feature Extraction.md",
-    "Feature engineering/Market & Sector selection.md",
     "z-attachements/Pasted image 20251101145117.png",
     "z-attachements/Pasted image 20251101143218.png",
     "z-attachements/Pasted image 20251101142953.png",
@@ -200,14 +214,9 @@
     "z-attachements/Pasted image 20251101142437.png",
     "Feature engineering",
     "z-attachements/Pasted image 20251101141450.png",
-    "EDA/Dimensionality Reduction.md",
-    "EDA/Normalization.md",
-    "EDA/In-sample permutation test.md",
-    "EDA/Parameter Sensitivity Analysis.md",
     "z-attachements/Pasted image 20251030191937.png",
     "z-attachements",
     "z-attachements/Pasted image 20251030191534.png",
-    "z-attachements/Pasted image 20251030191358.png",
-    "Welcome.md"
+    "z-attachements/Pasted image 20251030191358.png"
   ]
 }

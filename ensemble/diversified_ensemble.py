@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import logging
 from datetime import datetime
-from typing import Optional, Union, Dict, List, Any
+from typing import Optional, Union, Dict, List, Any, Tuple
 import os
 from utils.enums import TimeFrame
 import utils.helpers as helpers
@@ -92,6 +92,13 @@ class DiversifiedEnsemble:
         self.instrument_weights_ = None
         self.n_tickers_ = None
         self.is_fitted_ = False
+        
+        # Caching for fit and predict operations
+        # Cache key: (date_range_start, date_range_end) as tuple of dates
+        self._fit_cache: Dict[Tuple[Any, Any], bool] = {}  # Maps date_range -> is_fitted flag
+        self._predict_cache: Dict[Tuple[Any, ...], Union[pd.DataFrame, Dict[str, Any]]] = {}  # Maps (date_range, strategy) -> predictions
+        self._cache_hits = 0
+        self._cache_misses = 0
         
         # Validate that control_file_path is provided
         if control_file_path is None:
@@ -727,6 +734,28 @@ class DiversifiedEnsemble:
         
         return supported_tickers
     
+    def _get_date_range_key(self, candles_df: pd.DataFrame) -> Tuple[Any, Any]:
+        """
+        Generate cache key from date range of candles DataFrame.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            Candles DataFrame with datetime column
+            
+        Returns
+        -------
+        Tuple
+            (min_date, max_date) as tuple of date objects (not datetime)
+        """
+        if candles_df.empty or 'datetime' not in candles_df.columns:
+            return (None, None)
+        
+        datetimes = pd.to_datetime(candles_df['datetime'])
+        min_date = datetimes.min().date()
+        max_date = datetimes.max().date()
+        return (min_date, max_date)
+    
     def fit_from_candles(
         self,
         candles_df: pd.DataFrame,
@@ -738,6 +767,8 @@ class DiversifiedEnsemble:
         This is the new DataFrame-based API for fitting ensembles.
         Uses ensemble-level caching to extract features once per (bias_node_spec, ticker)
         combination and reuse them across base models.
+        
+        Uses date_range-based caching to avoid refitting for the same date range.
         
         CRITICAL ALIGNMENT FIX:
         - Features at time T are based on candle T
@@ -762,6 +793,16 @@ class DiversifiedEnsemble:
         self
             Fitted ensemble model
         """
+        # Check cache first
+        date_range_key = self._get_date_range_key(candles_df)
+        if date_range_key in self._fit_cache and self.is_fitted_:
+            logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache HIT for date_range: {date_range_key}")
+            self._cache_hits += 1
+            return self
+        
+        logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache MISS for date_range: {date_range_key}")
+        self._cache_misses += 1
+        
         from utils.enums import Ticker
         import numpy as np
         
@@ -933,6 +974,9 @@ class DiversifiedEnsemble:
         # For now, mark as fitted - full ensemble fitting can be done via the regular fit() method
         self.is_fitted_ = True
         
+        # Store in cache
+        self._fit_cache[date_range_key] = True
+        
         return self
     
     def _calculate_aligned_returns_from_candles(
@@ -1008,42 +1052,21 @@ class DiversifiedEnsemble:
         # Combine all ticker returns (may have duplicate datetime indices)
         combined_returns = pd.concat(all_returns)
         
-        # Now aggregate by base datetime (matching BaseModel.get_feature() behavior)
-        # BaseModel.get_feature() uses: base_dt = dt.replace(microsecond=0)
-        returns_data = []
-        for dt, ret_value in combined_returns.items():
-            # Remove microsecond precision to get base datetime (matches BaseModel.get_feature() exactly)
-            if isinstance(dt, pd.Timestamp):
-                base_dt = dt.replace(microsecond=0)
-            else:
-                base_dt = pd.to_datetime(dt).replace(microsecond=0)
-            returns_data.append({
-                'datetime': base_dt,
-                'return': ret_value
-            })
+        # For multi-ticker models, preserve all samples (don't aggregate by base datetime)
+        # This matches the new BaseModel.get_feature() behavior which keeps all samples
+        # Sort by datetime to ensure consistent ordering
+        combined_returns = combined_returns.sort_index()
         
-        if not returns_data:
-            return pd.Series(dtype=float, name='returns')
-        
-        # Create DataFrame and aggregate by base datetime (mean across tickers)
-        # This matches how BaseModel.get_feature() aggregates features
-        df = pd.DataFrame(returns_data)
-        aggregated = df.groupby('datetime')['return'].mean().sort_index()
-        
-        # Debug: Log aggregation details
+        # Debug: Log details
         logger.debug(
             f"Aligned returns calculation: input candles={len(candles_df)}, "
-            f"combined returns={len(combined_returns)}, "
-            f"aggregated returns={len(aggregated)} unique base datetimes, "
-            f"date range={aggregated.index.min()} to {aggregated.index.max()}"
+            f"combined returns={len(combined_returns)} samples (preserving all ticker samples), "
+            f"date range={combined_returns.index.min()} to {combined_returns.index.max()}"
         )
         
-        # Create Series with base datetime index
-        aggregated_returns = pd.Series(
-            aggregated.values,
-            index=pd.DatetimeIndex(aggregated.index),
-            name='returns'
-        )
+        # Return combined returns with original datetimes (preserves all samples)
+        aggregated_returns = combined_returns.copy()
+        aggregated_returns.name = 'returns'
         
         return aggregated_returns
     
@@ -1149,6 +1172,8 @@ class DiversifiedEnsemble:
         This is the new DataFrame-based API for prediction.
         Routes candles to each base model, which computes features and predicts internally.
         
+        Uses date_range-based caching to avoid recomputation for the same date range.
+        
         Parameters
         ----------
         candles_df : pd.DataFrame
@@ -1174,6 +1199,24 @@ class DiversifiedEnsemble:
                 "Call fit_from_candles() or fit() first."
             )
         
+        # Check cache first
+        date_range_key = self._get_date_range_key(candles_df)
+        cache_key = (date_range_key, return_base_model_predictions)
+        
+        if cache_key in self._predict_cache:
+            self._cache_hits += 1
+            cache_msg = (
+                f"DiversifiedEnsemble.predict_from_candles() cache HIT for date_range: {date_range_key} "
+                f"(hits: {self._cache_hits}, misses: {self._cache_misses})"
+            )
+            logger.info(cache_msg)
+            cached_result = self._predict_cache[cache_key]
+            # Return a deep copy to avoid modifying cache
+            return self._deep_copy_result(cached_result)
+        
+        logger.debug(f"DiversifiedEnsemble.predict_from_candles() cache MISS for date_range: {date_range_key}")
+        self._cache_misses += 1
+        
         # Calculate or use provided volatility
         if volatility is None:
             volatility = self._calculate_volatility_from_candles(candles_df)
@@ -1181,13 +1224,25 @@ class DiversifiedEnsemble:
         all_predictions = []
         base_model_predictions_dict = {}
         
+        # Import Ticker for normalization
+        from utils.enums import Ticker
+        
+        # Helper function to normalize ticker names (for comparison)
+        def normalize_ticker_name(ticker_val):
+            """Normalize ticker to string name for comparison."""
+            if isinstance(ticker_val, Ticker):
+                return ticker_val.name
+            elif isinstance(ticker_val, str):
+                return ticker_val.replace('Ticker.', '')
+            else:
+                return getattr(ticker_val, 'name', str(ticker_val))
+        
         # Group candles by ticker
         for ticker_name in candles_df['ticker'].unique():
             ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
             
             # Get ticker enum
             try:
-                from utils.enums import Ticker
                 ticker = Ticker[ticker_name] if isinstance(ticker_name, str) else ticker_name
             except (KeyError, AttributeError):
                 logger.warning(f"Unknown ticker '{ticker_name}', skipping")
@@ -1200,6 +1255,21 @@ class DiversifiedEnsemble:
             ticker_predictions = []
             for model_name, base_model in self.base_models.items():
                 try:
+                    # Check if this base model supports this ticker
+                    model_tickers = set(getattr(base_model, 'tickers', []))
+                    if model_tickers:
+                        # Normalize ticker names for comparison
+                        model_ticker_names = {normalize_ticker_name(t) for t in model_tickers}
+                        normalized_ticker_name = normalize_ticker_name(ticker_name)
+                        
+                        # Skip this base model if it doesn't support this ticker
+                        if normalized_ticker_name not in model_ticker_names:
+                            logger.debug(
+                                f"Base model '{model_name}' does not support ticker '{ticker_name}'. "
+                                f"Supported tickers: {model_ticker_names}. Skipping."
+                            )
+                            continue
+                    
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
                     # BaseModel.predict() handles feature caching internally
                     pred = base_model.predict(ticker_candles)
@@ -1259,7 +1329,8 @@ class DiversifiedEnsemble:
                     )
             
             if not ticker_predictions:
-                logger.warning(f"No ticker_predictions for ticker {ticker_name}. Base models: {list(self.base_models.keys())}")
+                # No predictions for this ticker - this is expected if no base models support it
+                logger.debug(f"No ticker_predictions for ticker {ticker_name}. Base models: {list(self.base_models.keys())}")
                 continue
                 
             # Combine predictions for this ticker
@@ -1326,11 +1397,19 @@ class DiversifiedEnsemble:
             for model_name, model_dfs in base_model_predictions_dict.items():
                 combined_base_models[model_name] = pd.concat(model_dfs, ignore_index=True)
             
-            return {
+            result = {
                 'ensemble': ensemble_result,
                 'base_models': combined_base_models
             }
+            # Store in cache
+            self._predict_cache[cache_key] = {
+                'ensemble': ensemble_result.copy(),
+                'base_models': {k: v.copy() for k, v in combined_base_models.items()}
+            }
+            return result
         
+        # Store in cache
+        self._predict_cache[cache_key] = ensemble_result.copy()
         return ensemble_result
     
     def predict(
@@ -1776,3 +1855,72 @@ class DiversifiedEnsemble:
         ]
         
         return "\n".join(lines)
+    
+    def _deep_copy_result(self, obj: Any) -> Any:
+        """
+        Recursively deep copy DataFrames in nested structures.
+        
+        Handles:
+        - pd.DataFrame: returns .copy()
+        - dict: recursively copies values
+        - list: recursively copies elements
+        - other: returns as-is (immutable or primitive types)
+        
+        Parameters
+        ----------
+        obj : Any
+            Object to deep copy (DataFrame, dict, list, or primitive)
+            
+        Returns
+        -------
+        Any
+            Deep copied object with all DataFrames copied
+        """
+        if isinstance(obj, pd.DataFrame):
+            return obj.copy()
+        elif isinstance(obj, dict):
+            return {k: self._deep_copy_result(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._deep_copy_result(item) for item in obj]
+        else:
+            return obj
+    
+    def clear_cache(self) -> None:
+        """Clear all cached fit and predict results."""
+        self._fit_cache.clear()
+        self._predict_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        # Also clear cache in base models
+        for base_model in self.base_models.values():
+            if hasattr(base_model, 'clear_cache'):
+                base_model.clear_cache()
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics for this ensemble and all base models.
+        
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with cache hits, misses, hit rate, and cache sizes
+        """
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
+        
+        base_model_stats = {}
+        for model_name, base_model in self.base_models.items():
+            if hasattr(base_model, 'get_cache_stats'):
+                base_model_stats[model_name] = base_model.get_cache_stats()
+        
+        return {
+            'ensemble': {
+                'hits': self._cache_hits,
+                'misses': self._cache_misses,
+                'total': total,
+                'hit_rate': hit_rate,
+                'fit_cache_size': len(self._fit_cache),
+                'predict_cache_size': len(self._predict_cache)
+            },
+            'base_models': base_model_stats
+        }
