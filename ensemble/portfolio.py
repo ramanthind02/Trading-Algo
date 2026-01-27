@@ -19,11 +19,49 @@ Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 import pandas as pd
 import numpy as np
 import logging
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Union, Any, Tuple
 from utils.enums import TimeFrame
 from .weight_layer import WeightLayer
 
+try:
+    from joblib import Parallel, delayed
+    JOBLIB_AVAILABLE = True
+    _joblib_version = None
+    try:
+        import joblib
+        _joblib_version = getattr(joblib, '__version__', 'unknown')
+    except:
+        pass
+except ImportError as e:
+    JOBLIB_AVAILABLE = False
+    _joblib_import_error = str(e)
+    # Fallback: define dummy functions
+    def Parallel(*args, **kwargs):
+        class DummyParallel:
+            def __init__(self, *args, **kwargs):
+                pass
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def __call__(self, iterable):
+                return list(iterable)
+        return DummyParallel()
+    def delayed(func):
+        return func
+
 logger = logging.getLogger(__name__)
+
+# Log joblib availability at module load
+if JOBLIB_AVAILABLE:
+    logger.info(f"joblib available (version: {_joblib_version}) - parallel processing enabled")
+else:
+    error_msg = f"joblib not available - using sequential processing"
+    if '_joblib_import_error' in globals():
+        error_msg += f" (ImportError: {_joblib_import_error})"
+    error_msg += " (install with: pip install joblib)"
+    print(f"⚠️  WARNING: {error_msg}")
+    logger.warning(error_msg)
 
 
 class Portfolio:
@@ -137,7 +175,7 @@ class Portfolio:
             # Create default inverse correlation WeightLayer
             self.weight_layer = WeightLayer(
                 weight_method='inverse_correlation',
-                fdm_max=2.0
+                fdm_max=2.5
             )
         else:
             self.weight_layer = weight_layer
@@ -152,6 +190,13 @@ class Portfolio:
         self.mean_return_correlation_: Optional[float] = None
         self.instruments_: Optional[List[str]] = None
         self.is_fitted_: bool = False
+        
+        # Caching for fit and predict operations
+        # Cache key: (date_range_start, date_range_end) as tuple of dates
+        self._fit_cache: Dict[Tuple[Any, Any], bool] = {}  # Maps date_range -> is_fitted flag
+        self._predict_cache: Dict[Tuple[Any, ...], Union[pd.DataFrame, Dict[str, Any]]] = {}  # Maps (date_range, return_flags) -> predictions
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     def fit(
         self,
@@ -423,6 +468,28 @@ class Portfolio:
 
         return df[['ticker', 'forecast_score', 'position_fraction']]
     
+    def _get_date_range_key(self, candles_df: pd.DataFrame) -> Tuple[Any, Any]:
+        """
+        Generate cache key from date range of candles DataFrame.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            Candles DataFrame with datetime column
+            
+        Returns
+        -------
+        Tuple
+            (min_date, max_date) as tuple of date objects (not datetime)
+        """
+        if candles_df.empty or 'datetime' not in candles_df.columns:
+            return (None, None)
+        
+        datetimes = pd.to_datetime(candles_df['datetime'])
+        min_date = datetimes.min().date()
+        max_date = datetimes.max().date()
+        return (min_date, max_date)
+    
     def fit_from_candles(
         self,
         candles_df: pd.DataFrame,
@@ -433,6 +500,8 @@ class Portfolio:
         
         This is the new DataFrame-based API for fitting portfolios.
         Routes candles to each ensemble, which routes to base models.
+        
+        Uses date_range-based caching to avoid refitting for the same date range.
         
         Parameters
         ----------
@@ -459,15 +528,71 @@ class Portfolio:
                 f"Available timeframes: {candles_df['timeframe'].unique()}"
             )
         
-        # Fit all ensembles
-        for ensemble in self.ensembles:
-            if target_data is not None:
-                # Use the new fit_from_candles method if available
-                if hasattr(ensemble, 'fit_from_candles'):
-                    ensemble.fit_from_candles(tf_candles, target_data)
+        # Check cache first
+        date_range_key = self._get_date_range_key(tf_candles)
+        if date_range_key in self._fit_cache and self.is_fitted_:
+            logger.debug(f"Portfolio.fit_from_candles() cache HIT for date_range: {date_range_key}")
+            self._cache_hits += 1
+            return self
+        
+        logger.debug(f"Portfolio.fit_from_candles() cache MISS for date_range: {date_range_key}")
+        self._cache_misses += 1
+        
+        # Fit all ensembles (with parallelization if available)
+        if target_data is not None:
+            if JOBLIB_AVAILABLE and len(self.ensembles) > 1:
+                # Parallel fitting for multiple ensembles
+                msg = f"Fitting {len(self.ensembles)} ensembles in parallel (using joblib)..."
+                print(f"⚡ {msg}")
+                logger.info(msg)
+                import time
+                start_time = time.time()
+                
+                def fit_ensemble(ensemble_idx, ensemble):
+                    try:
+                        logger.debug(f"Fitting ensemble {ensemble_idx}...")
+                        ensemble.fit_from_candles(tf_candles, target_data)
+                        return True
+                    except Exception as e:
+                        logger.error(f"Error fitting ensemble {ensemble_idx}: {e}", exc_info=True)
+                        return False
+                
+                results = Parallel(n_jobs=-1, backend='threading', verbose=0)(
+                    delayed(fit_ensemble)(idx, ensemble) for idx, ensemble in enumerate(self.ensembles)
+                )
+                elapsed = time.time() - start_time
+                failed = sum(1 for r in results if not r)
+                msg = f"✓ Parallel fitting completed in {elapsed:.2f}s ({failed} failed)"
+                print(msg)
+                logger.info(msg)
+                if failed > 0:
+                    warn_msg = f"Failed to fit {failed} out of {len(self.ensembles)} ensembles"
+                    print(f"⚠️  {warn_msg}")
+                    logger.warning(warn_msg)
+            else:
+                # Sequential fitting
+                if not JOBLIB_AVAILABLE:
+                    msg = f"Fitting {len(self.ensembles)} ensembles sequentially (joblib not available)..."
+                    print(f"🐌 {msg}")
+                    logger.info(msg)
                 else:
-                    # Fallback: ensembles must be pre-fitted
-                    pass
+                    msg = f"Fitting {len(self.ensembles)} ensemble(s) sequentially (only 1 ensemble)..."
+                    print(f"🐌 {msg}")
+                    logger.info(msg)
+                
+                import time
+                start_time = time.time()
+                for idx, ensemble in enumerate(self.ensembles):
+                    try:
+                        logger.debug(f"Fitting ensemble {idx}...")
+                        ensemble.fit_from_candles(tf_candles, target_data)
+                    except Exception as e:
+                        logger.error(f"Error fitting ensemble {idx}: {e}", exc_info=True)
+                elapsed = time.time() - start_time
+                msg = f"✓ Sequential fitting completed in {elapsed:.2f}s"
+                print(msg)
+                logger.info(msg)
+
         
         # Fit IDM if we have return data
         if target_data is not None:
@@ -529,6 +654,10 @@ class Portfolio:
             self._fit_weight_layer(tf_candles)
         
         self.is_fitted_ = True
+        
+        # Store in cache
+        self._fit_cache[date_range_key] = True
+        
         return self
     
     def predict_from_candles(
@@ -542,6 +671,10 @@ class Portfolio:
         
         This is the new DataFrame-based API for prediction.
         Routes candles to ensembles, aggregates predictions, and applies risk management.
+        
+        Uses date_range-based caching to avoid recomputation for the same date range.
+        Core predictions are cached regardless of return flags, enabling cache reuse
+        between basic and granular prediction calls.
         
         Parameters
         ----------
@@ -581,80 +714,144 @@ class Portfolio:
                 return result
             return empty_df
         
+        # Use core cache key WITHOUT return flags - enables cache sharing between basic and granular calls
+        date_range_key = self._get_date_range_key(tf_candles)
+        core_cache_key = date_range_key  # Just date range, no return flags
+        
+        # Check if we have cached core results
+        if core_cache_key in self._predict_cache:
+            self._cache_hits += 1
+            cache_msg = (
+                f"Portfolio.predict_from_candles() cache HIT for date_range: {date_range_key} "
+                f"(hits: {self._cache_hits}, misses: {self._cache_misses})"
+            )
+            logger.info(cache_msg)
+            print(f"🚀 {cache_msg}")
+            cached_result = self._predict_cache[core_cache_key]
+            # Return formatted subset based on flags
+            return self._format_cached_result(cached_result, return_ensemble_predictions, return_base_model_predictions)
+        
+        logger.debug(f"Portfolio.predict_from_candles() cache MISS for date_range: {date_range_key}")
+        
         # Calculate volatility (from candles) - needed for all predictions
         volatility = self._calculate_volatility_from_candles(tf_candles)
         
-        # Storage for granular predictions
+        # Storage for all predictions (always compute everything for caching)
         forecast_vectors = []  # For WeightLayer.combine()
         ensemble_predictions_dict = {}
         base_model_predictions_dict = {}
         
-        # Get predictions from all ensembles
-        for ensemble_idx, ensemble in enumerate(self.ensembles):
-            # Use the new predict_from_candles method if available
-            if hasattr(ensemble, 'predict_from_candles'):
-                # Always get base model predictions to build forecast vectors for WeightLayer
+        # Get predictions from all ensembles (with parallelization if available)
+        def get_ensemble_predictions(ensemble_idx, ensemble):
+            """Helper function for parallel prediction."""
+            if not hasattr(ensemble, 'predict_from_candles'):
+                return None, None
+            
+            try:
                 ensemble_result = ensemble.predict_from_candles(
                     tf_candles,
-                    volatility=volatility,  # Pass volatility for proper scaling
+                    volatility=volatility,
                     return_base_model_predictions=True
                 )
-                
-                if isinstance(ensemble_result, dict):
-                    ensemble_pred = ensemble_result.get('ensemble')
-                    base_models = ensemble_result.get('base_models', {})
-                    
-                    # Build forecast vectors for WeightLayer (one per ensemble)
-                    # WeightLayer expects: ['ticker', 'model_name', 'forecast', 'signal']
-                    ensemble_forecast_vector = []
-                    for model_name, model_pred in base_models.items():
-                        if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:
-                            # Convert to WeightLayer format
-                            forecast_df = model_pred.copy()
-                            forecast_df['model_name'] = model_name
-                            forecast_df['forecast'] = forecast_df['forecast_score']
-                            # Extract signal from forecast (1 if forecast > 0, else 0)
-                            forecast_df['signal'] = (forecast_df['forecast'] > 0).astype(int)
-                            # Keep only required columns
-                            forecast_df = forecast_df[['ticker', 'datetime', 'model_name', 'forecast', 'signal']]
-                            ensemble_forecast_vector.append(forecast_df)
-                    
-                    if ensemble_forecast_vector:
-                        # Combine all base models from this ensemble into one forecast vector
-                        ensemble_vector_df = pd.concat(ensemble_forecast_vector, ignore_index=True)
-                        forecast_vectors.append(ensemble_vector_df)
-                    
-                    # Store base model predictions with ensemble prefix (for granular output)
-                    if return_base_model_predictions:
-                        for model_name, model_pred in base_models.items():
-                            ensemble_name = f"ensemble_{ensemble_idx}"
-                            full_model_name = f"{ensemble_name}::{model_name}"
-                            # Convert to position fractions (forecasts already volatility-adjusted)
-                            base_model_positions = self._apply_risk_management_to_forecasts(
-                                model_pred, volatility, tf_candles
-                            )
-                            base_model_predictions_dict[full_model_name] = base_model_positions
-                    
-                    # Store ensemble-level predictions if requested
-                    if return_ensemble_predictions:
-                        ensemble_name = f"ensemble_{ensemble_idx}"
-                        # Convert to position fractions
-                        ensemble_positions = self._apply_risk_management_to_forecasts(
-                            ensemble_pred, volatility, tf_candles
-                        )
-                        ensemble_predictions_dict[ensemble_name] = ensemble_positions
-                else:
-                    # If ensemble doesn't return dict, it's already aggregated
-                    ensemble_pred = ensemble_result
-                    if return_ensemble_predictions:
-                        ensemble_name = f"ensemble_{ensemble_idx}"
-                        ensemble_positions = self._apply_risk_management_to_forecasts(
-                            ensemble_pred, volatility, tf_candles
-                        )
-                        ensemble_predictions_dict[ensemble_name] = ensemble_positions
+                return ensemble_idx, ensemble_result
+            except Exception as e:
+                logger.error(
+                    f"Error getting predictions from ensemble {ensemble_idx}: {e}",
+                    exc_info=True
+                )
+                return ensemble_idx, None
+        
+        # Parallel or sequential prediction
+        if JOBLIB_AVAILABLE and len(self.ensembles) > 1:
+            msg = f"Getting predictions from {len(self.ensembles)} ensembles in parallel (using joblib)..."
+            print(f"⚡ {msg}")
+            logger.info(msg)
+            import time
+            start_time = time.time()
+            ensemble_results = Parallel(n_jobs=-1, backend='threading', verbose=0)(
+                delayed(get_ensemble_predictions)(idx, ensemble)
+                for idx, ensemble in enumerate(self.ensembles)
+            )
+            elapsed = time.time() - start_time
+            msg = f"✓ Parallel prediction completed in {elapsed:.2f}s"
+            print(msg)
+            logger.info(msg)
+        else:
+            if not JOBLIB_AVAILABLE:
+                msg = f"Getting predictions from {len(self.ensembles)} ensembles sequentially (joblib not available)..."
+                print(f"🐌 {msg}")
+                logger.info(msg)
             else:
-                # Fallback: use regular predict (requires features, not implemented here)
-                pass
+                msg = f"Getting predictions from {len(self.ensembles)} ensemble(s) sequentially (only 1 ensemble)..."
+                print(f"🐌 {msg}")
+                logger.info(msg)
+            import time
+            start_time = time.time()
+            ensemble_results = [
+                get_ensemble_predictions(idx, ensemble)
+                for idx, ensemble in enumerate(self.ensembles)
+            ]
+            elapsed = time.time() - start_time
+            msg = f"✓ Sequential prediction completed in {elapsed:.2f}s"
+            print(msg)
+            logger.info(msg)
+        
+        # Process results - ALWAYS compute all predictions for caching
+        for ensemble_idx, ensemble_result in ensemble_results:
+            if ensemble_result is None:
+                continue
+            
+            if isinstance(ensemble_result, dict):
+                ensemble_pred = ensemble_result.get('ensemble')
+                base_models = ensemble_result.get('base_models', {})
+                
+                # Build forecast vectors for WeightLayer (one per ensemble)
+                # WeightLayer expects: ['ticker', 'model_name', 'forecast', 'signal']
+                ensemble_forecast_vector = []
+                for model_name, model_pred in base_models.items():
+                    if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:
+                        # Convert to WeightLayer format
+                        forecast_df = model_pred.copy()
+                        forecast_df['model_name'] = model_name
+                        forecast_df['forecast'] = forecast_df['forecast_score']
+                        # Extract signal from forecast (1 if forecast > 0, else 0)
+                        forecast_df['signal'] = (forecast_df['forecast'] > 0).astype(int)
+                        # Keep only required columns
+                        forecast_df = forecast_df[['ticker', 'datetime', 'model_name', 'forecast', 'signal']]
+                        ensemble_forecast_vector.append(forecast_df)
+                
+                if ensemble_forecast_vector:
+                    # Combine all base models from this ensemble into one forecast vector
+                    ensemble_vector_df = pd.concat(ensemble_forecast_vector, ignore_index=True)
+                    forecast_vectors.append(ensemble_vector_df)
+                
+                # ALWAYS compute base model predictions (now fast with vectorization)
+                for model_name, model_pred in base_models.items():
+                    ensemble_name = f"ensemble_{ensemble_idx}"
+                    full_model_name = f"{ensemble_name}::{model_name}"
+                    # Convert to position fractions (vectorized - O(n+m) complexity)
+                    base_model_positions = self._apply_risk_management_to_forecasts(
+                        model_pred, volatility, tf_candles
+                    )
+                    base_model_predictions_dict[full_model_name] = base_model_positions
+                
+                # ALWAYS compute ensemble-level predictions (now fast with vectorization)
+                if ensemble_pred is not None:
+                    ensemble_name = f"ensemble_{ensemble_idx}"
+                    # Convert to position fractions (vectorized - O(n+m) complexity)
+                    ensemble_positions = self._apply_risk_management_to_forecasts(
+                        ensemble_pred, volatility, tf_candles
+                    )
+                    ensemble_predictions_dict[ensemble_name] = ensemble_positions
+            else:
+                # If ensemble doesn't return dict, it's already aggregated
+                ensemble_pred = ensemble_result
+                if ensemble_pred is not None:
+                    ensemble_name = f"ensemble_{ensemble_idx}"
+                    ensemble_positions = self._apply_risk_management_to_forecasts(
+                        ensemble_pred, volatility, tf_candles
+                    )
+                    ensemble_predictions_dict[ensemble_name] = ensemble_positions
         
         if not forecast_vectors:
             empty_df = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score', 'position_fraction'])
@@ -685,16 +882,81 @@ class Portfolio:
             forecast_scores_df, volatility, tf_candles
         )
         
-        # Return structure based on flags
-        if return_ensemble_predictions or return_base_model_predictions:
-            result = {'portfolio': positions_df}
-            if return_ensemble_predictions:
-                result['ensembles'] = ensemble_predictions_dict
-            if return_base_model_predictions:
-                result['base_models'] = base_model_predictions_dict
-            return result
+        # Cache the FULL result (all predictions) with core cache key
+        full_result = {
+            'portfolio': positions_df,
+            'ensembles': ensemble_predictions_dict,
+            'base_models': base_model_predictions_dict
+        }
+        self._predict_cache[core_cache_key] = full_result
         
-        return positions_df
+        # Return formatted subset based on flags
+        return self._format_cached_result(full_result, return_ensemble_predictions, return_base_model_predictions)
+    
+    def _format_cached_result(
+        self,
+        cached_result: Dict[str, Any],
+        return_ensemble_predictions: bool,
+        return_base_model_predictions: bool
+    ) -> Union[pd.DataFrame, Dict[str, Any]]:
+        """
+        Format cached result based on return flags.
+        
+        Returns a deep copy of relevant portions to avoid cache mutation.
+        
+        Parameters
+        ----------
+        cached_result : Dict[str, Any]
+            Full cached result with 'portfolio', 'ensembles', 'base_models' keys
+        return_ensemble_predictions : bool
+            Whether to include ensemble predictions
+        return_base_model_predictions : bool
+            Whether to include base model predictions
+            
+        Returns
+        -------
+        pd.DataFrame or Dict[str, Any]
+            Formatted result based on flags
+        """
+        if return_ensemble_predictions or return_base_model_predictions:
+            result = {'portfolio': self._deep_copy_result(cached_result['portfolio'])}
+            if return_ensemble_predictions:
+                result['ensembles'] = self._deep_copy_result(cached_result.get('ensembles', {}))
+            if return_base_model_predictions:
+                result['base_models'] = self._deep_copy_result(cached_result.get('base_models', {}))
+            return result
+        else:
+            # Just return portfolio DataFrame
+            return self._deep_copy_result(cached_result['portfolio'])
+    
+    def _deep_copy_result(self, obj: Any) -> Any:
+        """
+        Recursively deep copy DataFrames in nested structures.
+        
+        Handles:
+        - pd.DataFrame: returns .copy()
+        - dict: recursively copies values
+        - list: recursively copies elements
+        - other: returns as-is (immutable or primitive types)
+        
+        Parameters
+        ----------
+        obj : Any
+            Object to deep copy (DataFrame, dict, list, or primitive)
+            
+        Returns
+        -------
+        Any
+            Deep copied object with all DataFrames copied
+        """
+        if isinstance(obj, pd.DataFrame):
+            return obj.copy()
+        elif isinstance(obj, dict):
+            return {k: self._deep_copy_result(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._deep_copy_result(item) for item in obj]
+        else:
+            return obj
     
     def _aggregate_ensembles(
         self,
@@ -996,22 +1258,38 @@ class Portfolio:
         candles_df : pd.DataFrame
             Candles DataFrame for generating forecasts
         """
+        print("\n" + "=" * 60)
+        print("Fitting WeightLayer...")
+        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("Fitting WeightLayer...")
+        logger.info("=" * 60)
+        
         if not self.ensembles:
+            logger.warning("No ensembles available for WeightLayer fitting")
             return
         
+        logger.info(f"Processing {len(self.ensembles)} ensemble(s)")
+        
         # Calculate volatility for forecast generation
+        logger.info("Calculating volatility from candles...")
         volatility = self._calculate_volatility_from_candles(candles_df)
+        logger.info(f"Volatility calculated for {len(volatility)} ticker(s)")
         
         # Collect forecast vectors and signals from all ensembles
         forecast_vectors = []
-        all_signals_list = []
+        all_signals_dict = {}  # model_name -> list of (datetime, signal) tuples
         
-        for ensemble in self.ensembles:
+        for ensemble_idx, ensemble in enumerate(self.ensembles):
+            logger.info(f"\nProcessing Ensemble {ensemble_idx + 1}/{len(self.ensembles)}...")
+            
             if not hasattr(ensemble, 'predict_from_candles'):
+                logger.warning(f"Ensemble {ensemble_idx} does not have predict_from_candles method")
                 continue
             
             try:
                 # Get ensemble predictions with base model granularity
+                logger.info(f"  Getting predictions from ensemble {ensemble_idx}...")
                 ensemble_result = ensemble.predict_from_candles(
                     candles_df,
                     volatility=volatility,
@@ -1020,10 +1298,13 @@ class Portfolio:
                 
                 if isinstance(ensemble_result, dict):
                     base_models = ensemble_result.get('base_models', {})
+                    logger.info(f"  Found {len(base_models)} base model(s) in ensemble {ensemble_idx}")
                     ensemble_forecast_vector = []
                     
                     for model_name, model_pred in base_models.items():
                         if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:
+                            logger.info(f"    Processing model: {model_name} ({len(model_pred)} rows)")
+                            
                             # Convert to WeightLayer format: ['ticker', 'model_name', 'forecast', 'signal']
                             forecast_df = model_pred.copy()
                             forecast_df['model_name'] = model_name
@@ -1034,47 +1315,213 @@ class Portfolio:
                             forecast_df = forecast_df[['ticker', 'datetime', 'model_name', 'forecast', 'signal']]
                             ensemble_forecast_vector.append(forecast_df)
                             
-                            # Extract signals for weight calculation (pivot by model_name)
-                            signal_series = forecast_df.set_index('datetime')['signal']
-                            all_signals_list.append((model_name, signal_series))
+                            # Aggregate signals across tickers by datetime (take max)
+                            # For signals, we want to know if ANY ticker has a signal at a given datetime
+                            forecast_df['datetime'] = pd.to_datetime(forecast_df['datetime'])
+                            signal_by_datetime = forecast_df.groupby('datetime')['signal'].max()
+                            
+                            # Log signal statistics
+                            signal_sum = signal_by_datetime.sum()
+                            signal_pct = 100.0 * signal_sum / len(signal_by_datetime) if len(signal_by_datetime) > 0 else 0
+                            logger.info(
+                                f"      Signals: {signal_sum}/{len(signal_by_datetime)} ({signal_pct:.1f}%) active, "
+                                f"date range: {signal_by_datetime.index.min()} to {signal_by_datetime.index.max()}"
+                            )
+                            
+                            # Store signals for this model
+                            if model_name not in all_signals_dict:
+                                all_signals_dict[model_name] = []
+                            all_signals_dict[model_name].append(signal_by_datetime)
+                        else:
+                            logger.warning(f"    Model {model_name}: Invalid format (not DataFrame or missing 'forecast_score')")
                     
                     if ensemble_forecast_vector:
                         # Combine all base models from this ensemble into one forecast vector
                         ensemble_vector_df = pd.concat(ensemble_forecast_vector, ignore_index=True)
                         forecast_vectors.append(ensemble_vector_df)
-            except Exception:
-                # Skip this ensemble if prediction fails
+                        logger.info(f"  Ensemble {ensemble_idx}: Added forecast vector with {len(ensemble_vector_df)} rows")
+                    else:
+                        logger.warning(f"  Ensemble {ensemble_idx}: No valid forecast vectors collected")
+                else:
+                    logger.warning(f"  Ensemble {ensemble_idx}: Result is not a dict: {type(ensemble_result)}")
+            except Exception as e:
+                logger.error(
+                    f"Error getting predictions from ensemble {ensemble_idx} for WeightLayer fitting: {e}",
+                    exc_info=True
+                )
                 continue
         
+        logger.info(f"\nCollected {len(forecast_vectors)} forecast vector(s)")
+        logger.info(f"Collected signals for {len(all_signals_dict)} model(s)")
+        
+        # Debug: Show forecast vector details
+        for idx, fv in enumerate(forecast_vectors):
+            if isinstance(fv, pd.DataFrame):
+                logger.info(
+                    f"  Forecast vector {idx}: {len(fv)} rows, "
+                    f"columns: {list(fv.columns)}, "
+                    f"date range: {fv['datetime'].min()} to {fv['datetime'].max() if 'datetime' in fv.columns else 'N/A'}"
+                )
+        
         if len(forecast_vectors) == 0:
-            # Cannot fit WeightLayer without forecast vectors
+            error_msg = "No forecast vectors collected. Cannot fit WeightLayer."
+            print(f"✗ {error_msg}")
+            logger.error(error_msg)
+            print("=" * 60 + "\n")
             return
         
         # Build signals DataFrame for weight calculation
-        # Pivot signals by model_name (columns) and datetime (index)
-        if all_signals_list:
-            # Find common datetime index
-            common_index = all_signals_list[0][1].index
-            for _, signal_series in all_signals_list[1:]:
-                common_index = common_index.intersection(signal_series.index)
+        # Aggregate signals per model across all tickers and ensembles
+        if all_signals_dict:
+            logger.info("\nAggregating signals across tickers...")
+            # For each model, combine all signal series (from different tickers/ensembles)
+            # Take max across all series for each datetime (1 if any ticker has signal)
+            combined_signals_dict = {}
+            for model_name, signal_series_list in all_signals_dict.items():
+                if not signal_series_list:
+                    logger.warning(f"  Model {model_name}: Empty signal series list")
+                    continue
+                
+                logger.info(f"  Model {model_name}: Combining {len(signal_series_list)} signal series...")
+                
+                # Combine all series for this model
+                combined_df = pd.DataFrame({i: series for i, series in enumerate(signal_series_list)})
+                # Take max across columns (1 if any ticker has signal at this datetime)
+                combined_signal = combined_df.max(axis=1)
+                combined_signals_dict[model_name] = combined_signal
+                
+                signal_sum = combined_signal.sum()
+                signal_pct = 100.0 * signal_sum / len(combined_signal) if len(combined_signal) > 0 else 0
+                logger.info(
+                    f"    Combined: {signal_sum}/{len(combined_signal)} ({signal_pct:.1f}%) active, "
+                    f"date range: {combined_signal.index.min()} to {combined_signal.index.max()}"
+                )
             
-            if len(common_index) >= 2:
-                signals_df = pd.DataFrame(index=common_index)
-                for model_name, signal_series in all_signals_list:
-                    aligned_signal = signal_series.reindex(common_index)
-                    signals_df[model_name] = aligned_signal
-                
-                # Drop rows with any NaN
-                signals_df = signals_df.dropna()
-                
-                if len(signals_df) >= 2 and len(signals_df.columns) >= 1:
-                    # Fit WeightLayer
-                    try:
-                        self.weight_layer.fit(forecast_vectors, signals_df)
-                    except Exception:
-                        # If fitting fails, WeightLayer will remain unfitted
-                        # It will use defaults when combine() is called
-                        pass
+            if not combined_signals_dict:
+                error_msg = "No signals collected after aggregation. Cannot fit WeightLayer."
+                print(f"✗ {error_msg}")
+                logger.error(error_msg)
+                print("=" * 60 + "\n")
+                return
+            
+            logger.info(f"\nFinding common datetime index across {len(combined_signals_dict)} model(s)...")
+            
+            # Instead of using intersection (which can be empty), use the union of all datetimes
+            # from the candles DataFrame as the common index
+            # This ensures we have a complete datetime range to work with
+            candles_datetimes = pd.to_datetime(candles_df['datetime']).unique()
+            candles_datetimes = pd.DatetimeIndex(sorted(candles_datetimes))
+            
+            logger.info(f"  Using candles datetime index: {len(candles_datetimes)} unique datetimes")
+            logger.info(f"  Date range: {candles_datetimes.min()} to {candles_datetimes.max()}")
+            
+            # Also log what each model has
+            for model_name, signal_series in combined_signals_dict.items():
+                logger.info(
+                    f"  Model {model_name}: {len(signal_series)} datetimes, "
+                    f"range: {signal_series.index.min()} to {signal_series.index.max()}"
+                )
+            
+            # Use candles datetime index as common index
+            common_index = candles_datetimes
+            
+            if len(common_index) < 2:
+                error_msg = (
+                    f"Insufficient datetime index for WeightLayer fitting. "
+                    f"Common index length: {len(common_index)} "
+                    f"(need at least 2)"
+                )
+                print(f"✗ {error_msg}")
+                logger.error(error_msg)
+                print("=" * 60 + "\n")
+                return
+            
+            logger.info(f"Using common datetime index: {len(common_index)} datetimes")
+            logger.info(f"  Date range: {common_index.min()} to {common_index.max()}")
+            
+            # Build signals DataFrame
+            logger.debug("\nBuilding signals DataFrame...")
+            signals_df = pd.DataFrame(index=common_index)
+            for model_name, signal_series in combined_signals_dict.items():
+                # Reindex to common index, filling missing values with 0
+                # This handles cases where a model doesn't have signals for all datetimes
+                aligned_signal = signal_series.reindex(common_index, fill_value=0)
+                signals_df[model_name] = aligned_signal
+                signal_sum = aligned_signal.sum()
+                original_sum = signal_series.sum()
+                msg = (
+                    f"  {model_name}: {signal_sum}/{len(aligned_signal)} ({100.0*signal_sum/len(aligned_signal):.1f}%) active "
+                    f"(original: {original_sum}/{len(signal_series)})"
+                )
+                logger.debug(msg)
+            
+            # Drop rows with any NaN (shouldn't happen after fill_value=0, but just in case)
+            before_drop = len(signals_df)
+            signals_df = signals_df.dropna()
+            after_drop = len(signals_df)
+            if before_drop != after_drop:
+                warn_msg = f"Dropped {before_drop - after_drop} rows with NaN"
+                logger.warning(warn_msg)
+            
+            logger.debug(f"\nSignals DataFrame: {len(signals_df)} rows, {len(signals_df.columns)} columns")
+            logger.debug(f"  Columns: {list(signals_df.columns)}")
+            
+            if len(signals_df) >= 2 and len(signals_df.columns) >= 1:
+                # Fit WeightLayer
+                try:
+                    logger.info(f"\nFitting WeightLayer...")
+                    logger.info(f"  Forecast vectors: {len(forecast_vectors)}")
+                    logger.info(f"  Signals DataFrame: {len(signals_df)} samples, {len(signals_df.columns)} models")
+                    self.weight_layer.fit(forecast_vectors, signals_df)
+                    
+                    # Get diagnostics for success message
+                    diag = self.weight_layer.get_diagnostics()
+                    summary = diag.get('summary', {})
+                    
+                    success_msg = (
+                        f"\n✓ WeightLayer fitted successfully!"
+                        f"\n  Tickers: {summary.get('n_tickers', 0)}"
+                        f"\n  Mean FDM: {summary.get('mean_fdm', 1.0):.4f} "
+                        f"(range: {summary.get('min_fdm', 1.0):.4f} - {summary.get('max_fdm', 1.0):.4f})"
+                        f"\n  Mean models per ticker: {summary.get('mean_models_per_ticker', 0):.1f}"
+                    )
+                    
+                    # Show per-ticker FDM
+                    tickers_info = diag.get('tickers', {})
+                    if tickers_info:
+                        success_msg += f"\n  Per-ticker FDM:"
+                        for ticker, ticker_info in sorted(tickers_info.items()):
+                            fdm_val = ticker_info.get('fdm', 1.0)
+                            n_models = ticker_info.get('n_models', 0)
+                            success_msg += f"\n    {ticker}: FDM={fdm_val:.4f} ({n_models} model(s))"
+                    
+                    print(success_msg)
+                    logger.info(success_msg)
+                except Exception as e:
+                    error_msg = f"✗ Error fitting WeightLayer: {e}"
+                    print(error_msg)
+                    print(f"  Exception type: {type(e).__name__}")
+                    import traceback
+                    print(f"  Traceback:\n{traceback.format_exc()}")
+                    logger.error(
+                        f"✗ Error fitting WeightLayer: {e}",
+                        exc_info=True
+                    )
+                    # WeightLayer will remain unfitted
+            else:
+                error_msg = (
+                    f"Insufficient data for WeightLayer fitting: "
+                    f"{len(signals_df)} samples (need >= 2), {len(signals_df.columns)} models (need >= 1)"
+                )
+                print(f"✗ {error_msg}")
+                logger.error(error_msg)
+        else:
+            error_msg = "No signals collected. Cannot fit WeightLayer."
+            print(f"✗ {error_msg}")
+            logger.error(error_msg)
+        
+        print("=" * 60 + "\n")
+        logger.info("=" * 60)
     
     def _align_forecasts_with_candles(
         self,
@@ -1177,8 +1624,7 @@ class Portfolio:
         """
         Apply risk management to forecast DataFrame (for ensemble/base model level).
         
-        Similar to _apply_risk_management but works with forecast DataFrames
-        that have ticker and datetime columns.
+        Uses vectorized pandas operations for O(n+m) complexity instead of O(n*m).
         Note: Forecasts are already volatility-adjusted from Ensemble layer.
         
         Parameters
@@ -1196,70 +1642,45 @@ class Portfolio:
         pd.DataFrame
             Position fractions with columns: ticker, datetime, forecast_score, position_fraction
         """
-        results = []
+        # Prepare forecasts DataFrame with normalized datetime
+        forecasts_clean = forecasts_df[['ticker', 'datetime', 'forecast_score']].copy()
+        forecasts_clean['datetime'] = pd.to_datetime(forecasts_clean['datetime'])
         
-        # Merge forecasts with candles to align by ticker and datetime
-        for _, row in candles_df.iterrows():
-            dt = pd.to_datetime(row['datetime'])
-            ticker = row['ticker']
-            
-            # Find matching forecast
-            matching = forecasts_df[
-                (forecasts_df['ticker'] == ticker) &
-                (pd.to_datetime(forecasts_df['datetime']) == dt)
-            ]
-            
-            if len(matching) > 0:
-                forecast_score = matching.iloc[0]['forecast_score']
-            else:
-                # Try to find nearest datetime for this ticker
-                ticker_forecasts = forecasts_df[forecasts_df['ticker'] == ticker].copy()
-                if len(ticker_forecasts) > 0:
-                    ticker_forecasts['datetime'] = pd.to_datetime(ticker_forecasts['datetime'])
-                    ticker_forecasts = ticker_forecasts.set_index('datetime')
-                    if dt in ticker_forecasts.index:
-                        forecast_score = ticker_forecasts.loc[dt, 'forecast_score']
-                    else:
-                        # Find nearest
-                        nearest_idx = ticker_forecasts.index.get_indexer([dt], method='nearest')[0]
-                        if nearest_idx >= 0:
-                            forecast_score = ticker_forecasts.iloc[nearest_idx]['forecast_score']
-                        else:
-                            forecast_score = 0.0
-                else:
-                    forecast_score = 0.0
-            
-            # Forecasts are already volatility-adjusted from Ensemble and FDM-scaled from aggregation
-            # Apply IDM (Instrument Diversification Multiplier)
-            idm_value = self.idm_ if self.idm_ is not None else 1.0
-            scaled_forecast = forecast_score * idm_value
-            
-            # Apply instrument weights
-            if self.instrument_weights is not None:
-                inst_weight = self.instrument_weights.get(ticker, 1.0)
-            else:
-                # Equal weight
-                unique_tickers = candles_df['ticker'].nunique()
-                inst_weight = 1.0 / unique_tickers if unique_tickers > 0 else 1.0
-            
-            position_fraction = scaled_forecast * inst_weight
-            
-            # Apply position cap
-            if self.max_position_pct is not None:
-                position_fraction = np.clip(
-                    position_fraction,
-                    -self.max_position_pct,
-                    self.max_position_pct
-                )
-            
-            results.append({
-                'ticker': ticker,
-                'datetime': dt,
-                'forecast_score': forecast_score,
-                'position_fraction': position_fraction
-            })
+        # Prepare candles subset with normalized datetime
+        candles_subset = candles_df[['ticker', 'datetime']].copy()
+        candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime'])
         
-        return pd.DataFrame(results)
+        # Vectorized merge on (ticker, datetime) - O(n+m) complexity
+        result = candles_subset.merge(
+            forecasts_clean,
+            on=['ticker', 'datetime'],
+            how='left'
+        )
+        
+        # Fill missing forecast scores with 0.0
+        result['forecast_score'] = result['forecast_score'].fillna(0.0)
+        
+        # Vectorized IDM application
+        idm_value = self.idm_ if self.idm_ is not None else 1.0
+        result['position_fraction'] = result['forecast_score'] * idm_value
+        
+        # Vectorized instrument weight application
+        if self.instrument_weights is not None:
+            result['position_fraction'] *= result['ticker'].map(self.instrument_weights).fillna(1.0)
+        else:
+            # Equal weight per unique instrument
+            n_tickers = candles_df['ticker'].nunique()
+            if n_tickers > 0:
+                result['position_fraction'] /= n_tickers
+        
+        # Vectorized position cap
+        if self.max_position_pct is not None:
+            result['position_fraction'] = result['position_fraction'].clip(
+                lower=-self.max_position_pct,
+                upper=self.max_position_pct
+            )
+        
+        return result[['ticker', 'datetime', 'forecast_score', 'position_fraction']]
     
     def _apply_risk_management(
         self,
@@ -1270,7 +1691,7 @@ class Portfolio:
         """
         Apply risk management to forecast scores.
         
-        Applies DM (diversification multiplier) and instrument weights.
+        Uses vectorized pandas operations for O(n+m) complexity instead of O(n*m).
         Note: Forecasts are already volatility-adjusted from Ensemble layer.
         
         Parameters
@@ -1288,70 +1709,8 @@ class Portfolio:
         pd.DataFrame
             Position fractions with columns: ticker, datetime, forecast_score, position_fraction
         """
-        results = []
-        
-        # Merge forecast scores with candles to align by ticker and datetime
-        for _, row in candles_df.iterrows():
-            dt = pd.to_datetime(row['datetime'])
-            ticker = row['ticker']
-            
-            # Find matching forecast score for this ticker and datetime
-            matching = forecast_scores_df[
-                (forecast_scores_df['ticker'] == ticker) &
-                (pd.to_datetime(forecast_scores_df['datetime']) == dt)
-            ]
-            
-            if len(matching) > 0:
-                forecast_score = matching.iloc[0]['forecast_score']
-            else:
-                # Try to find nearest datetime for this ticker
-                ticker_forecasts = forecast_scores_df[forecast_scores_df['ticker'] == ticker].copy()
-                if len(ticker_forecasts) > 0:
-                    ticker_forecasts['datetime'] = pd.to_datetime(ticker_forecasts['datetime'])
-                    ticker_forecasts = ticker_forecasts.set_index('datetime')
-                    if dt in ticker_forecasts.index:
-                        forecast_score = ticker_forecasts.loc[dt, 'forecast_score']
-                    else:
-                        # Find nearest
-                        nearest_idx = ticker_forecasts.index.get_indexer([dt], method='nearest')[0]
-                        if nearest_idx >= 0:
-                            forecast_score = ticker_forecasts.iloc[nearest_idx]['forecast_score']
-                        else:
-                            forecast_score = 0.0
-                else:
-                    forecast_score = 0.0
-            
-            # Forecasts are already volatility-adjusted from Ensemble and FDM-scaled from aggregation
-            # Apply IDM (Instrument Diversification Multiplier)
-            idm_value = self.idm_ if self.idm_ is not None else 1.0
-            scaled_forecast = forecast_score * idm_value
-            
-            # Apply instrument weights
-            if self.instrument_weights is not None:
-                inst_weight = self.instrument_weights.get(ticker, 1.0)
-            else:
-                # Equal weight
-                unique_tickers = candles_df['ticker'].nunique()
-                inst_weight = 1.0 / unique_tickers if unique_tickers > 0 else 1.0
-            
-            position_fraction = scaled_forecast * inst_weight
-            
-            # Apply position cap
-            if self.max_position_pct is not None:
-                position_fraction = np.clip(
-                    position_fraction,
-                    -self.max_position_pct,
-                    self.max_position_pct
-                )
-            
-            results.append({
-                'ticker': ticker,
-                'datetime': dt,
-                'forecast_score': forecast_score,
-                'position_fraction': position_fraction
-            })
-        
-        return pd.DataFrame(results)
+        # Delegate to vectorized implementation (same logic)
+        return self._apply_risk_management_to_forecasts(forecast_scores_df, volatility, candles_df)
 
     def get_diagnostics(self) -> Dict:
         """
@@ -1375,20 +1734,24 @@ class Portfolio:
         """
         weight_layer_diag = self.weight_layer.get_diagnostics() if self.weight_layer else {}
         
+        # Extract summary FDM from weight layer diagnostics (new per-ticker structure)
+        summary = weight_layer_diag.get('summary', {}) if isinstance(weight_layer_diag, dict) else {}
+        mean_fdm = summary.get('mean_fdm') if summary else (weight_layer_diag.get('fdm') if isinstance(weight_layer_diag, dict) else None)
+        
         # Flatten weight layer diagnostics for easier access
         diagnostics = {
             'is_fitted': self.is_fitted_,
             'idm': self.idm_,
             'mean_return_correlation': self.mean_return_correlation_,
-            'fdm': weight_layer_diag.get('fdm') if isinstance(weight_layer_diag, dict) else None,
-            'mean_forecast_correlation': weight_layer_diag.get('mean_forecast_correlation') if isinstance(weight_layer_diag, dict) else None,
+            'fdm': mean_fdm,  # Use mean FDM across tickers
+            'mean_forecast_correlation': summary.get('mean_forecast_correlation') if summary else (weight_layer_diag.get('mean_forecast_correlation') if isinstance(weight_layer_diag, dict) else None),
             'n_instruments': len(self.instruments_) if self.instruments_ else 0,
             'instruments': self.instruments_,
             'idm_max': self.idm_max,
             'fdm_max': weight_layer_diag.get('fdm_max') if isinstance(weight_layer_diag, dict) else None,
             'max_position_pct': self.max_position_pct,
             'trading_timeframe': self.trading_timeframe.name if self.trading_timeframe else None,
-            'weight_layer': weight_layer_diag  # Full weight layer diagnostics
+            'weight_layer': weight_layer_diag  # Full weight layer diagnostics (includes per-ticker info)
         }
         
         return diagnostics
@@ -1417,27 +1780,63 @@ class Portfolio:
         
         if self.weight_layer:
             weight_layer_diag = self.weight_layer.get_diagnostics()
+            summary = weight_layer_diag.get('summary', {})
+            tickers_info = weight_layer_diag.get('tickers', {})
+            
             print(f"\n🔮 Forecast Diversification Multiplier (FDM):")
-            print(f"  FDM: {weight_layer_diag.get('fdm', 'Not calculated')}")
-            print(f"  FDM Max: {weight_layer_diag.get('fdm_max', 'N/A')}")
-            print(f"  Mean Forecast Correlation: {weight_layer_diag.get('mean_forecast_correlation', 'N/A')}")
+            if summary:
+                print(f"  Mean FDM: {summary.get('mean_fdm', 'N/A')}")
+                print(f"  FDM Range: {summary.get('min_fdm', 'N/A')} - {summary.get('max_fdm', 'N/A')}")
+                print(f"  FDM Max: {weight_layer_diag.get('fdm_max', 'N/A')}")
+                print(f"  Number of Tickers: {summary.get('n_tickers', 0)}")
+                print(f"  Mean Models per Ticker: {summary.get('mean_models_per_ticker', 'N/A'):.1f}")
+            else:
+                # Fallback for old format (shouldn't happen with new implementation)
+                print(f"  FDM: {weight_layer_diag.get('fdm', 'Not calculated')}")
+                print(f"  FDM Max: {weight_layer_diag.get('fdm_max', 'N/A')}")
+                print(f"  Mean Forecast Correlation: {weight_layer_diag.get('mean_forecast_correlation', 'N/A')}")
             
             print(f"\n⚖️  Weight Layer:")
             print(f"  Fitted: {weight_layer_diag.get('is_fitted', False)}")
             print(f"  Weight Method: {weight_layer_diag.get('weight_method', 'N/A')}")
-            print(f"  Number of Models: {weight_layer_diag.get('n_models', 0)}")
             
-            weights = weight_layer_diag.get('weights')
-            if weights and isinstance(weights, dict):
-                print(f"  Model Weights (top 5):")
-                # Filter out NaN weights and sort
-                valid_weights = {k: v for k, v in weights.items() if not pd.isna(v)}
-                if valid_weights:
-                    sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)[:5]
-                    for model_name, weight in sorted_weights:
-                        print(f"    {model_name}: {weight:.4f}")
-                else:
-                    print(f"    (All weights are NaN - check signal correlations)")
+            # Show per-ticker FDM and model availability
+            if tickers_info:
+                print(f"\n  Per-Ticker FDM and Models:")
+                for ticker in sorted(tickers_info.keys()):
+                    ticker_info = tickers_info[ticker]
+                    fdm_val = ticker_info.get('fdm', 1.0)
+                    n_models = ticker_info.get('n_models', 0)
+                    models = ticker_info.get('models', [])
+                    mean_corr = ticker_info.get('mean_forecast_correlation', 'N/A')
+                    print(f"    {ticker}:")
+                    print(f"      FDM: {fdm_val:.4f}")
+                    print(f"      Models: {n_models} ({', '.join(models[:3])}{'...' if len(models) > 3 else ''})")
+                    if isinstance(mean_corr, (int, float)):
+                        print(f"      Mean Forecast Correlation: {mean_corr:.4f}")
+                    
+                    # Show top weights for this ticker
+                    weights = ticker_info.get('weights')
+                    if weights and isinstance(weights, dict):
+                        valid_weights = {k: v for k, v in weights.items() if not pd.isna(v)}
+                        if valid_weights:
+                            sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)[:3]
+                            if sorted_weights:
+                                print(f"      Top Weights:")
+                                for model_name, weight in sorted_weights:
+                                    print(f"        {model_name}: {weight:.4f}")
+            else:
+                # Fallback: show global weights if available (old format)
+                weights = weight_layer_diag.get('weights')
+                if weights and isinstance(weights, dict):
+                    print(f"  Model Weights (top 5):")
+                    valid_weights = {k: v for k, v in weights.items() if not pd.isna(v)}
+                    if valid_weights:
+                        sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)[:5]
+                        for model_name, weight in sorted_weights:
+                            print(f"    {model_name}: {weight:.4f}")
+                    else:
+                        print(f"    (All weights are NaN - check signal correlations)")
         else:
             print(f"\n🔮 Forecast Diversification Multiplier (FDM):")
             print(f"  WeightLayer: Not initialized")
@@ -1445,6 +1844,107 @@ class Portfolio:
         print(f"\n📏 Position Sizing:")
         print(f"  Max Position %: {self.max_position_pct}")
         print(f"  Instrument Weights: {'Custom' if self.instrument_weights else 'Equal weight'}")
+        
+        # Print base model binning details for all ensembles
+        if self.ensembles:
+            print(f"\n🔬 Base Model Binning Details:")
+            for ensemble_idx, ensemble in enumerate(self.ensembles):
+                ensemble_name = f"Ensemble {ensemble_idx + 1}"
+                if hasattr(ensemble, 'base_models') and ensemble.base_models:
+                    print(f"\n  {ensemble_name}:")
+                    for model_name, base_model in ensemble.base_models.items():
+                        binning_model = getattr(base_model, 'binning_model', None)
+                        if binning_model is None:
+                            print(f"    {model_name}: No binning model")
+                            continue
+                        
+                        # Get binning information
+                        n_bins = getattr(binning_model, 'n_bins', 'N/A')
+                        is_fitted = getattr(binning_model, 'is_fitted_', False)
+                        strategy = getattr(binning_model, 'strategy', 'long')
+                        best_long_bin = getattr(binning_model, 'best_long_bin_', None)
+                        best_short_bin = getattr(binning_model, 'best_short_bin_', None)
+                        thresholds = getattr(binning_model, 'thresholds_', None)
+                        bin_stats = getattr(binning_model, 'bin_stats_', None)
+                        
+                        # Get feature column name if available
+                        feature_column = getattr(base_model, 'feature_column', None)
+                        
+                        print(f"    {model_name}:")
+                        if feature_column:
+                            print(f"      Feature Column: {feature_column}")
+                        print(f"      Fitted: {is_fitted}")
+                        print(f"      Strategy: {strategy}")
+                        print(f"      Number of Bins: {n_bins}")
+                        
+                        if is_fitted:
+                            # Determine selected bin and strategy for display
+                            selected_bin = None
+                            selected_strategy = None
+                            if strategy == 'long' and best_long_bin is not None:
+                                selected_bin = best_long_bin
+                                selected_strategy = 'LONG'
+                            elif strategy == 'short' and best_short_bin is not None:
+                                selected_bin = best_short_bin
+                                selected_strategy = 'SHORT'
+                            
+                            # Show thresholds if available
+                            if thresholds is not None and len(thresholds) > 0:
+                                print(f"      Thresholds: {thresholds.tolist()}")
+                            elif thresholds is not None and len(thresholds) == 0:
+                                print(f"      Thresholds: [Constant feature - single bin]")
+                            
+                            # Show bin statistics with selected bin highlighted
+                            if bin_stats is not None and len(bin_stats) > 0:
+                                print(f"      Bin Statistics:")
+                                # Sort bins by index (handle both string and int keys)
+                                def get_bin_key(bin_item):
+                                    key = bin_item[0]
+                                    try:
+                                        return int(key)
+                                    except (ValueError, TypeError):
+                                        return 0
+                                
+                                sorted_bins = sorted(bin_stats.items(), key=get_bin_key)
+                                for bin_idx, stats in sorted_bins:
+                                    # Convert bin_idx to int for comparison
+                                    try:
+                                        bin_idx_int = int(bin_idx)
+                                    except (ValueError, TypeError):
+                                        bin_idx_int = None
+                                    
+                                    # Highlight selected bin similar to decile plots
+                                    is_selected = (
+                                        (selected_bin is not None and bin_idx_int == selected_bin) or
+                                        (selected_bin is None and len(sorted_bins) == 1)  # Single bin case
+                                    )
+                                    
+                                    if is_selected and selected_strategy:
+                                        bin_label = f"        Bin {bin_idx} ⭐ SELECTED [{selected_strategy}]"
+                                    elif is_selected:
+                                        bin_label = f"        Bin {bin_idx} ⭐ SELECTED"
+                                    else:
+                                        bin_label = f"        Bin {bin_idx}"
+                                    
+                                    print(bin_label)
+                                    
+                                    mean_ret = stats.get('mean_return', 'N/A')
+                                    sortino = stats.get('sortino_metric', 'N/A')
+                                    count = stats.get('count', 'N/A')
+                                    feat_min = stats.get('feature_min', 'N/A')
+                                    feat_max = stats.get('feature_max', 'N/A')
+                                    
+                                    print(f"          Mean Return: {mean_ret:.6f}" if isinstance(mean_ret, (int, float)) else f"          Mean Return: {mean_ret}")
+                                    print(f"          Sortino Metric: {sortino:.4f}" if isinstance(sortino, (int, float)) else f"          Sortino Metric: {sortino}")
+                                    print(f"          Sample Count: {count}" if isinstance(count, (int, float)) else f"          Sample Count: {count}")
+                                    if isinstance(feat_min, (int, float)) and isinstance(feat_max, (int, float)):
+                                        print(f"          Feature Range: [{feat_min:.4f}, {feat_max:.4f}]")
+                                    else:
+                                        print(f"          Feature Range: [{feat_min}, {feat_max}]")
+                            else:
+                                print(f"      Bin Statistics: Not available")
+                        else:
+                            print(f"      ⚠ Model not fitted yet")
         
         print("=" * 60)
 
@@ -1465,3 +1965,43 @@ class Portfolio:
             f"  Instruments: {self.instruments_}"
         ]
         return "\n".join(lines)
+    
+    def clear_cache(self) -> None:
+        """Clear all cached fit and predict results."""
+        self._fit_cache.clear()
+        self._predict_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        # Also clear cache in ensembles
+        for ensemble in self.ensembles:
+            if hasattr(ensemble, 'clear_cache'):
+                ensemble.clear_cache()
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics for this portfolio and all ensembles.
+        
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with cache hits, misses, hit rate, and cache sizes
+        """
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
+        
+        ensemble_stats = {}
+        for idx, ensemble in enumerate(self.ensembles):
+            if hasattr(ensemble, 'get_cache_stats'):
+                ensemble_stats[f'ensemble_{idx}'] = ensemble.get_cache_stats()
+        
+        return {
+            'portfolio': {
+                'hits': self._cache_hits,
+                'misses': self._cache_misses,
+                'total': total,
+                'hit_rate': hit_rate,
+                'fit_cache_size': len(self._fit_cache),
+                'predict_cache_size': len(self._predict_cache)
+            },
+            'ensembles': ensemble_stats
+        }

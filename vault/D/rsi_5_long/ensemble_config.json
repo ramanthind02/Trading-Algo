@@ -1,0 +1,13 @@
+{
+  "timeframe": "D",
+  "ensemble_name": "rsi_5",
+  "direction": "long",
+  "tickers": [
+    "ES",
+    "NQ",
+    "RTY",
+    "YM"
+  ],
+  "created_at": "2026-01-26T03:21:22.932797+00:00",
+  "updated_at": "2026-01-26T03:21:22.932820+00:00"
+}

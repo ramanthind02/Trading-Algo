@@ -22,7 +22,7 @@ import numpy as np
 
 from utils.enums import TimeFrame, Direction, Ticker
 from feature_selection.base_models.feature_base_model import BaseModel
-from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel
+from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel, TwoBinBinningModel
 import utils.helpers as helpers
 
 # Type hint for forward reference
@@ -838,6 +838,12 @@ def load_feature_base_models(
             binning_model = QuantileBinningModel(**binning_model_params, strategy=strategy)
         elif binning_model_type == 'DecisionTreeBinningModel':
             binning_model = DecisionTreeBinningModel(**binning_model_params, strategy=strategy)
+        elif binning_model_type == 'TwoBinBinningModel':
+            # TwoBinBinningModel doesn't accept n_bins (it's hardcoded to 2)
+            # Remove it from params if present
+            two_bin_params = binning_model_params.copy()
+            two_bin_params.pop('n_bins', None)
+            binning_model = TwoBinBinningModel(**two_bin_params, strategy=strategy)
         else:
             raise ValueError(f"Unknown binning model type: {binning_model_type}")
         

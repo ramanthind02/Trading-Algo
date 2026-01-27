@@ -93,10 +93,14 @@ class QuantileBinningModel(BinningModelBase):
     
     def _create_bins(self, feature_data: pd.Series, target_data: pd.Series) -> pd.Series:
         """
-        Create bins using quantile-based splitting.
+        Create bins using quantile-based splitting, ensuring n_bins are created.
         
         This method implements the abstract _create_bins method from BaseModel.
         It uses pandas qcut to create bins with equal number of samples.
+        
+        If duplicates cause qcut to collapse bins, uses a hybrid approach:
+        1. Try qcut first
+        2. If fewer bins created, use unique value boundaries to ensure n_bins
         
         Parameters
         ----------
@@ -112,9 +116,58 @@ class QuantileBinningModel(BinningModelBase):
         """
         try:
             bins = pd.qcut(feature_data, self.n_bins, labels=False, duplicates='drop')
-        except ValueError:
-            # If qcut fails (e.g., too many duplicate values), use cut with equal-width bins
-            bins = pd.cut(feature_data, self.n_bins, labels=False, duplicates='drop')
+            n_created_bins = bins.nunique()
+            
+            # If we got fewer bins than requested, use a different approach
+            if n_created_bins < self.n_bins:
+                # Get unique values and create bins based on unique value boundaries
+                unique_vals = feature_data.unique()
+                n_unique = len(unique_vals)
+                
+                if n_unique <= self.n_bins:
+                    # Not enough unique values: assign each unique value to its own bin
+                    # Map unique values to bin indices
+                    sorted_unique = np.sort(unique_vals)
+                    bin_map = {val: idx for idx, val in enumerate(sorted_unique)}
+                    bins = feature_data.map(bin_map).astype(int)
+                else:
+                    # Enough unique values: try to create bins using quantiles on unique values
+                    # This helps when many values are duplicates but we have enough unique values
+                    quantiles = np.linspace(0, 1, self.n_bins + 1)
+                    unique_quantiles = np.quantile(unique_vals, quantiles)
+                    # Remove duplicates from quantiles
+                    unique_quantiles = np.unique(unique_quantiles)
+                    
+                    if len(unique_quantiles) - 1 >= self.n_bins:
+                        # Use quantile-based thresholds on unique values
+                        bins = pd.cut(feature_data, bins=unique_quantiles, labels=False, include_lowest=True, duplicates='drop')
+                        n_created_bins = bins.nunique()
+                    
+                    # If still not enough bins, use equal-width binning on the full range
+                    # This ensures we get the requested number of bins even if distribution is skewed
+                    if n_created_bins < self.n_bins:
+                        bins = pd.cut(feature_data, bins=self.n_bins, labels=False, duplicates='drop', include_lowest=True)
+                        n_created_bins = bins.nunique()
+                        
+                        # If equal-width still doesn't work (very few unique values), 
+                        # split the data range into n_bins equal-width intervals
+                        if n_created_bins < self.n_bins:
+                            min_val = feature_data.min()
+                            max_val = feature_data.max()
+                            # Create n_bins equal-width intervals
+                            bin_edges = np.linspace(min_val, max_val, self.n_bins + 1)
+                            # Ensure first and last edges include all values
+                            bin_edges[0] = min_val - 1e-10
+                            bin_edges[-1] = max_val + 1e-10
+                            bins = pd.cut(feature_data, bins=bin_edges, labels=False, include_lowest=True, duplicates='drop')
+        except (ValueError, TypeError):
+            # Fallback: use equal-width bins on the full range
+            min_val = feature_data.min()
+            max_val = feature_data.max()
+            bin_edges = np.linspace(min_val, max_val, self.n_bins + 1)
+            bin_edges[0] = min_val - 1e-10
+            bin_edges[-1] = max_val + 1e-10
+            bins = pd.cut(feature_data, bins=bin_edges, labels=False, include_lowest=True, duplicates='drop')
         
         return bins
     

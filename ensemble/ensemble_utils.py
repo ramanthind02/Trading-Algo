@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any
 import numpy as np
 import pandas as pd
 
-from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel, BaseModel
+from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel, TwoBinBinningModel, BaseModel
 from utils.enums import TimeFrame, Ticker
 import utils.helpers as helpers
 
@@ -334,7 +334,7 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
         raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
     
     # Validate model_type
-    valid_model_types = ['QuantileBinningModel', 'DecisionTreeBinningModel']
+    valid_model_types = ['QuantileBinningModel', 'DecisionTreeBinningModel', 'TwoBinBinningModel']
     if config['model_type'] not in valid_model_types:
         raise ValueError(
             f"{prefix}Invalid model_type: {config['model_type']}. "
@@ -398,6 +398,12 @@ def create_base_model_from_config(
         binning_model = QuantileBinningModel(**constructor_params)
     elif model_type == 'DecisionTreeBinningModel':
         binning_model = DecisionTreeBinningModel(**constructor_params)
+    elif model_type == 'TwoBinBinningModel':
+        # TwoBinBinningModel doesn't accept n_bins (it's hardcoded to 2)
+        # Remove it from constructor_params if present
+        two_bin_params = constructor_params.copy()
+        two_bin_params.pop('n_bins', None)
+        binning_model = TwoBinBinningModel(**two_bin_params)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
     

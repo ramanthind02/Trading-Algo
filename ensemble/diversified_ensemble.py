@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import logging
 from datetime import datetime
-from typing import Optional, Union, Dict, List, Any
+from typing import Optional, Union, Dict, List, Any, Tuple
 import os
 from utils.enums import TimeFrame
 import utils.helpers as helpers
@@ -92,6 +92,13 @@ class DiversifiedEnsemble:
         self.instrument_weights_ = None
         self.n_tickers_ = None
         self.is_fitted_ = False
+        
+        # Caching for fit and predict operations
+        # Cache key: (date_range_start, date_range_end) as tuple of dates
+        self._fit_cache: Dict[Tuple[Any, Any], bool] = {}  # Maps date_range -> is_fitted flag
+        self._predict_cache: Dict[Tuple[Any, ...], Union[pd.DataFrame, Dict[str, Any]]] = {}  # Maps (date_range, strategy) -> predictions
+        self._cache_hits = 0
+        self._cache_misses = 0
         
         # Validate that control_file_path is provided
         if control_file_path is None:
@@ -700,6 +707,55 @@ class DiversifiedEnsemble:
         
         return self
     
+    def _get_supported_tickers(self) -> set:
+        """
+        Get the set of tickers supported by all base models in this ensemble.
+        
+        Returns the intersection of tickers from all base models (all models must support a ticker).
+        If no base models exist, returns empty set.
+        
+        Returns
+        -------
+        set
+            Set of ticker enums supported by all base models
+        """
+        if not self.base_models:
+            return set()
+        
+        # Get tickers from first base model
+        first_model = next(iter(self.base_models.values()))
+        supported_tickers = set(getattr(first_model, 'tickers', []))
+        
+        # Intersect with tickers from all other base models
+        # All models must support a ticker for it to be in the ensemble
+        for base_model in self.base_models.values():
+            model_tickers = set(getattr(base_model, 'tickers', []))
+            supported_tickers = supported_tickers.intersection(model_tickers)
+        
+        return supported_tickers
+    
+    def _get_date_range_key(self, candles_df: pd.DataFrame) -> Tuple[Any, Any]:
+        """
+        Generate cache key from date range of candles DataFrame.
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            Candles DataFrame with datetime column
+            
+        Returns
+        -------
+        Tuple
+            (min_date, max_date) as tuple of date objects (not datetime)
+        """
+        if candles_df.empty or 'datetime' not in candles_df.columns:
+            return (None, None)
+        
+        datetimes = pd.to_datetime(candles_df['datetime'])
+        min_date = datetimes.min().date()
+        max_date = datetimes.max().date()
+        return (min_date, max_date)
+    
     def fit_from_candles(
         self,
         candles_df: pd.DataFrame,
@@ -712,52 +768,136 @@ class DiversifiedEnsemble:
         Uses ensemble-level caching to extract features once per (bias_node_spec, ticker)
         combination and reuse them across base models.
         
+        Uses date_range-based caching to avoid refitting for the same date range.
+        
+        CRITICAL ALIGNMENT FIX:
+        - Features at time T are based on candle T
+        - Returns at time T represent return from T-1 to T
+        - We need to shift returns forward by 1 so feature at T pairs with return from T to T+1
+        - Must group by ticker first, then shift, then aggregate to match feature aggregation
+        
+        IMPORTANT: Filters candles_df to only include tickers supported by all base models
+        in this ensemble. This prevents errors when candles contain tickers not in the ensemble.
+        
         Parameters
         ----------
         candles_df : pd.DataFrame
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
         target_data : pd.Series
-            Target values (returns) aligned with candles_df by datetime index
+            Target values (returns) from all tickers, indexed by datetime.
+            May have duplicate datetime indices (one per ticker).
+            NOTE: This parameter is currently ignored - returns are calculated directly from candles.
             
         Returns
         -------
         self
             Fitted ensemble model
         """
-        from utils.enums import Ticker
+        # Check cache first
+        date_range_key = self._get_date_range_key(candles_df)
+        if date_range_key in self._fit_cache and self.is_fitted_:
+            logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache HIT for date_range: {date_range_key}")
+            self._cache_hits += 1
+            return self
         
-        # Group candles by ticker
-        for ticker_name in candles_df['ticker'].unique():
-            ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
-            
-            # Get ticker enum
+        logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache MISS for date_range: {date_range_key}")
+        self._cache_misses += 1
+        
+        from utils.enums import Ticker
+        import numpy as np
+        
+        # Get supported tickers from all base models
+        supported_tickers = self._get_supported_tickers()
+        
+        if not supported_tickers:
+            raise ValueError(
+                "No base models found or base models have no tickers configured. "
+                "Cannot fit ensemble without knowing which tickers are supported."
+            )
+        
+        # Convert ticker enums to strings for filtering
+        # Handle both enum and string ticker formats
+        supported_ticker_names = set()
+        for ticker in supported_tickers:
+            if isinstance(ticker, Ticker):
+                supported_ticker_names.add(ticker.name)
+            elif isinstance(ticker, str):
+                supported_ticker_names.add(ticker)
+            else:
+                # Try to get name attribute
+                supported_ticker_names.add(getattr(ticker, 'name', str(ticker)))
+        
+        # Filter candles to only include supported tickers
+        # Handle both enum and string ticker formats in candles_df
+        def normalize_ticker_name(ticker_val):
+            """Normalize ticker to string name for comparison."""
+            if isinstance(ticker_val, Ticker):
+                return ticker_val.name
+            elif isinstance(ticker_val, str):
+                # Remove 'Ticker.' prefix if present
+                return ticker_val.replace('Ticker.', '')
+            else:
+                return getattr(ticker_val, 'name', str(ticker_val))
+        
+        # Filter candles_df
+        candles_df = candles_df.copy()
+        candles_df['ticker_normalized'] = candles_df['ticker'].apply(normalize_ticker_name)
+        filtered_candles = candles_df[candles_df['ticker_normalized'].isin(supported_ticker_names)].copy()
+        filtered_candles = filtered_candles.drop(columns=['ticker_normalized'])
+        
+        if filtered_candles.empty:
+            raise ValueError(
+                f"No candles found for supported tickers: {sorted(supported_ticker_names)}. "
+                f"Available tickers in candles_df: {sorted(candles_df['ticker'].apply(normalize_ticker_name).unique())}"
+            )
+        
+        logger.debug(
+            f"Filtered candles: {len(candles_df)} -> {len(filtered_candles)} rows "
+            f"(keeping tickers: {sorted(supported_ticker_names)})"
+        )
+        
+        # Calculate returns directly from filtered candles with proper alignment
+        # CRITICAL: Group by ticker, calculate returns, shift forward by 1, then aggregate
+        aggregated_returns = self._calculate_aligned_returns_from_candles(filtered_candles)
+        
+        # Debug: Log aggregation info
+        logger.debug(
+            f"Returns calculation: filtered candles length={len(filtered_candles)}, "
+            f"aggregated_returns length={len(aggregated_returns)}, "
+            f"unique base datetimes in filtered candles={len(pd.to_datetime(filtered_candles['datetime']).dt.floor('s').unique())}"
+        )
+        
+        # Fit each base model ONCE with all candles (not per ticker)
+        # BaseModel.fit() handles multi-ticker aggregation internally
+        for model_name, base_model in self.base_models.items():
             try:
-                ticker = Ticker[ticker_name] if isinstance(ticker_name, str) else ticker_name
-            except (KeyError, AttributeError):
-                logger.warning(f"Unknown ticker '{ticker_name}', skipping")
-                continue
-            
-            # Fit each base model (BaseModel.fit() handles caching internally)
-            for model_name, base_model in self.base_models.items():
-                try:
-                    # Skip if already fitted (e.g., loaded from vault with fitted params)
-                    if base_model.is_fitted_:
-                        continue
-                    
-                    # Align target data with candles
-                    ticker_target = target_data.reindex(
-                        pd.to_datetime(ticker_candles['datetime']),
-                        method='nearest'
-                    )
-                    
-                    # Fit base model with candles
-                    # BaseModel.fit() will check cache and use pre-extracted features
-                    base_model.fit(ticker_candles, ticker_target)
-                except Exception as e:
-                    logger.error(
-                        f"Error fitting base model '{model_name}' for ticker '{ticker_name}': {e}",
-                        exc_info=True
-                    )
+                # Skip if already fitted (e.g., loaded from vault with fitted params)
+                if base_model.is_fitted_:
+                    logger.debug(f"Skipping already-fitted model '{model_name}'")
+                    continue
+                
+                # Fit base model with filtered candles and aggregated returns
+                # BaseModel.fit() will:
+                # 1. Stream candles from all supported tickers
+                # 2. Extract features and aggregate by base datetime (mean)
+                # 3. Align aggregated returns with aggregated features
+                base_model.fit(filtered_candles, aggregated_returns)
+                
+                # Debug: Log fitting results
+                if base_model.binning_model.is_fitted_:
+                    bin_stats = base_model.binning_model.bin_stats_
+                    if bin_stats:
+                        logger.debug(
+                            f"Model '{model_name}' fitted: "
+                            f"n_bins={base_model.binning_model.n_bins}, "
+                            f"best_long_bin={base_model.binning_model.best_long_bin_}, "
+                            f"n_bins_with_stats={len(bin_stats)}"
+                        )
+            except Exception as e:
+                logger.error(
+                    f"Error fitting base model '{model_name}': {e}",
+                    exc_info=True
+                )
         
         # Calculate model exposure fractions from actual binary signals (empirical)
         # This accounts for non-uniform binning where bins may have different sample counts
@@ -765,7 +905,17 @@ class DiversifiedEnsemble:
         if self.model_exposure_fractions_ is None:
             self.model_exposure_fractions_ = {}
             
-            # Generate binary signals from all base models using training candles
+            # Helper function to normalize ticker names (reuse from above)
+            def normalize_ticker_name(ticker_val):
+                """Normalize ticker to string name for comparison."""
+                if isinstance(ticker_val, Ticker):
+                    return ticker_val.name
+                elif isinstance(ticker_val, str):
+                    return ticker_val.replace('Ticker.', '')
+                else:
+                    return getattr(ticker_val, 'name', str(ticker_val))
+            
+            # Generate binary signals from all base models using filtered training candles
             for model_name, base_model in self.base_models.items():
                 # Check if this is a buy_hold model (always in market)
                 bias_node_spec = getattr(base_model, 'bias_node_spec', None)
@@ -777,19 +927,30 @@ class DiversifiedEnsemble:
                     # Buy_hold is always in market: h_i = 1.0
                     self.model_exposure_fractions_[model_name] = 1.0
                 else:
-                    # Generate binary signals for this model across all tickers
+                    # Generate binary signals for this model across supported tickers only
                     model_signals = []
-                    for ticker_name in candles_df['ticker'].unique():
-                        ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
-                        try:
-                            # Generate binary signals from base model
-                            pred = base_model.predict(ticker_candles)
-                            if pred is not None and len(pred) > 0:
-                                model_signals.append(pred)
-                        except Exception as e:
-                            logger.warning(
-                                f"Error generating signals for model '{model_name}' on ticker '{ticker_name}': {e}"
-                            )
+                    # Get tickers supported by this specific base model
+                    model_tickers = set(getattr(base_model, 'tickers', []))
+                    model_ticker_names = {normalize_ticker_name(t) for t in model_tickers}
+                    
+                    # Filter candles to only this model's supported tickers
+                    model_candles = filtered_candles[
+                        filtered_candles['ticker'].apply(normalize_ticker_name).isin(model_ticker_names)
+                    ].copy()
+                    
+                    if not model_candles.empty:
+                        # Group by ticker and generate signals
+                        for ticker_name in model_candles['ticker'].unique():
+                            ticker_candles = model_candles[model_candles['ticker'] == ticker_name].copy()
+                            try:
+                                # Generate binary signals from base model
+                                pred = base_model.predict(ticker_candles)
+                                if pred is not None and len(pred) > 0:
+                                    model_signals.append(pred)
+                            except Exception as e:
+                                logger.warning(
+                                    f"Error generating signals for model '{model_name}' on ticker '{ticker_name}': {e}"
+                                )
                     
                     # Calculate exposure fraction from actual binary signals
                     if model_signals:
@@ -813,7 +974,101 @@ class DiversifiedEnsemble:
         # For now, mark as fitted - full ensemble fitting can be done via the regular fit() method
         self.is_fitted_ = True
         
+        # Store in cache
+        self._fit_cache[date_range_key] = True
+        
         return self
+    
+    def _calculate_aligned_returns_from_candles(
+        self,
+        candles_df: pd.DataFrame
+    ) -> pd.Series:
+        """
+        Calculate returns from candles with proper alignment for feature pairing.
+        
+        CRITICAL ALIGNMENT LOGIC:
+        - Features at time T are extracted from candle T
+        - Returns at time T represent return from T-1 to T (calculated from close[T-1] to close[T])
+        - To pair feature at T with forward return, we need return from T to T+1
+        - Solution: Calculate returns per ticker, shift forward by 1, then aggregate
+        
+        Steps:
+        1. Group candles by ticker
+        2. For each ticker: calculate log returns, shift forward by 1 period
+        3. Remove microsecond precision (base datetime) to match BaseModel.get_feature()
+        4. Aggregate by base datetime (mean across tickers) to match feature aggregation
+        
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            Candles DataFrame with columns: datetime, ticker, close, etc.
+            
+        Returns
+        -------
+        pd.Series
+            Aggregated returns indexed by base datetime (microseconds removed),
+            with mean aggregation across tickers for each base datetime.
+            Returns are shifted forward by 1 period so feature at T pairs with return from T to T+1.
+        """
+        import numpy as np
+        
+        if candles_df.empty:
+            return pd.Series(dtype=float, name='returns')
+        
+        # Ensure datetime is datetime type
+        candles_df = candles_df.copy()
+        candles_df['datetime'] = pd.to_datetime(candles_df['datetime'])
+        
+        # Group by ticker and calculate returns with forward shift
+        all_returns = []
+        for ticker in candles_df['ticker'].unique():
+            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
+            ticker_candles = ticker_candles.sort_values('datetime')
+            
+            if len(ticker_candles) < 2:
+                continue
+            
+            # Calculate log returns: return at T = log(close[T] / close[T-1])
+            # This represents return from T-1 to T
+            ticker_candles['returns'] = np.log(ticker_candles['close'] / ticker_candles['close'].shift(1))
+            
+            # CRITICAL: Shift returns forward by 1 period
+            # Feature at time T should pair with return from T to T+1
+            # So we shift the return series forward: return[T] (from T-1 to T) -> return[T+1] (from T to T+1)
+            ticker_candles['forward_returns'] = ticker_candles['returns'].shift(-1)
+            
+            # Set datetime as index
+            ticker_candles = ticker_candles.set_index('datetime')
+            
+            # Extract forward returns (drop NaN from shift)
+            ticker_forward_returns = ticker_candles['forward_returns'].dropna()
+            
+            if len(ticker_forward_returns) > 0:
+                all_returns.append(ticker_forward_returns)
+        
+        if not all_returns:
+            return pd.Series(dtype=float, name='returns')
+        
+        # Combine all ticker returns (may have duplicate datetime indices)
+        combined_returns = pd.concat(all_returns)
+        
+        # For multi-ticker models, preserve all samples (don't aggregate by base datetime)
+        # This matches the new BaseModel.get_feature() behavior which keeps all samples
+        # Sort by datetime to ensure consistent ordering
+        combined_returns = combined_returns.sort_index()
+        
+        # Debug: Log details
+        logger.debug(
+            f"Aligned returns calculation: input candles={len(candles_df)}, "
+            f"combined returns={len(combined_returns)} samples (preserving all ticker samples), "
+            f"date range={combined_returns.index.min()} to {combined_returns.index.max()}"
+        )
+        
+        # Return combined returns with original datetimes (preserves all samples)
+        aggregated_returns = combined_returns.copy()
+        aggregated_returns.name = 'returns'
+        
+        return aggregated_returns
     
     def _calculate_volatility_from_candles(
         self,
@@ -917,6 +1172,8 @@ class DiversifiedEnsemble:
         This is the new DataFrame-based API for prediction.
         Routes candles to each base model, which computes features and predicts internally.
         
+        Uses date_range-based caching to avoid recomputation for the same date range.
+        
         Parameters
         ----------
         candles_df : pd.DataFrame
@@ -942,6 +1199,24 @@ class DiversifiedEnsemble:
                 "Call fit_from_candles() or fit() first."
             )
         
+        # Check cache first
+        date_range_key = self._get_date_range_key(candles_df)
+        cache_key = (date_range_key, return_base_model_predictions)
+        
+        if cache_key in self._predict_cache:
+            self._cache_hits += 1
+            cache_msg = (
+                f"DiversifiedEnsemble.predict_from_candles() cache HIT for date_range: {date_range_key} "
+                f"(hits: {self._cache_hits}, misses: {self._cache_misses})"
+            )
+            logger.info(cache_msg)
+            cached_result = self._predict_cache[cache_key]
+            # Return a deep copy to avoid modifying cache
+            return self._deep_copy_result(cached_result)
+        
+        logger.debug(f"DiversifiedEnsemble.predict_from_candles() cache MISS for date_range: {date_range_key}")
+        self._cache_misses += 1
+        
         # Calculate or use provided volatility
         if volatility is None:
             volatility = self._calculate_volatility_from_candles(candles_df)
@@ -949,13 +1224,25 @@ class DiversifiedEnsemble:
         all_predictions = []
         base_model_predictions_dict = {}
         
+        # Import Ticker for normalization
+        from utils.enums import Ticker
+        
+        # Helper function to normalize ticker names (for comparison)
+        def normalize_ticker_name(ticker_val):
+            """Normalize ticker to string name for comparison."""
+            if isinstance(ticker_val, Ticker):
+                return ticker_val.name
+            elif isinstance(ticker_val, str):
+                return ticker_val.replace('Ticker.', '')
+            else:
+                return getattr(ticker_val, 'name', str(ticker_val))
+        
         # Group candles by ticker
         for ticker_name in candles_df['ticker'].unique():
             ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
             
             # Get ticker enum
             try:
-                from utils.enums import Ticker
                 ticker = Ticker[ticker_name] if isinstance(ticker_name, str) else ticker_name
             except (KeyError, AttributeError):
                 logger.warning(f"Unknown ticker '{ticker_name}', skipping")
@@ -968,6 +1255,21 @@ class DiversifiedEnsemble:
             ticker_predictions = []
             for model_name, base_model in self.base_models.items():
                 try:
+                    # Check if this base model supports this ticker
+                    model_tickers = set(getattr(base_model, 'tickers', []))
+                    if model_tickers:
+                        # Normalize ticker names for comparison
+                        model_ticker_names = {normalize_ticker_name(t) for t in model_tickers}
+                        normalized_ticker_name = normalize_ticker_name(ticker_name)
+                        
+                        # Skip this base model if it doesn't support this ticker
+                        if normalized_ticker_name not in model_ticker_names:
+                            logger.debug(
+                                f"Base model '{model_name}' does not support ticker '{ticker_name}'. "
+                                f"Supported tickers: {model_ticker_names}. Skipping."
+                            )
+                            continue
+                    
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
                     # BaseModel.predict() handles feature caching internally
                     pred = base_model.predict(ticker_candles)
@@ -1027,7 +1329,8 @@ class DiversifiedEnsemble:
                     )
             
             if not ticker_predictions:
-                logger.warning(f"No ticker_predictions for ticker {ticker_name}. Base models: {list(self.base_models.keys())}")
+                # No predictions for this ticker - this is expected if no base models support it
+                logger.debug(f"No ticker_predictions for ticker {ticker_name}. Base models: {list(self.base_models.keys())}")
                 continue
                 
             # Combine predictions for this ticker
@@ -1094,11 +1397,19 @@ class DiversifiedEnsemble:
             for model_name, model_dfs in base_model_predictions_dict.items():
                 combined_base_models[model_name] = pd.concat(model_dfs, ignore_index=True)
             
-            return {
+            result = {
                 'ensemble': ensemble_result,
                 'base_models': combined_base_models
             }
+            # Store in cache
+            self._predict_cache[cache_key] = {
+                'ensemble': ensemble_result.copy(),
+                'base_models': {k: v.copy() for k, v in combined_base_models.items()}
+            }
+            return result
         
+        # Store in cache
+        self._predict_cache[cache_key] = ensemble_result.copy()
         return ensemble_result
     
     def predict(
@@ -1544,3 +1855,72 @@ class DiversifiedEnsemble:
         ]
         
         return "\n".join(lines)
+    
+    def _deep_copy_result(self, obj: Any) -> Any:
+        """
+        Recursively deep copy DataFrames in nested structures.
+        
+        Handles:
+        - pd.DataFrame: returns .copy()
+        - dict: recursively copies values
+        - list: recursively copies elements
+        - other: returns as-is (immutable or primitive types)
+        
+        Parameters
+        ----------
+        obj : Any
+            Object to deep copy (DataFrame, dict, list, or primitive)
+            
+        Returns
+        -------
+        Any
+            Deep copied object with all DataFrames copied
+        """
+        if isinstance(obj, pd.DataFrame):
+            return obj.copy()
+        elif isinstance(obj, dict):
+            return {k: self._deep_copy_result(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._deep_copy_result(item) for item in obj]
+        else:
+            return obj
+    
+    def clear_cache(self) -> None:
+        """Clear all cached fit and predict results."""
+        self._fit_cache.clear()
+        self._predict_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
+        # Also clear cache in base models
+        for base_model in self.base_models.values():
+            if hasattr(base_model, 'clear_cache'):
+                base_model.clear_cache()
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics for this ensemble and all base models.
+        
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with cache hits, misses, hit rate, and cache sizes
+        """
+        total = self._cache_hits + self._cache_misses
+        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
+        
+        base_model_stats = {}
+        for model_name, base_model in self.base_models.items():
+            if hasattr(base_model, 'get_cache_stats'):
+                base_model_stats[model_name] = base_model.get_cache_stats()
+        
+        return {
+            'ensemble': {
+                'hits': self._cache_hits,
+                'misses': self._cache_misses,
+                'total': total,
+                'hit_rate': hit_rate,
+                'fit_cache_size': len(self._fit_cache),
+                'predict_cache_size': len(self._predict_cache)
+            },
+            'base_models': base_model_stats
+        }
