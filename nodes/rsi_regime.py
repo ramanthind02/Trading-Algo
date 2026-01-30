@@ -2,14 +2,14 @@ from typing import List
 import numpy as np
 from utils.models import Candle
 from utils.enums import Ticker, TimeFrame
-from utils.rsi_helpers import compute_rsi_initial, update_rsi
+from utils.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
 from nodes import BiasNode
 from collections import deque
 
 
 class RSIRegime(BiasNode):
     """
-    RSI with Regime Filter Bias Node - Numba-accelerated
+    RSI with Regime Filter Bias Node - Cython-accelerated
     
     Computes the RSI indicator centered from -100 to 100 (instead of 0-100)
     with an optional regime filter using a 200-period moving average.
@@ -20,11 +20,14 @@ class RSIRegime(BiasNode):
     
     Regime Filter:
     - "off": Always output centered RSI
-    - "bullish": Only output RSI when price > 200-period MA (output 0 otherwise)
-    - "bearish": Only output RSI when price < 200-period MA (output 0 otherwise)
+    - "bullish": Only output RSI when price > 200-period MA (output NaN otherwise)
+    - "bearish": Only output RSI when price < 200-period MA (output NaN otherwise)
     
     This allows the RSI to only be active during specific market regimes,
     helping to filter out signals during unfavorable conditions.
+    
+    Performance: Uses Cython-backed fast kernels for RSI computation.
+    Regime filter logic remains in Python (O(1) per candle).
     
     Parameters:
     - lookback: Period for RSI calculation (default: 14)
@@ -187,12 +190,12 @@ class RSIRegime(BiasNode):
                     self.close_buffer[:self.buffer_idx]
                 ])
             
-            # Call Numba-compiled initialization
-            self.upsum, self.dnsum = compute_rsi_initial(init_prices, self.lookback)
+            # Call Cython-backed initialization
+            self.upsum, self.dnsum = compute_rsi_initial_fast(init_prices, self.lookback)
         
-        # Update RSI using Numba-compiled function
+        # Update RSI using Cython-backed function
         # Only need prev_close and curr_close (no array access needed!)
-        self.upsum, self.dnsum, rsi = update_rsi(
+        self.upsum, self.dnsum, rsi = update_rsi_fast(
             self.prev_close,
             curr_close,
             self.upsum,

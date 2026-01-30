@@ -12,6 +12,7 @@ This document provides a comprehensive guide for creating new bias nodes in the 
 6. [Template: RSI Example](#template-rsi-example)
 7. [Best Practices](#best-practices)
 8. [Common Patterns](#common-patterns)
+9. [Cython Optimization for Bias Nodes](#cython-optimization-for-bias-nodes)
 
 ---
 
@@ -755,6 +756,188 @@ class BreakoutStrategy(BiasNode):
 
 ---
 
+## Cython Optimization for Bias Nodes
+
+Many bias nodes in this project are now **Cython-accelerated** for optimal performance. Cython is used to accelerate the **inner loops** of bias node computations (e.g., ATR, EMA, SMA, rolling statistics, RSI, momentum, ROC). Bias nodes should remain thin Python shells that:
+
+- **Own the state** (buffers, indices, counters)
+- **Call into Cython-backed helpers** for heavy numerical work
+- **Remain correct even without Cython** (automatic Python fallback)
+
+### Current Cython-Accelerated Nodes
+
+The following bias nodes use Cython-optimized kernels via `utils/fast_nodes.py` and `utils/fast_stats.py`:
+
+- **ATRNode** (`nodes/atr.py`) - Uses `compute_atr_fast` for 5-10x speedup
+- **DonchianChannel** (`nodes/donchian_channel.py`) - Uses `compute_high_low_channel_fast` for efficient high/low scanning
+- **WilliamsRNode** (`nodes/williamsr.py`) - Uses `compute_high_low_channel_fast` for channel computation
+- **RSI** (`nodes/rsi.py`) - Uses `compute_rsi_initial_fast` and `update_rsi_fast` for RSI calculations
+- **CumulativeRSI** (`nodes/cumulative_rsi.py`) - Uses Cython-backed RSI kernels with Python averaging
+- **ROC** (`nodes/roc.py`) - Uses `compute_roc_fast` for rate of change calculations
+- **MADiffNode** (`nodes/ma_diff.py`) - Uses `compute_ma_diff_fast` from `fast_stats` for MA difference computation
+
+All of these nodes automatically fall back to pure Python implementations when Cython extensions are not compiled, ensuring correctness regardless of build configuration.
+
+### 1. When to Use Cython
+
+Prefer Cython-backed functions whenever your node:
+
+- Performs the **same numeric operation every candle** (e.g., ATR, EMA, SMA, rolling sums, z-scores)
+- Operates on **NumPy arrays or deques** where memory access is the bottleneck
+- Is called **tens of thousands of times** during backtests or walkforward
+
+For these cases, use the helpers in `utils/fast_nodes.py` instead of re‑implementing the math in pure Python.
+
+### 2. How Cython Integration Works
+
+- Core C implementations live in `utils/cython_nodes.pyx` and `utils/cython_optimized.pyx`
+- `utils/setup_cython.py` compiles them into shared libraries
+- `utils/fast_nodes.py` and `utils/fast_stats.py` provide **Python APIs with automatic fallback**:
+  - If Cython extensions are compiled, they call the Cython versions (5–10x faster for some ops)
+  - If not compiled, they transparently fall back to pure Python implementations
+
+Bias nodes should **only import from** `utils.fast_nodes` or `utils.fast_stats` (never from `utils.cython_nodes` or `utils.cython_optimized` directly).
+
+#### Building Cython Extensions
+
+To compile Cython extensions for optimal performance:
+
+**Prerequisites:**
+- Cython package installed (`pip install cython`)
+- C compiler (GCC on Linux/Mac, Visual Studio Build Tools on Windows)
+- NumPy installed
+- Virtual environment activated (`source venv/bin/activate`)
+
+**Build Command:**
+```bash
+source venv/bin/activate
+python utils/setup_cython.py build_ext --inplace
+```
+
+This will compile `cython_nodes.pyx` and `cython_optimized.pyx` into shared libraries (`.so` on Linux/Mac, `.pyd` on Windows) that are automatically imported when available.
+
+**Verification:**
+After building, you should see a message when importing:
+```
+✓ Cython node optimizations loaded (5-10x speedup for ATR, EMA, etc.)
+```
+
+If Cython is not available, you'll see:
+```
+⚠ Cython optimizations not available (compile with: python utils/setup_cython.py build_ext --inplace)
+```
+
+The system will continue to work correctly using pure Python fallbacks, but will be slower.
+
+### 3. Example: Using Cython-Backed ATR in a Bias Node
+
+```python
+import numpy as np
+from typing import List
+from utils.fast_nodes import compute_atr_fast
+
+class ATRNode(BiasNode):
+    def __init__(self, ticker: Ticker, tf: TimeFrame, period: int = 14):
+        super().__init__(ticker, tf)
+        self.period = period
+        self.module_name = 'atr'
+        self.output_features = ['atr', 'atrPct']
+        self.params = {'period': period}
+        self.front_bad = period
+
+        # State owned by the node (Python)
+        self.true_ranges = np.zeros(period, dtype=np.float64)
+        self.buffer_idx = 0
+        self.n_filled = 0
+        self.prev_close = -1.0
+
+        self.ensure_standardized_columns()
+
+    def _compute_candle(self, candle: Candle) -> List:
+        self.n_prices += 1
+
+        if self.n_prices < self.front_bad:
+            self.prev_close = candle.close
+            self.output.append((0.0, 0.0))
+            return [0.0, 0.0]
+
+        atr, atr_pct, self.buffer_idx, self.n_filled = compute_atr_fast(
+            candle.high,
+            candle.low,
+            candle.close,
+            self.prev_close,
+            self.true_ranges,
+            self.buffer_idx,
+            self.n_filled,
+            self.period,
+        )
+
+        self.prev_close = candle.close
+        self.output.append((atr, atr_pct))
+        return [atr, atr_pct]
+```
+
+**Key points:**
+
+- The **node API** (`_compute_candle`) stays the same
+- The heavy math is delegated to `compute_atr_fast`, which:
+  - Uses Cython if available
+  - Falls back to pure Python otherwise
+- Node state (`true_ranges`, indices, counters) is still managed in Python
+
+### 4. Other Available Cython Helpers
+
+From `utils/fast_nodes.py` (all with Cython fallback):
+
+- `compute_atr_fast(...)` - Average True Range computation
+- `compute_ema_fast(value, prev_ema, alpha, is_first)` - Exponential Moving Average
+- `compute_sma_fast(values, n)` - Simple Moving Average
+- `compute_stddev_fast(values, n, mean_val=0.0)` - Standard deviation
+- `compute_zscore_fast(value, mean_val, stddev_val)` - Z-score normalization
+- `compute_profit_factor_fast(returns, n)` - Profit factor calculation
+- `rolling_sum_update(new_value, old_value, current_sum)` - Rolling sum update
+- `batch_compute_log_returns(close_prices)` - Batch log returns computation
+- `compute_high_low_channel_fast(highs, lows, start_idx, window, n)` - High/low channel scanning
+- `compute_momentum_fast(curr_close, past_close)` - Momentum calculation
+- `compute_roc_fast(curr_close, past_close)` - Rate of Change (percentage)
+- `compute_rsi_initial_fast(close_prices, lookback)` - RSI initialization
+- `update_rsi_fast(prev_close, curr_close, upsum, dnsum, lookback)` - RSI incremental update
+
+From `utils/fast_stats.py` (all with Cython fallback):
+
+- `compute_ma_diff_fast(log_close, log_closes, true_ranges, lookback, compression)` - MA difference with normalization
+- `spearman_rho(var1, var2)` - Spearman correlation
+- `rank_with_tie_correction(arr)` - Ranking with tie correction
+- `optimize_threshold_fast(feature_vals, target_vals, floor, n_thresholds)` - Threshold optimization
+
+Use these whenever the same operation appears in many nodes or is clearly performance‑critical.
+
+### 5. Cython Optimization Checklist for Nodes
+
+When adding or refactoring a bias node:
+
+- [ ] Identify **hot paths** (numeric code inside `_compute_candle` called every bar)
+- [ ] Check if an equivalent helper exists in `utils/fast_nodes.py` or `utils/fast_stats.py` and use it
+- [ ] If adding a new heavy numeric routine, consider:
+  - Implementing it in `utils/cython_nodes.pyx` (for node/streaming operations) or `utils/cython_optimized.pyx` (for statistical/analytical operations)
+  - Exposing it via `utils/fast_nodes.py` or `utils/fast_stats.py` with a pure Python fallback
+  - Adding tests in `tests/test_cython_bias_nodes.py` to verify Cython vs Python path equivalence
+- [ ] Ensure the node still works (slower) even if Cython extensions are not compiled
+- [ ] Test both paths: run tests with `CYTHON_*_AVAILABLE` set to `True` and `False` to verify identical outputs
+
+### 6. Testing Cython vs Python Paths
+
+Tests in `tests/test_cython_bias_nodes.py` validate that nodes produce identical outputs whether using Cython-optimized kernels or pure Python fallbacks. These tests:
+
+- Create synthetic candle sequences using deterministic random seeds
+- Run each node with Cython enabled (via monkeypatching `CYTHON_*_AVAILABLE` flags)
+- Run the same node with Cython disabled (pure Python fallback)
+- Assert that outputs are equal or very close (`np.allclose` with tight tolerances)
+
+This ensures correctness regardless of whether Cython extensions are compiled, and helps catch any divergence between implementations.
+
+---
+
 ## Checklist for New Bias Nodes
 
 Before submitting a new bias node, ensure:
@@ -779,6 +962,7 @@ Before submitting a new bias node, ensure:
 - [ ] Includes comprehensive docstrings (note if rule-based or continuous, and normalization approach)
 - [ ] Uses efficient data structures (circular buffers, NumPy arrays)
 - [ ] Handles edge cases gracefully (no exceptions in `_compute_candle`)
+- [ ] **For performance‑critical math**: Reuse helpers from `utils/fast_nodes.py` and ensure Cython integration via `utils/setup_cython.py` where appropriate
 
 ---
 
@@ -791,6 +975,7 @@ Before submitting a new bias node, ensure:
   - `nodes/atr.py` - Average True Range
 - **Column Naming**: `utils/helpers.py` - `build_feature_column_name()` function
 - **Candle Model**: `utils/models.py` - `Candle` class definition
+- **Cython Setup**: `utils/setup_cython.py` and `utils/fast_nodes.py` for compiling and using optimized helpers
 
 ---
 

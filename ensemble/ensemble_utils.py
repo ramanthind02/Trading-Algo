@@ -8,13 +8,19 @@ creating base model instances, and managing feature configurations.
 import json
 import os
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 import pandas as pd
 
-from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel, TwoBinBinningModel, BaseModel
-from utils.enums import TimeFrame, Ticker
 import utils.helpers as helpers
+from feature_selection.base_models import (
+    BaseModel,
+    DecisionTreeBinningModel,
+    QuantileBinningModel,
+    TwoBinBinningModel,
+)
+from utils.enums import Ticker, TimeFrame
 
 
 def parse_control_file(filepath: str) -> Dict[str, Any]:

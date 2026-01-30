@@ -3,6 +3,7 @@ from utils.models import Candle
 from utils.enums import Ticker, TimeFrame
 from nodes import BiasNode
 from collections import deque
+from utils.fast_nodes import compute_momentum_fast
 
 
 class Momentum(BiasNode):
@@ -86,8 +87,8 @@ class Momentum(BiasNode):
         # The oldest value is at index 0, which is lookback periods ago
         past_close = self.close_buffer[0]
         
-        # Simple subtraction - no division needed
-        momentum = curr_close - past_close
+        # Use Cython-backed fast kernel for momentum computation
+        momentum = compute_momentum_fast(curr_close, past_close)
         
         self.output.append(momentum)
         return [momentum]

@@ -7,18 +7,29 @@ and applies risk-adjusted position sizing based on volatility and exposure fract
 """
 
 import json
+import logging
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
-import logging
-from datetime import datetime
-from typing import Optional, Union, Dict, List, Any, Tuple
-import os
-from utils.enums import TimeFrame
+
 import utils.helpers as helpers
-from .ensemble_utils import filter_dataframe_by_timeframe
+from utils.enums import TimeFrame, Ticker
 from utils.models import Candle
+from .ensemble_utils import filter_dataframe_by_timeframe
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_ticker_name(ticker_val: object) -> str:
+    """Normalize ticker identifiers (enum, string, etc.) to a bare ticker name string."""
+    if isinstance(ticker_val, Ticker):
+        return ticker_val.name
+    if isinstance(ticker_val, str):
+        return ticker_val.replace("Ticker.", "")
+    return getattr(ticker_val, "name", str(ticker_val))
 
 class DiversifiedEnsemble:
     """
@@ -803,9 +814,6 @@ class DiversifiedEnsemble:
         logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache MISS for date_range: {date_range_key}")
         self._cache_misses += 1
         
-        from utils.enums import Ticker
-        import numpy as np
-        
         # Get supported tickers from all base models
         supported_tickers = self._get_supported_tickers()
         
@@ -827,28 +835,16 @@ class DiversifiedEnsemble:
                 # Try to get name attribute
                 supported_ticker_names.add(getattr(ticker, 'name', str(ticker)))
         
-        # Filter candles to only include supported tickers
-        # Handle both enum and string ticker formats in candles_df
-        def normalize_ticker_name(ticker_val):
-            """Normalize ticker to string name for comparison."""
-            if isinstance(ticker_val, Ticker):
-                return ticker_val.name
-            elif isinstance(ticker_val, str):
-                # Remove 'Ticker.' prefix if present
-                return ticker_val.replace('Ticker.', '')
-            else:
-                return getattr(ticker_val, 'name', str(ticker_val))
-        
-        # Filter candles_df
+        # Filter candles_df to only include supported tickers
         candles_df = candles_df.copy()
-        candles_df['ticker_normalized'] = candles_df['ticker'].apply(normalize_ticker_name)
+        candles_df['ticker_normalized'] = candles_df['ticker'].apply(_normalize_ticker_name)
         filtered_candles = candles_df[candles_df['ticker_normalized'].isin(supported_ticker_names)].copy()
         filtered_candles = filtered_candles.drop(columns=['ticker_normalized'])
         
         if filtered_candles.empty:
             raise ValueError(
                 f"No candles found for supported tickers: {sorted(supported_ticker_names)}. "
-                f"Available tickers in candles_df: {sorted(candles_df['ticker'].apply(normalize_ticker_name).unique())}"
+                f"Available tickers in candles_df: {sorted(candles_df['ticker'].apply(_normalize_ticker_name).unique())}"
             )
         
         logger.debug(
@@ -905,16 +901,6 @@ class DiversifiedEnsemble:
         if self.model_exposure_fractions_ is None:
             self.model_exposure_fractions_ = {}
             
-            # Helper function to normalize ticker names (reuse from above)
-            def normalize_ticker_name(ticker_val):
-                """Normalize ticker to string name for comparison."""
-                if isinstance(ticker_val, Ticker):
-                    return ticker_val.name
-                elif isinstance(ticker_val, str):
-                    return ticker_val.replace('Ticker.', '')
-                else:
-                    return getattr(ticker_val, 'name', str(ticker_val))
-            
             # Generate binary signals from all base models using filtered training candles
             for model_name, base_model in self.base_models.items():
                 # Check if this is a buy_hold model (always in market)
@@ -931,11 +917,11 @@ class DiversifiedEnsemble:
                     model_signals = []
                     # Get tickers supported by this specific base model
                     model_tickers = set(getattr(base_model, 'tickers', []))
-                    model_ticker_names = {normalize_ticker_name(t) for t in model_tickers}
+                    model_ticker_names = {_normalize_ticker_name(t) for t in model_tickers}
                     
                     # Filter candles to only this model's supported tickers
                     model_candles = filtered_candles[
-                        filtered_candles['ticker'].apply(normalize_ticker_name).isin(model_ticker_names)
+                        filtered_candles['ticker'].apply(_normalize_ticker_name).isin(model_ticker_names)
                     ].copy()
                     
                     if not model_candles.empty:
@@ -1010,8 +996,6 @@ class DiversifiedEnsemble:
             with mean aggregation across tickers for each base datetime.
             Returns are shifted forward by 1 period so feature at T pairs with return from T to T+1.
         """
-        import numpy as np
-        
         if candles_df.empty:
             return pd.Series(dtype=float, name='returns')
         
@@ -1224,19 +1208,6 @@ class DiversifiedEnsemble:
         all_predictions = []
         base_model_predictions_dict = {}
         
-        # Import Ticker for normalization
-        from utils.enums import Ticker
-        
-        # Helper function to normalize ticker names (for comparison)
-        def normalize_ticker_name(ticker_val):
-            """Normalize ticker to string name for comparison."""
-            if isinstance(ticker_val, Ticker):
-                return ticker_val.name
-            elif isinstance(ticker_val, str):
-                return ticker_val.replace('Ticker.', '')
-            else:
-                return getattr(ticker_val, 'name', str(ticker_val))
-        
         # Group candles by ticker
         for ticker_name in candles_df['ticker'].unique():
             ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
@@ -1259,8 +1230,8 @@ class DiversifiedEnsemble:
                     model_tickers = set(getattr(base_model, 'tickers', []))
                     if model_tickers:
                         # Normalize ticker names for comparison
-                        model_ticker_names = {normalize_ticker_name(t) for t in model_tickers}
-                        normalized_ticker_name = normalize_ticker_name(ticker_name)
+                        model_ticker_names = {_normalize_ticker_name(t) for t in model_tickers}
+                        normalized_ticker_name = _normalize_ticker_name(ticker_name)
                         
                         # Skip this base model if it doesn't support this ticker
                         if normalized_ticker_name not in model_ticker_names:

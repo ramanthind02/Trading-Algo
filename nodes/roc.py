@@ -4,6 +4,7 @@ from utils.enums import Ticker, TimeFrame
 from nodes import BiasNode
 from nodes.ewsd import EWSDNode
 from collections import deque
+from utils.fast_nodes import compute_roc_fast
 
 
 class ROC(BiasNode):
@@ -132,11 +133,9 @@ class ROC(BiasNode):
         # The oldest value is at index 0, which is lookback periods ago
         past_close = self.close_buffer[0]
         
-        if past_close == 0:
-            # Avoid division by zero
-            roc = 0.0
-        else:
-            roc = ((curr_close - past_close) / past_close) * 100
+        # Use Cython-backed fast kernel for ROC computation
+        # compute_roc_fast handles division by zero safely
+        roc = compute_roc_fast(curr_close, past_close)
         
         # Normalize by EWSD if enabled
         if self.normalize_by_ewsd and self.ewsd_node is not None:

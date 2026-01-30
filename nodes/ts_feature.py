@@ -19,6 +19,15 @@ class TimeSeriesFeatureNode(BiasNode):
     - Applies a specified time series transformation function from utils.functime to the window
     - Computes features lazily using Polars when features are extracted
     
+    Performance Note:
+    This node does not use Cython optimization because:
+    1. The per-candle path (_compute_candle) is lightweight (just stores values in deques)
+    2. The extraction-time path (compute_features_from_stored_data) delegates heavy computation
+       to Polars (vectorized) and functime functions (NumPy-optimized). The Python loop
+       iterates over feature windows rather than per-candle hot paths, and the overhead is
+       minimal compared to the Polars/functime work. Moving the coordination loop to Cython
+       would not eliminate the Polars/NumPy calls and would add complexity without benefit.
+    
     Parameters:
     - wrapped_node: Another BiasNode instance to wrap
     - lookback: Rolling window size for time series features
@@ -220,8 +229,8 @@ class TimeSeriesFeatureNode(BiasNode):
         base_column_names = list(self.windows.keys())
         
         for name in base_column_names:
-            # Use Polars rolling window with custom aggregation
-            # We'll compute the transformation for each rolling window
+            # Extract Series once per column to avoid repeated DataFrame slicing
+            series = df[name]
             feature_values = []
             
             # For each row, get the rolling window and compute transformation
@@ -230,10 +239,9 @@ class TimeSeriesFeatureNode(BiasNode):
                     # Not enough data for window
                     feature_values.append(np.nan)
                 else:
-                    # Get the rolling window
+                    # Get the rolling window slice directly from Series
                     window_start = max(0, i - self.lookback + 1)
-                    window_data = df.slice(window_start, self.lookback)
-                    window_series = window_data[name]
+                    window_series = series.slice(window_start, self.lookback)
                     
                     # Compute transformation
                     feature_value = self._compute_transformation(window_series)

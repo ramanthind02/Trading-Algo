@@ -1,20 +1,21 @@
 from typing import List
 import numpy as np
-from numba import njit
 from utils.models import Candle
 from utils.enums import Ticker, TimeFrame
-from utils.rsi_helpers import compute_rsi_initial, update_rsi
+from utils.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
 from nodes import BiasNode
 
 
 # ============================================================================
-# NUMBA-COMPILED AVERAGING FUNCTION (Fast!)
+# PURE PYTHON AVERAGING FUNCTION (Simple O(1) operation, no need for Numba)
 # ============================================================================
 
-@njit
 def compute_avg_rsi(rsi_buffer: np.ndarray, buffer_size: int) -> float:
     """
     Compute average of RSI values in the buffer.
+    
+    This is a simple averaging operation that doesn't require Numba acceleration.
+    The performance-critical RSI computation is handled by Cython-backed fast kernels.
     
     Parameters:
     - rsi_buffer: Circular buffer containing RSI values
@@ -39,7 +40,7 @@ def compute_avg_rsi(rsi_buffer: np.ndarray, buffer_size: int) -> float:
 
 class CumulativeRSI(BiasNode):
     """
-    Cumulative RSI Bias Node - Numba-accelerated
+    Cumulative RSI Bias Node - Cython-accelerated
     
     Computes RSI for each candle and then takes the average of the last 
     'avg_period' RSI values to create a smoother, less noisy signal.
@@ -51,7 +52,7 @@ class CumulativeRSI(BiasNode):
     as the standard RSI node, then maintains a rolling buffer of these
     RSI values and returns their average.
     
-    Performance: ~10-20x faster than pure Python implementation
+    Performance: Uses Cython-backed fast kernels for RSI computation.
     
     Parameters:
     - lookback: Period for individual RSI calculation (default: 14)
@@ -108,7 +109,7 @@ class CumulativeRSI(BiasNode):
         Compute Cumulative RSI for the given candle.
         
         This method:
-        1. Calculates the RSI for the current candle using the same logic as regular RSI
+        1. Calculates the RSI for the current candle using Cython-backed fast kernels
         2. Stores the RSI value in a rolling buffer
         3. Returns the average of the RSI values in the buffer
         
@@ -149,11 +150,11 @@ class CumulativeRSI(BiasNode):
                     self.close_buffer[:self.buffer_idx]
                 ])
             
-            # Call Numba-compiled initialization
-            self.upsum, self.dnsum = compute_rsi_initial(init_prices, self.lookback)
+            # Call Cython-backed initialization
+            self.upsum, self.dnsum = compute_rsi_initial_fast(init_prices, self.lookback)
         
-        # Update RSI using Numba-compiled function (same as regular RSI)
-        self.upsum, self.dnsum, current_rsi = update_rsi(
+        # Update RSI using Cython-backed function (same as regular RSI)
+        self.upsum, self.dnsum, current_rsi = update_rsi_fast(
             self.prev_close,
             curr_close,
             self.upsum,
@@ -167,7 +168,7 @@ class CumulativeRSI(BiasNode):
         if self.n_rsi_values < self.avg_period:
             self.n_rsi_values += 1
         
-        # Compute average RSI using Numba-compiled function
+        # Compute average RSI using pure Python function (simple O(1) operation)
         avg_rsi = compute_avg_rsi(self.rsi_buffer, min(self.n_rsi_values, self.avg_period))
         
         # Update prev_close for next iteration

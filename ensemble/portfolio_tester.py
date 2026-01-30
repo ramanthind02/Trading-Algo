@@ -6,12 +6,18 @@ from candles to tearsheet analysis, with support for granular performance analys
 at portfolio, ensemble, and base model levels.
 """
 
-import pandas as pd
-import numpy as np
-from typing import Dict, Optional, Union, Any
 from pathlib import Path
+from typing import Any, Dict, Optional, Union
+
+import numpy as np
+import pandas as pd
 
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+
+
+def _empty_returns_series(name: str) -> pd.Series:
+    """Create an empty returns series with a consistent float dtype and name."""
+    return pd.Series(dtype=float, name=name)
 
 
 def calculate_log_returns_from_candles(candles_df: pd.DataFrame) -> pd.Series:
@@ -31,32 +37,28 @@ def calculate_log_returns_from_candles(candles_df: pd.DataFrame) -> pd.Series:
     pd.Series
         Returns series indexed by datetime (can be aligned with candles by datetime)
     """
-    candles_df = candles_df.sort_values(['ticker', 'datetime']).copy()
-    
-    # Calculate log returns per ticker and combine
-    returns_list = []
-    for ticker in candles_df['ticker'].unique():
-        ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
-        ticker_candles = ticker_candles.sort_values('datetime')
-        
-        # Calculate log returns
-        ticker_candles['returns'] = np.log(ticker_candles['close'] / ticker_candles['close'].shift(1))
-        
-        # Set datetime as index
-        ticker_candles = ticker_candles.set_index('datetime')
-        
-        # Extract returns
-        ticker_returns = ticker_candles['returns'].dropna()
-        returns_list.append(ticker_returns)
-    
-    # Combine all ticker returns (may have duplicate datetime indices from different tickers)
-    if returns_list:
-        combined_returns = pd.concat(returns_list)
-        # Sort by datetime
-        combined_returns = combined_returns.sort_index()
-        return combined_returns
-    else:
-        return pd.Series(dtype=float, name='returns')
+    if candles_df.empty:
+        return _empty_returns_series('returns')
+
+    candles_sorted = candles_df.sort_values(['ticker', 'datetime']).copy()
+    candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
+
+    # Compute log returns per ticker using vectorized groupby + diff
+    candles_sorted['log_close'] = np.log(candles_sorted['close'])
+    candles_sorted['returns'] = (
+        candles_sorted.groupby('ticker')['log_close'].diff()
+    )
+
+    # Drop NaNs from the first observation of each ticker
+    result = (
+        candles_sorted
+        .set_index('datetime')['returns']
+        .dropna()
+        .sort_index()
+    )
+
+    result.name = 'returns'
+    return result
 
 
 def calculate_strategy_returns_from_positions(
@@ -91,104 +93,71 @@ def calculate_strategy_returns_from_positions(
     pd.Series
         Daily strategy returns indexed by datetime (summed across tickers)
     """
-    # Calculate returns per ticker
+    if positions_df.empty or candles_df.empty:
+        return _empty_returns_series('strategy_return')
+
     candles_sorted = candles_df.sort_values(['ticker', 'datetime']).copy()
-    
-    # Calculate log returns per ticker
-    ticker_returns = {}
-    for ticker in candles_sorted['ticker'].unique():
-        ticker_candles = candles_sorted[candles_sorted['ticker'] == ticker].copy()
-        ticker_candles = ticker_candles.sort_values('datetime')
-        
-        # Calculate log returns
-        ticker_candles['returns'] = np.log(ticker_candles['close'] / ticker_candles['close'].shift(1))
-        ticker_candles = ticker_candles.set_index('datetime')
-        
-        ticker_returns[ticker] = ticker_candles['returns'].dropna()
-    
-    # Note: No need to track num_tickers for scaling - instrument weights handle allocation
-    
-    # Shift positions forward by one period to avoid lookahead bias
-    # A prediction at time x using candle x should only be available at time x+1
-    # The return at time x+1 represents the return from x to x+1
-    positions_shifted = positions_df.copy()
-    positions_shifted['datetime'] = pd.to_datetime(positions_shifted['datetime'])
-    
-    # Group by ticker and shift datetime forward by one period
-    positions_shifted_list = []
-    for ticker in positions_shifted['ticker'].unique():
-        ticker_positions = positions_shifted[positions_shifted['ticker'] == ticker].copy()
-        ticker_positions = ticker_positions.sort_values('datetime')
-        
-        # Get the datetime index for this ticker's returns to find next valid datetime
-        if ticker in ticker_returns:
-            ticker_ret = ticker_returns[ticker]
-            ticker_ret_index = ticker_ret.index
-            
-            # Shift each position to the next available datetime in returns
-            # This ensures position at time x applies to return from x to x+1
-            shifted_data = []
-            for _, pos_row in ticker_positions.iterrows():
-                dt = pos_row['datetime']
-                position_fraction = pos_row['position_fraction']
-                
-                # Find next datetime in returns that is > current datetime
-                # searchsorted with side='right' finds insertion point after any existing dt
-                next_dt_idx = ticker_ret_index.searchsorted(dt, side='right')
-                if next_dt_idx < len(ticker_ret_index):
-                    next_dt = ticker_ret_index[next_dt_idx]
-                    shifted_data.append({
-                        'ticker': ticker,
-                        'datetime': next_dt,
-                        'position_fraction': position_fraction
-                    })
-                # If no future datetime, skip this position (it's at the end of the data)
-            
-            if shifted_data:
-                ticker_positions_shifted = pd.DataFrame(shifted_data)
-                positions_shifted_list.append(ticker_positions_shifted)
-    
-    if not positions_shifted_list:
-        return pd.Series(dtype=float, name='strategy_return')
-    
-    positions_shifted = pd.concat(positions_shifted_list, ignore_index=True)
-    
-    # Merge shifted positions with returns
-    strategy_returns_list = []
-    
-    for _, pos_row in positions_shifted.iterrows():
-        ticker = pos_row['ticker']
-        dt = pd.to_datetime(pos_row['datetime'])
-        position_fraction = pos_row['position_fraction']
-        
-        # Get return for this ticker and datetime
-        if ticker in ticker_returns:
-            ticker_ret = ticker_returns[ticker]
-            if dt in ticker_ret.index:
-                # Strategy return calculation depends on strategy direction
-                # For 'long': return = position_fraction * instrument_return
-                # For 'short': return = -position_fraction * instrument_return (shorting profits from negative returns)
-                if strategy == 'short':
-                    strategy_return = -position_fraction * ticker_ret.loc[dt]
-                else:
-                    strategy_return = position_fraction * ticker_ret.loc[dt]
-                strategy_returns_list.append({
-                    'datetime': dt,
-                    'return': strategy_return
-                })
-    
-    if not strategy_returns_list:
-        return pd.Series(dtype=float, name='strategy_return')
-    
-    # Convert to Series
-    strategy_returns_df = pd.DataFrame(strategy_returns_list)
-    strategy_returns_df = strategy_returns_df.set_index('datetime')
-    strategy_returns_df = strategy_returns_df.sort_index()
-    
-    # Group by datetime and sum (if multiple tickers on same day)
-    # Summing gives correct portfolio return (instrument weights already account for allocation)
-    strategy_returns = strategy_returns_df.groupby('datetime')['return'].sum()
-    
+    candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
+
+    # Compute log returns per ticker (reused for all strategies)
+    candles_sorted['log_close'] = np.log(candles_sorted['close'])
+    candles_sorted['instrument_return'] = (
+        candles_sorted.groupby('ticker')['log_close'].diff()
+    )
+
+    # For each (ticker, datetime) in candles, compute the datetime of the next bar
+    candles_sorted['next_datetime'] = (
+        candles_sorted.groupby('ticker')['datetime'].shift(-1)
+    )
+
+    # Align positions with the *next* bar's return to avoid lookahead bias.
+    positions = positions_df.copy()
+    positions['datetime'] = pd.to_datetime(positions['datetime'])
+
+    # Merge to find, for each position at time t, the candle row and its next_datetime
+    pos_with_next = positions.merge(
+        candles_sorted[['ticker', 'datetime', 'next_datetime']],
+        on=['ticker', 'datetime'],
+        how='left',
+    )
+
+    # Drop positions that do not have a future bar
+    pos_with_next = pos_with_next.dropna(subset=['next_datetime'])
+
+    if pos_with_next.empty:
+        return _empty_returns_series('strategy_return')
+
+    pos_with_next = pos_with_next.rename(columns={'next_datetime': 'ret_datetime'})
+
+    # Now join with instrument returns at ret_datetime
+    returns_df = candles_sorted[['ticker', 'datetime', 'instrument_return']].dropna()
+
+    merged = pos_with_next.merge(
+        returns_df,
+        left_on=['ticker', 'ret_datetime'],
+        right_on=['ticker', 'datetime'],
+        how='inner',
+        suffixes=('', '_ret'),
+    )
+
+    if merged.empty:
+        return _empty_returns_series('strategy_return')
+
+    # Strategy return calculation depends on strategy direction
+    if strategy == 'short':
+        merged['strategy_return'] = -merged['position_fraction'] * merged['instrument_return']
+    else:
+        merged['strategy_return'] = merged['position_fraction'] * merged['instrument_return']
+
+    # Group by datetime of the return (ret_datetime) and sum across tickers
+    merged['ret_datetime'] = merged['ret_datetime'].astype('datetime64[ns]')
+    strategy_returns = (
+        merged.groupby('ret_datetime')['strategy_return']
+        .sum()
+        .sort_index()
+    )
+
+    strategy_returns.name = 'strategy_return'
     return strategy_returns
 
 
@@ -211,53 +180,40 @@ def calculate_baseline_returns(
     pd.Series
         Daily baseline returns indexed by datetime
     """
+    if candles_df.empty:
+        return _empty_returns_series('baseline_return')
+
     candles_sorted = candles_df.sort_values(['ticker', 'datetime']).copy()
-    
-    # Calculate returns per ticker
-    ticker_returns_dict = {}
-    for ticker in candles_sorted['ticker'].unique():
-        ticker_candles = candles_sorted[candles_sorted['ticker'] == ticker].copy()
-        ticker_candles = ticker_candles.sort_values('datetime')
-        
-        # Calculate log returns
-        ticker_candles['returns'] = np.log(ticker_candles['close'] / ticker_candles['close'].shift(1))
-        ticker_candles = ticker_candles.set_index('datetime')
-        
-        ticker_returns_dict[ticker] = ticker_candles['returns'].dropna()
-    
-    if not ticker_returns_dict:
-        return pd.Series(dtype=float, name='baseline_return')
-    
-    # Combine ticker returns
+    candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
+
+    # Compute log returns per ticker
+    candles_sorted['log_close'] = np.log(candles_sorted['close'])
+    candles_sorted['returns'] = (
+        candles_sorted.groupby('ticker')['log_close'].diff()
+    )
+
+    valid = candles_sorted.dropna(subset=['returns'])
+    if valid.empty:
+        return _empty_returns_series('baseline_return')
+
     if equal_weight:
-        # Equal weight: average returns across tickers
-        # Get all unique datetimes
-        all_dates = set()
-        for returns in ticker_returns_dict.values():
-            all_dates.update(returns.index)
-        all_dates = sorted(all_dates)
-        
-        # Average returns across tickers for each date
-        baseline_returns_list = []
-        for dt in all_dates:
-            returns_on_date = []
-            for ticker, returns in ticker_returns_dict.items():
-                if dt in returns.index:
-                    returns_on_date.append(returns.loc[dt])
-            
-            if returns_on_date:
-                avg_return = np.mean(returns_on_date)
-                baseline_returns_list.append({'datetime': dt, 'return': avg_return})
-        
-        baseline_df = pd.DataFrame(baseline_returns_list)
-        baseline_df = baseline_df.set_index('datetime')
-        baseline_returns = baseline_df['return'].sort_index()
+        # Equal-weighted baseline: average across all tickers that have a return on that date
+        baseline = (
+            valid.groupby('datetime')['returns']
+            .mean()
+            .sort_index()
+        )
     else:
-        # Single ticker: use first ticker
-        first_ticker = list(ticker_returns_dict.keys())[0]
-        baseline_returns = ticker_returns_dict[first_ticker]
-    
-    return baseline_returns
+        # Single-ticker buy-and-hold: use the first ticker's returns
+        first_ticker = valid['ticker'].iloc[0]
+        baseline = (
+            valid[valid['ticker'] == first_ticker]
+            .set_index('datetime')['returns']
+            .sort_index()
+        )
+
+    baseline.name = 'baseline_return'
+    return baseline
 
 
 class PortfolioTester:

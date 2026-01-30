@@ -411,10 +411,10 @@ class BaseModel:
             if 'datetime' in ticker_candles.columns:
                 ticker_candles = ticker_candles.sort_values('datetime')
             
-            # Extract features for this ticker
-            for _, row in ticker_candles.iterrows():
-                candle = Candle.from_row(row)
-                self.add_candle(candle, row['timeframe'], ticker=ticker)
+            # Extract features for this ticker (itertuples is much faster than iterrows)
+            for row in ticker_candles.itertuples(index=False):
+                candle = Candle.from_row_fast(row)
+                self.add_candle(candle, candle.tf, ticker=ticker)
         
         # Extract aggregated features (all tickers)
         feature_data = self.get_feature()
@@ -610,11 +610,8 @@ class BaseModel:
                     f"Model was initialized with tickers: {self.tickers}"
                 )
         
-        # Collect input datetimes
-        all_input_datetimes = []
-        for _, row in candles_df.iterrows():
-            candle = Candle.from_row(row)
-            all_input_datetimes.append(candle.datetime)
+        # Collect input datetimes (vectorized, preserves row order)
+        all_input_datetimes = pd.to_datetime(candles_df['datetime']).tolist()
         
         # Extract features for all tickers
         for ticker in normalized_tickers:
@@ -623,11 +620,12 @@ class BaseModel:
             ticker_candles = candles_df[
                 (candles_df['ticker'] == ticker) | (candles_df['ticker'] == ticker_str)
             ].copy()
-            
-            # Extract features for this ticker
-            for _, row in ticker_candles.iterrows():
-                candle = Candle.from_row(row)
-                self.add_candle(candle, row['timeframe'], ticker=ticker)
+            if 'datetime' in ticker_candles.columns:
+                ticker_candles = ticker_candles.sort_values('datetime')
+            # Extract features for this ticker (itertuples is much faster than iterrows)
+            for row in ticker_candles.itertuples(index=False):
+                candle = Candle.from_row_fast(row)
+                self.add_candle(candle, candle.tf, ticker=ticker)
         
         # Extract aggregated features (all tickers)
         feature_data = self.get_feature()
