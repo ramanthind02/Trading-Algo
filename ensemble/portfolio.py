@@ -16,52 +16,17 @@ Key responsibilities:
 Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 """
 
-import pandas as pd
-import numpy as np
 import logging
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import pandas as pd
+
 from utils.enums import TimeFrame
+from utils.fast_volatility import compute_ewsd_annualized_from_closes
 from .weight_layer import WeightLayer
 
-try:
-    from joblib import Parallel, delayed
-    JOBLIB_AVAILABLE = True
-    _joblib_version = None
-    try:
-        import joblib
-        _joblib_version = getattr(joblib, '__version__', 'unknown')
-    except:
-        pass
-except ImportError as e:
-    JOBLIB_AVAILABLE = False
-    _joblib_import_error = str(e)
-    # Fallback: define dummy functions
-    def Parallel(*args, **kwargs):
-        class DummyParallel:
-            def __init__(self, *args, **kwargs):
-                pass
-            def __enter__(self):
-                return self
-            def __exit__(self, *args):
-                pass
-            def __call__(self, iterable):
-                return list(iterable)
-        return DummyParallel()
-    def delayed(func):
-        return func
-
 logger = logging.getLogger(__name__)
-
-# Log joblib availability at module load
-if JOBLIB_AVAILABLE:
-    logger.info(f"joblib available (version: {_joblib_version}) - parallel processing enabled")
-else:
-    error_msg = f"joblib not available - using sequential processing"
-    if '_joblib_import_error' in globals():
-        error_msg += f" (ImportError: {_joblib_import_error})"
-    error_msg += " (install with: pip install joblib)"
-    print(f"⚠️  WARNING: {error_msg}")
-    logger.warning(error_msg)
 
 
 class Portfolio:
@@ -538,60 +503,15 @@ class Portfolio:
         logger.debug(f"Portfolio.fit_from_candles() cache MISS for date_range: {date_range_key}")
         self._cache_misses += 1
         
-        # Fit all ensembles (with parallelization if available)
+        # Fit all ensembles sequentially (Cython-friendly, no GIL contention)
         if target_data is not None:
-            if JOBLIB_AVAILABLE and len(self.ensembles) > 1:
-                # Parallel fitting for multiple ensembles
-                msg = f"Fitting {len(self.ensembles)} ensembles in parallel (using joblib)..."
-                print(f"⚡ {msg}")
-                logger.info(msg)
-                import time
-                start_time = time.time()
-                
-                def fit_ensemble(ensemble_idx, ensemble):
-                    try:
-                        logger.debug(f"Fitting ensemble {ensemble_idx}...")
-                        ensemble.fit_from_candles(tf_candles, target_data)
-                        return True
-                    except Exception as e:
-                        logger.error(f"Error fitting ensemble {ensemble_idx}: {e}", exc_info=True)
-                        return False
-                
-                results = Parallel(n_jobs=-1, backend='threading', verbose=0)(
-                    delayed(fit_ensemble)(idx, ensemble) for idx, ensemble in enumerate(self.ensembles)
-                )
-                elapsed = time.time() - start_time
-                failed = sum(1 for r in results if not r)
-                msg = f"✓ Parallel fitting completed in {elapsed:.2f}s ({failed} failed)"
-                print(msg)
-                logger.info(msg)
-                if failed > 0:
-                    warn_msg = f"Failed to fit {failed} out of {len(self.ensembles)} ensembles"
-                    print(f"⚠️  {warn_msg}")
-                    logger.warning(warn_msg)
-            else:
-                # Sequential fitting
-                if not JOBLIB_AVAILABLE:
-                    msg = f"Fitting {len(self.ensembles)} ensembles sequentially (joblib not available)..."
-                    print(f"🐌 {msg}")
-                    logger.info(msg)
-                else:
-                    msg = f"Fitting {len(self.ensembles)} ensemble(s) sequentially (only 1 ensemble)..."
-                    print(f"🐌 {msg}")
-                    logger.info(msg)
-                
-                import time
-                start_time = time.time()
-                for idx, ensemble in enumerate(self.ensembles):
-                    try:
-                        logger.debug(f"Fitting ensemble {idx}...")
-                        ensemble.fit_from_candles(tf_candles, target_data)
-                    except Exception as e:
-                        logger.error(f"Error fitting ensemble {idx}: {e}", exc_info=True)
-                elapsed = time.time() - start_time
-                msg = f"✓ Sequential fitting completed in {elapsed:.2f}s"
-                print(msg)
-                logger.info(msg)
+            logger.debug(f"Fitting {len(self.ensembles)} ensemble(s) sequentially")
+            for idx, ensemble in enumerate(self.ensembles):
+                try:
+                    logger.debug(f"Fitting ensemble {idx}...")
+                    ensemble.fit_from_candles(tf_candles, target_data)
+                except Exception as e:
+                    logger.error(f"Error fitting ensemble {idx}: {e}", exc_info=True)
 
         
         # Fit IDM if we have return data
@@ -761,40 +681,12 @@ class Portfolio:
                 )
                 return ensemble_idx, None
         
-        # Parallel or sequential prediction
-        if JOBLIB_AVAILABLE and len(self.ensembles) > 1:
-            msg = f"Getting predictions from {len(self.ensembles)} ensembles in parallel (using joblib)..."
-            print(f"⚡ {msg}")
-            logger.info(msg)
-            import time
-            start_time = time.time()
-            ensemble_results = Parallel(n_jobs=-1, backend='threading', verbose=0)(
-                delayed(get_ensemble_predictions)(idx, ensemble)
-                for idx, ensemble in enumerate(self.ensembles)
-            )
-            elapsed = time.time() - start_time
-            msg = f"✓ Parallel prediction completed in {elapsed:.2f}s"
-            print(msg)
-            logger.info(msg)
-        else:
-            if not JOBLIB_AVAILABLE:
-                msg = f"Getting predictions from {len(self.ensembles)} ensembles sequentially (joblib not available)..."
-                print(f"🐌 {msg}")
-                logger.info(msg)
-            else:
-                msg = f"Getting predictions from {len(self.ensembles)} ensemble(s) sequentially (only 1 ensemble)..."
-                print(f"🐌 {msg}")
-                logger.info(msg)
-            import time
-            start_time = time.time()
-            ensemble_results = [
-                get_ensemble_predictions(idx, ensemble)
-                for idx, ensemble in enumerate(self.ensembles)
-            ]
-            elapsed = time.time() - start_time
-            msg = f"✓ Sequential prediction completed in {elapsed:.2f}s"
-            print(msg)
-            logger.info(msg)
+        # Get predictions from all ensembles sequentially (Cython-friendly)
+        logger.debug(f"Getting predictions from {len(self.ensembles)} ensemble(s) sequentially")
+        ensemble_results = [
+            get_ensemble_predictions(idx, ensemble)
+            for idx, ensemble in enumerate(self.ensembles)
+        ]
         
         # Process results - ALWAYS compute all predictions for caching
         for ensemble_idx, ensemble_result in ensemble_results:
@@ -1027,85 +919,67 @@ class Portfolio:
         candles_df: pd.DataFrame
     ) -> Dict[str, float]:
         """
-        Calculate blended volatility from EWSD bias nodes.
-        
-        Creates EWSD (Exponentially Weighted Standard Deviation) nodes for each ticker
-        and streams candles to build up volatility estimates. EWSD nodes implement
-        Carver's blended volatility:
-        - 70% EWMA-32 (short-run estimate)
-        - 30% long-run historical average (10-year window)
-        
+        Calculate blended volatility from close prices using a fast, array-based EWSD approximation.
+
+        This replaces the earlier per-candle EWSDNode loop with a vectorized
+        implementation that operates directly on NumPy arrays. Conceptually it
+        matches Carver's approach:
+
+        - 70% short-run EWMA-32 of squared returns
+        - 30% long-run historical standard deviation (10-year window)
+        - Annualized by multiplying daily sigma by 16
+
         Parameters
         ----------
         candles_df : pd.DataFrame
-            Candles DataFrame with columns: datetime, ticker, open, high, low, close, volume, timeframe
-            
+            Candles DataFrame with columns: datetime, ticker, close
+
         Returns
         -------
         Dict[str, float]
             Mapping from ticker to annualized blended volatility (as decimal, not percentage)
         """
-        from utils.enums import Ticker, TimeFrame
-        from nodes.ewsd import EWSDNode
-        from utils.models import Candle
-        
-        volatility_dict = {}
-        
-        # Group by ticker
-        for ticker_name in candles_df['ticker'].unique():
-            ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
+        volatility_dict: Dict[str, float] = {}
+
+        if candles_df.empty or 'ticker' not in candles_df.columns or 'close' not in candles_df.columns:
+            return volatility_dict
+
+        df = candles_df.copy()
+        df['datetime'] = pd.to_datetime(df['datetime'])
+
+        for ticker_name, ticker_candles in df.groupby('ticker'):
             ticker_candles = ticker_candles.sort_values('datetime')
-            
-            if len(ticker_candles) == 0:
-                volatility_dict[ticker_name] = 0.20  # Default fallback
-                continue
-            
-            # Convert ticker name to Ticker enum
-            try:
-                if isinstance(ticker_name, str):
-                    # Handle both 'ES' and 'Ticker.ES' formats
-                    ticker_str = ticker_name.replace('Ticker.', '') if 'Ticker.' in ticker_name else ticker_name
-                    ticker = Ticker[ticker_str]
-                else:
-                    ticker = ticker_name
-            except (KeyError, AttributeError):
-                logger.warning(f"Unknown ticker '{ticker_name}', using default volatility")
+
+            closes = ticker_candles['close'].to_numpy(dtype=np.float64)
+            if closes.size < 2:
                 volatility_dict[ticker_name] = 0.20
                 continue
-            
-            # Create EWSD node for this ticker
-            ewsd_node = EWSDNode(
-                ticker=ticker,
-                tf=TimeFrame.D,  # Use daily timeframe for volatility calculation
-                lambda_short=0.06061,  # 32-day span
-                long_run_window=2520,  # 10 years (2520 trading days)
-                blend_short_weight=0.7,
-                blend_long_weight=0.3
-            )
-            
-            # Stream all candles to build up EWSD state
-            ewsd_value = None
-            for _, row in ticker_candles.iterrows():
-                candle = Candle.from_row(row)
-                ewsd_output = ewsd_node.add_candle(candle)
-                if ewsd_output and len(ewsd_output) >= 2:
-                    # ewsd_output[1] is annual_pct (in percentage)
-                    # Convert to decimal
-                    ewsd_value = ewsd_output[1] / 100.0
-            
-            # Use latest EWSD value or fallback
-            if ewsd_value is None or np.isnan(ewsd_value):
-                ticker_candles['returns'] = ticker_candles['close'].pct_change()
-                daily_vol = ticker_candles['returns'].std()
-                annual_vol = daily_vol * np.sqrt(252)  # Annualize
-                ewsd_value = annual_vol if not np.isnan(annual_vol) else 0.20
+
+            try:
+                vol = compute_ewsd_annualized_from_closes(closes)
+            except Exception as exc:  # pragma: no cover - defensive
                 logger.warning(
-                    f"EWSD calculation failed for ticker '{ticker_name}'. "
-                    f"Using simple volatility calculation as fallback."
+                    "Error computing EWSD volatility for ticker '%s': %s. "
+                    "Falling back to simple annualized std.",
+                    ticker_name,
+                    exc,
                 )
-            
-            volatility_dict[ticker_name] = ewsd_value
-        
+                vol = np.nan
+
+            if not np.isfinite(vol) or vol <= 0.0:
+                ticker_candles = ticker_candles.copy()
+                ticker_candles['returns'] = ticker_candles['close'].pct_change()
+                daily_vol = float(ticker_candles['returns'].std())
+                annual_vol = daily_vol * np.sqrt(252.0)
+                vol = annual_vol if np.isfinite(annual_vol) and annual_vol > 0.0 else 0.20
+                logger.warning(
+                    "EWSD calculation produced invalid value for ticker '%s'. "
+                    "Using simple volatility calculation as fallback.",
+                    ticker_name,
+                )
+
+            volatility_dict[ticker_name] = float(vol)
+
         return volatility_dict
     
     def _calculate_returns_from_candles(
@@ -1125,7 +999,7 @@ class Portfolio:
         pd.DataFrame
             Returns DataFrame with tickers as columns, datetime as index
         """
-        returns_dict = {}
+        returns_dict: Dict[str, pd.Series] = {}
         date_ranges_dict = {}  # Store date ranges for logging
         
         for ticker in candles_df['ticker'].unique():
@@ -1143,13 +1017,7 @@ class Portfolio:
             # Drop NaN from individual ticker (first row will be NaN from pct_change)
             ticker_returns = ticker_candles['returns'].dropna()
             
-            # Convert ticker to string for dictionary key (handle both enum and string)
-            if hasattr(ticker, 'name'):
-                ticker_key = ticker.name  # Ticker enum
-            elif hasattr(ticker, 'value'):
-                ticker_key = str(ticker.value)  # Fallback
-            else:
-                ticker_key = str(ticker)  # String or other
+            ticker_key = self._normalize_ticker_key(ticker)
             
             if len(ticker_returns) > 0:
                 # Ensure datetime index is properly formatted as DatetimeIndex
@@ -1178,7 +1046,7 @@ class Portfolio:
         # Create DataFrame with all ticker returns
         # This will align by datetime index (union of all datetimes)
         # Ensure all indices are normalized and the same type before creating DataFrame
-        normalized_returns_dict = {}
+        normalized_returns_dict: Dict[str, pd.Series] = {}
         for ticker_key, ticker_returns in returns_dict.items():
             # Create a copy to avoid modifying original
             normalized_returns = ticker_returns.copy()
@@ -1242,6 +1110,20 @@ class Portfolio:
             return pd.DataFrame()
         
         return returns_df
+
+    @staticmethod
+    def _normalize_ticker_key(ticker: object) -> str:
+        """
+        Normalize a ticker identifier (enum, string, etc.) to a string key.
+
+        Keeps ticker handling consistent across IDM calculations without
+        changing any external behavior.
+        """
+        if hasattr(ticker, "name"):
+            return str(getattr(ticker, "name"))
+        if hasattr(ticker, "value"):
+            return str(getattr(ticker, "value"))
+        return str(ticker)
     
     def _fit_weight_layer(
         self,

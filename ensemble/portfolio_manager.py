@@ -14,13 +14,14 @@ Author: Trading Research Team
 Date: 2025-01-10
 """
 
+import logging
+from typing import Dict, Optional
+
 import pandas as pd
-import numpy as np
-from typing import Dict, Optional, List
+
+from execution.position_sizer import PositionSizer
 from utils.enums import TimeFrame
 from .portfolio import Portfolio
-from execution.position_sizer import PositionSizer
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +104,8 @@ class PortfolioManager:
         if not portfolios:
             raise ValueError("portfolios cannot be empty")
         
-        self.portfolios = portfolios
-        self.position_sizer = position_sizer
+        self.portfolios: Dict[TimeFrame, Portfolio] = portfolios
+        self.position_sizer: Optional[PositionSizer] = position_sizer
         
         logger.info(
             f"PortfolioManager initialized with {len(portfolios)} portfolios: "

@@ -18,7 +18,7 @@ Expected speedups:
 
 import numpy as np
 cimport numpy as cnp
-from libc.math cimport sqrt, fabs, fmax
+from libc.math cimport sqrt, fabs, fmax, log, erf
 cimport cython
 
 # Initialize numpy C API
@@ -397,3 +397,423 @@ def compute_ma_from_deque(
         sum_val += arr[i]
     
     return sum_val / <double>n
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_high_low_channel_fast(
+    double[::1] highs,
+    double[::1] lows,
+    Py_ssize_t start_idx,
+    Py_ssize_t window,
+    Py_ssize_t n
+):
+    """
+    Fast computation of highest high and lowest low over a rolling window.
+    
+    Efficiently computes (highest_high, lowest_low) over the last `window` valid
+    elements ending at `start_idx`. Designed for circular-buffer friendly usage
+    where `start_idx` points to the current position and we look back `window`
+    elements (wrapping around if needed).
+    
+    This function is optimized for Donchian Channel and Williams %R calculations
+    where we need to find the highest high and lowest low over a lookback period.
+    
+    Parameters:
+    - highs: Memoryview of high prices (circular buffer or array)
+    - lows: Memoryview of low prices (circular buffer or array)
+    - start_idx: Current index position (end of window, 0-based)
+    - window: Number of elements to look back
+    - n: Total number of valid elements in buffer (may be less than buffer size)
+    
+    Returns:
+    - tuple: (highest_high, lowest_low) over the window
+    
+    Usage example:
+        # For a circular buffer with period=20, current position at idx=15:
+        # Look back 20 elements: indices wrapping around from 15 backwards
+        highest, lowest = compute_high_low_channel_fast(highs, lows, start_idx=15, window=20, n=20)
+    """
+    cdef double highest_high = -1e300
+    cdef double lowest_low = 1e300
+    cdef Py_ssize_t i, idx
+    cdef Py_ssize_t actual_window = min(window, n)
+    
+    if actual_window <= 0 or n <= 0:
+        return 0.0, 0.0
+    
+    # Scan backwards from start_idx, wrapping around if needed
+    for i in range(actual_window):
+        # Calculate index going backwards, wrapping around
+        # Use modulo arithmetic: (start_idx - i) % n handles wrapping
+        idx = (start_idx - i + n) % n
+        
+        # Update highest and lowest
+        if highs[idx] > highest_high:
+            highest_high = highs[idx]
+        if lows[idx] < lowest_low:
+            lowest_low = lows[idx]
+    
+    return highest_high, lowest_low
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_momentum_fast(
+    double curr_close,
+    double past_close
+):
+    """
+    Fast momentum computation (price difference).
+    
+    Computes the simple momentum as the difference between current and past close.
+    This is a trivial but typed and optimized function for Momentum node calculations.
+    
+    Parameters:
+    - curr_close: Current close price
+    - past_close: Past close price (from lookback periods ago)
+    
+    Returns:
+    - momentum: curr_close - past_close
+    """
+    return curr_close - past_close
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_roc_fast(
+    double curr_close,
+    double past_close
+):
+    """
+    Fast Rate of Change (ROC) computation as percentage.
+    
+    Computes ROC as: ((curr_close - past_close) / past_close) * 100.0
+    Returns 0.0 safely when past_close <= 0 to avoid division by zero.
+    
+    Parameters:
+    - curr_close: Current close price
+    - past_close: Past close price (from lookback periods ago)
+    
+    Returns:
+    - roc: Percentage ROC, or 0.0 if past_close <= 0
+    """
+    if past_close <= 0.0:
+        return 0.0
+    
+    return ((curr_close - past_close) / past_close) * 100.0
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_rsi_initial_fast(
+    double[::1] close_prices,
+    Py_ssize_t lookback
+):
+    """
+    Fast RSI initial computation (Cython equivalent of utils.rsi_helpers.compute_rsi_initial).
+    
+    Initializes RSI computation for the first valid period by computing average gains
+    and losses over the initial lookback period. Uses 1e-60 guards to prevent division
+    by zero, matching the Numba implementation exactly.
+    
+    Parameters:
+    - close_prices: Array of close prices (must have at least lookback elements)
+    - lookback: RSI period
+    
+    Returns:
+    - tuple: (upsum, dnsum) as averages, where:
+      - upsum: Average of positive price changes
+      - dnsum: Average of negative price changes (as positive values)
+    
+    Note:
+    - This matches the logic in utils/rsi_helpers.py compute_rsi_initial exactly
+    - Initializes with 1e-60 to prevent division issues
+    - Computes averages over (lookback - 1) price differences
+    """
+    cdef double upsum = 1e-60
+    cdef double dnsum = 1e-60
+    cdef double diff
+    cdef Py_ssize_t i
+    
+    # Compute sum of gains and losses over initial period
+    for i in range(1, lookback):
+        diff = close_prices[i] - close_prices[i - 1]
+        if diff > 0.0:
+            upsum += diff
+        else:
+            dnsum -= diff  # Make positive
+    
+    # Convert to averages
+    upsum /= (lookback - 1)
+    dnsum /= (lookback - 1)
+    
+    return upsum, dnsum
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def update_rsi_fast(
+    double prev_close,
+    double curr_close,
+    double upsum,
+    double dnsum,
+    Py_ssize_t lookback
+):
+    """
+    Fast RSI update computation (Cython equivalent of utils.rsi_helpers.update_rsi).
+    
+    Updates RSI using exponential moving average approach. Computes new average gains
+    and losses, then calculates RSI value. Matches the Numba implementation exactly.
+    
+    Parameters:
+    - prev_close: Previous close price
+    - curr_close: Current close price
+    - upsum: Current average gain
+    - dnsum: Current average loss (as positive value)
+    - lookback: RSI period
+    
+    Returns:
+    - tuple: (new_upsum, new_dnsum, rsi_value) where:
+      - new_upsum: Updated average gain
+      - new_dnsum: Updated average loss (as positive value)
+      - rsi_value: RSI value (0-100)
+    
+    Note:
+    - This matches the logic in utils/rsi_helpers.py update_rsi exactly
+    - Uses exponential moving average: new_avg = ((period-1) * old_avg + new_value) / period
+    - RSI = 100 * upsum / (upsum + dnsum)
+    """
+    cdef double diff = curr_close - prev_close
+    cdef double new_upsum, new_dnsum, rsi
+    
+    if diff > 0.0:
+        # Price went up
+        new_upsum = ((lookback - 1) * upsum + diff) / lookback
+        new_dnsum = dnsum * (lookback - 1.0) / lookback
+    else:
+        # Price went down
+        new_dnsum = ((lookback - 1) * dnsum - diff) / lookback
+        new_upsum = upsum * (lookback - 1.0) / lookback
+    
+    # Compute RSI
+    rsi = 100.0 * new_upsum / (new_upsum + new_dnsum)
+    
+    return new_upsum, new_dnsum, rsi
+
+
+# =============================================================================
+# Ultimate C% and rolling helpers (pct_change, rolling max/min/mean)
+# =============================================================================
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_pct_change_fast(double prev_close, double curr_close):
+    """
+    One-period percent change: ((curr - prev) / prev) * 100.0.
+    Returns 0.0 if prev_close <= 0.
+    """
+    if prev_close <= 0.0:
+        return 0.0
+    return ((curr_close - prev_close) / prev_close) * 100.0
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def rolling_max_1d_fast(double[::1] values, Py_ssize_t n, Py_ssize_t window):
+    """
+    Rolling max over the last `window` elements of `values` (valid length `n`).
+    Returns max of values[n-window:n] or 0.0 if n == 0.
+    """
+    if n <= 0:
+        return 0.0
+    cdef Py_ssize_t start = max(0, n - window)
+    cdef double m = values[start]
+    cdef Py_ssize_t i
+    for i in range(start + 1, n):
+        if values[i] > m:
+            m = values[i]
+    return m
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def rolling_min_1d_fast(double[::1] values, Py_ssize_t n, Py_ssize_t window):
+    """
+    Rolling min over the last `window` elements of `values` (valid length `n`).
+    """
+    if n <= 0:
+        return 0.0
+    cdef Py_ssize_t start = max(0, n - window)
+    cdef double m = values[start]
+    cdef Py_ssize_t i
+    for i in range(start + 1, n):
+        if values[i] < m:
+            m = values[i]
+    return m
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def rolling_mean_1d_fast(double[::1] values, Py_ssize_t n, Py_ssize_t window):
+    """
+    Rolling mean over the last `window` elements of `values` (valid length `n`).
+    """
+    if n <= 0:
+        return 0.0
+    cdef Py_ssize_t start = max(0, n - window)
+    cdef Py_ssize_t count = n - start
+    cdef double s = 0.0
+    cdef Py_ssize_t i
+    for i in range(start, n):
+        s += values[i]
+    return s / <double>count
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_ultimate_c_fast(
+    double[::1] roc_values,
+    Py_ssize_t n,
+    Py_ssize_t lookback,
+    double factor
+):
+    """
+    Ultimate C% from ROC array. Same formula as ultimate_c.compute_ultimate_c.
+    Returns 50.0 if n == 0.
+    """
+    if n == 0:
+        return 50.0
+    cdef double current_roc = roc_values[n - 1]
+    cdef double high_short, low_short, high_med, low_med, high_long, low_long
+    cdef double casey_c_short = 50.0, casey_c_med = 50.0, casey_c_long = 50.0
+    cdef Py_ssize_t short_window = lookback
+    cdef Py_ssize_t med_window = <Py_ssize_t>(lookback * factor)
+    cdef Py_ssize_t long_window = <Py_ssize_t>(lookback * factor * factor)
+    cdef double factor_sq = factor * factor
+    cdef double denominator = factor_sq + factor + 1.0
+
+    if n >= short_window:
+        high_short = rolling_max_1d_fast(roc_values, n, short_window)
+        low_short = rolling_min_1d_fast(roc_values, n, short_window)
+        if high_short - low_short != 0.0:
+            casey_c_short = ((current_roc - low_short) / (high_short - low_short)) * 100.0
+    if n >= med_window:
+        high_med = rolling_max_1d_fast(roc_values, n, med_window)
+        low_med = rolling_min_1d_fast(roc_values, n, med_window)
+        if high_med - low_med != 0.0:
+            casey_c_med = ((current_roc - low_med) / (high_med - low_med)) * 100.0
+    if n >= long_window:
+        high_long = rolling_max_1d_fast(roc_values, n, long_window)
+        low_long = rolling_min_1d_fast(roc_values, n, long_window)
+        if high_long - low_long != 0.0:
+            casey_c_long = ((current_roc - low_long) / (high_long - low_long)) * 100.0
+
+    return ((casey_c_short * factor_sq) + (casey_c_med * factor) + casey_c_long) / denominator
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def smooth_ultimate_c_fast(
+    double[::1] ultimate_c_values,
+    Py_ssize_t n,
+    Py_ssize_t smooth_lookback
+):
+    """Rolling mean of ultimate_c_values over last smooth_lookback elements."""
+    return rolling_mean_1d_fast(ultimate_c_values, n, smooth_lookback)
+
+
+# =============================================================================
+# Sample stddev (ddof=1) for EWSD long-run
+# =============================================================================
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_stddev_sample_fast(double[::1] values, Py_ssize_t n):
+    """
+    Sample standard deviation (ddof=1). Returns 0.0 if n < 2.
+    """
+    if n < 2:
+        return 0.0
+    cdef double mean_val = fast_mean(values, n)
+    cdef double sum_sq = 0.0
+    cdef double diff
+    cdef Py_ssize_t i
+    for i in range(n):
+        diff = values[i] - mean_val
+        sum_sq += diff * diff
+    return sqrt(sum_sq / <double>(n - 1))
+
+
+# =============================================================================
+# Normal CDF (for CMMA), return and ATR-from-slice
+# =============================================================================
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def normal_cdf_fast(double x):
+    """Standard normal CDF: 0.5 * (1 + erf(x / sqrt(2)))."""
+    return 0.5 * (1.0 + erf(x / 1.4142135623730951))  # sqrt(2)
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_return_fast(double open_px, double close_px):
+    """
+    Returns (pct_return, log_return): ((close-open)/open)*100 and log(close/open).
+    If open_px <= 0 returns (0.0, 0.0).
+    """
+    if open_px <= 0.0:
+        return 0.0, 0.0
+    cdef double pct = ((close_px - open_px) / open_px) * 100.0
+    cdef double log_ret = 0.0
+    if close_px > 0.0:
+        log_ret = log(close_px / open_px)
+    return pct, log_ret
+
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def compute_atr_from_slice_fast(
+    double[::1] highs,
+    double[::1] lows,
+    double[::1] closes,
+    Py_ssize_t end_idx,
+    Py_ssize_t period
+):
+    """
+    ATR over the slice [end_idx - period + 1, end_idx] (inclusive).
+    Uses contiguous arrays; end_idx is the last index. Returns 0.0 if period <= 0
+    or slice would go before 0.
+    """
+    if period <= 0 or end_idx < period - 1:
+        return 0.0
+    cdef Py_ssize_t start = end_idx - period + 1
+    cdef double tr_sum = 0.0
+    cdef double hl, hc, lc, tr
+    cdef Py_ssize_t i
+    for i in range(start, end_idx + 1):
+        if i == 0:
+            tr = highs[0] - lows[0]
+        else:
+            hl = highs[i] - lows[i]
+            hc = fabs(highs[i] - closes[i - 1])
+            lc = fabs(lows[i] - closes[i - 1])
+            tr = fast_max3(hl, hc, lc)
+        tr_sum += tr
+    return tr_sum / <double>period

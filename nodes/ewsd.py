@@ -24,6 +24,12 @@ from typing import List, Optional
 import numpy as np
 from collections import deque
 
+try:
+    from utils.fast_nodes import CYTHON_NODES_AVAILABLE, compute_stddev_sample_fast
+except ImportError:
+    CYTHON_NODES_AVAILABLE = False
+    compute_stddev_sample_fast = None  # type: ignore[assignment]
+
 
 class EWSDNode(BiasNode):
     """
@@ -42,6 +48,9 @@ class EWSDNode(BiasNode):
     Outputs:
     - ewsd_daily_pct: Daily standard deviation (percentage)
     - ewsd_annual_pct: Annualized standard deviation (percentage)
+    
+    Cython: When built, uses compute_stddev_sample_fast from fast_nodes for
+    the long-run standard deviation (sample ddof=1); EWMA variance remains O(1).
     """
     
     def __init__(
@@ -143,9 +152,14 @@ class EWSDNode(BiasNode):
             # 3. Calculate short-run standard deviation
             sigma_short = np.sqrt(current_variance_sq)
             
-            # 4. Update long-run standard deviation
+            # 4. Update long-run standard deviation (Cython when available)
             if len(self.returns_history) >= 20:  # Need minimum data
-                self.sigma_long = np.std(self.returns_history, ddof=1)
+                arr = np.array(self.returns_history, dtype=np.float64)
+                n_ret = len(arr)
+                if CYTHON_NODES_AVAILABLE and compute_stddev_sample_fast is not None:
+                    self.sigma_long = compute_stddev_sample_fast(arr, n_ret)
+                else:
+                    self.sigma_long = np.std(self.returns_history, ddof=1)
             
             # 5. Blend short-run and long-run estimates
             # Carver's preferred blend: 70% short-run + 30% long-run

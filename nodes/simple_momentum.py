@@ -3,6 +3,7 @@ from utils.models import Candle
 from utils.enums import Ticker, TimeFrame
 from nodes import BiasNode
 from collections import deque
+from utils.fast_nodes import compute_momentum_fast
 
 
 class SimpleMomentum(BiasNode):
@@ -83,10 +84,13 @@ class SimpleMomentum(BiasNode):
         # The deque maintains lookback+1 items, with index 0 being the oldest
         past_close = self.close_buffer[0]
         
+        # Use Cython-backed fast kernel to compute momentum (price difference)
+        momentum = compute_momentum_fast(curr_close, past_close)
+        
         # Generate signal: 1 if price is higher, -1 if lower
-        if curr_close > past_close:
+        if momentum > 0:
             signal = 1.0  # Long signal
-        elif curr_close < past_close:
+        elif momentum < 0:
             signal = -1.0  # Short signal
         else:
             signal = 0.0  # Neutral (price unchanged)

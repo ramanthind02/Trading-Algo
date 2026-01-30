@@ -6,6 +6,12 @@ import numpy as np
 from collections import deque
 from scipy.stats import norm
 
+# Try to import Cython optimized version
+try:
+    from utils.fast_nodes import compute_high_low_channel_fast, CYTHON_NODES_AVAILABLE
+except ImportError:
+    CYTHON_NODES_AVAILABLE = False
+
 
 class WilliamsRNode(BiasNode):
     """
@@ -60,8 +66,16 @@ class WilliamsRNode(BiasNode):
         self.params = {'lookback': lookback, 'atr_length': atr_length, 'compression': compression}
         
         # Storage for high and low prices
-        self.high_prices = deque(maxlen=lookback)
-        self.low_prices = deque(maxlen=lookback)
+        if CYTHON_NODES_AVAILABLE:
+            # Cython path: use numpy arrays for 5-10x speedup
+            self.high_prices_arr = np.zeros(lookback, dtype=np.float64)
+            self.low_prices_arr = np.zeros(lookback, dtype=np.float64)
+            self.high_low_idx = 0
+            self.high_low_n_filled = 0
+        else:
+            # Fallback: use deques
+            self.high_prices = deque(maxlen=lookback)
+            self.low_prices = deque(maxlen=lookback)
         
         # Storage for ATR calculation
         self.prev_close: Optional[float] = None
@@ -98,8 +112,16 @@ class WilliamsRNode(BiasNode):
         self.true_ranges.append(true_range)
         
         # Add current high and low to history
-        self.high_prices.append(candle.high)
-        self.low_prices.append(candle.low)
+        if CYTHON_NODES_AVAILABLE:
+            # Fast Cython path: store in numpy arrays
+            self.high_prices_arr[self.high_low_idx] = candle.high
+            self.low_prices_arr[self.high_low_idx] = candle.low
+            self.high_low_idx = (self.high_low_idx + 1) % self.lookback
+            self.high_low_n_filled = min(self.high_low_n_filled + 1, self.lookback)
+        else:
+            # Fallback: use deques
+            self.high_prices.append(candle.high)
+            self.low_prices.append(candle.low)
         
         # Update previous close
         self.prev_close = candle.close
@@ -111,8 +133,23 @@ class WilliamsRNode(BiasNode):
             return self.output
         
         # Find highest high and lowest low over lookback period
-        highest_high = max(self.high_prices)
-        lowest_low = min(self.low_prices)
+        if CYTHON_NODES_AVAILABLE:
+            # Fast Cython path: use compute_high_low_channel_fast
+            # After writing, high_low_idx points to the next write position
+            # The current candle is at (high_low_idx - 1) % lookback
+            # We want to include current candle, so start from there
+            curr_idx = (self.high_low_idx - 1 + self.lookback) % self.lookback
+            highest_high, lowest_low = compute_high_low_channel_fast(
+                self.high_prices_arr,
+                self.low_prices_arr,
+                curr_idx,
+                self.lookback,
+                self.high_low_n_filled
+            )
+        else:
+            # Fallback: use Python max/min
+            highest_high = max(self.high_prices)
+            lowest_low = min(self.low_prices)
         
         # Compute range
         price_range = highest_high - lowest_low

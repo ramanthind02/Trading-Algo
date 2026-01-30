@@ -103,3 +103,42 @@ class Candle(BaseModel):
             ticker=ticker,
             tf=tf
         )
+
+    @classmethod
+    def from_row_fast(cls, row) -> 'Candle':
+        """
+        Create Candle from a named tuple (e.g. from df.itertuples(index=False)).
+
+        Expected attributes: datetime, open, high, low, close, volume, ticker, timeframe
+
+        Parameters
+        ----------
+        row : named tuple
+            Row from DataFrame.itertuples(index=False)
+
+        Returns
+        -------
+        Candle
+            Candle instance
+        """
+        import pandas as pd
+        ticker = getattr(row, 'ticker', None)
+        if isinstance(ticker, str):
+            ticker = Ticker[ticker]
+        elif ticker is None:
+            raise ValueError("ticker attribute is required")
+        tf = getattr(row, 'timeframe', None) or getattr(row, 'tf', None)
+        if isinstance(tf, str):
+            tf = TimeFrame[tf]
+        elif tf is None:
+            raise ValueError("timeframe attribute is required")
+        return cls(
+            datetime=pd.to_datetime(getattr(row, 'datetime')),
+            open=float(row.open),
+            high=float(row.high),
+            low=float(row.low),
+            close=float(row.close),
+            volume=float(getattr(row, 'volume', 0)),
+            ticker=ticker,
+            tf=tf
+        )

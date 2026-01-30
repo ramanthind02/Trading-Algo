@@ -6,13 +6,7 @@ import numpy as np
 from collections import deque
 import math
 
-# Try to import Cython optimizations, fall back to pure Python if not available
-try:
-    from utils.cython_optimized import compute_ma_diff_fast
-    CYTHON_AVAILABLE = True
-except ImportError:
-    CYTHON_AVAILABLE = False
-    from scipy.stats import norm
+from utils.fast_nodes import compute_ema_fast
 
 class EWMACNode(BiasNode):
     """
@@ -86,8 +80,9 @@ class EWMACNode(BiasNode):
         self.ewma_slow = price
 
     def _update_ewma(self, current_ewma: float, current_price: float, lambda_val: float) -> float:
-        """Calculates the next EWMA value."""
-        return lambda_val * current_price + (1.0 - lambda_val) * current_ewma
+        """Calculates the next EWMA value using Cython-backed fast kernel."""
+        # Use compute_ema_fast: alpha = lambda_val, is_first = False (already initialized)
+        return compute_ema_fast(current_price, current_ewma, lambda_val, is_first=False)
 
     def _compute_ewsd_init(self, price_change: float):
         """Builds buffer for initial EWSD estimate."""

@@ -43,13 +43,15 @@ Examples:
 """
 
 from datetime import datetime
-from utils.enums import TimeFrame, Ticker
-import utils.helpers as helpers
-from utils.models import Candle
-import pandas as pd
-import numpy as np
-from typing import List, Dict, Any, Union, Tuple, Optional
 from itertools import product
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+import numpy as np
+import pandas as pd
+
+import utils.helpers as helpers
+from utils.enums import TimeFrame, Ticker
+from utils.models import Candle
 
 
 def _expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -70,7 +72,36 @@ def _expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [dict(zip(keys, combo)) for combo in product(*values)]
 
 
-def _compute_targets(price_df: pd.DataFrame, atr_col: str = None, ewsd_col: str = None) -> pd.DataFrame:
+def _normalize_ticker_str(ticker: object) -> str:
+    """
+    Normalize ticker objects (enums, strings, etc.) to a string representation.
+
+    This keeps ticker handling consistent across single- and multi-ticker
+    feature/target pipelines without changing external behavior.
+    """
+    if hasattr(ticker, "name"):
+        return str(getattr(ticker, "name"))
+    if isinstance(ticker, str):
+        return ticker
+    return str(ticker)
+
+
+def _ensure_utc_datetime_index(values: object) -> pd.DatetimeIndex:
+    """
+    Convert arbitrary datetime-like values to a UTC-normalized DatetimeIndex.
+
+    Mirrors the existing pattern:
+    - Use pd.to_datetime to construct a DatetimeIndex
+    - Localize to UTC when tz-naive
+    - Convert to UTC when timezone-aware
+    """
+    datetime_index = pd.to_datetime(values)
+    if datetime_index.tz is None:
+        return datetime_index.tz_localize("UTC")
+    return datetime_index.tz_convert("UTC")
+
+
+def _compute_targets(price_df: pd.DataFrame, atr_col: Optional[str] = None, ewsd_col: Optional[str] = None) -> pd.DataFrame:
     """Compute target columns from price data."""
     raw_return = (price_df['close'] / price_df['open']) - 1
     log_return = np.log(price_df['close'] / price_df['open'])
@@ -111,12 +142,12 @@ def compute_forward_returns(
     - Return[t+1] = (close[t+1]/open[t+1] - 1) is the return for day t+1
     - Last row is dropped (no forward return available)
     
-    Supports volatility scaling (ATR/EWSD normalization) when features_df is provided.
-    This is important for multi-ticker scenarios where different tickers have different
-    volatility levels (e.g., NQ is more volatile than ES).
+    Supports volatility scaling (ATR/EWSD normalization) using the provided
+    features_df. This is important for multi-ticker scenarios where different
+    tickers have different volatility levels (e.g., NQ is more volatile than ES).
     
-    ATR and EWSD features are MANDATORY when features_df is provided. The function will
-    raise an error if ATR or EWSD columns are not found.
+    ATR and EWSD features are MANDATORY: features_df must be provided and contain
+    appropriate ATR/EWSD columns, otherwise this function raises an error.
     
     Parameters
     ----------
@@ -155,7 +186,7 @@ def compute_forward_returns(
     >>> print(f"Targets shape: {targets_df.shape}")
     >>> print(f"Targets columns: {list(targets_df.columns)}")
     """
-    targets_list = []
+    targets_list: List[pd.DataFrame] = []
     
     for ticker in candles_df['ticker'].unique():
         ticker_candles = candles_df[candles_df['ticker'] == ticker].copy().sort_values('datetime')
@@ -177,12 +208,7 @@ def compute_forward_returns(
         
         # Normalize ticker to string name to match extract_features format
         # load_data_multi_ticker sets ticker column to enum objects, we need string names
-        if hasattr(ticker, 'name'):
-            ticker_name = ticker.name
-        elif isinstance(ticker, str):
-            ticker_name = ticker
-        else:
-            ticker_name = str(ticker)
+        ticker_name = _normalize_ticker_str(ticker)
         
         # ATR and EWSD are mandatory for volatility scaling
         # Find ATR and EWSD columns for this ticker
@@ -199,14 +225,12 @@ def compute_forward_returns(
             ticker_features = features_df
         
         # Align features to candles by index (use original index before dropping)
-        ticker_features_indexed = ticker_features.set_index(ticker_features.index) if not isinstance(ticker_features.index, pd.DatetimeIndex) else ticker_features
+        ticker_features_indexed = ticker_features
+        if not isinstance(ticker_features.index, pd.DatetimeIndex):
+            ticker_features_indexed = ticker_features.set_index(ticker_features.index)
         
         # Get original datetime index (before dropping first row)
-        original_datetime_index = pd.to_datetime(ticker_candles['datetime'].values)
-        if original_datetime_index.tz is None:
-            original_datetime_index = original_datetime_index.tz_localize('UTC')
-        else:
-            original_datetime_index = original_datetime_index.tz_convert('UTC')
+        original_datetime_index = _ensure_utc_datetime_index(ticker_candles['datetime'].values)
         
         # Find ATR column (contains 'atr' and '252' in name)
         atr_col = next(
@@ -259,12 +283,7 @@ def compute_forward_returns(
         # - ticker_candles has indices [0, 1, 2, ..., N-1] with Return[1], Return[2], ..., Return[N]
         # - We want to align with features at indices [0, 1, 2, ..., N-1] with Feature[0], Feature[1], ..., Feature[N-1]
         # - Feature[t] at index t predicts Return[t+1] at index t
-        original_target_index = pd.to_datetime(ticker_candles['datetime'].values)
-        # Ensure timezone is UTC to match features
-        if original_target_index.tz is None:
-            original_target_index = original_target_index.tz_localize('UTC')
-        else:
-            original_target_index = original_target_index.tz_convert('UTC')
+        original_target_index = _ensure_utc_datetime_index(ticker_candles['datetime'].values)
         
         # After dropping last row, ticker_candles has len(targets_df) rows
         # The indices are already aligned: [0, 1, 2, ..., len-1]

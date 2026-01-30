@@ -4,6 +4,14 @@ RSI (Relative Strength Index) computation helpers with Numba acceleration.
 This module contains the core RSI calculation functions that can be shared
 between different RSI-based nodes (RSI, Cumulative RSI, etc.).
 
+NOTE: Cython equivalents now exist in utils/cython_nodes.pyx and are exposed
+via utils/fast_nodes.py as compute_rsi_initial_fast() and update_rsi_fast().
+Active nodes should prefer the fast_nodes wrappers, which automatically fall
+back to these Numba implementations if Cython is not available.
+
+This module is kept as a reference implementation and fallback for the fast_nodes
+wrappers. It should not be imported directly by nodes anymore.
+
 Functions:
 - compute_rsi_initial: Initialize RSI computation for the first valid period
 - update_rsi: Update RSI using exponential moving average

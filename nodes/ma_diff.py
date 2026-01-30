@@ -5,13 +5,7 @@ from typing import List, Optional
 import numpy as np
 from collections import deque
 
-# Try to import Cython optimizations, fall back to pure Python if not available
-try:
-    from utils.cython_optimized import compute_ma_diff_fast
-    CYTHON_AVAILABLE = True
-except ImportError:
-    CYTHON_AVAILABLE = False
-    from scipy.stats import norm
+from utils.fast_stats import compute_ma_diff_fast
 
 class MADiffNode(BiasNode):
     """
@@ -102,32 +96,15 @@ class MADiffNode(BiasNode):
             self.output = [0.0]
             return self.output
         
-        # Use Cython-optimized computation if available (15-25x faster)
-        if CYTHON_AVAILABLE:
-            output_value = compute_ma_diff_fast(
-                log_close,
-                self.log_closes,
-                self.true_ranges,
-                self.lookback,
-                self.compression
-            )
-        else:
-            # Fallback to pure Python implementation
-            # Compute moving average of log closes (excluding current candle)
-            log_ma = np.mean(list(self.log_closes)[:-1])  # Use all but the last (current) value
-            
-            # Compute ATR
-            atr = np.mean(self.true_ranges) if len(self.true_ranges) > 0 else 0.0
-            
-            # Compute normalized difference
-            if atr > 0.0:
-                denom = atr * np.sqrt(self.lookback + 1.0)
-                diff = (log_close - log_ma) / denom
-                
-                # Transform through normal CDF and scale to [-50, 50]
-                output_value = 100.0 * norm.cdf(self.compression * diff) - 50.0
-            else:
-                output_value = 0.0
+        # Use fast_stats wrapper which handles both Cython and pure-Python fallback
+        # The wrapper automatically selects the best available implementation
+        output_value = compute_ma_diff_fast(
+            log_close,
+            self.log_closes,
+            self.true_ranges,
+            self.lookback,
+            self.compression
+        )
         
         # Update bias based on output value
         if output_value > 0:
