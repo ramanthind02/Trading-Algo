@@ -10,7 +10,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -103,13 +103,6 @@ class DiversifiedEnsemble:
         self.instrument_weights_ = None
         self.n_tickers_ = None
         self.is_fitted_ = False
-        
-        # Caching for fit and predict operations
-        # Cache key: (date_range_start, date_range_end) as tuple of dates
-        self._fit_cache: Dict[Tuple[Any, Any], bool] = {}  # Maps date_range -> is_fitted flag
-        self._predict_cache: Dict[Tuple[Any, ...], Union[pd.DataFrame, Dict[str, Any]]] = {}  # Maps (date_range, strategy) -> predictions
-        self._cache_hits = 0
-        self._cache_misses = 0
         
         # Validate that control_file_path is provided
         if control_file_path is None:
@@ -745,28 +738,6 @@ class DiversifiedEnsemble:
         
         return supported_tickers
     
-    def _get_date_range_key(self, candles_df: pd.DataFrame) -> Tuple[Any, Any]:
-        """
-        Generate cache key from date range of candles DataFrame.
-        
-        Parameters
-        ----------
-        candles_df : pd.DataFrame
-            Candles DataFrame with datetime column
-            
-        Returns
-        -------
-        Tuple
-            (min_date, max_date) as tuple of date objects (not datetime)
-        """
-        if candles_df.empty or 'datetime' not in candles_df.columns:
-            return (None, None)
-        
-        datetimes = pd.to_datetime(candles_df['datetime'])
-        min_date = datetimes.min().date()
-        max_date = datetimes.max().date()
-        return (min_date, max_date)
-    
     def fit_from_candles(
         self,
         candles_df: pd.DataFrame,
@@ -804,16 +775,6 @@ class DiversifiedEnsemble:
         self
             Fitted ensemble model
         """
-        # Check cache first
-        date_range_key = self._get_date_range_key(candles_df)
-        if date_range_key in self._fit_cache and self.is_fitted_:
-            logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache HIT for date_range: {date_range_key}")
-            self._cache_hits += 1
-            return self
-        
-        logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache MISS for date_range: {date_range_key}")
-        self._cache_misses += 1
-        
         # Get supported tickers from all base models
         supported_tickers = self._get_supported_tickers()
         
@@ -959,9 +920,6 @@ class DiversifiedEnsemble:
         # This requires computing binary signals from all base models
         # For now, mark as fitted - full ensemble fitting can be done via the regular fit() method
         self.is_fitted_ = True
-        
-        # Store in cache
-        self._fit_cache[date_range_key] = True
         
         return self
     
@@ -1183,24 +1141,6 @@ class DiversifiedEnsemble:
                 "Call fit_from_candles() or fit() first."
             )
         
-        # Check cache first
-        date_range_key = self._get_date_range_key(candles_df)
-        cache_key = (date_range_key, return_base_model_predictions)
-        
-        if cache_key in self._predict_cache:
-            self._cache_hits += 1
-            cache_msg = (
-                f"DiversifiedEnsemble.predict_from_candles() cache HIT for date_range: {date_range_key} "
-                f"(hits: {self._cache_hits}, misses: {self._cache_misses})"
-            )
-            logger.info(cache_msg)
-            cached_result = self._predict_cache[cache_key]
-            # Return a deep copy to avoid modifying cache
-            return self._deep_copy_result(cached_result)
-        
-        logger.debug(f"DiversifiedEnsemble.predict_from_candles() cache MISS for date_range: {date_range_key}")
-        self._cache_misses += 1
-        
         # Calculate or use provided volatility
         if volatility is None:
             volatility = self._calculate_volatility_from_candles(candles_df)
@@ -1367,20 +1307,11 @@ class DiversifiedEnsemble:
             combined_base_models = {}
             for model_name, model_dfs in base_model_predictions_dict.items():
                 combined_base_models[model_name] = pd.concat(model_dfs, ignore_index=True)
-            
-            result = {
+            return {
                 'ensemble': ensemble_result,
                 'base_models': combined_base_models
             }
-            # Store in cache
-            self._predict_cache[cache_key] = {
-                'ensemble': ensemble_result.copy(),
-                'base_models': {k: v.copy() for k, v in combined_base_models.items()}
-            }
-            return result
         
-        # Store in cache
-        self._predict_cache[cache_key] = ensemble_result.copy()
         return ensemble_result
     
     def predict(
@@ -1827,71 +1758,3 @@ class DiversifiedEnsemble:
         
         return "\n".join(lines)
     
-    def _deep_copy_result(self, obj: Any) -> Any:
-        """
-        Recursively deep copy DataFrames in nested structures.
-        
-        Handles:
-        - pd.DataFrame: returns .copy()
-        - dict: recursively copies values
-        - list: recursively copies elements
-        - other: returns as-is (immutable or primitive types)
-        
-        Parameters
-        ----------
-        obj : Any
-            Object to deep copy (DataFrame, dict, list, or primitive)
-            
-        Returns
-        -------
-        Any
-            Deep copied object with all DataFrames copied
-        """
-        if isinstance(obj, pd.DataFrame):
-            return obj.copy()
-        elif isinstance(obj, dict):
-            return {k: self._deep_copy_result(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._deep_copy_result(item) for item in obj]
-        else:
-            return obj
-    
-    def clear_cache(self) -> None:
-        """Clear all cached fit and predict results."""
-        self._fit_cache.clear()
-        self._predict_cache.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
-        # Also clear cache in base models
-        for base_model in self.base_models.values():
-            if hasattr(base_model, 'clear_cache'):
-                base_model.clear_cache()
-    
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """
-        Get cache statistics for this ensemble and all base models.
-        
-        Returns
-        -------
-        Dict[str, Any]
-            Dictionary with cache hits, misses, hit rate, and cache sizes
-        """
-        total = self._cache_hits + self._cache_misses
-        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
-        
-        base_model_stats = {}
-        for model_name, base_model in self.base_models.items():
-            if hasattr(base_model, 'get_cache_stats'):
-                base_model_stats[model_name] = base_model.get_cache_stats()
-        
-        return {
-            'ensemble': {
-                'hits': self._cache_hits,
-                'misses': self._cache_misses,
-                'total': total,
-                'hit_rate': hit_rate,
-                'fit_cache_size': len(self._fit_cache),
-                'predict_cache_size': len(self._predict_cache)
-            },
-            'base_models': base_model_stats
-        }
