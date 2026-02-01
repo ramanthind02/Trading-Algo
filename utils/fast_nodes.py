@@ -26,10 +26,10 @@ try:
         rolling_sum_update as _cython_rolling_sum
     )
     CYTHON_NODES_AVAILABLE = True
-    print("✓ Cython node optimizations loaded (5-10x speedup for ATR, EMA, etc.)")
+    # print("[OK] Cython node optimizations loaded (5-10x speedup for ATR, EMA, etc.)")
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
-    print("⚠ Cython node optimizations not available (compile with: python utils/setup_cython.py build_ext --inplace)")
+    # print("[WARN] Cython node optimizations not available (compile with: python utils/setup_cython.py build_ext --inplace)")
 
 
 def compute_atr_fast(high, low, close, prev_close, true_ranges, buffer_idx, n_filled, period):
