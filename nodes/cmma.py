@@ -1,8 +1,22 @@
 import math
 from typing import List
+import numpy as np
 from utils.models import Candle
 from utils.enums import Ticker, TimeFrame
 from nodes import BiasNode
+
+try:
+    from utils.fast_nodes import (
+        CYTHON_NODES_AVAILABLE,
+        compute_sma_fast,
+        compute_atr_from_slice_fast,
+        normal_cdf_fast,
+    )
+except ImportError:
+    CYTHON_NODES_AVAILABLE = False
+    compute_sma_fast = None  # type: ignore[assignment]
+    compute_atr_from_slice_fast = None  # type: ignore[assignment]
+    normal_cdf_fast = None  # type: ignore[assignment]
 
 
 class CloseMaMinusMA(BiasNode):
@@ -112,27 +126,40 @@ class CloseMaMinusMA(BiasNode):
         if n < self.front_bad:
             self.output.append(0.0)
             return [0.0]
-        
-        # Compute moving average of log(close) over lookback period
-        log_sum = 0.0
-        for k in range(n - self.lookback, n):
-            log_sum += math.log(self.close_prices[k])
-        ma = log_sum / self.lookback
-        
-        # Compute ATR
-        atr = self._compute_atr(n - 1)
-        
+
+        # Moving average of log(close) over lookback (Cython when available)
+        if CYTHON_NODES_AVAILABLE and compute_sma_fast is not None:
+            log_arr = np.array(
+                [math.log(p) for p in self.close_prices[-self.lookback :]],
+                dtype=np.float64,
+            )
+            ma = compute_sma_fast(log_arr, self.lookback)
+        else:
+            log_sum = 0.0
+            for k in range(n - self.lookback, n):
+                log_sum += math.log(self.close_prices[k])
+            ma = log_sum / self.lookback
+
+        # ATR (Cython when available)
+        if CYTHON_NODES_AVAILABLE and compute_atr_from_slice_fast is not None:
+            highs_arr = np.array(self.high_prices, dtype=np.float64)
+            lows_arr = np.array(self.low_prices, dtype=np.float64)
+            closes_arr = np.array(self.close_prices, dtype=np.float64)
+            atr = compute_atr_from_slice_fast(
+                highs_arr, lows_arr, closes_arr, n - 1, self.atr_length
+            )
+        else:
+            atr = self._compute_atr(n - 1)
+
         if atr > 0.0:
-            # Normalize by ATR * sqrt(lookback + 1)
             denom = atr * math.sqrt(self.lookback + 1.0)
             normalized = (math.log(self.close_prices[-1]) - ma) / denom
-            
-            # Transform through normal CDF and scale to [-50, 50]
-            # The factor 1.0 controls compression (increase for more compression, decrease for less)
-            result = 100.0 * self._normal_cdf(1.0 * normalized) - 50.0
+            if CYTHON_NODES_AVAILABLE and normal_cdf_fast is not None:
+                result = 100.0 * normal_cdf_fast(1.0 * normalized) - 50.0
+            else:
+                result = 100.0 * self._normal_cdf(1.0 * normalized) - 50.0
         else:
-            # If ATR is zero, return neutral value
             result = 0.0
-        
+
         self.output.append(result)
         return [result]

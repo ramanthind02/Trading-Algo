@@ -175,13 +175,6 @@ class BaseModel:
         # Maps datetime -> feature value
         self._feature_values: Dict[Any, float] = {}
         self._feature_datetimes: List[Any] = []
-        
-        # Caching for fit and predict operations
-        # Cache key: (date_range_start, date_range_end) as tuple of dates
-        self._fit_cache: Dict[Tuple[Any, Any], bool] = {}  # Maps date_range -> is_fitted flag
-        self._predict_cache: Dict[Tuple[Any, ...], pd.Series] = {}  # Maps (date_range, strategy) -> predictions
-        self._cache_hits = 0
-        self._cache_misses = 0
     
     def __getattr__(self, name: str) -> Any:
         """
@@ -313,28 +306,6 @@ class BaseModel:
         
         return feature_series
     
-    def _get_date_range_key(self, candles_df: pd.DataFrame) -> Tuple[Any, Any]:
-        """
-        Generate cache key from date range of candles DataFrame.
-        
-        Parameters
-        ----------
-        candles_df : pd.DataFrame
-            Candles DataFrame with datetime column
-            
-        Returns
-        -------
-        Tuple
-            (min_date, max_date) as tuple of date objects (not datetime)
-        """
-        if candles_df.empty or 'datetime' not in candles_df.columns:
-            return (None, None)
-        
-        datetimes = pd.to_datetime(candles_df['datetime'])
-        min_date = datetimes.min().date()
-        max_date = datetimes.max().date()
-        return (min_date, max_date)
-    
     def fit(
         self,
         candles_df: pd.DataFrame,
@@ -357,20 +328,6 @@ class BaseModel:
         self
             Fitted model
         """
-        # Check cache first
-        date_range_key = self._get_date_range_key(candles_df)
-        if date_range_key in self._fit_cache and self.binning_model.is_fitted_:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.debug(f"BaseModel.fit() cache HIT for date_range: {date_range_key}")
-            self._cache_hits += 1
-            return self
-        
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"BaseModel.fit() cache MISS for date_range: {date_range_key}")
-        self._cache_misses += 1
-        
         # Extract unique tickers from candles_df
         unique_tickers = candles_df['ticker'].unique()
         
@@ -411,10 +368,10 @@ class BaseModel:
             if 'datetime' in ticker_candles.columns:
                 ticker_candles = ticker_candles.sort_values('datetime')
             
-            # Extract features for this ticker
-            for _, row in ticker_candles.iterrows():
-                candle = Candle.from_row(row)
-                self.add_candle(candle, row['timeframe'], ticker=ticker)
+            # Extract features for this ticker (itertuples is much faster than iterrows)
+            for row in ticker_candles.itertuples(index=False):
+                candle = Candle.from_row_fast(row)
+                self.add_candle(candle, candle.tf, ticker=ticker)
         
         # Extract aggregated features (all tickers)
         feature_data = self.get_feature()
@@ -535,9 +492,6 @@ class BaseModel:
         # Fit binning model
         self.binning_model.fit(feature_data, aligned_target)
         
-        # Store in cache
-        self._fit_cache[date_range_key] = True
-        
         return self
     
     def predict(
@@ -563,27 +517,6 @@ class BaseModel:
             Predictions (binary signals or scaled positions) indexed by candle datetimes
             Returns predictions for ALL input candles, not just new ones.
         """
-        # Check cache first
-        date_range_key = self._get_date_range_key(candles_df)
-        cache_key = (date_range_key, strategy)
-        
-        if cache_key in self._predict_cache:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.debug(f"BaseModel.predict() cache HIT for date_range: {date_range_key}, strategy: {strategy}")
-            self._cache_hits += 1
-            # Return cached predictions, but reindex to match input candles datetimes
-            cached_pred = self._predict_cache[cache_key]
-            input_datetimes = pd.to_datetime(candles_df['datetime'])
-            # Reindex cached predictions to input datetimes (forward fill for same dates)
-            aligned_pred = cached_pred.reindex(input_datetimes, method='ffill')
-            return aligned_pred.fillna(0)  # Fill any missing with 0
-        
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"BaseModel.predict() cache MISS for date_range: {date_range_key}, strategy: {strategy}")
-        self._cache_misses += 1
-        
         # Note: We don't reset state here because base models may be called multiple times
         # with different tickers, and we want to preserve historical context for features
         # that require lookback windows (e.g., moving averages, RSI, etc.)
@@ -610,11 +543,8 @@ class BaseModel:
                     f"Model was initialized with tickers: {self.tickers}"
                 )
         
-        # Collect input datetimes
-        all_input_datetimes = []
-        for _, row in candles_df.iterrows():
-            candle = Candle.from_row(row)
-            all_input_datetimes.append(candle.datetime)
+        # Collect input datetimes (vectorized, preserves row order)
+        all_input_datetimes = pd.to_datetime(candles_df['datetime']).tolist()
         
         # Extract features for all tickers
         for ticker in normalized_tickers:
@@ -623,11 +553,12 @@ class BaseModel:
             ticker_candles = candles_df[
                 (candles_df['ticker'] == ticker) | (candles_df['ticker'] == ticker_str)
             ].copy()
-            
-            # Extract features for this ticker
-            for _, row in ticker_candles.iterrows():
-                candle = Candle.from_row(row)
-                self.add_candle(candle, row['timeframe'], ticker=ticker)
+            if 'datetime' in ticker_candles.columns:
+                ticker_candles = ticker_candles.sort_values('datetime')
+            # Extract features for this ticker (itertuples is much faster than iterrows)
+            for row in ticker_candles.itertuples(index=False):
+                candle = Candle.from_row_fast(row)
+                self.add_candle(candle, candle.tf, ticker=ticker)
         
         # Extract aggregated features (all tickers)
         feature_data = self.get_feature()
@@ -687,9 +618,6 @@ class BaseModel:
         
         # Predict with binning model
         predictions = self.binning_model.predict(input_feature_data, strategy=strategy)
-        
-        # Store in cache (indexed by input datetimes for exact matching)
-        self._predict_cache[cache_key] = predictions.copy()
         
         return predictions
     
@@ -808,32 +736,5 @@ class BaseModel:
             model_id=model_id,
             fitted_params=fitted_params,
             train_start=train_start,
-            train_end=train_end
+        train_end=train_end
         )
-    
-    def clear_cache(self) -> None:
-        """Clear all cached fit and predict results."""
-        self._fit_cache.clear()
-        self._predict_cache.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
-    
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """
-        Get cache statistics.
-        
-        Returns
-        -------
-        Dict[str, Any]
-            Dictionary with cache hits, misses, hit rate, and cache sizes
-        """
-        total = self._cache_hits + self._cache_misses
-        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
-        return {
-            'hits': self._cache_hits,
-            'misses': self._cache_misses,
-            'total': total,
-            'hit_rate': hit_rate,
-            'fit_cache_size': len(self._fit_cache),
-            'predict_cache_size': len(self._predict_cache)
-        }

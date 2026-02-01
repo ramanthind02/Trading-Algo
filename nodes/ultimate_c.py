@@ -6,9 +6,22 @@ from utils.models import Candle
 from utils.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
+try:
+    from utils.fast_nodes import (
+        CYTHON_NODES_AVAILABLE,
+        compute_pct_change_fast,
+        compute_ultimate_c_fast,
+        smooth_ultimate_c_fast,
+    )
+except ImportError:
+    CYTHON_NODES_AVAILABLE = False
+    compute_pct_change_fast = None  # type: ignore[assignment]
+    compute_ultimate_c_fast = None  # type: ignore[assignment]
+    smooth_ultimate_c_fast = None  # type: ignore[assignment]
+
 
 # ============================================================================
-# NUMBA-COMPILED COMPUTATION FUNCTIONS (Fast!)
+# NUMBA-COMPILED FALLBACKS (used when Cython not available)
 # ============================================================================
 
 @njit
@@ -189,26 +202,27 @@ def smooth_ultimate_c(ultimate_c_values: np.ndarray, smooth_lookback: int) -> fl
 
 class UltimateC(BiasNode):
     """
-    Ultimate C% Bias Node - Numba-accelerated
-    
+    Ultimate C% Bias Node - Cython-accelerated when built, else Numba fallback.
+
     Computes the Ultimate C% indicator, which is a multi-timeframe momentum
     oscillator that combines short, medium, and long-term normalized ROC values.
-    
+
     The algorithm:
     1. Calculates Rate of Change (ROC) as percent change
     2. Normalizes ROC over three different lookback periods (short, med, long)
     3. Combines the three normalized values using weighted average
     4. Smooths the result
-    
+
     Ultimate C% oscillates between 0 and 100, similar to RSI:
     - Values above 70: Overbought
     - Values below 30: Oversold
-    
-    Performance: ~10-20x faster than pure Python implementation
+
+    Performance: Uses Cython helpers from fast_nodes when built (pct_change,
+    rolling max/min/mean, ultimate_c, smooth); otherwise Numba-compiled helpers.
     
     Parameters:
-    - lookback: Base lookback period for short-term normalization (default: 5)
-    - factor: Factor for medium and long periods (default: 1)
+    - lookback: Base lookback period for short-term normalization (default: 2)
+    - factor: Factor for medium and long periods (default: 2.0)
     - smooth_lookback: Smoothing period for final output (default: 2)
     """
     
@@ -271,8 +285,10 @@ class UltimateC(BiasNode):
         """
         Compute Ultimate C% for the given candle.
         
-        Delegates heavy computation to Numba-compiled functions for ~10-20x speedup.
-        Uses circular buffers to avoid expensive array append operations.
+        Delegates heavy computation to Numba-compiled functions for optimal performance.
+        Uses circular buffers (deques) to avoid expensive array append operations.
+        
+        Uses Cython from fast_nodes when available, else Numba helpers.
         
         Parameters:
         - candle: The candle to process
@@ -285,7 +301,10 @@ class UltimateC(BiasNode):
         
         # Calculate ROC (percent change)
         if self.n_prices > 1 and self.prev_close > 1e-10:
-            roc = pct_change_1d(self.prev_close, curr_close)
+            if CYTHON_NODES_AVAILABLE and compute_pct_change_fast is not None:
+                roc = compute_pct_change_fast(self.prev_close, curr_close)
+            else:
+                roc = pct_change_1d(self.prev_close, curr_close)
             self.roc_values.append(roc)
         else:
             # Not enough data or invalid price
@@ -314,26 +333,35 @@ class UltimateC(BiasNode):
             self.output.append(50.0)
             return [50.0]
         
-        # Convert ROC values to numpy array for numba computation
+        # Convert ROC values to numpy array
         roc_array = np.array(self.roc_values, dtype=np.float64)
-        
-        # Compute Ultimate C%
-        ultimate_c = compute_ultimate_c(
-            roc_array,
-            self.lookback,
-            self.factor
-        )
-        
+
+        # Compute Ultimate C% (Cython when available, else Numba)
+        if CYTHON_NODES_AVAILABLE and compute_ultimate_c_fast is not None:
+            ultimate_c = compute_ultimate_c_fast(
+                roc_array, self.lookback, self.factor
+            )
+        else:
+            ultimate_c = compute_ultimate_c(
+                roc_array, self.lookback, self.factor
+            )
+
         # Store for smoothing
         self.ultimate_c_values.append(ultimate_c)
-        
-        # Smooth the result
+
+        # Smooth the result (Cython when available, else Numba)
         if len(self.ultimate_c_values) < self.smooth_lookback:
-            # Not enough values for smoothing yet, return raw value
             smoothed_ultimate_c = ultimate_c
         else:
             ultimate_c_array = np.array(self.ultimate_c_values, dtype=np.float64)
-            smoothed_ultimate_c = smooth_ultimate_c(ultimate_c_array, self.smooth_lookback)
+            if CYTHON_NODES_AVAILABLE and smooth_ultimate_c_fast is not None:
+                smoothed_ultimate_c = smooth_ultimate_c_fast(
+                    ultimate_c_array, self.smooth_lookback
+                )
+            else:
+                smoothed_ultimate_c = smooth_ultimate_c(
+                    ultimate_c_array, self.smooth_lookback
+                )
         
         self.output.append(smoothed_ultimate_c)
         return [smoothed_ultimate_c]

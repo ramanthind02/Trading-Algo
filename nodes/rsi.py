@@ -2,7 +2,7 @@ from typing import List
 import numpy as np
 from utils.models import Candle
 from utils.enums import Ticker, TimeFrame
-from utils.rsi_helpers import compute_rsi_initial, update_rsi
+from utils.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
 from nodes import BiasNode
 
 
@@ -12,7 +12,7 @@ from nodes import BiasNode
 
 class RSI(BiasNode):
     """
-    RSI (Relative Strength Index) Bias Node - Numba-accelerated
+    RSI (Relative Strength Index) Bias Node - Cython-accelerated
     
     Computes the standard RSI indicator using exponential moving average
     of up and down price movements.
@@ -22,7 +22,7 @@ class RSI(BiasNode):
     The RSI oscillates between 0 and 100, with values above 70 typically
     considered overbought and values below 30 considered oversold.
     
-    Performance: ~10-20x faster than pure Python implementation
+    Performance: Uses Cython-backed fast kernels for optimal performance.
     
     Parameters:
     - lookback: Period for RSI calculation (default: 14)
@@ -69,7 +69,7 @@ class RSI(BiasNode):
         """
         Compute RSI for the given candle.
         
-        Delegates heavy computation to Numba-compiled functions for ~10-20x speedup.
+        Delegates heavy computation to Cython-backed fast kernels for optimal performance.
         Uses circular buffer to avoid expensive array append operations.
         
         Parameters:
@@ -104,12 +104,12 @@ class RSI(BiasNode):
                     self.close_buffer[:self.buffer_idx]
                 ])
             
-            # Call Numba-compiled initialization
-            self.upsum, self.dnsum = compute_rsi_initial(init_prices, self.lookback)
+            # Call Cython-backed initialization
+            self.upsum, self.dnsum = compute_rsi_initial_fast(init_prices, self.lookback)
         
-        # Update RSI using Numba-compiled function
+        # Update RSI using Cython-backed function
         # Only need prev_close and curr_close (no array access needed!)
-        self.upsum, self.dnsum, rsi = update_rsi(
+        self.upsum, self.dnsum, rsi = update_rsi_fast(
             self.prev_close,
             curr_close,
             self.upsum,

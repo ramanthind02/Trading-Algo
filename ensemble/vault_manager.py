@@ -16,17 +16,21 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
-import pandas as pd
-import numpy as np
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
-from utils.enums import TimeFrame, Direction, Ticker
-from feature_selection.base_models.feature_base_model import BaseModel
-from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel, TwoBinBinningModel
+import numpy as np
+import pandas as pd
+
 import utils.helpers as helpers
+from feature_selection.base_models import (
+    DecisionTreeBinningModel,
+    QuantileBinningModel,
+    TwoBinBinningModel,
+)
+from feature_selection.base_models.feature_base_model import BaseModel
+from utils.enums import Direction, TimeFrame, Ticker
 
 # Type hint for forward reference
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ensemble.diversified_ensemble import DiversifiedEnsemble
 

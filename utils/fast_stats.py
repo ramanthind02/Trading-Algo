@@ -15,19 +15,22 @@ Usage:
 
 import numpy as np
 import pandas as pd
-from typing import Tuple
+from typing import Tuple, Deque
+import collections
 
 # Try to import Cython optimized versions
 try:
     from utils.cython_optimized import (
         spearman_rho as _cython_spearman_rho,
         rank_with_tie_correction as _cython_rank_with_tie_correction,
-        optimize_threshold_fast as _cython_optimize_threshold
+        optimize_threshold_fast as _cython_optimize_threshold,
+        compute_ma_diff_fast as _cython_ma_diff,
     )
     CYTHON_AVAILABLE = True
     print("✓ Cython optimizations loaded successfully (20-50x speedup)")
 except ImportError:
     CYTHON_AVAILABLE = False
+    _cython_ma_diff = None  # type: ignore[assignment]
     print("⚠ Cython optimizations not available, using pure Python (compile with: python utils/setup_cython.py build_ext --inplace)")
 
 
@@ -127,6 +130,36 @@ def optimize_threshold_fast(feature_vals, target_vals, floor: float, n_threshold
         )
 
 
+def compute_ma_diff_fast(
+    log_close: float,
+    log_closes: Deque[float],
+    true_ranges: Deque[float],
+    lookback: int,
+    compression: float
+) -> float:
+    """
+    Fast computation of MA diff feature.
+    
+    Computes the difference between the current log close price and a moving average,
+    normalized by ATR and scaled to be centered around 0. Automatically uses Cython
+    implementation if available (15-25x faster), otherwise falls back to pure Python.
+    
+    Parameters:
+    - log_close: Current log(close) value
+    - log_closes: Deque of historical log closes
+    - true_ranges: Deque of historical true ranges
+    - lookback: Lookback period for MA
+    - compression: Compression factor for output
+    
+    Returns:
+    - output_value: The MA diff feature value in range [-50, 50]
+    """
+    if CYTHON_AVAILABLE and _cython_ma_diff is not None:
+        return _cython_ma_diff(log_close, log_closes, true_ranges, lookback, compression)
+    else:
+        return _python_ma_diff(log_close, log_closes, true_ranges, lookback, compression)
+
+
 # ============================================================================
 # PURE PYTHON FALLBACK IMPLEMENTATIONS
 # ============================================================================
@@ -183,3 +216,32 @@ def _python_spearman_rho(x_vals: np.ndarray, y_vals: np.ndarray) -> float:
     rho = 0.5 * (ssx + ssy - rankerr) / denominator
     
     return rho
+
+
+def _python_ma_diff(
+    log_close: float,
+    log_closes: Deque[float],
+    true_ranges: Deque[float],
+    lookback: int,
+    compression: float
+) -> float:
+    """Pure Python implementation of MA diff computation."""
+    # Compute moving average of log closes (excluding current candle)
+    log_closes_list = list(log_closes)[:-1]  # Use all but the last (current) value
+    log_ma = np.mean(log_closes_list) if log_closes_list else 0.0
+    
+    # Compute ATR
+    atr = np.mean(list(true_ranges)) if len(true_ranges) > 0 else 0.0
+    
+    # Compute normalized difference
+    if atr > 0.0:
+        denom = atr * np.sqrt(lookback + 1.0)
+        diff = (log_close - log_ma) / denom
+        
+        # Transform through normal CDF and scale to [-50, 50]
+        from scipy.stats import norm
+        output_value = 100.0 * norm.cdf(compression * diff) - 50.0
+    else:
+        output_value = 0.0
+    
+    return output_value

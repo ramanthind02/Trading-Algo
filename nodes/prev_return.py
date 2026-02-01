@@ -4,13 +4,21 @@ from utils.enums import Bias, Ticker, TimeFrame
 from typing import List
 import numpy as np
 
+try:
+    from utils.fast_nodes import CYTHON_NODES_AVAILABLE, compute_return_fast
+except ImportError:
+    CYTHON_NODES_AVAILABLE = False
+    compute_return_fast = None  # type: ignore[assignment]
+
+
 class ReturnNode(BiasNode):
     """
     ReturnNode is a bias node that outputs the return of the candle.
     This serves as a canary value to identify lookahead bias.
-    
+
     The return is calculated as the percentage change between the close price
-    and the open price of the candle.
+    and the open price of the candle. Uses Cython compute_return_fast when
+    available for consistency with other nodes.
     """
     
     def __init__(self, ticker: Ticker, tf: TimeFrame):
@@ -35,30 +43,28 @@ class ReturnNode(BiasNode):
     
     def _compute_candle(self, candle: Candle) -> List:
         """
-        Computes the return of the candle as a percentage change
-        
+        Computes the return of the candle as a percentage change.
+
         Parameters:
         - candle (Candle): The candle to compute the return for
-        
+
         Returns:
-        - List: A list containing the return value as a percentage
+        - List: [candle_return, log_return, sign, is_bullish]
         """
-        # Calculate return as (close - open) / open * 100
-        
-        candle_return = ((candle.close - candle.open) / candle.open) * 100
-        
-        # Update bias based on return value
+        if CYTHON_NODES_AVAILABLE and compute_return_fast is not None:
+            candle_return, log_return = compute_return_fast(candle.open, candle.close)
+        else:
+            candle_return = ((candle.close - candle.open) / candle.open) * 100
+            log_return = np.log(candle.close / candle.open) if candle.open > 0 else 0.0
+
         if candle_return > 0:
             self.bias = Bias.BULLISH
         elif candle_return < 0:
             self.bias = Bias.BEARISH
         else:
             self.bias = Bias.NEUTRAL
-        
-        log_return = np.log(candle.close/candle.open)
-        # Store the return value in output
+
         is_bullish = candle_return > 0
         self.output = [candle_return, log_return, np.sign(candle_return), is_bullish]
-        
         return self.output
     

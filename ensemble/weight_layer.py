@@ -16,9 +16,10 @@ Key responsibilities:
 Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 """
 
+from typing import Dict, List, Optional, Protocol
+
 import numpy as np
 import pandas as pd
-from typing import List, Optional, Protocol, Dict
 
 
 class Weighter(Protocol):

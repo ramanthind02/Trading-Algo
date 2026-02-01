@@ -7,18 +7,29 @@ and applies risk-adjusted position sizing based on volatility and exposure fract
 """
 
 import json
+import logging
+import os
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+
 import numpy as np
 import pandas as pd
-import logging
-from datetime import datetime
-from typing import Optional, Union, Dict, List, Any, Tuple
-import os
-from utils.enums import TimeFrame
+
 import utils.helpers as helpers
-from .ensemble_utils import filter_dataframe_by_timeframe
+from utils.enums import TimeFrame, Ticker
 from utils.models import Candle
+from .ensemble_utils import filter_dataframe_by_timeframe
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_ticker_name(ticker_val: object) -> str:
+    """Normalize ticker identifiers (enum, string, etc.) to a bare ticker name string."""
+    if isinstance(ticker_val, Ticker):
+        return ticker_val.name
+    if isinstance(ticker_val, str):
+        return ticker_val.replace("Ticker.", "")
+    return getattr(ticker_val, "name", str(ticker_val))
 
 class DiversifiedEnsemble:
     """
@@ -92,13 +103,6 @@ class DiversifiedEnsemble:
         self.instrument_weights_ = None
         self.n_tickers_ = None
         self.is_fitted_ = False
-        
-        # Caching for fit and predict operations
-        # Cache key: (date_range_start, date_range_end) as tuple of dates
-        self._fit_cache: Dict[Tuple[Any, Any], bool] = {}  # Maps date_range -> is_fitted flag
-        self._predict_cache: Dict[Tuple[Any, ...], Union[pd.DataFrame, Dict[str, Any]]] = {}  # Maps (date_range, strategy) -> predictions
-        self._cache_hits = 0
-        self._cache_misses = 0
         
         # Validate that control_file_path is provided
         if control_file_path is None:
@@ -734,28 +738,6 @@ class DiversifiedEnsemble:
         
         return supported_tickers
     
-    def _get_date_range_key(self, candles_df: pd.DataFrame) -> Tuple[Any, Any]:
-        """
-        Generate cache key from date range of candles DataFrame.
-        
-        Parameters
-        ----------
-        candles_df : pd.DataFrame
-            Candles DataFrame with datetime column
-            
-        Returns
-        -------
-        Tuple
-            (min_date, max_date) as tuple of date objects (not datetime)
-        """
-        if candles_df.empty or 'datetime' not in candles_df.columns:
-            return (None, None)
-        
-        datetimes = pd.to_datetime(candles_df['datetime'])
-        min_date = datetimes.min().date()
-        max_date = datetimes.max().date()
-        return (min_date, max_date)
-    
     def fit_from_candles(
         self,
         candles_df: pd.DataFrame,
@@ -793,19 +775,6 @@ class DiversifiedEnsemble:
         self
             Fitted ensemble model
         """
-        # Check cache first
-        date_range_key = self._get_date_range_key(candles_df)
-        if date_range_key in self._fit_cache and self.is_fitted_:
-            logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache HIT for date_range: {date_range_key}")
-            self._cache_hits += 1
-            return self
-        
-        logger.debug(f"DiversifiedEnsemble.fit_from_candles() cache MISS for date_range: {date_range_key}")
-        self._cache_misses += 1
-        
-        from utils.enums import Ticker
-        import numpy as np
-        
         # Get supported tickers from all base models
         supported_tickers = self._get_supported_tickers()
         
@@ -827,28 +796,16 @@ class DiversifiedEnsemble:
                 # Try to get name attribute
                 supported_ticker_names.add(getattr(ticker, 'name', str(ticker)))
         
-        # Filter candles to only include supported tickers
-        # Handle both enum and string ticker formats in candles_df
-        def normalize_ticker_name(ticker_val):
-            """Normalize ticker to string name for comparison."""
-            if isinstance(ticker_val, Ticker):
-                return ticker_val.name
-            elif isinstance(ticker_val, str):
-                # Remove 'Ticker.' prefix if present
-                return ticker_val.replace('Ticker.', '')
-            else:
-                return getattr(ticker_val, 'name', str(ticker_val))
-        
-        # Filter candles_df
+        # Filter candles_df to only include supported tickers
         candles_df = candles_df.copy()
-        candles_df['ticker_normalized'] = candles_df['ticker'].apply(normalize_ticker_name)
+        candles_df['ticker_normalized'] = candles_df['ticker'].apply(_normalize_ticker_name)
         filtered_candles = candles_df[candles_df['ticker_normalized'].isin(supported_ticker_names)].copy()
         filtered_candles = filtered_candles.drop(columns=['ticker_normalized'])
         
         if filtered_candles.empty:
             raise ValueError(
                 f"No candles found for supported tickers: {sorted(supported_ticker_names)}. "
-                f"Available tickers in candles_df: {sorted(candles_df['ticker'].apply(normalize_ticker_name).unique())}"
+                f"Available tickers in candles_df: {sorted(candles_df['ticker'].apply(_normalize_ticker_name).unique())}"
             )
         
         logger.debug(
@@ -905,16 +862,6 @@ class DiversifiedEnsemble:
         if self.model_exposure_fractions_ is None:
             self.model_exposure_fractions_ = {}
             
-            # Helper function to normalize ticker names (reuse from above)
-            def normalize_ticker_name(ticker_val):
-                """Normalize ticker to string name for comparison."""
-                if isinstance(ticker_val, Ticker):
-                    return ticker_val.name
-                elif isinstance(ticker_val, str):
-                    return ticker_val.replace('Ticker.', '')
-                else:
-                    return getattr(ticker_val, 'name', str(ticker_val))
-            
             # Generate binary signals from all base models using filtered training candles
             for model_name, base_model in self.base_models.items():
                 # Check if this is a buy_hold model (always in market)
@@ -931,11 +878,11 @@ class DiversifiedEnsemble:
                     model_signals = []
                     # Get tickers supported by this specific base model
                     model_tickers = set(getattr(base_model, 'tickers', []))
-                    model_ticker_names = {normalize_ticker_name(t) for t in model_tickers}
+                    model_ticker_names = {_normalize_ticker_name(t) for t in model_tickers}
                     
                     # Filter candles to only this model's supported tickers
                     model_candles = filtered_candles[
-                        filtered_candles['ticker'].apply(normalize_ticker_name).isin(model_ticker_names)
+                        filtered_candles['ticker'].apply(_normalize_ticker_name).isin(model_ticker_names)
                     ].copy()
                     
                     if not model_candles.empty:
@@ -974,9 +921,6 @@ class DiversifiedEnsemble:
         # For now, mark as fitted - full ensemble fitting can be done via the regular fit() method
         self.is_fitted_ = True
         
-        # Store in cache
-        self._fit_cache[date_range_key] = True
-        
         return self
     
     def _calculate_aligned_returns_from_candles(
@@ -1010,8 +954,6 @@ class DiversifiedEnsemble:
             with mean aggregation across tickers for each base datetime.
             Returns are shifted forward by 1 period so feature at T pairs with return from T to T+1.
         """
-        import numpy as np
-        
         if candles_df.empty:
             return pd.Series(dtype=float, name='returns')
         
@@ -1199,43 +1141,12 @@ class DiversifiedEnsemble:
                 "Call fit_from_candles() or fit() first."
             )
         
-        # Check cache first
-        date_range_key = self._get_date_range_key(candles_df)
-        cache_key = (date_range_key, return_base_model_predictions)
-        
-        if cache_key in self._predict_cache:
-            self._cache_hits += 1
-            cache_msg = (
-                f"DiversifiedEnsemble.predict_from_candles() cache HIT for date_range: {date_range_key} "
-                f"(hits: {self._cache_hits}, misses: {self._cache_misses})"
-            )
-            logger.info(cache_msg)
-            cached_result = self._predict_cache[cache_key]
-            # Return a deep copy to avoid modifying cache
-            return self._deep_copy_result(cached_result)
-        
-        logger.debug(f"DiversifiedEnsemble.predict_from_candles() cache MISS for date_range: {date_range_key}")
-        self._cache_misses += 1
-        
         # Calculate or use provided volatility
         if volatility is None:
             volatility = self._calculate_volatility_from_candles(candles_df)
         
         all_predictions = []
         base_model_predictions_dict = {}
-        
-        # Import Ticker for normalization
-        from utils.enums import Ticker
-        
-        # Helper function to normalize ticker names (for comparison)
-        def normalize_ticker_name(ticker_val):
-            """Normalize ticker to string name for comparison."""
-            if isinstance(ticker_val, Ticker):
-                return ticker_val.name
-            elif isinstance(ticker_val, str):
-                return ticker_val.replace('Ticker.', '')
-            else:
-                return getattr(ticker_val, 'name', str(ticker_val))
         
         # Group candles by ticker
         for ticker_name in candles_df['ticker'].unique():
@@ -1259,8 +1170,8 @@ class DiversifiedEnsemble:
                     model_tickers = set(getattr(base_model, 'tickers', []))
                     if model_tickers:
                         # Normalize ticker names for comparison
-                        model_ticker_names = {normalize_ticker_name(t) for t in model_tickers}
-                        normalized_ticker_name = normalize_ticker_name(ticker_name)
+                        model_ticker_names = {_normalize_ticker_name(t) for t in model_tickers}
+                        normalized_ticker_name = _normalize_ticker_name(ticker_name)
                         
                         # Skip this base model if it doesn't support this ticker
                         if normalized_ticker_name not in model_ticker_names:
@@ -1396,20 +1307,11 @@ class DiversifiedEnsemble:
             combined_base_models = {}
             for model_name, model_dfs in base_model_predictions_dict.items():
                 combined_base_models[model_name] = pd.concat(model_dfs, ignore_index=True)
-            
-            result = {
+            return {
                 'ensemble': ensemble_result,
                 'base_models': combined_base_models
             }
-            # Store in cache
-            self._predict_cache[cache_key] = {
-                'ensemble': ensemble_result.copy(),
-                'base_models': {k: v.copy() for k, v in combined_base_models.items()}
-            }
-            return result
         
-        # Store in cache
-        self._predict_cache[cache_key] = ensemble_result.copy()
         return ensemble_result
     
     def predict(
@@ -1856,71 +1758,3 @@ class DiversifiedEnsemble:
         
         return "\n".join(lines)
     
-    def _deep_copy_result(self, obj: Any) -> Any:
-        """
-        Recursively deep copy DataFrames in nested structures.
-        
-        Handles:
-        - pd.DataFrame: returns .copy()
-        - dict: recursively copies values
-        - list: recursively copies elements
-        - other: returns as-is (immutable or primitive types)
-        
-        Parameters
-        ----------
-        obj : Any
-            Object to deep copy (DataFrame, dict, list, or primitive)
-            
-        Returns
-        -------
-        Any
-            Deep copied object with all DataFrames copied
-        """
-        if isinstance(obj, pd.DataFrame):
-            return obj.copy()
-        elif isinstance(obj, dict):
-            return {k: self._deep_copy_result(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._deep_copy_result(item) for item in obj]
-        else:
-            return obj
-    
-    def clear_cache(self) -> None:
-        """Clear all cached fit and predict results."""
-        self._fit_cache.clear()
-        self._predict_cache.clear()
-        self._cache_hits = 0
-        self._cache_misses = 0
-        # Also clear cache in base models
-        for base_model in self.base_models.values():
-            if hasattr(base_model, 'clear_cache'):
-                base_model.clear_cache()
-    
-    def get_cache_stats(self) -> Dict[str, Any]:
-        """
-        Get cache statistics for this ensemble and all base models.
-        
-        Returns
-        -------
-        Dict[str, Any]
-            Dictionary with cache hits, misses, hit rate, and cache sizes
-        """
-        total = self._cache_hits + self._cache_misses
-        hit_rate = (self._cache_hits / total * 100) if total > 0 else 0.0
-        
-        base_model_stats = {}
-        for model_name, base_model in self.base_models.items():
-            if hasattr(base_model, 'get_cache_stats'):
-                base_model_stats[model_name] = base_model.get_cache_stats()
-        
-        return {
-            'ensemble': {
-                'hits': self._cache_hits,
-                'misses': self._cache_misses,
-                'total': total,
-                'hit_rate': hit_rate,
-                'fit_cache_size': len(self._fit_cache),
-                'predict_cache_size': len(self._predict_cache)
-            },
-            'base_models': base_model_stats
-        }
