@@ -375,13 +375,16 @@ def _extract_features_single_ticker(
     param_combos = _expand_param_grid(params)
     
     # Create bias nodes for each parameter combination
+    # Store tuples of (bias_node, param_combo, tf) to preserve original params for cache lookup
     bias_nodes = []
+    bias_node_info = []  # List of (bias_node, param_combo, tf) for cache lookup fallback
     column_names = []
     
     for param_combo in param_combos:
         for tf in timeframes:
             bias_node = helpers.create_bias_node(module_name, ticker, tf, param_combo)
             bias_nodes.append(bias_node)
+            bias_node_info.append((bias_node, param_combo, tf))
             
             # Get column names for this node
             node_cols = bias_node.get_column_names() if hasattr(bias_node, 'get_column_names') else getattr(bias_node, 'columns', [])
@@ -409,24 +412,27 @@ def _extract_features_single_ticker(
     if use_cache:
         from utils.bias_node_cache import BiasNodeCache, CacheMissError
 
-        for bias_node in bias_nodes:
-            # Get params from bias node
-            node_params = getattr(bias_node, 'params', {})
+        for bias_node, orig_params, orig_tf in bias_node_info:
+            # Get params from bias node, falling back to original params if node doesn't have them
+            # This ensures compatibility with nodes that don't set module_name/params attributes
+            node_module = getattr(bias_node, 'module_name', module_name)
+            node_params = getattr(bias_node, 'params', orig_params)
+            node_tf = getattr(bias_node, 'tf', orig_tf)
 
             # Create cache instance
             cache = BiasNodeCache(
-                module_name=bias_node.module_name,
+                module_name=node_module,
                 params=node_params,
                 ticker=ticker,
-                tf=bias_node.tf
+                tf=node_tf
             )
 
             if not cache.exists():
                 raise CacheMissError(
-                    module_name=bias_node.module_name,
+                    module_name=node_module,
                     params=node_params,
                     ticker=ticker,
-                    tf=bias_node.tf,
+                    tf=node_tf,
                     date_range=(start, end),
                     cache_path=cache.cache_path,
                     reason="Cache file does not exist. Run CacheManager.populate_cache() first."

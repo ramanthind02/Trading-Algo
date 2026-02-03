@@ -204,9 +204,11 @@ class BiasNodeCache:
                     value_str = value_str[:10]
                 parts.append(f"{key}_{value_str}")
 
-        # If params are too complex, fall back to hash
+        # If params are too complex or all values are non-simple types
+        # (lists, dicts), fall back to hash to avoid filename collisions
         suffix = "_".join(parts)
-        if len(suffix) > 60:
+        if len(suffix) > 60 or (not parts and self.params):
+            # Hash when: suffix is too long OR params exist but none were simple
             suffix = self._hash_params(self.params)
 
         return suffix

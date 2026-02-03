@@ -279,6 +279,48 @@ class TestCachePathStructure:
         data2 = cache2.load()
         assert not np.allclose(data1.values, data2.values)
 
+    def test_complex_params_no_collision(self, temp_cache_dir, sample_data):
+        """Test that complex params (lists/dicts) use hash to avoid filename collision.
+
+        This tests the fix for the bug where params with only complex values
+        (lists, dicts) would result in empty suffix and filename collision.
+        """
+        # Both params have only complex values (lists)
+        cache1 = BiasNodeCache(
+            module_name='custom_node',
+            params={'thresholds': [0.1, 0.2, 0.3]},
+            ticker=Ticker.ES,
+            tf=TimeFrame.D,
+            cache_dir=temp_cache_dir
+        )
+        cache2 = BiasNodeCache(
+            module_name='custom_node',
+            params={'thresholds': [0.5, 0.6, 0.7]},  # Different list values
+            ticker=Ticker.ES,
+            tf=TimeFrame.D,
+            cache_dir=temp_cache_dir
+        )
+
+        # Cache paths should be different (both should use hash)
+        assert cache1.cache_path != cache2.cache_path
+
+        # Verify both paths contain a hash (not empty suffix)
+        # Path.stem gives filename without extension
+        from pathlib import Path
+        assert len(Path(cache1.cache_path).stem) > len('ES_D')
+        assert len(Path(cache2.cache_path).stem) > len('ES_D')
+
+        # Save different data and verify no collision
+        cache1.save(sample_data)
+        cache2.save(sample_data * 2)
+
+        assert cache1.exists()
+        assert cache2.exists()
+
+        data1 = cache1.load()
+        data2 = cache2.load()
+        assert not np.allclose(data1.values, data2.values)
+
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

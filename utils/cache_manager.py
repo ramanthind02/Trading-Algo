@@ -346,30 +346,36 @@ class CacheManager:
         ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
         tf_str = tf.name if hasattr(tf, 'name') else str(tf)
 
-        # Create bias node to get its actual module_name and params
-        # (bias nodes may normalize/rename these)
-        bias_node = create_bias_node(module_name, ticker, tf, params)
-        actual_module_name = getattr(bias_node, 'module_name', module_name)
-        actual_params = getattr(bias_node, 'params', params)
-
-        cache = BiasNodeCache(
-            module_name=actual_module_name,
-            params=actual_params,
-            ticker=ticker,
-            tf=tf,
-            cache_dir=self.cache_dir
-        )
-
+        # Initialize result with basic info (may be updated after bias node creation)
         result = {
-            'module_name': actual_module_name,
-            'params': actual_params,
+            'module_name': module_name,
+            'params': params,
             'ticker': ticker_str,
             'tf': tf_str,
-            'cache_path': cache.cache_path,
+            'cache_path': None,
             'status': 'unknown'
         }
 
         try:
+            # Create bias node to get its actual module_name and params
+            # (bias nodes may normalize/rename these)
+            bias_node = create_bias_node(module_name, ticker, tf, params)
+            actual_module_name = getattr(bias_node, 'module_name', module_name)
+            actual_params = getattr(bias_node, 'params', params)
+
+            cache = BiasNodeCache(
+                module_name=actual_module_name,
+                params=actual_params,
+                ticker=ticker,
+                tf=tf,
+                cache_dir=self.cache_dir
+            )
+
+            # Update result with actual values
+            result['module_name'] = actual_module_name
+            result['params'] = actual_params
+            result['cache_path'] = cache.cache_path
+
             # Check if cache exists and skip if not overwriting
             if cache.exists() and not overwrite:
                 result['status'] = 'skipped'
@@ -631,13 +637,15 @@ class CacheManager:
                     tickers_set.add(ticker)
 
         # Also check config-level tickers
+        # Note: Config-level tickers may include defaults that don't match our Ticker enum,
+        # so we silently ignore invalid entries here (unlike ensemble-level which warns)
         config_tickers = config.get('tickers', [])
         for ticker in config_tickers:
             if isinstance(ticker, str):
                 try:
                     tickers_set.add(Ticker[ticker])
                 except KeyError:
-                    pass
+                    pass  # Silently ignore unknown tickers from config defaults
             elif isinstance(ticker, Ticker):
                 tickers_set.add(ticker)
 

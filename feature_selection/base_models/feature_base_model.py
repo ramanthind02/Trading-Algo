@@ -529,7 +529,6 @@ class BaseModel:
             # Validate alignment after base datetime matching
             final_alignment_ratio = aligned_target.notna().sum() / len(feature_data) if len(feature_data) > 0 else 0.0
             if final_alignment_ratio < 0.8:
-                import logging
                 logger = logging.getLogger(__name__)
                 logger.warning(
                     f"Poor alignment after base datetime matching: {final_alignment_ratio:.1%} aligned. "
@@ -846,7 +845,6 @@ class BaseModel:
                 feature_index.append(dt)
             else:
                 # No feature for this datetime - this shouldn't happen if bias nodes are working
-                import logging
                 logger = logging.getLogger(__name__)
                 logger.debug(
                     f"BaseModel.predict() no feature value for datetime {dt}. "
@@ -858,7 +856,6 @@ class BaseModel:
         
         if not feature_index:
             # No features extracted at all - this is a problem, log it
-            import logging
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"BaseModel.predict() extracted no features for {len(all_input_datetimes)} candles. "
@@ -878,7 +875,6 @@ class BaseModel:
         if hasattr(has_nan, 'any'):
             has_nan = has_nan.any()
         if has_nan:
-            import logging
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"BaseModel.predict() has {input_feature_data.isna().sum()} NaN values out of {len(input_feature_data)}. "
