@@ -80,11 +80,13 @@ class DiversifiedEnsemble:
         config_path: Optional[str] = None,
         save_path: Optional[str] = None,
         control_file_path: Optional[str] = None,
-        base_tf: Optional[TimeFrame] = None
+        base_tf: Optional[TimeFrame] = None,
+        use_cache: bool = True
     ):
         self.target_volatility = target_volatility
         self.instrument_weights = instrument_weights
         self.save_path = save_path
+        self.use_cache = use_cache
         
         # Base model ownership
         self.base_models: Dict[str, Any] = {}  # Dict[str, BaseModel]
@@ -316,7 +318,11 @@ class DiversifiedEnsemble:
             
             # Create base model instance
             # create_base_model_from_config will use tickers from model_config if available
-            base_model = create_base_model_from_config(model_config, fitted_params=fitted_params)
+            base_model = create_base_model_from_config(
+                model_config,
+                fitted_params=fitted_params,
+                use_cache=self.use_cache
+            )
             
             # Store model
             self.base_models[model_name] = base_model
@@ -741,7 +747,9 @@ class DiversifiedEnsemble:
     def fit_from_candles(
         self,
         candles_df: pd.DataFrame,
-        target_data: pd.Series
+        target_data: pd.Series,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> 'DiversifiedEnsemble':
         """
         Fit all base models using candles DataFrame.
@@ -769,7 +777,11 @@ class DiversifiedEnsemble:
             Target values (returns) from all tickers, indexed by datetime.
             May have duplicate datetime indices (one per ticker).
             NOTE: This parameter is currently ignored - returns are calculated directly from candles.
-            
+        start_date : datetime, optional
+            Start date for cached data. If None, inferred from candles_df.
+        end_date : datetime, optional
+            End date for cached data. If None, inferred from candles_df.
+
         Returns
         -------
         self
@@ -835,10 +847,10 @@ class DiversifiedEnsemble:
                 
                 # Fit base model with filtered candles and aggregated returns
                 # BaseModel.fit() will:
-                # 1. Stream candles from all supported tickers
+                # 1. Stream candles from all supported tickers (or use cache if use_cache=True)
                 # 2. Extract features and aggregate by base datetime (mean)
                 # 3. Align aggregated returns with aggregated features
-                base_model.fit(filtered_candles, aggregated_returns)
+                base_model.fit(filtered_candles, aggregated_returns, start_date, end_date)
                 
                 # Debug: Log fitting results
                 if base_model.binning_model.is_fitted_:
@@ -1102,7 +1114,9 @@ class DiversifiedEnsemble:
         self,
         candles_df: pd.DataFrame,
         volatility: Optional[Dict[str, float]] = None,
-        return_base_model_predictions: bool = False
+        return_base_model_predictions: bool = False,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
         Aggregate predictions from all base models using candles DataFrame.
@@ -1124,7 +1138,11 @@ class DiversifiedEnsemble:
             Volatility per ticker (annualized). If None, calculated from candles.
         return_base_model_predictions : bool, default=False
             If True, return base model-level predictions in result dict
-            
+        start_date : datetime, optional
+            Start date for cached data. If None, inferred from candles_df.
+        end_date : datetime, optional
+            End date for cached data. If None, inferred from candles_df.
+
         Returns
         -------
         pd.DataFrame or Dict[str, Any]
@@ -1182,8 +1200,8 @@ class DiversifiedEnsemble:
                             continue
                     
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
-                    # BaseModel.predict() handles feature caching internally
-                    pred = base_model.predict(ticker_candles)
+                    # BaseModel.predict() handles feature caching internally (if use_cache=True)
+                    pred = base_model.predict(ticker_candles, start_date=start_date, end_date=end_date)
                     
                     # Debug: Log prediction details
                     if len(pred) == 0:

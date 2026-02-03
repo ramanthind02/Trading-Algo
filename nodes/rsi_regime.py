@@ -102,7 +102,10 @@ class RSIRegime(BiasNode):
         
         # Define standardized columns
         self.ensure_standardized_columns()
-    
+
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _update_moving_average(self, price: float) -> float:
         """
         Update the moving average efficiently using a running sum.

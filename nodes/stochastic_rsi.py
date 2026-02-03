@@ -85,6 +85,9 @@ class StochasticRSI(BiasNode):
         # Define standardized columns
         self.ensure_standardized_columns()
 
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Compute Stochastic RSI for the given candle.

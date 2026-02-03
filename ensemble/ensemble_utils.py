@@ -363,7 +363,8 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
 def create_base_model_from_config(
     config: Dict[str, Any],
     ticker: Optional[Ticker] = None,
-    fitted_params: Optional[Dict[str, Any]] = None
+    fitted_params: Optional[Dict[str, Any]] = None,
+    use_cache: bool = True
 ) -> Any:
     """
     Factory function to create base model instances from configuration.
@@ -378,7 +379,10 @@ def create_base_model_from_config(
         Ticker symbol for the base model. If None, will try to extract from feature_column or use default.
     fitted_params : Dict[str, Any], optional
         Fitted parameters to restore (thresholds, best bins, etc.)
-        
+    use_cache : bool, default=True
+        If True, BaseModel will use vectorized cached data when available.
+        If False, uses streaming candle-by-candle processing.
+
     Returns
     -------
     BaseModel
@@ -509,7 +513,8 @@ def create_base_model_from_config(
     base_model = BaseModel(
         feature_config=feature_config,
         tickers=tickers_list,
-        binning_model=binning_model
+        binning_model=binning_model,
+        use_cache=use_cache
     )
     
     # Set feature_column if available

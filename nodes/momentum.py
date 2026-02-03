@@ -56,7 +56,10 @@ class Momentum(BiasNode):
         
         # Define standardized columns
         self.ensure_standardized_columns()
-    
+
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Compute Momentum for the given candle.

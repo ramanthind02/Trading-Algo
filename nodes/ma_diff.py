@@ -59,7 +59,10 @@ class MADiffNode(BiasNode):
         
         # Define standardized columns (will be: ma_diff_signal_D_lookback_50)
         self.ensure_standardized_columns()
-    
+
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Computes the MA difference feature for the current candle.

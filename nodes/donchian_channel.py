@@ -69,6 +69,9 @@ class DonchianChannel(BiasNode):
         # Define standardized columns
         self.ensure_standardized_columns()
 
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def calculate_donchian_channel(self, lookback: int) -> Tuple[float, float]:
         """
         Calculates the Donchian channel (highest high and lowest low) over the specified lookback period.

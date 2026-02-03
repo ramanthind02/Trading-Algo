@@ -1,9 +1,14 @@
 from utils.models import Candle
 from abc import ABC, abstractmethod
-from typing import List, Dict, Type, TypeVar
+from datetime import datetime
+from typing import List, Dict, Type, TypeVar, Optional, TYPE_CHECKING
 from utils.enums import Bias, Ticker, TimeFrame
 from typing import Any, Dict
 import utils.helpers as _helpers
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from utils.bias_node_cache import BiasNodeCache
 
 
 T = TypeVar('T', bound='BiasNode')
@@ -36,6 +41,11 @@ class BiasNode(ABC):
             'last_candle_id': None,
             'last_result': None
         }
+
+        # Bias node cache attributes (initialized after params are set)
+        self._bias_node_cache: Optional['BiasNodeCache'] = None
+        self._cache_loaded: bool = False
+        self._cached_data: Optional['pd.DataFrame'] = None
     
     @classmethod
     def get_instance(cls: Type[T], *args, **kwargs) -> T:
@@ -155,4 +165,201 @@ class BiasNode(ABC):
         except Exception:
             # Do not raise to preserve backwards compatibility
             pass
-    
+
+    # ----------------------------------------------------------------------
+    # Bias Node Cache API
+    # ----------------------------------------------------------------------
+    def _init_cache_after_params(self) -> None:
+        """
+        Initialize the bias node cache after params are set.
+
+        This method should be called by subclasses at the END of their
+        __init__ method, after setting module_name and params.
+
+        If the cache file exists, it will be loaded automatically.
+
+        Example usage in subclass __init__:
+            def __init__(self, ticker, tf, lookback=14):
+                super().__init__(ticker, tf)
+                self.module_name = 'rsi'
+                self.params = {'lookback': lookback}
+                # ... other initialization ...
+                self._init_cache_after_params()  # Call at end
+        """
+        # Only initialize cache if module_name and params are set
+        if not self.module_name:
+            return
+
+        try:
+            from utils.bias_node_cache import BiasNodeCache
+
+            self._bias_node_cache = BiasNodeCache(
+                module_name=self.module_name,
+                params=self.params,
+                ticker=self.ticker,
+                tf=self.tf
+            )
+
+            # Load cache if it exists
+            if self._bias_node_cache.exists():
+                self._cached_data = self._bias_node_cache.load()
+                self._cache_loaded = True
+
+        except ImportError:
+            # BiasNodeCache not available, continue without caching
+            pass
+        except Exception as e:
+            # Log warning but don't fail initialization
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to initialize cache for {self.module_name}: {e}")
+
+    def get_cached_values(
+        self,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        require_cache: bool = True
+    ) -> Optional['pd.Series']:
+        """
+        Get cached output values for a date range.
+
+        This is the primary API for vectorized access to bias node outputs.
+        Use this instead of streaming candles when cache is available.
+
+        Parameters
+        ----------
+        start : datetime, optional
+            Start of date range (inclusive). If None, uses earliest available.
+        end : datetime, optional
+            End of date range (inclusive). If None, uses latest available.
+        require_cache : bool, default=True
+            If True and cache is missing: logs warning and raises CacheMissError.
+            If False and cache is missing: returns None.
+
+        Returns
+        -------
+        pd.Series or None
+            Cached output values indexed by datetime.
+            Returns None if cache is missing and require_cache=False.
+
+        Raises
+        ------
+        CacheMissError
+            If require_cache=True and cache is missing or incomplete.
+
+        Example
+        -------
+        >>> # Vectorized access (fast)
+        >>> values = bias_node.get_cached_values(start, end)
+        >>> if values is not None:
+        ...     features = values.reindex(candles_df['datetime'])
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Check if cache is initialized
+        if self._bias_node_cache is None:
+            if require_cache:
+                from utils.bias_node_cache import CacheMissError
+                logger.warning(
+                    f"Cache not initialized for {self.module_name} ({self.ticker}, {self.tf}). "
+                    f"Call _init_cache_after_params() in subclass __init__."
+                )
+                raise CacheMissError(
+                    module_name=self.module_name,
+                    params=self.params,
+                    ticker=self.ticker,
+                    tf=self.tf,
+                    date_range=(start, end),
+                    reason="Cache not initialized. Subclass must call _init_cache_after_params()."
+                )
+            return None
+
+        # Delegate to BiasNodeCache
+        return self._bias_node_cache.get_values(
+            start=start,
+            end=end,
+            require_cache=require_cache
+        )
+
+    def get_cached_dataframe(
+        self,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+        require_cache: bool = True
+    ) -> Optional['pd.DataFrame']:
+        """
+        Get cached output as DataFrame (for multi-output nodes).
+
+        Similar to get_cached_values() but returns all output columns
+        for nodes with multiple outputs (e.g., EWMAC with signal and signalBool).
+
+        Parameters
+        ----------
+        start : datetime, optional
+            Start of date range (inclusive)
+        end : datetime, optional
+            End of date range (inclusive)
+        require_cache : bool, default=True
+            If True and cache is missing: raises CacheMissError.
+
+        Returns
+        -------
+        pd.DataFrame or None
+            All cached columns for the date range.
+        """
+        if self._bias_node_cache is None:
+            if require_cache:
+                from utils.bias_node_cache import CacheMissError
+                raise CacheMissError(
+                    module_name=self.module_name,
+                    params=self.params,
+                    ticker=self.ticker,
+                    tf=self.tf,
+                    date_range=(start, end),
+                    reason="Cache not initialized"
+                )
+            return None
+
+        return self._bias_node_cache.get_dataframe(
+            start=start,
+            end=end,
+            require_cache=require_cache
+        )
+
+    def is_cache_loaded(self) -> bool:
+        """
+        Check if cache data is loaded.
+
+        Returns
+        -------
+        bool
+            True if cache exists and has been loaded.
+        """
+        return self._cache_loaded
+
+    def cache_exists(self) -> bool:
+        """
+        Check if cache file exists on disk.
+
+        Returns
+        -------
+        bool
+            True if cache file exists.
+        """
+        if self._bias_node_cache is None:
+            return False
+        return self._bias_node_cache.exists()
+
+    def get_cache_path(self) -> Optional[str]:
+        """
+        Get the cache file path.
+
+        Returns
+        -------
+        str or None
+            Path to cache file, or None if cache not initialized.
+        """
+        if self._bias_node_cache is None:
+            return None
+        return self._bias_node_cache.cache_path

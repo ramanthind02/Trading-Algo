@@ -108,7 +108,8 @@ class Portfolio:
         max_position_pct: float = 2.0,
         weight_layer: Optional[WeightLayer] = None,
         instrument_weights: Optional[Dict[str, float]] = None,
-        idm_max: float = 2.5
+        idm_max: float = 2.5,
+        use_cache: bool = True
     ):
         """
         Initialize Portfolio.
@@ -134,6 +135,7 @@ class Portfolio:
         self.ensembles = ensembles if ensembles is not None else []
         self.trading_timeframe = trading_timeframe
         self.target_volatility = target_volatility
+        self.use_cache = use_cache
         
         # WeightLayer is required - create default if not provided
         if weight_layer is None:
@@ -429,7 +431,9 @@ class Portfolio:
     def fit_from_candles(
         self,
         candles_df: pd.DataFrame,
-        target_data: Optional[pd.Series] = None
+        target_data: Optional[pd.Series] = None,
+        start_date=None,
+        end_date=None
     ) -> 'Portfolio':
         """
         Fit all ensembles using candles DataFrame.
@@ -446,7 +450,11 @@ class Portfolio:
             Should contain candles for the trading_timeframe of this portfolio
         target_data : pd.Series, optional
             Target values (returns) for training. If None, ensembles must be pre-fitted.
-            
+        start_date : datetime, optional
+            Start date for cached data. If None, inferred from candles_df.
+        end_date : datetime, optional
+            End date for cached data. If None, inferred from candles_df.
+
         Returns
         -------
         self
@@ -470,7 +478,7 @@ class Portfolio:
             for idx, ensemble in enumerate(self.ensembles):
                 try:
                     logger.debug(f"Fitting ensemble {idx}...")
-                    ensemble.fit_from_candles(tf_candles, target_data)
+                    ensemble.fit_from_candles(tf_candles, target_data, start_date, end_date)
                 except Exception as e:
                     logger.error(f"Error fitting ensemble {idx}: {e}", exc_info=True)
 
@@ -542,7 +550,9 @@ class Portfolio:
         self,
         candles_df: pd.DataFrame,
         return_ensemble_predictions: bool = False,
-        return_base_model_predictions: bool = False
+        return_base_model_predictions: bool = False,
+        start_date=None,
+        end_date=None
     ) -> Union[pd.DataFrame, Dict[str, Any]]:
         """
         Generate position fractions using candles DataFrame.
@@ -563,7 +573,11 @@ class Portfolio:
             If True, return ensemble-level predictions in result dict
         return_base_model_predictions : bool, default=False
             If True, return base model-level predictions in result dict
-            
+        start_date : datetime, optional
+            Start date for cached data. If None, inferred from candles_df.
+        end_date : datetime, optional
+            End date for cached data. If None, inferred from candles_df.
+
         Returns
         -------
         pd.DataFrame or Dict[str, Any]
@@ -610,7 +624,9 @@ class Portfolio:
                 ensemble_result = ensemble.predict_from_candles(
                     tf_candles,
                     volatility=volatility,
-                    return_base_model_predictions=True
+                    return_base_model_predictions=True,
+                    start_date=start_date,
+                    end_date=end_date
                 )
                 return ensemble_idx, ensemble_result
             except Exception as e:
@@ -1110,7 +1126,9 @@ class Portfolio:
                 ensemble_result = ensemble.predict_from_candles(
                     candles_df,
                     volatility=volatility,
-                    return_base_model_predictions=True
+                    return_base_model_predictions=True,
+                    start_date=start_date,
+                    end_date=end_date
                 )
                 
                 if isinstance(ensemble_result, dict):
