@@ -41,7 +41,7 @@ try:
         compute_atr_from_slice_fast as _cython_atr_from_slice,
     )
     CYTHON_NODES_AVAILABLE = True
-    print("✓ Cython node optimizations loaded (5-10x speedup for ATR, EMA, etc.)")
+    # print("[OK] Cython node optimizations loaded (5-10x speedup for ATR, EMA, etc.)")
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
     _cython_batch_returns = None  # type: ignore[assignment]
@@ -60,7 +60,7 @@ except ImportError:
     _cython_normal_cdf = None  # type: ignore[assignment]
     _cython_return = None  # type: ignore[assignment]
     _cython_atr_from_slice = None  # type: ignore[assignment]
-    print("⚠ Cython node optimizations not available (compile with: python utils/setup_cython.py build_ext --inplace)")
+    # print("[WARN] Cython node optimizations not available (compile with: python utils/setup_cython.py build_ext --inplace)")
 
 
 def compute_atr_fast(high, low, close, prev_close, true_ranges, buffer_idx, n_filled, period):

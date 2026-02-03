@@ -228,3 +228,6 @@ venv
 # Claude
 .claude/settings.local.json
 tmpclaude*
+
+# Research reports (generated outputs)
+research/reports/

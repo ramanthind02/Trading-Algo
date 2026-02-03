@@ -2567,7 +2567,7 @@ class FeatureExplorer:
         if 'decile_bin_data' in results and results['decile_bin_data']:
             decile_data_path = os.path.join(export_dir, 'decile_bin_data.txt')
             try:
-                with open(decile_data_path, 'w') as f:
+                with open(decile_data_path, 'w', encoding='utf-8') as f:
                     f.write("="*70 + "\n")
                     f.write("Decile Bin Analysis: Bin Ranges and Objective Metrics\n")
                     f.write("="*70 + "\n")
@@ -2889,7 +2889,7 @@ class FeatureExplorer:
         
         # 9. Create summary text file
         summary_text_path = os.path.join(export_dir, 'summary_report.txt')
-        with open(summary_text_path, 'w') as f:
+        with open(summary_text_path, 'w', encoding='utf-8') as f:
             f.write("="*70 + "\n")
             f.write("Feature Analysis Summary Report\n")
             f.write("="*70 + "\n")

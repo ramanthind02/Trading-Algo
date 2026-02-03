@@ -126,7 +126,7 @@ def generate_tearsheet(
             match_dates=False,  # Prevent timezone comparison issues
             compounded=False    # Use non-compounded returns (Carver methodology)
         )
-        print(f"\n✅ HTML tearsheet saved to: {output_file}")
+        print(f"\n[OK] HTML tearsheet saved to: {output_file}")
         print("   Note: Using non-compounded returns (Robert Carver methodology)")
         
     elif mode == 'full':
