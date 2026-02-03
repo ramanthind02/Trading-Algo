@@ -135,6 +135,8 @@ class CacheManager:
             Path(self.candle_dir) / tf_str / f"{ticker_str}.parquet",
             Path(self.candle_dir) / ticker_str / f"{tf_str}.parquet",
             Path(self.candle_dir) / f"{ticker_str}.parquet",
+            # Also check data/ohlc_data format: {ticker}/{tf}_{ticker}.parquet
+            Path(self.candle_dir) / ticker_str / f"{tf_str}_{ticker_str}.parquet",
         ]
 
         candle_path = None
@@ -247,6 +249,63 @@ class CacheManager:
 
         return df
 
+    def _compute_bias_node_output_from_node(
+        self,
+        bias_node,
+        candles_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Compute bias node output using an existing bias node instance.
+
+        Parameters
+        ----------
+        bias_node : BiasNode
+            Existing bias node instance
+        candles_df : pd.DataFrame
+            Candles to stream through the bias node
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with datetime index and output columns
+        """
+        # Stream candles and collect output
+        datetimes = []
+        outputs = []
+
+        for _, row in candles_df.iterrows():
+            candle = Candle.from_row(row)
+            result = bias_node.add_candle(candle)
+            datetimes.append(candle.datetime)
+            outputs.append(result)
+
+        # Build output DataFrame
+        # Most bias nodes return [value] or [value, bool_value]
+        if outputs and len(outputs[0]) == 1:
+            df = pd.DataFrame({
+                'datetime': datetimes,
+                'value': [o[0] for o in outputs]
+            })
+        elif outputs and len(outputs[0]) == 2:
+            df = pd.DataFrame({
+                'datetime': datetimes,
+                'value': [o[0] for o in outputs],
+                'value_bool': [o[1] for o in outputs]
+            })
+        else:
+            # Handle multi-output nodes
+            n_outputs = len(outputs[0]) if outputs else 0
+            data = {'datetime': datetimes}
+            for i in range(n_outputs):
+                col_name = f'value_{i}' if i > 0 else 'value'
+                data[col_name] = [o[i] for o in outputs]
+            df = pd.DataFrame(data)
+
+        # Set datetime as index
+        df = df.set_index('datetime')
+
+        return df
+
     def _populate_single_cache(
         self,
         module_name: str,
@@ -282,20 +341,28 @@ class CacheManager:
         Dict[str, Any]
             Result dict with status and details
         """
+        from utils.helpers import create_bias_node
+
         ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
         tf_str = tf.name if hasattr(tf, 'name') else str(tf)
 
+        # Create bias node to get its actual module_name and params
+        # (bias nodes may normalize/rename these)
+        bias_node = create_bias_node(module_name, ticker, tf, params)
+        actual_module_name = getattr(bias_node, 'module_name', module_name)
+        actual_params = getattr(bias_node, 'params', params)
+
         cache = BiasNodeCache(
-            module_name=module_name,
-            params=params,
+            module_name=actual_module_name,
+            params=actual_params,
             ticker=ticker,
             tf=tf,
             cache_dir=self.cache_dir
         )
 
         result = {
-            'module_name': module_name,
-            'params': params,
+            'module_name': actual_module_name,
+            'params': actual_params,
             'ticker': ticker_str,
             'tf': tf_str,
             'cache_path': cache.cache_path,
@@ -319,9 +386,9 @@ class CacheManager:
 
             result['candle_count'] = len(candles_df)
 
-            # Compute bias node output
-            output_df = self._compute_bias_node_output(
-                module_name, params, ticker, tf, candles_df
+            # Compute bias node output (reuse the bias node we created)
+            output_df = self._compute_bias_node_output_from_node(
+                bias_node, candles_df
             )
 
             # Save to cache
