@@ -231,3 +231,6 @@ tmpclaude*
 
 # Research reports (generated outputs)
 research/reports/
+
+# Bias node cache (parquet files)
+cache/
