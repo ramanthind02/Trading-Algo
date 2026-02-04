@@ -280,7 +280,10 @@ class UltimateC(BiasNode):
         
         # Define standardized columns
         self.ensure_standardized_columns()
-    
+
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Compute Ultimate C% for the given candle.

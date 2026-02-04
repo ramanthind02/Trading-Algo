@@ -61,7 +61,10 @@ class EWMACNode(BiasNode):
         
         # Define standardized columns
         self.ensure_standardized_columns()
-        
+
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
         # Internal state for EWMA and EWSD
         self.ewma_fast: Optional[float] = None
         self.ewma_slow: Optional[float] = None

@@ -40,7 +40,10 @@ class ReturnNode(BiasNode):
         self.columns = ['return', "log_return", "sign", "is_bullish"]
         # Define standardized columns
         self.ensure_standardized_columns()
-    
+
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Computes the return of the candle as a percentage change.

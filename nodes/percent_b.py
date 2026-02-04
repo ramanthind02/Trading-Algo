@@ -76,6 +76,9 @@ class PercentB(BiasNode):
         # Define standardized columns
         self.ensure_standardized_columns()
 
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Compute %B signal for the given candle.

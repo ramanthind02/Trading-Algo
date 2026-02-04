@@ -87,7 +87,10 @@ class WilliamsRNode(BiasNode):
         
         # Define standardized columns
         self.ensure_standardized_columns()
-    
+
+        # Initialize cache after params are set
+        self._init_cache_after_params()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Computes the Williams %R feature for the current candle.

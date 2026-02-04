@@ -346,13 +346,21 @@ def _extract_features_single_ticker(
     ticker: Ticker,
     start: datetime,
     end: datetime,
-    timeframes: List[TimeFrame]
+    timeframes: List[TimeFrame],
+    use_cache: bool = False
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single ticker.
     
     This is a pure function that handles feature extraction for one ticker.
     Used internally by extract_features() to process each ticker separately.
+
+    Parameters
+    ----------
+    use_cache : bool, default=False
+        If True, load features from BiasNodeCache instead of streaming candles.
+        This provides ~50-100x speedup for large datasets.
+        Cache must be pre-populated using CacheManager.populate_cache().
     """
     # Load price data
     price_df = helpers.load_data(ticker, TimeFrame.D, start=start, end=end)
@@ -367,13 +375,16 @@ def _extract_features_single_ticker(
     param_combos = _expand_param_grid(params)
     
     # Create bias nodes for each parameter combination
+    # Store tuples of (bias_node, param_combo, tf) to preserve original params for cache lookup
     bias_nodes = []
+    bias_node_info = []  # List of (bias_node, param_combo, tf) for cache lookup fallback
     column_names = []
     
     for param_combo in param_combos:
         for tf in timeframes:
             bias_node = helpers.create_bias_node(module_name, ticker, tf, param_combo)
             bias_nodes.append(bias_node)
+            bias_node_info.append((bias_node, param_combo, tf))
             
             # Get column names for this node
             node_cols = bias_node.get_column_names() if hasattr(bias_node, 'get_column_names') else getattr(bias_node, 'columns', [])
@@ -396,31 +407,91 @@ def _extract_features_single_ticker(
         n_node_cols = len(node_cols)
         node_to_cols[bias_node] = (col_idx, col_idx + n_node_cols)
         col_idx += n_node_cols
-    
-    # Extract features by iterating over candles
-    for idx, (dt, row) in enumerate(price_df.iterrows()):
-        candle = Candle(
-            datetime=dt,
-            open=float(row['open']),
-            high=float(row['high']),
-            low=float(row['low']),
-            close=float(row['close']),
-            volume=float(row.get('volume', 0)),
-            ticker=ticker,
-            tf=TimeFrame.D
-        )
-        
-        for bias_node in bias_nodes:
-            if bias_node.tf == TimeFrame.D:
-                values = bias_node.add_candle(candle)
-                start_col, end_col = node_to_cols[bias_node]
-                
-                for i in range(min(len(values), end_col - start_col)):
-                    val = values[i]
-                    if hasattr(val, 'value'):
-                        val = val.value
-                    feature_data[idx, start_col + i] = float(val) if val is not None else np.nan
-    
+
+    # CACHED PATH: Load from BiasNodeCache (fast)
+    if use_cache:
+        from utils.bias_node_cache import BiasNodeCache, CacheMissError
+
+        for bias_node, orig_params, orig_tf in bias_node_info:
+            # Get params from bias node, falling back to original params if node doesn't have them
+            # This ensures compatibility with nodes that don't set module_name/params attributes
+            node_module = getattr(bias_node, 'module_name', module_name)
+            node_params = getattr(bias_node, 'params', orig_params)
+            node_tf = getattr(bias_node, 'tf', orig_tf)
+
+            # Create cache instance
+            cache = BiasNodeCache(
+                module_name=node_module,
+                params=node_params,
+                ticker=ticker,
+                tf=node_tf
+            )
+
+            if not cache.exists():
+                raise CacheMissError(
+                    module_name=node_module,
+                    params=node_params,
+                    ticker=ticker,
+                    tf=node_tf,
+                    date_range=(start, end),
+                    cache_path=cache.cache_path,
+                    reason="Cache file does not exist. Run CacheManager.populate_cache() first."
+                )
+
+            # Load cached values
+            cached_df = cache.get_dataframe(start=start, end=end, require_cache=True)
+
+            # Align cached data to price_df index
+            # Remove timezone from cached index if needed for alignment
+            if cached_df.index.tz is not None:
+                cached_aligned = cached_df.reindex(price_df.index.tz_convert(cached_df.index.tz))
+            else:
+                cached_aligned = cached_df.reindex(price_df.index.tz_localize(None))
+
+            # If alignment failed, try without timezone
+            if cached_aligned.isna().all().all():
+                price_index_naive = price_df.index.tz_localize(None) if price_df.index.tz else price_df.index
+                cached_index_naive = cached_df.index.tz_localize(None) if cached_df.index.tz else cached_df.index
+                cached_df_naive = cached_df.copy()
+                cached_df_naive.index = cached_index_naive
+                cached_aligned = cached_df_naive.reindex(price_index_naive)
+
+            # Fill feature_data from cache
+            start_col, end_col = node_to_cols[bias_node]
+
+            if 'value' in cached_aligned.columns:
+                feature_data[:, start_col] = cached_aligned['value'].values
+            else:
+                # Multi-column cache
+                for i, col in enumerate(cached_aligned.columns):
+                    if start_col + i < end_col:
+                        feature_data[:, start_col + i] = cached_aligned[col].values
+
+    # STREAMING PATH: Iterate over candles (slow)
+    else:
+        for idx, (dt, row) in enumerate(price_df.iterrows()):
+            candle = Candle(
+                datetime=dt,
+                open=float(row['open']),
+                high=float(row['high']),
+                low=float(row['low']),
+                close=float(row['close']),
+                volume=float(row.get('volume', 0)),
+                ticker=ticker,
+                tf=TimeFrame.D
+            )
+
+            for bias_node in bias_nodes:
+                if bias_node.tf == TimeFrame.D:
+                    values = bias_node.add_candle(candle)
+                    start_col, end_col = node_to_cols[bias_node]
+
+                    for i in range(min(len(values), end_col - start_col)):
+                        val = values[i]
+                        if hasattr(val, 'value'):
+                            val = val.value
+                        feature_data[idx, start_col + i] = float(val) if val is not None else np.nan
+
     # Create features DataFrame
     features_df = pd.DataFrame(feature_data, index=price_df.index, columns=column_names)
     
@@ -500,7 +571,8 @@ def extract_features(
     start: datetime = None,
     end: datetime = None,
     timeframes: List[TimeFrame] = None,
-    use_millisecond_offset: bool = True
+    use_millisecond_offset: bool = True,
+    use_cache: bool = False
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single bias node with parameter grid exploration.
@@ -586,7 +658,8 @@ def extract_features(
             ticker=tickers[0],
             start=start,
             end=end,
-            timeframes=timeframes
+            timeframes=timeframes,
+            use_cache=use_cache
         )
         
         # Add ticker column for identification
@@ -607,7 +680,8 @@ def extract_features(
             ticker=single_ticker,
             start=start,
             end=end,
-            timeframes=timeframes
+            timeframes=timeframes,
+            use_cache=use_cache
         )
         
         # Add millisecond offset to avoid duplicate datetime indices
@@ -638,7 +712,8 @@ def extract_features_with_forward_returns(
     end: datetime = None,
     timeframes: List[TimeFrame] = None,
     use_millisecond_offset: bool = True,
-    target_col: str = 'log_return'
+    target_col: str = 'log_return',
+    use_cache: bool = False
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features and compute intraday returns (shifted forward) automatically.
@@ -741,7 +816,8 @@ def extract_features_with_forward_returns(
         start=start,
         end=end,
         timeframes=timeframes,
-        use_millisecond_offset=use_millisecond_offset
+        use_millisecond_offset=use_millisecond_offset,
+        use_cache=use_cache
     )
     
     # Extract ATR features (mandatory for volatility scaling)
@@ -752,7 +828,8 @@ def extract_features_with_forward_returns(
         start=start,
         end=end,
         timeframes=timeframes,
-        use_millisecond_offset=use_millisecond_offset
+        use_millisecond_offset=use_millisecond_offset,
+        use_cache=use_cache
     )
     
     # Extract EWSD features (mandatory for volatility scaling)
@@ -763,7 +840,8 @@ def extract_features_with_forward_returns(
         start=start,
         end=end,
         timeframes=timeframes,
-        use_millisecond_offset=use_millisecond_offset
+        use_millisecond_offset=use_millisecond_offset,
+        use_cache=use_cache
     )
     
     # Combine all features: main + ATR + EWSD
@@ -1095,7 +1173,8 @@ def extract_features_for_bias_node(
     start: datetime = None,
     end: datetime = None,
     use_millisecond_offset: bool = True,
-    target_col: str = 'log_return'
+    target_col: str = 'log_return',
+    use_cache: bool = False
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     High-level convenience function for extracting features from a bias node spec.
@@ -1184,5 +1263,6 @@ def extract_features_for_bias_node(
         end=end,
         timeframes=timeframes,
         use_millisecond_offset=use_millisecond_offset,
-        target_col=target_col
+        target_col=target_col,
+        use_cache=use_cache
     )

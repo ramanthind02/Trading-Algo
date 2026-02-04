@@ -10,13 +10,17 @@ Date: 2025-01-07
 
 import pandas as pd
 import numpy as np
+from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
+import logging
 
 from utils.enums import Ticker, TimeFrame
 from utils.models import Candle
 from utils import helpers
 from feature_selection.base_models.base_model import BinningModelBase
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -68,7 +72,8 @@ class BaseModel:
         self,
         feature_config: Dict[str, Any],
         tickers: Union[Ticker, List[Ticker]],
-        binning_model: Optional[BinningModelBase] = None
+        binning_model: Optional[BinningModelBase] = None,
+        use_cache: bool = True
     ):
         """
         Initialize base model with feature configuration.
@@ -89,8 +94,12 @@ class BaseModel:
             When multiple tickers are provided, the model is trained in aggregate across all tickers.
         binning_model : BinningModelBase, optional
             Binning model instance. If None, will be created from feature_config.
+        use_cache : bool, default=True
+            If True, uses vectorized cached data when available.
+            If False, uses streaming candle-by-candle processing.
         """
         self.feature_config = feature_config
+        self.use_cache = use_cache
         
         # Normalize tickers to list
         if isinstance(tickers, Ticker):
@@ -309,13 +318,45 @@ class BaseModel:
     def fit(
         self,
         candles_df: pd.DataFrame,
-        target_data: pd.Series
+        target_data: pd.Series,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> 'BaseModel':
         """
         Fit model: update bias nodes, extract features, fit binning model.
-        
-        Uses caching based on date_range to avoid refitting for the same date range.
-        
+
+        Dispatches to vectorized_fit (cached) or stream_fit based on use_cache setting.
+
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with candles. Must have columns: datetime, open, high, low, close, volume, ticker, timeframe
+        target_data : pd.Series
+            Target values (returns) aligned with candles
+        start_date : datetime, optional
+            Start date for vectorized fit (required if use_cache=True)
+        end_date : datetime, optional
+            End date for vectorized fit (required if use_cache=True)
+
+        Returns
+        -------
+        self
+            Fitted model
+        """
+        if self.use_cache:
+            return self.vectorized_fit(candles_df, target_data, start_date, end_date)
+        return self.stream_fit(candles_df, target_data)
+
+    def stream_fit(
+        self,
+        candles_df: pd.DataFrame,
+        target_data: pd.Series
+    ) -> 'BaseModel':
+        """
+        Fit model using streaming candle-by-candle processing.
+
+        This is the original fit implementation that processes candles one at a time.
+
         Parameters
         ----------
         candles_df : pd.DataFrame
@@ -328,6 +369,18 @@ class BaseModel:
         self
             Fitted model
         """
+        # Convert target_data to Series if it's a DataFrame
+        if isinstance(target_data, pd.DataFrame):
+            # If DataFrame has 'datetime' column, use it as index
+            if 'datetime' in target_data.columns:
+                target_data = target_data.set_index('datetime')
+            # Get the first non-datetime column as the target
+            target_cols = [c for c in target_data.columns if c != 'datetime']
+            if target_cols:
+                target_data = target_data[target_cols[0]]
+            else:
+                target_data = target_data.iloc[:, 0]
+
         # Extract unique tickers from candles_df
         unique_tickers = candles_df['ticker'].unique()
         
@@ -428,7 +481,11 @@ class BaseModel:
         
         # If alignment resulted in all NaN or very poor alignment, try aligning by base datetime
         # This is a fallback for when datetimes don't match exactly
-        if (aligned_target.isna().all() or alignment_ratio < 0.5) and len(target_data) > 0:
+        # Use .all().all() to handle both Series and DataFrame cases
+        all_nan = aligned_target.isna().all()
+        if hasattr(all_nan, 'all'):
+            all_nan = all_nan.all()
+        if (all_nan or alignment_ratio < 0.5) and len(target_data) > 0:
             # Use the same method as BaseModel.get_feature() for consistency
             # BaseModel.get_feature() uses: base_dt = dt.replace(microsecond=0)
             # We'll use the same approach here
@@ -472,7 +529,6 @@ class BaseModel:
             # Validate alignment after base datetime matching
             final_alignment_ratio = aligned_target.notna().sum() / len(feature_data) if len(feature_data) > 0 else 0.0
             if final_alignment_ratio < 0.8:
-                import logging
                 logger = logging.getLogger(__name__)
                 logger.warning(
                     f"Poor alignment after base datetime matching: {final_alignment_ratio:.1%} aligned. "
@@ -491,31 +547,242 @@ class BaseModel:
         
         # Fit binning model
         self.binning_model.fit(feature_data, aligned_target)
-        
+
         return self
-    
+
+    def vectorized_fit(
+        self,
+        candles_df: pd.DataFrame,
+        target_data: pd.Series,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> 'BaseModel':
+        """
+        Fit model using vectorized cached data.
+
+        Uses get_cached_values() from bias nodes for bulk feature extraction,
+        avoiding the candle-by-candle processing loop.
+
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with candles. Used for extracting date range if not provided.
+        target_data : pd.Series
+            Target values (returns) aligned with candles
+        start_date : datetime, optional
+            Start date for cached data. If None, inferred from candles_df.
+        end_date : datetime, optional
+            End date for cached data. If None, inferred from candles_df.
+
+        Returns
+        -------
+        self
+            Fitted model
+
+        Raises
+        ------
+        CacheMissError
+            If cache is not available for any bias node
+        """
+        from utils.bias_node_cache import CacheMissError
+
+        # Convert target_data to Series if it's a DataFrame
+        if isinstance(target_data, pd.DataFrame):
+            # If DataFrame has 'datetime' column, use it as index
+            if 'datetime' in target_data.columns:
+                target_data = target_data.set_index('datetime')
+            # Get the first non-datetime column as the target
+            target_cols = [c for c in target_data.columns if c != 'datetime']
+            if target_cols:
+                target_data = target_data[target_cols[0]]
+            else:
+                target_data = target_data.iloc[:, 0]
+
+        # Infer date range from candles_df if not provided
+        if start_date is None:
+            start_date = pd.to_datetime(candles_df['datetime']).min()
+        if end_date is None:
+            end_date = pd.to_datetime(candles_df['datetime']).max()
+
+        # Convert to datetime if needed
+        if isinstance(start_date, str):
+            start_date = pd.to_datetime(start_date)
+        if isinstance(end_date, str):
+            end_date = pd.to_datetime(end_date)
+
+        # Get the primary timeframe and build feature column name
+        primary_tf = self.bias_node_spec['timeframes'][0]
+        primary_ticker = self.tickers[0]
+        primary_node = self.bias_nodes[(primary_ticker, primary_tf)]
+
+        output_feature = 'signal'  # default
+        if hasattr(primary_node, 'output_features') and primary_node.output_features:
+            output_feature = primary_node.output_features[0]
+
+        column_name = helpers.build_feature_column_name(
+            module=self.bias_node_spec['module_name'],
+            feature=output_feature,
+            tf=primary_tf,
+            params=self.bias_node_spec['params']
+        )
+        self.feature_column = column_name
+
+        # Collect cached features from all bias nodes
+        all_features = []
+        for ticker in self.tickers:
+            for tf in self.bias_node_spec['timeframes']:
+                bias_node = self.bias_nodes[(ticker, tf)]
+                try:
+                    cached_values = bias_node.get_cached_values(
+                        start=start_date,
+                        end=end_date,
+                        require_cache=True
+                    )
+                    if cached_values is not None and len(cached_values) > 0:
+                        all_features.append(cached_values)
+                except CacheMissError:
+                    # Cache miss - fall back to streaming
+                    logger.warning(
+                        f"Cache miss for {bias_node.module_name} ({ticker}, {tf}). "
+                        f"Falling back to stream_fit."
+                    )
+                    return self.stream_fit(candles_df, target_data)
+
+        if not all_features:
+            raise ValueError(
+                f"No cached features available for any bias node. "
+                f"Run cache population first or set use_cache=False."
+            )
+
+        # Combine features from all tickers/timeframes
+        if len(all_features) == 1:
+            feature_data = all_features[0]
+        else:
+            # Concatenate and aggregate by datetime (mean for multi-ticker)
+            combined = pd.concat(all_features)
+            feature_data = combined.groupby(combined.index).mean()
+
+        feature_data.name = column_name
+
+        # Align feature and target data
+        aligned_target = target_data.reindex(feature_data.index)
+
+        # Check alignment quality
+        n_aligned = aligned_target.notna().sum()
+        n_features = len(feature_data)
+        alignment_ratio = n_aligned / n_features if n_features > 0 else 0.0
+
+        # If alignment resulted in all NaN or very poor alignment, try aligning by base datetime
+        # Use hasattr to handle both Series and DataFrame cases
+        all_nan = aligned_target.isna().all()
+        if hasattr(all_nan, 'all'):
+            all_nan = all_nan.all()
+        if (all_nan or alignment_ratio < 0.5) and len(target_data) > 0:
+            def to_base_datetime(dt):
+                """Convert datetime to base datetime (remove microseconds)."""
+                if isinstance(dt, pd.Timestamp):
+                    return dt.replace(microsecond=0)
+                else:
+                    return pd.to_datetime(dt).replace(microsecond=0)
+
+            feature_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in feature_data.index])
+            target_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in target_data.index])
+
+            feature_by_base = pd.Series(feature_data.values, index=feature_base_index)
+            feature_by_base = feature_by_base.groupby(feature_by_base.index).mean()
+
+            target_by_base = pd.Series(target_data.values, index=target_base_index)
+            target_by_base = target_by_base.groupby(target_by_base.index).mean()
+
+            common_base_dt = feature_by_base.index.intersection(target_by_base.index)
+
+            if len(common_base_dt) == 0:
+                raise ValueError(
+                    f"Cannot align feature and target data. "
+                    f"Feature index range: {feature_data.index.min()} to {feature_data.index.max()}, "
+                    f"Target index range: {target_data.index.min()} to {target_data.index.max()}. "
+                    f"No overlapping base datetimes found."
+                )
+
+            feature_data = feature_by_base.reindex(common_base_dt)
+            aligned_target = target_by_base.reindex(common_base_dt)
+
+            final_alignment_ratio = aligned_target.notna().sum() / len(feature_data) if len(feature_data) > 0 else 0.0
+            if final_alignment_ratio < 0.8:
+                logger.warning(
+                    f"Poor alignment after base datetime matching: {final_alignment_ratio:.1%} aligned. "
+                    f"Feature range: {feature_data.index.min()} to {feature_data.index.max()}, "
+                    f"Target range: {target_by_base.index.min()} to {target_by_base.index.max()}, "
+                    f"Common datetimes: {len(common_base_dt)}"
+                )
+
+        # Final validation
+        final_n_aligned = aligned_target.notna().sum()
+        if final_n_aligned < 20:
+            raise ValueError(
+                f"Insufficient aligned data: {final_n_aligned} samples aligned out of {len(feature_data)} features. "
+                f"This suggests a datetime alignment issue between features and returns."
+            )
+
+        # Fit binning model
+        self.binning_model.fit(feature_data, aligned_target)
+
+        return self
+
     def predict(
         self,
         candles_df: pd.DataFrame,
-        strategy: str = 'long'
+        strategy: str = 'long',
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> pd.Series:
         """
         Predict: update bias nodes, extract features, predict with binning model.
-        
-        Uses caching based on date_range and strategy to avoid recomputation.
-        
+
+        Dispatches to vectorized_predict (cached) or stream_predict based on use_cache setting.
+
         Parameters
         ----------
         candles_df : pd.DataFrame
             DataFrame with candles. Must have columns: datetime, open, high, low, close, volume, ticker, timeframe
         strategy : str, default='long'
             Strategy to use: 'long' or 'short'
-            
+        start_date : datetime, optional
+            Start date for vectorized predict (required if use_cache=True)
+        end_date : datetime, optional
+            End date for vectorized predict (required if use_cache=True)
+
         Returns
         -------
         pd.Series
             Predictions (binary signals or scaled positions) indexed by candle datetimes
             Returns predictions for ALL input candles, not just new ones.
+        """
+        if self.use_cache:
+            return self.vectorized_predict(candles_df, strategy, start_date, end_date)
+        return self.stream_predict(candles_df, strategy)
+
+    def stream_predict(
+        self,
+        candles_df: pd.DataFrame,
+        strategy: str = 'long'
+    ) -> pd.Series:
+        """
+        Predict using streaming candle-by-candle processing.
+
+        This is the original predict implementation.
+
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with candles.
+        strategy : str, default='long'
+            Strategy to use: 'long' or 'short'
+
+        Returns
+        -------
+        pd.Series
+            Predictions indexed by candle datetimes
         """
         # Note: We don't reset state here because base models may be called multiple times
         # with different tickers, and we want to preserve historical context for features
@@ -578,7 +845,6 @@ class BaseModel:
                 feature_index.append(dt)
             else:
                 # No feature for this datetime - this shouldn't happen if bias nodes are working
-                import logging
                 logger = logging.getLogger(__name__)
                 logger.debug(
                     f"BaseModel.predict() no feature value for datetime {dt}. "
@@ -590,7 +856,6 @@ class BaseModel:
         
         if not feature_index:
             # No features extracted at all - this is a problem, log it
-            import logging
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"BaseModel.predict() extracted no features for {len(all_input_datetimes)} candles. "
@@ -606,8 +871,10 @@ class BaseModel:
         input_feature_data = pd.Series(feature_values, index=pd.DatetimeIndex(feature_index))
         
         # Drop NaN values before prediction (bias nodes should always return values)
-        if input_feature_data.isna().any():
-            import logging
+        has_nan = input_feature_data.isna().any()
+        if hasattr(has_nan, 'any'):
+            has_nan = has_nan.any()
+        if has_nan:
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"BaseModel.predict() has {input_feature_data.isna().sum()} NaN values out of {len(input_feature_data)}. "
@@ -618,9 +885,102 @@ class BaseModel:
         
         # Predict with binning model
         predictions = self.binning_model.predict(input_feature_data, strategy=strategy)
-        
+
         return predictions
-    
+
+    def vectorized_predict(
+        self,
+        candles_df: pd.DataFrame,
+        strategy: str = 'long',
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
+    ) -> pd.Series:
+        """
+        Predict using vectorized cached data.
+
+        Uses get_cached_values() from bias nodes for bulk feature extraction.
+
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with candles. Used for extracting date range if not provided.
+        strategy : str, default='long'
+            Strategy to use: 'long' or 'short'
+        start_date : datetime, optional
+            Start date for cached data. If None, inferred from candles_df.
+        end_date : datetime, optional
+            End date for cached data. If None, inferred from candles_df.
+
+        Returns
+        -------
+        pd.Series
+            Predictions indexed by candle datetimes
+        """
+        from utils.bias_node_cache import CacheMissError
+
+        # Infer date range from candles_df if not provided
+        if start_date is None:
+            start_date = pd.to_datetime(candles_df['datetime']).min()
+        if end_date is None:
+            end_date = pd.to_datetime(candles_df['datetime']).max()
+
+        # Convert to datetime if needed
+        if isinstance(start_date, str):
+            start_date = pd.to_datetime(start_date)
+        if isinstance(end_date, str):
+            end_date = pd.to_datetime(end_date)
+
+        # Collect cached features from all bias nodes
+        all_features = []
+        for ticker in self.tickers:
+            for tf in self.bias_node_spec['timeframes']:
+                bias_node = self.bias_nodes[(ticker, tf)]
+                try:
+                    cached_values = bias_node.get_cached_values(
+                        start=start_date,
+                        end=end_date,
+                        require_cache=True
+                    )
+                    if cached_values is not None and len(cached_values) > 0:
+                        all_features.append(cached_values)
+                except CacheMissError:
+                    # Cache miss - fall back to streaming
+                    logger.warning(
+                        f"Cache miss for {bias_node.module_name} ({ticker}, {tf}). "
+                        f"Falling back to stream_predict."
+                    )
+                    return self.stream_predict(candles_df, strategy)
+
+        if not all_features:
+            raise ValueError(
+                f"No cached features available for any bias node. "
+                f"Run cache population first or set use_cache=False."
+            )
+
+        # Combine features from all tickers/timeframes
+        if len(all_features) == 1:
+            feature_data = all_features[0]
+        else:
+            # Concatenate and aggregate by datetime (mean for multi-ticker)
+            combined = pd.concat(all_features)
+            feature_data = combined.groupby(combined.index).mean()
+
+        # Handle NaN values
+        has_nan = feature_data.isna().any()
+        if hasattr(has_nan, 'any'):
+            has_nan = has_nan.any()
+        if has_nan:
+            logger.warning(
+                f"BaseModel.vectorized_predict() has {feature_data.isna().sum()} NaN values. "
+                f"Filling with 0.0."
+            )
+            feature_data = feature_data.fillna(0.0)
+
+        # Predict with binning model
+        predictions = self.binning_model.predict(feature_data, strategy=strategy)
+
+        return predictions
+
     def save_to_vault(
         self,
         ensemble_dir: Optional[str] = None,
