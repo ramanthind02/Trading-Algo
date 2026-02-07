@@ -640,13 +640,13 @@ class BaseModel:
                     )
                     if cached_values is not None and len(cached_values) > 0:
                         all_features.append(cached_values)
-                except CacheMissError:
-                    # Cache miss - fall back to streaming
-                    logger.warning(
+                except CacheMissError as exc:
+                    logger.error(
                         f"Cache miss for {bias_node.module_name} ({ticker}, {tf}). "
-                        f"Falling back to stream_fit."
+                        f"Vectorized fit requires complete cache coverage.",
+                        exc_info=True
                     )
-                    return self.stream_fit(candles_df, target_data)
+                    raise exc
 
         if not all_features:
             raise ValueError(
@@ -930,9 +930,21 @@ class BaseModel:
         if isinstance(end_date, str):
             end_date = pd.to_datetime(end_date)
 
-        # Collect cached features from all bias nodes
+        # Determine which tickers are actually in the input candles
+        if 'ticker' in candles_df.columns:
+            # Get unique tickers from input candles - only predict for these tickers
+            candles_tickers = candles_df['ticker'].unique()
+            # Convert to set for fast lookup
+            candles_ticker_set = set(candles_tickers)
+            # Filter self.tickers to only those present in candles_df
+            tickers_to_predict = [t for t in self.tickers if t in candles_ticker_set or (hasattr(t, 'value') and t.value in candles_ticker_set) or str(t) in [str(ct) for ct in candles_tickers]]
+        else:
+            # No ticker column - use all tickers (single-ticker mode)
+            tickers_to_predict = self.tickers
+        
+        # Collect cached features from relevant bias nodes
         all_features = []
-        for ticker in self.tickers:
+        for ticker in tickers_to_predict:
             for tf in self.bias_node_spec['timeframes']:
                 bias_node = self.bias_nodes[(ticker, tf)]
                 try:
@@ -943,13 +955,13 @@ class BaseModel:
                     )
                     if cached_values is not None and len(cached_values) > 0:
                         all_features.append(cached_values)
-                except CacheMissError:
-                    # Cache miss - fall back to streaming
-                    logger.warning(
+                except CacheMissError as exc:
+                    logger.error(
                         f"Cache miss for {bias_node.module_name} ({ticker}, {tf}). "
-                        f"Falling back to stream_predict."
+                        f"Vectorized predict requires complete cache coverage.",
+                        exc_info=True
                     )
-                    return self.stream_predict(candles_df, strategy)
+                    raise exc
 
         if not all_features:
             raise ValueError(
@@ -961,7 +973,9 @@ class BaseModel:
         if len(all_features) == 1:
             feature_data = all_features[0]
         else:
-            # Concatenate and aggregate by datetime (mean for multi-ticker)
+            # Concatenate and aggregate by datetime
+            # For multi-timeframe: take mean across timeframes for same ticker
+            # For multi-ticker (should not happen - ensemble passes single ticker): take mean
             combined = pd.concat(all_features)
             feature_data = combined.groupby(combined.index).mean()
 

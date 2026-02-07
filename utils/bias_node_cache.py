@@ -147,6 +147,34 @@ class BiasNodeCache:
 
         # Cached data (loaded lazily)
         self._data: Optional[pd.DataFrame] = None
+        # Warning suppression for partial coverage
+        self._warned_partial_start: bool = False
+        self._warned_partial_end: bool = False
+
+    def _warn_partial_coverage(
+        self,
+        cache_start: pd.Timestamp,
+        cache_end: pd.Timestamp,
+        start: Optional[datetime],
+        end: Optional[datetime]
+    ) -> None:
+        if start is not None and not self._warned_partial_start:
+            if cache_start > start + pd.Timedelta(days=1):
+                logger.warning(
+                    f"Partial cache coverage for {self.module_name} ({self.ticker_str}, {self.tf_str}). "
+                    f"Cache starts at {cache_start}, requested {start}. "
+                    f"Proceeding with available data."
+                )
+                self._warned_partial_start = True
+        
+        if end is not None and not self._warned_partial_end:
+            if cache_end < end - pd.Timedelta(days=1):
+                logger.warning(
+                    f"Partial cache coverage for {self.module_name} ({self.ticker_str}, {self.tf_str}). "
+                    f"Cache ends at {cache_end}, requested {end}. "
+                    f"Proceeding with available data."
+                )
+                self._warned_partial_end = True
 
     @staticmethod
     def _hash_params(params: Dict[str, Any]) -> str:
@@ -434,32 +462,12 @@ class BiasNodeCache:
                     cache_path=self.cache_path,
                     reason=f"No cached data in range {start} to {end}"
                 )
-
+            
             # Check if range is fully covered (allow 1 day tolerance for edge cases)
             cache_start = values.index.min()
             cache_end = values.index.max()
-
-            if cache_start > start + pd.Timedelta(days=1):
-                raise CacheMissError(
-                    module_name=self.module_name,
-                    params=self.params,
-                    ticker=self.ticker,
-                    tf=self.tf,
-                    date_range=(start, end),
-                    cache_path=self.cache_path,
-                    reason=f"Cache starts at {cache_start}, requested {start}"
-                )
-
-            if cache_end < end - pd.Timedelta(days=1):
-                raise CacheMissError(
-                    module_name=self.module_name,
-                    params=self.params,
-                    ticker=self.ticker,
-                    tf=self.tf,
-                    date_range=(start, end),
-                    cache_path=self.cache_path,
-                    reason=f"Cache ends at {cache_end}, requested {end}"
-                )
+            
+            self._warn_partial_coverage(cache_start, cache_end, start, end)
 
         return values
 
@@ -513,11 +521,16 @@ class BiasNodeCache:
         if start is not None:
             start = pd.to_datetime(start)
             df = df[df.index >= start]
-
+        
         if end is not None:
             end = pd.to_datetime(end)
             df = df[df.index <= end]
-
+        
+        if require_cache and start is not None and end is not None and not df.empty:
+            cache_start = df.index.min()
+            cache_end = df.index.max()
+            self._warn_partial_coverage(cache_start, cache_end, start, end)
+        
         return df
 
     def invalidate(self) -> bool:

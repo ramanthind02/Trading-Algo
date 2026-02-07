@@ -368,10 +368,11 @@ class Portfolio:
                 fallback_weight = remaining_weight / n_missing if n_missing > 0 else 0.0
                 df['instrument_weight'] = df['instrument_weight'].fillna(fallback_weight)
         else:
-            # Equal weight per unique instrument
-            unique_instruments = df['ticker'].nunique()
-            equal_weight = 1.0 / unique_instruments if unique_instruments > 0 else 0.0
-            df['instrument_weight'] = equal_weight
+            # Equal weight: divide capital equally across all instruments
+            # Each instrument gets 1/N where N = number of unique tickers
+            # IDM scales up total portfolio exposure, but weights must sum to 1.0
+            n_instruments = df['ticker'].nunique()
+            df['instrument_weight'] = 1.0 / n_instruments if n_instruments > 0 else 1.0
 
         # Calculate weighted position
         df['position_weighted'] = df['forecast_score'] * df['instrument_weight']
@@ -540,7 +541,7 @@ class Portfolio:
                     self.instruments_ = sorted(tf_candles['ticker'].unique().tolist())
             
             # Fit WeightLayer (calculates weights and FDM from forecast correlations)
-            self._fit_weight_layer(tf_candles)
+            self._fit_weight_layer(tf_candles, start_date=start_date, end_date=end_date)
         
         self.is_fitted_ = True
         
@@ -656,8 +657,7 @@ class Portfolio:
                 # WeightLayer expects: ['ticker', 'model_name', 'forecast', 'signal']
                 ensemble_forecast_vector = []
                 for model_name, model_pred in base_models.items():
-                    if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:
-                        # Convert to WeightLayer format
+                    if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:# Convert to WeightLayer format
                         forecast_df = model_pred.copy()
                         forecast_df['model_name'] = model_name
                         forecast_df['forecast'] = forecast_df['forecast_score']
@@ -685,10 +685,12 @@ class Portfolio:
                 # ALWAYS compute ensemble-level predictions (now fast with vectorization)
                 if ensemble_pred is not None:
                     ensemble_name = f"ensemble_{ensemble_idx}"
+                    
                     # Convert to position fractions (vectorized - O(n+m) complexity)
                     ensemble_positions = self._apply_risk_management_to_forecasts(
                         ensemble_pred, volatility, tf_candles
                     )
+                    
                     ensemble_predictions_dict[ensemble_name] = ensemble_positions
             else:
                 # If ensemble doesn't return dict, it's already aggregated
@@ -712,10 +714,8 @@ class Portfolio:
             return empty_df
         
         # Use WeightLayer to combine forecasts from all base models across all ensembles
-        if self.weight_layer.is_fitted_:
-            # WeightLayer is fitted - use it to combine forecasts
-            combined_forecasts = self.weight_layer.combine(forecast_vectors)
-            # Convert to format expected by _apply_risk_management (needs datetime column)
+        if self.weight_layer.is_fitted_:# WeightLayer is fitted - use it to combine forecasts
+            combined_forecasts = self.weight_layer.combine(forecast_vectors)# Convert to format expected by _apply_risk_management (needs datetime column)
             # WeightLayer returns ['ticker', 'forecast_score'], but we need datetime
             # We'll merge with candles to get datetime alignment
             forecast_scores_df = self._align_forecasts_with_candles(combined_forecasts, tf_candles)
@@ -1078,7 +1078,9 @@ class Portfolio:
     
     def _fit_weight_layer(
         self,
-        candles_df: pd.DataFrame
+        candles_df: pd.DataFrame,
+        start_date=None,
+        end_date=None
     ) -> None:
         """
         Fit WeightLayer from forecast vectors and signals.
@@ -1480,10 +1482,14 @@ class Portfolio:
         # Prepare forecasts DataFrame with normalized datetime
         forecasts_clean = forecasts_df[['ticker', 'datetime', 'forecast_score']].copy()
         forecasts_clean['datetime'] = pd.to_datetime(forecasts_clean['datetime'])
+        # Remove microseconds (used to distinguish tickers in multi-ticker DataFrames)
+        forecasts_clean['datetime'] = forecasts_clean['datetime'].dt.floor('S')
         
         # Prepare candles subset with normalized datetime
         candles_subset = candles_df[['ticker', 'datetime']].copy()
         candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime'])
+        # Remove microseconds (used to distinguish tickers in multi-ticker DataFrames)
+        candles_subset['datetime'] = candles_subset['datetime'].dt.floor('S')
         
         # Vectorized merge on (ticker, datetime) - O(n+m) complexity
         result = candles_subset.merge(
@@ -1503,10 +1509,12 @@ class Portfolio:
         if self.instrument_weights is not None:
             result['position_fraction'] *= result['ticker'].map(self.instrument_weights).fillna(1.0)
         else:
-            # Equal weight per unique instrument
-            n_tickers = candles_df['ticker'].nunique()
-            if n_tickers > 0:
-                result['position_fraction'] /= n_tickers
+            # Equal weight: divide capital equally across all instruments
+            # Each instrument gets 1/N where N = number of unique tickers
+            # IDM scales up total portfolio exposure, but weights must sum to 1.0
+            n_instruments = result['ticker'].nunique()
+            instrument_weight = 1.0 / n_instruments if n_instruments > 0 else 1.0
+            result['position_fraction'] *= instrument_weight
         
         # Vectorized position cap
         if self.max_position_pct is not None:

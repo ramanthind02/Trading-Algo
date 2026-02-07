@@ -902,8 +902,11 @@ class DiversifiedEnsemble:
                         for ticker_name in model_candles['ticker'].unique():
                             ticker_candles = model_candles[model_candles['ticker'] == ticker_name].copy()
                             try:
-                                # Generate binary signals from base model
-                                pred = base_model.predict(ticker_candles)
+                                # Generate binary signals from base model using its configured strategy
+                                pred = base_model.predict(
+                                    ticker_candles,
+                                    strategy=base_model.strategy
+                                )
                                 if pred is not None and len(pred) > 0:
                                     model_signals.append(pred)
                             except Exception as e:
@@ -1201,9 +1204,12 @@ class DiversifiedEnsemble:
                     
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
                     # BaseModel.predict() handles feature caching internally (if use_cache=True)
-                    pred = base_model.predict(ticker_candles, start_date=start_date, end_date=end_date)
-                    
-                    # Debug: Log prediction details
+                    pred = base_model.predict(
+                        ticker_candles,
+                        strategy=base_model.strategy,
+                        start_date=start_date,
+                        end_date=end_date
+                    )# Debug: Log prediction details
                     if len(pred) == 0:
                         logger.warning(
                             f"Base model '{model_name}' returned empty predictions for ticker '{ticker_name}'. "
@@ -1221,6 +1227,7 @@ class DiversifiedEnsemble:
                     # Calculate volatility-adjusted forecast
                     # X_i is the binary signal (pred.values)
                     forecast_if_active = self.target_volatility_ / (ticker_vol * sqrt_h_i)
+                    
                     
                     # Cap forecast at 2.0 (per spec: max position is 2.0)
                     forecast_if_active = min(forecast_if_active, 2.0)
@@ -1319,13 +1326,46 @@ class DiversifiedEnsemble:
         ensemble_result = pd.concat(all_predictions, ignore_index=True)
         ensemble_result = ensemble_result[['ticker', 'datetime', 'forecast_score']]
         
+        # CRITICAL FIX: Align predictions to candles' datetime index to ensure all tickers have same rows
+        # This fixes the issue where different tickers have different prediction counts (e.g. ES:1008, NQ:1007)
+        # causing the merge in portfolio._apply_risk_management_to_forecasts to fail
+        candles_datetime_index = candles_df[['ticker', 'datetime']].copy()
+        candles_datetime_index['datetime'] = pd.to_datetime(candles_datetime_index['datetime'])
+        # Remove microseconds from candles (used to distinguish tickers in multi-ticker DataFrames)
+        candles_datetime_index['datetime'] = candles_datetime_index['datetime'].dt.floor('S')
+        ensemble_result['datetime'] = pd.to_datetime(ensemble_result['datetime'])
+        ensemble_result['datetime'] = ensemble_result['datetime'].dt.floor('S')
+        
+        # Right merge: keep all candles datetimes, fill missing forecasts with 0
+        ensemble_result = candles_datetime_index.merge(
+            ensemble_result,
+            on=['ticker', 'datetime'],
+            how='left'
+        )
+        ensemble_result['forecast_score'] = ensemble_result['forecast_score'].fillna(0.0)
+        ensemble_result = ensemble_result[['ticker', 'datetime', 'forecast_score']]
+        
         # Return structure based on flag
         if return_base_model_predictions:
             # Combine base model predictions across tickers
             combined_base_models = {}
             for model_name, model_dfs in base_model_predictions_dict.items():
-                combined_base_models[model_name] = pd.concat(model_dfs, ignore_index=True)
-            return {
+                base_model_df = pd.concat(model_dfs, ignore_index=True)
+                
+                # CRITICAL FIX: Align base model predictions to candles' datetime index too
+                base_model_df['datetime'] = pd.to_datetime(base_model_df['datetime'])
+                base_model_df['datetime'] = base_model_df['datetime'].dt.floor('S')
+                base_model_df = candles_datetime_index.merge(
+                    base_model_df,
+                    on=['ticker', 'datetime'],
+                    how='left'
+                )
+                base_model_df['forecast_score'] = base_model_df['forecast_score'].fillna(0.0)
+                base_model_df = base_model_df[['ticker', 'datetime', 'forecast_score']]
+                
+                combined_base_models[model_name] = base_model_df
+        
+        return {
                 'ensemble': ensemble_result,
                 'base_models': combined_base_models
             }
