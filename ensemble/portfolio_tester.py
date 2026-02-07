@@ -16,8 +16,8 @@ from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
 
 
 def _empty_returns_series(name: str) -> pd.Series:
-    """Create an empty returns series with a consistent float dtype and name."""
-    return pd.Series(dtype=float, name=name)
+    """Create an empty returns series with a consistent float dtype, DatetimeIndex, and name."""
+    return pd.Series(dtype=float, name=name, index=pd.DatetimeIndex([]))
 
 
 def calculate_log_returns_from_candles(candles_df: pd.DataFrame) -> pd.Series:
@@ -98,6 +98,10 @@ def calculate_strategy_returns_from_positions(
 
     candles_sorted = candles_df.sort_values(['ticker', 'datetime']).copy()
     candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
+    
+    # CRITICAL: Remove microsecond offsets used to distinguish tickers in multi-ticker DataFrames
+    # The positions DataFrame has already been normalized (floor('S')), so we need to match that
+    candles_sorted['datetime'] = candles_sorted['datetime'].dt.floor('S')
 
     # Compute log returns per ticker (reused for all strategies)
     candles_sorted['log_close'] = np.log(candles_sorted['close'])
@@ -113,6 +117,17 @@ def calculate_strategy_returns_from_positions(
     # Align positions with the *next* bar's return to avoid lookahead bias.
     positions = positions_df.copy()
     positions['datetime'] = pd.to_datetime(positions['datetime'])
+    # Ensure positions datetime is also normalized (should already be, but ensure consistency)
+    positions['datetime'] = positions['datetime'].dt.floor('S')
+    
+    # #region agent log
+    from utils.debug_helpers import safe_json_dumps
+    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
+        # Check date coverage
+        pos_dates = positions.groupby('ticker')['datetime'].apply(lambda x: (x.min(), x.max(), len(x))).to_dict()
+        candles_dates = candles_sorted.groupby('ticker')['datetime'].apply(lambda x: (x.min(), x.max(), len(x))).to_dict()
+        f.write(safe_json_dumps({'location':'portfolio_tester.py:117','message':'date coverage check','data':{'positions_date_range_sample':{k: {'min': str(v[0]), 'max': str(v[1]), 'count': v[2]} for k, v in list(pos_dates.items())[:3]},'candles_date_range_sample':{k: {'min': str(v[0]), 'max': str(v[1]), 'count': v[2]} for k, v in list(candles_dates.items())[:3]}},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'date_gaps'})+'\n')
+    # #endregion
 
     # Merge to find, for each position at time t, the candle row and its next_datetime
     pos_with_next = positions.merge(
@@ -120,6 +135,14 @@ def calculate_strategy_returns_from_positions(
         on=['ticker', 'datetime'],
         how='left',
     )
+    
+    # #region agent log
+    from utils.debug_helpers import safe_json_dumps
+    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
+        # Check how many rows lost next_datetime
+        na_by_ticker = pos_with_next[pos_with_next['next_datetime'].isna()].groupby('ticker').size().to_dict()
+        f.write(safe_json_dumps({'location':'portfolio_tester.py:129','message':'after first merge','data':{'total_rows':len(pos_with_next),'na_next_datetime':int(pos_with_next['next_datetime'].isna().sum()),'na_by_ticker':na_by_ticker},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'date_gaps'})+'\n')
+    # #endregion
 
     # Drop positions that do not have a future bar
     pos_with_next = pos_with_next.dropna(subset=['next_datetime'])
@@ -131,6 +154,23 @@ def calculate_strategy_returns_from_positions(
 
     # Now join with instrument returns at ret_datetime
     returns_df = candles_sorted[['ticker', 'datetime', 'instrument_return']].dropna()
+    
+    # #region agent log
+    from utils.debug_helpers import safe_json_dumps
+    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
+        # Check what we have before second merge
+        pos_by_ticker = pos_with_next.groupby('ticker').size().to_dict()
+        returns_by_ticker = returns_df.groupby('ticker').size().to_dict()
+        # Sample a specific date to see what's available
+        sample_date = pos_with_next['ret_datetime'].iloc[10] if len(pos_with_next) > 10 else None
+        if sample_date:
+            pos_on_date = pos_with_next[pos_with_next['ret_datetime'] == sample_date]['ticker'].tolist()
+            returns_on_date = returns_df[returns_df['datetime'] == sample_date]['ticker'].tolist()
+        else:
+            pos_on_date = []
+            returns_on_date = []
+        f.write(safe_json_dumps({'location':'portfolio_tester.py:139','message':'before second merge','data':{'pos_with_next_rows':len(pos_with_next),'returns_df_rows':len(returns_df),'pos_tickers':len(pos_by_ticker),'returns_tickers':len(returns_by_ticker),'sample_date':str(sample_date) if sample_date else None,'pos_tickers_on_sample_date':pos_on_date,'returns_tickers_on_sample_date':returns_on_date},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'second_merge'})+'\n')
+    # #endregion
 
     merged = pos_with_next.merge(
         returns_df,
@@ -139,6 +179,13 @@ def calculate_strategy_returns_from_positions(
         how='inner',
         suffixes=('', '_ret'),
     )
+    
+    # #region agent log
+    from utils.debug_helpers import safe_json_dumps
+    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
+        merged_by_ticker = merged.groupby('ticker').size().to_dict()
+        f.write(safe_json_dumps({'location':'portfolio_tester.py:149','message':'after second merge','data':{'merged_rows':len(merged),'merged_tickers':len(merged_by_ticker),'rows_by_ticker':merged_by_ticker},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'second_merge'})+'\n')
+    # #endregion
 
     if merged.empty:
         return _empty_returns_series('strategy_return')
@@ -149,6 +196,17 @@ def calculate_strategy_returns_from_positions(
     else:
         merged['strategy_return'] = merged['position_fraction'] * merged['instrument_return']
 
+    # #region agent log
+    from utils.debug_helpers import safe_json_dumps
+    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
+        sample_rows = merged.head(50)[['ticker','ret_datetime','position_fraction','instrument_return','strategy_return']].to_dict('records')
+        # Group by date to count tickers per date
+        tickers_per_date = merged.groupby('ret_datetime')['ticker'].nunique().sort_index()
+        dates_with_1_ticker = (tickers_per_date == 1).sum()
+        dates_with_all_tickers = (tickers_per_date == 23).sum()
+        f.write(safe_json_dumps({'location':'portfolio_tester.py:152','message':'before aggregation','data':{'n_rows':len(merged),'unique_tickers':len(merged['ticker'].unique()),'unique_dates':len(merged['ret_datetime'].unique()),'dates_with_1_ticker':int(dates_with_1_ticker),'dates_with_all_tickers':int(dates_with_all_tickers),'tickers_per_date_stats':{'mean':float(tickers_per_date.mean()),'min':int(tickers_per_date.min()),'max':int(tickers_per_date.max()),'median':float(tickers_per_date.median())},'sample_rows':sample_rows,'instrument_return_stats':{'mean':float(merged['instrument_return'].mean()),'std':float(merged['instrument_return'].std()),'min':float(merged['instrument_return'].min()),'max':float(merged['instrument_return'].max())},'strategy_return_stats':{'mean':float(merged['strategy_return'].mean()),'std':float(merged['strategy_return'].std()),'min':float(merged['strategy_return'].min()),'max':float(merged['strategy_return'].max())}},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'returns_values'})+'\n')
+    # #endregion
+    
     # Group by datetime of the return (ret_datetime) and sum across tickers
     merged['ret_datetime'] = merged['ret_datetime'].astype('datetime64[ns]')
     strategy_returns = (
@@ -156,8 +214,15 @@ def calculate_strategy_returns_from_positions(
         .sum()
         .sort_index()
     )
+    
+    # #region agent log
+    from utils.debug_helpers import safe_json_dumps
+    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
+        f.write(safe_json_dumps({'location':'portfolio_tester.py:158','message':'after aggregation','data':{'n_returns':len(strategy_returns),'return_stats':{'mean':float(strategy_returns.mean()),'std':float(strategy_returns.std()),'min':float(strategy_returns.min()),'max':float(strategy_returns.max()),'abs_max':float(strategy_returns.abs().max())},'sample_returns':strategy_returns.head(20).to_dict()},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'returns_values'})+'\n')
+    # #endregion
 
     strategy_returns.name = 'strategy_return'
+    
     return strategy_returns
 
 
@@ -379,11 +444,13 @@ class PortfolioTester:
         output_file: Optional[str] = None,
         output_dir: Optional[str] = None,
         mode: str = 'full',
-        candles_df: Optional[pd.DataFrame] = None
+        candles_df: Optional[pd.DataFrame] = None,
+        strategy_returns: Optional[pd.Series] = None,
+        baseline_returns: Optional[pd.Series] = None
     ) -> None:
         """
         Generate QuantStats tearsheet for portfolio.
-        
+
         Parameters
         ----------
         strategy_name : str, default='Portfolio'
@@ -396,41 +463,49 @@ class PortfolioTester:
             Tearsheet mode: 'html', 'full', 'basic', or 'metrics'
         candles_df : pd.DataFrame, optional
             Candles DataFrame. If provided and strategy_returns not calculated, will calculate it
+        strategy_returns : pd.Series, optional
+            Precomputed strategy returns (e.g. for training set). If provided, used instead of self.
+        baseline_returns : pd.Series, optional
+            Precomputed baseline returns (e.g. for training set). If provided, used instead of self.
         """
-        # Calculate strategy returns if needed
-        if self.strategy_returns is None:
-            if candles_df is None:
-                raise ValueError("Either provide candles_df or call calculate_strategy_returns() first")
-            self.calculate_strategy_returns(candles_df)
-        
-        # Calculate baseline returns if needed
-        if self.baseline_returns is None:
-            if candles_df is None:
-                raise ValueError("Either provide candles_df or call calculate_baseline_returns() first")
-            self.calculate_baseline_returns(candles_df)
-        
+        use_strategy = strategy_returns
+        if use_strategy is None:
+            if self.strategy_returns is None:
+                if candles_df is None:
+                    raise ValueError("Either provide candles_df or call calculate_strategy_returns() first")
+                self.calculate_strategy_returns(candles_df)
+            use_strategy = self.strategy_returns
+
+        use_baseline = baseline_returns
+        if use_baseline is None:
+            if self.baseline_returns is None:
+                if candles_df is None:
+                    raise ValueError("Either provide candles_df or call calculate_baseline_returns() first")
+                self.calculate_baseline_returns(candles_df)
+            use_baseline = self.baseline_returns
+
         # Determine output file path
         final_output_file = output_file
         if output_dir is not None:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             safe_name = strategy_name.replace(' ', '_').replace('::', '_').replace('/', '_')
             final_output_file = str(Path(output_dir) / f"{safe_name}_tearsheet.html")
-        
+
         # If saving HTML file, save it first
         if final_output_file is not None:
             generate_tearsheet(
-                strategy_returns=self.strategy_returns,
-                baseline_returns=self.baseline_returns,
+                strategy_returns=use_strategy,
+                baseline_returns=use_baseline,
                 feature_name=strategy_name,
                 output_file=final_output_file,
                 mode='html'
             )
-        
+
         # If mode is not 'html' or no output file, also display in notebook
         if mode != 'html' or final_output_file is None:
             generate_tearsheet(
-                strategy_returns=self.strategy_returns,
-                baseline_returns=self.baseline_returns,
+                strategy_returns=use_strategy,
+                baseline_returns=use_baseline,
                 feature_name=strategy_name,
                 output_file=None,
                 mode=mode
@@ -440,11 +515,12 @@ class PortfolioTester:
         self,
         output_dir: Optional[str] = None,
         mode: str = 'html',
-        candles_df: Optional[pd.DataFrame] = None
+        candles_df: Optional[pd.DataFrame] = None,
+        baseline_returns: Optional[pd.Series] = None
     ) -> None:
         """
         Generate tearsheets for each ensemble.
-        
+
         Parameters
         ----------
         output_dir : str, optional
@@ -454,17 +530,25 @@ class PortfolioTester:
             Tearsheet mode: 'html', 'full', 'basic', or 'metrics'
         candles_df : pd.DataFrame, optional
             Candles DataFrame for calculating returns
+        baseline_returns : pd.Series, optional
+            Precomputed baseline returns (e.g. for training set). If provided, used instead of self.
         """
         if self.ensemble_predictions is None:
             raise ValueError("No ensemble predictions available. Call predict() with return_ensemble_predictions=True")
-        
+
         if candles_df is None:
             raise ValueError("candles_df is required to calculate returns")
-        
+
+        use_baseline = baseline_returns
+        if use_baseline is None and self.baseline_returns is None:
+            self.calculate_baseline_returns(candles_df)
+        if use_baseline is None:
+            use_baseline = self.baseline_returns
+
         # Create output directory if saving HTML
         if output_dir is not None:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-        
+
         for ensemble_name, ensemble_positions in self.ensemble_predictions.items():
             # Extract ensemble index from name (e.g., "ensemble_0" -> 0)
             try:
@@ -480,44 +564,41 @@ class PortfolioTester:
                                 strategies.add(base_model.binning_model.strategy)
                             elif hasattr(base_model, 'strategy'):
                                 strategies.add(base_model.strategy)
+
                     # Use strategy if all models agree, otherwise default to 'long'
                     ensemble_strategy = list(strategies)[0] if len(strategies) == 1 else 'long'
                 else:
                     ensemble_strategy = 'long'  # Fallback
             except (ValueError, AttributeError, IndexError):
                 ensemble_strategy = 'long'  # Fallback if can't determine
-            
+
             # Calculate returns for this ensemble
             ensemble_returns = calculate_strategy_returns_from_positions(
                 ensemble_positions,
                 candles_df,
                 strategy=ensemble_strategy
             )
-            
-            # Calculate baseline returns if not already done
-            if self.baseline_returns is None:
-                self.calculate_baseline_returns(candles_df)
-            
+
             # Determine output file path
             output_file = None
             if output_dir is not None:
                 output_file = str(Path(output_dir) / f"{ensemble_name}_tearsheet.html")
-            
+
             # If saving HTML file, save it first
             if output_file is not None:
                 generate_tearsheet(
                     strategy_returns=ensemble_returns,
-                    baseline_returns=self.baseline_returns,
+                    baseline_returns=use_baseline,
                     feature_name=f"Ensemble: {ensemble_name}",
                     output_file=output_file,
                     mode='html'
                 )
-            
+
             # If mode is not 'html' or no output file, also display in notebook
             if mode != 'html' or output_file is None:
                 generate_tearsheet(
                     strategy_returns=ensemble_returns,
-                    baseline_returns=self.baseline_returns,
+                    baseline_returns=use_baseline,
                     feature_name=f"Ensemble: {ensemble_name}",
                     output_file=None,
                     mode=mode
@@ -527,11 +608,12 @@ class PortfolioTester:
         self,
         output_dir: Optional[str] = None,
         mode: str = 'full',
-        candles_df: Optional[pd.DataFrame] = None
+        candles_df: Optional[pd.DataFrame] = None,
+        baseline_returns: Optional[pd.Series] = None
     ) -> None:
         """
         Generate tearsheets for each base model.
-        
+
         Parameters
         ----------
         output_dir : str, optional
@@ -541,33 +623,40 @@ class PortfolioTester:
             Tearsheet mode: 'html', 'full', 'basic', or 'metrics'
         candles_df : pd.DataFrame, optional
             Candles DataFrame for calculating returns
+        baseline_returns : pd.Series, optional
+            Precomputed baseline returns (e.g. for training set). If provided, used instead of self.
         """
         if self.base_model_predictions is None:
             raise ValueError("No base model predictions available. Call predict() with return_base_model_predictions=True")
-        
+
         if candles_df is None:
             raise ValueError("candles_df is required to calculate returns")
-        
+
+        use_baseline = baseline_returns
+        if use_baseline is None and self.baseline_returns is None:
+            self.calculate_baseline_returns(candles_df)
+        if use_baseline is None:
+            use_baseline = self.baseline_returns
+
         # Create output directory if saving HTML
         if output_dir is not None:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-        
-        # Calculate baseline returns if not already done
-        if self.baseline_returns is None:
-            self.calculate_baseline_returns(candles_df)
-        
+
         for model_name, model_positions in self.base_model_predictions.items():
             # Extract strategy from base model
-            # Model name format: "ensemble_X::model_name"
+            # Model name format: "ensemble_X::model_name" or "ensemble_X::feature_name::binning_method"
             model_strategy = 'long'  # Default
+            
             try:
                 if '::' in model_name:
-                    # Parse "ensemble_X::model_name"
+                    # Parse "ensemble_X::model_name" or "ensemble_X::feature_name::binning_method"
                     parts = model_name.split('::')
-                    if len(parts) == 2:
-                        ensemble_part = parts[0]  # "ensemble_X"
-                        base_model_name = parts[1]  # actual model name
-                        ensemble_idx = int(ensemble_part.replace('ensemble_', ''))
+                    ensemble_part = parts[0]  # "ensemble_X"
+                    ensemble_idx = int(ensemble_part.replace('ensemble_', ''))
+                    
+                    if len(parts) >= 2:
+                        # Try to find the base model - it could be parts[1] or parts[1]::parts[2]
+                        base_model_name = '::'.join(parts[1:])  # Join everything after ensemble_X
                         
                         if ensemble_idx < len(self.portfolio.ensembles):
                             ensemble = self.portfolio.ensembles[ensemble_idx]
@@ -577,7 +666,7 @@ class PortfolioTester:
                                     model_strategy = base_model.binning_model.strategy
                                 elif hasattr(base_model, 'strategy'):
                                     model_strategy = base_model.strategy
-            except (ValueError, AttributeError, IndexError, KeyError):
+            except (ValueError, AttributeError, IndexError, KeyError) as e:
                 # Fallback to 'long' if can't determine strategy
                 model_strategy = 'long'
             
@@ -599,17 +688,17 @@ class PortfolioTester:
             if output_file is not None:
                 generate_tearsheet(
                     strategy_returns=model_returns,
-                    baseline_returns=self.baseline_returns,
+                    baseline_returns=use_baseline,
                     feature_name=f"Base Model: {model_name}",
                     output_file=output_file,
                     mode='html'
                 )
-            
+
             # If mode is not 'html' or no output file, also display in notebook
             if mode != 'html' or output_file is None:
                 generate_tearsheet(
                     strategy_returns=model_returns,
-                    baseline_returns=self.baseline_returns,
+                    baseline_returns=use_baseline,
                     feature_name=f"Base Model: {model_name}",
                     output_file=None,
                     mode=mode

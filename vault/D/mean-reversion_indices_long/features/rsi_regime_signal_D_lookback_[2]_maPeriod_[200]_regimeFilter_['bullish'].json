@@ -1,0 +1,44 @@
+{
+  "feature_name": "rsi_regime_signal_D_lookback_[2]_maPeriod_[200]_regimeFilter_['bullish']",
+  "feature_column": "rsi_regime_signal_D_lookback_[2]_maPeriod_[200]_regimeFilter_['bullish']",
+  "created_at": "2026-02-05T05:10:27.076976+00:00",
+  "updated_at": "2026-02-05T05:10:27.076993+00:00",
+  "bias_node_spec": {
+    "module_name": "rsi_regime",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "lookback": [
+        2
+      ],
+      "ma_period": [
+        200
+      ],
+      "regime_filter": [
+        "bullish"
+      ]
+    }
+  },
+  "tickers": [
+    "ES",
+    "NQ",
+    "RTY",
+    "YM"
+  ],
+  "base_models": [
+    {
+      "model_id": "quantile_binning_5",
+      "model_name": "rsi_regime_signal_D_lookback_[2]_maPeriod_[200]_regimeFilter_['bullish']::quantile_binning_5",
+      "binning_model_type": "QuantileBinningModel",
+      "strategy": "long",
+      "binning_model_params": {
+        "n_bins": 5,
+        "selection_metric": "sortino",
+        "normalize_by": "ewsd"
+      },
+      "is_fitted": false,
+      "fitted_params": null
+    }
+  ]
+}

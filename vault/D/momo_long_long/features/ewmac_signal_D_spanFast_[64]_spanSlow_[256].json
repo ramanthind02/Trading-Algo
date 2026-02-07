@@ -1,0 +1,60 @@
+{
+  "feature_name": "ewmac_signal_D_spanFast_[64]_spanSlow_[256]",
+  "feature_column": "ewmac_signal_D_spanFast_[64]_spanSlow_[256]",
+  "created_at": "2026-02-06T05:56:39.392912+00:00",
+  "updated_at": "2026-02-06T05:56:39.392937+00:00",
+  "bias_node_spec": {
+    "module_name": "ewmac",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "spanFast": [
+        64
+      ],
+      "spanSlow": [
+        256
+      ]
+    }
+  },
+  "tickers": [
+    "BP",
+    "C",
+    "CD",
+    "CL",
+    "ES",
+    "EU",
+    "FV",
+    "GC",
+    "GF",
+    "HG",
+    "HO",
+    "JY",
+    "NQ",
+    "PL",
+    "RTY",
+    "S",
+    "SF",
+    "SI",
+    "TU",
+    "TY",
+    "US",
+    "W",
+    "YM"
+  ],
+  "base_models": [
+    {
+      "model_id": "two_bin_binning_2",
+      "model_name": "ewmac_signal_D_spanFast_[64]_spanSlow_[256]::two_bin_binning_2",
+      "binning_model_type": "TwoBinBinningModel",
+      "strategy": "long",
+      "binning_model_params": {
+        "n_bins": 2,
+        "selection_metric": "sortino",
+        "normalize_by": "ewsd"
+      },
+      "is_fitted": false,
+      "fitted_params": null
+    }
+  ]
+}

@@ -415,9 +415,7 @@ class BinningModelBase(ABC):
             bins = np.digitize(feature_data.values, self.thresholds_)
         
         # Create binary signal: 1 if in best bin, 0 otherwise
-        signal = pd.Series((bins == best_bin).astype(int), index=feature_data.index)
-        
-        # If not scaled or no normalization, return binary signals
+        signal = pd.Series((bins == best_bin).astype(int), index=feature_data.index)# If not scaled or no normalization, return binary signals
         if not scaled or self.normalize_by is None:
             return signal
         

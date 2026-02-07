@@ -632,7 +632,6 @@ class WeightLayer:
 
         # Group by ticker and apply ticker-specific weights and FDM
         combined_results = []
-        
         for ticker in all_forecasts['ticker'].unique():
             ticker_forecasts = all_forecasts[all_forecasts['ticker'] == ticker].copy()
             
@@ -685,7 +684,6 @@ class WeightLayer:
             
             # Cap forecast_score at 2.0 (per spec: max position is 2.0)
             ticker_combined['forecast_score'] = ticker_combined['forecast_score'].clip(upper=2.0, lower=-2.0)
-            
             combined_results.append(ticker_combined)
         
         # Combine all ticker results

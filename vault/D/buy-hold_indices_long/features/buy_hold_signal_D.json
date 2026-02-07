@@ -1,0 +1,51 @@
+{
+  "feature_name": "buy_hold_signal_D",
+  "feature_column": "buy_hold_signal_D",
+  "created_at": "2026-02-05T05:10:27.072645+00:00",
+  "updated_at": "2026-02-05T05:10:27.072674+00:00",
+  "bias_node_spec": {
+    "module_name": "buy_hold",
+    "timeframes": [
+      "D"
+    ],
+    "params": {}
+  },
+  "tickers": [
+    "ES",
+    "NQ",
+    "RTY",
+    "YM"
+  ],
+  "base_models": [
+    {
+      "model_id": "quantile_binning_2",
+      "model_name": "buy_hold_signal_D::quantile_binning_2",
+      "binning_model_type": "QuantileBinningModel",
+      "strategy": "long",
+      "binning_model_params": {
+        "n_bins": 2,
+        "selection_metric": "sortino",
+        "normalize_by": "ewsd"
+      },
+      "is_fitted": true,
+      "fitted_params": {
+        "thresholds": [],
+        "best_long_bin": 0,
+        "best_short_bin": 0,
+        "bin_stats": {
+          "0": {
+            "mean_return": 0.0004376395916674674,
+            "std_return": 0.012884616482648844,
+            "downside_std": 0.009966707813405104,
+            "sortino_metric": 0.6970519524234261,
+            "sortino_metric_short": -0.7434033996590901,
+            "count": 1260,
+            "feature_min": 1.0,
+            "feature_max": 1.0
+          }
+        }
+      },
+      "fitted_at": "2026-02-05T05:10:27.072664+00:00"
+    }
+  ]
+}
