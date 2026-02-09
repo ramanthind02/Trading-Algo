@@ -337,7 +337,227 @@ class ParameterAnalyzer:
         grouped_df = results_df.groupby(['param1_value', 'param2_value']).agg(agg_map).reset_index()
         
         return grouped_df
-    
+
+    def analyze_nd_parameters(
+        self,
+        feature_grid: Dict[Tuple, List[str]],
+        param_names: List[str],
+        target_col: str = 'log_return',
+        metric: Optional[Any] = None,
+        n_bins: int = 5,
+        base_model: Optional[Any] = None,
+    ) -> pd.DataFrame:
+        """
+        Analyze sensitivity of N parameters simultaneously.
+
+        Generalizes analyze_2d_parameters to support 1-4 parameters.
+
+        Parameters
+        ----------
+        feature_grid : Dict[Tuple, List[str]]
+            Dictionary mapping parameter value tuples to feature column names.
+            Keys are tuples of (val1, val2, ..., valN) matching param_names order.
+        param_names : List[str]
+            Names of the parameters (1-4).
+        target_col : str, default='log_return'
+            Target column to use for computing metrics.
+        metric : Optional[Any], default=None
+            Metric object with .compute() method. Defaults to SortinoRatio.
+        n_bins : int, default=5
+            Number of bins for QuantileBinningModel.
+        base_model : Optional[Any], default=None
+            Model instance with fit/predict methods. Defaults to QuantileBinningModel.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with paramK_value columns (K=1..N) and computed metrics.
+        """
+        model = base_model if base_model is not None else QuantileBinningModel(n_bins=n_bins)
+
+        if metric is None:
+            metric = SortinoRatio(annualization_factor=252)
+
+        metric_name = _get_metric_name_from_object(metric)
+
+        metric_funcs = {
+            'mean': lambda x: np.mean(x),
+            'std': lambda x: np.std(x),
+            'drawdown': None
+        }
+        metric_funcs[metric_name] = metric.compute
+
+        results = []
+        n_params = len(param_names)
+        print(f"Analyzing {n_params}D parameters with {len(feature_grid)} parameter combinations")
+
+        for param_vals, feature_names in feature_grid.items():
+            # Ensure param_vals is a tuple
+            if not isinstance(param_vals, tuple):
+                param_vals = (param_vals,)
+
+            for feature_name in feature_names:
+                try:
+                    feature_series = self.features_df[feature_name]
+                    target_series = self.targets_df[target_col]
+                    aligned = pd.concat(
+                        [feature_series.rename('feature'), target_series.rename('target')], axis=1
+                    ).dropna()
+                    feature_data = aligned['feature']
+                    target_data = aligned['target']
+
+                    if len(feature_data) == 0 or len(target_data) == 0:
+                        continue
+
+                    metrics = self._compute_metrics(feature_data, target_data, model, metric_funcs)
+                    # Add paramK_value columns
+                    for k, val in enumerate(param_vals, start=1):
+                        metrics[f'param{k}_value'] = val
+                    metrics['feature'] = feature_name
+                    results.append(metrics)
+
+                except Exception as e:
+                    print(f"  [WARNING] Error processing {feature_name}: {str(e)}")
+                    continue
+
+        if not results:
+            raise ValueError("No valid data points to analyze.")
+
+        results_df = pd.DataFrame(results)
+
+        # Group by all paramK_value columns and aggregate
+        group_cols = [f'param{k}_value' for k in range(1, n_params + 1)]
+        possible_cols = ['sortino', 'sharpe', 'mean', 'std', 'max_drawdown', 'n_samples']
+        if metric_name not in possible_cols:
+            possible_cols.append(metric_name)
+        present = [c for c in possible_cols if c in results_df.columns]
+        agg_map = {c: ('sum' if c == 'n_samples' else 'mean') for c in present}
+        grouped_df = results_df.groupby(group_cols).agg(agg_map).reset_index()
+
+        return grouped_df
+
+    def compute_robustness_metrics(
+        self,
+        results_df: pd.DataFrame,
+        metric_col: str,
+        metric_threshold: float = 1.0
+    ) -> Dict[str, Any]:
+        """
+        Compute robustness metrics for parameter sensitivity analysis.
+
+        Scores how robust the strategy is across the parameter space.
+
+        Parameters
+        ----------
+        results_df : pd.DataFrame
+            Results DataFrame from analyze_parameter, analyze_2d_parameters,
+            or analyze_nd_parameters.
+        metric_col : str
+            Column name of the metric to evaluate (e.g., 'sortino').
+        metric_threshold : float, default=1.0
+            Threshold for "acceptable" performance.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Dictionary with keys: variance_score, consistency_score, risk_score,
+            overall_score, rating, statistics, parameter_sensitivity.
+        """
+        metric_values = results_df[metric_col].dropna()
+
+        if len(metric_values) == 0:
+            return {
+                'variance_score': 0.0,
+                'consistency_score': 0.0,
+                'risk_score': 0.0,
+                'overall_score': 0.0,
+                'rating': 'HIGHLY FRAGILE',
+                'statistics': {},
+                'parameter_sensitivity': {}
+            }
+
+        mean_val = metric_values.mean()
+        std_val = metric_values.std()
+
+        # Variance score: penalize high coefficient of variation
+        cv = std_val / abs(mean_val) if abs(mean_val) > 1e-10 else float('inf')
+        variance_score = max(0.0, 10.0 - cv * 20.0)
+
+        # Consistency score: percentage above threshold
+        pct_above = (metric_values >= metric_threshold).mean()
+        consistency_score = pct_above * 10.0
+
+        # Risk score: penalize large drawdowns
+        if 'max_drawdown' in results_df.columns:
+            worst_dd = results_df['max_drawdown'].dropna().min()
+            risk_score = max(0.0, 10.0 - abs(worst_dd) * 50.0)
+        else:
+            risk_score = 5.0  # neutral if no drawdown data
+
+        # Overall score: average of components
+        overall_score = (variance_score + consistency_score + risk_score) / 3.0
+
+        # Rating
+        if overall_score >= 8.0:
+            rating = 'HIGHLY ROBUST'
+        elif overall_score >= 6.0:
+            rating = 'ROBUST'
+        elif overall_score >= 4.0:
+            rating = 'MODERATELY ROBUST'
+        elif overall_score >= 2.0:
+            rating = 'FRAGILE'
+        else:
+            rating = 'HIGHLY FRAGILE'
+
+        # Statistics
+        statistics = {
+            'mean': float(mean_val),
+            'median': float(metric_values.median()),
+            'std': float(std_val),
+            'min': float(metric_values.min()),
+            'max': float(metric_values.max()),
+            'cv': float(cv) if cv != float('inf') else None,
+            'n_configurations': len(metric_values),
+            'pct_above_threshold': float(pct_above),
+        }
+
+        # Parameter sensitivity: variance contribution per param
+        param_cols = [c for c in results_df.columns if c.startswith('param') and c.endswith('_value')]
+        parameter_sensitivity = {}
+
+        if param_cols and len(metric_values) > 1:
+            total_var = 0.0
+            param_vars = {}
+            for pc in param_cols:
+                if pc in results_df.columns:
+                    group_means = results_df.groupby(pc)[metric_col].mean()
+                    inter_group_var = group_means.var()
+                    if np.isnan(inter_group_var):
+                        inter_group_var = 0.0
+                    param_vars[pc] = inter_group_var
+                    total_var += inter_group_var
+
+            # Normalize to sum to 1
+            if total_var > 0:
+                for pc in param_vars:
+                    # Use param name without _value suffix for cleaner output
+                    param_key = pc.replace('_value', '')
+                    parameter_sensitivity[param_key] = param_vars[pc] / total_var
+            else:
+                for pc in param_cols:
+                    param_key = pc.replace('_value', '')
+                    parameter_sensitivity[param_key] = 1.0 / len(param_cols)
+
+        return {
+            'variance_score': float(variance_score),
+            'consistency_score': float(consistency_score),
+            'risk_score': float(risk_score),
+            'overall_score': float(overall_score),
+            'rating': rating,
+            'statistics': statistics,
+            'parameter_sensitivity': parameter_sensitivity,
+        }
+
     def plot_parameter_sensitivity(
         self,
         df: pd.DataFrame,

@@ -56,6 +56,8 @@ from metrics.plotting.feature_explorer_plots import (
 from metrics.plotting.parameter_plots import (
     plot_parameter_sensitivity,
     plot_2d_parameter_surface,
+    plot_3d_parameter_interactive,
+    plot_4d_parameter_interactive,
 )
 
 # Graphing utilities (portfolio analytics, quantstats)
@@ -94,6 +96,8 @@ __all__ = [
     # Parameter plots
     'plot_parameter_sensitivity',
     'plot_2d_parameter_surface',
+    'plot_3d_parameter_interactive',
+    'plot_4d_parameter_interactive',
     # Graphing
     'generate_tearsheet',
     'compute_baseline_results',

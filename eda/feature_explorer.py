@@ -42,6 +42,8 @@ from metrics.plotting.feature_explorer_plots import (
 from metrics.plotting.parameter_plots import (
     plot_parameter_sensitivity as plot_parameter_sensitivity_pure,
     plot_2d_parameter_surface as plot_2d_parameter_surface_pure,
+    plot_3d_parameter_interactive,
+    plot_4d_parameter_interactive,
 )
 from utils.permutation_test.permutation_engine import (
     PermutationEngine,
@@ -391,7 +393,132 @@ class FeatureExplorer:
         head = parts[0].lower()
         tail = ''.join(p.capitalize() for p in parts[1:])
         return head + tail
-    
+
+    def _extract_parameter_grid(
+        self,
+        module_name: str,
+        param_names: List[str],
+        feature_name: Optional[str] = None
+    ) -> Dict[tuple, List[str]]:
+        """
+        Build a parameter grid mapping parameter value tuples to feature column names.
+
+        Unifies the grid-building logic used by plot_2d_parameter_surface and the
+        new N-dimensional analysis methods.
+
+        Parameters
+        ----------
+        module_name : str
+            Name of the module (e.g., 'rsi', 'cmma').
+        param_names : List[str]
+            Parameter names (1-4). Will be canonicalized internally.
+        feature_name : Optional[str], default=None
+            Optional filter for a specific feature type (e.g., 'signal').
+            Excludes 'bool' features by default when None.
+
+        Returns
+        -------
+        Dict[Tuple, List[str]]
+            Mapping from parameter value tuples to lists of matching feature column names.
+        """
+        # Canonicalize param names
+        canon_names = [self._canonicalize_param_name(p) for p in param_names]
+
+        # Build feature-to-params mapping for this module
+        feature_to_params = {}
+
+        if self.feature_metadata:
+            for feat, meta in self.feature_metadata.items():
+                if meta.get('module', '').lower() == module_name.lower():
+                    feature_to_params[feat] = meta.get('parameters', {})
+        else:
+            # Fallback: parse feature column names
+            for feat in self.feature_names:
+                try:
+                    parsed = helpers.parse_feature_column_name(feat)
+                    if parsed and parsed.get('module', '').lower() == module_name.lower():
+                        feature_to_params[feat] = parsed.get('params', {})
+                except Exception:
+                    continue
+
+        def _norm_val(v):
+            try:
+                if isinstance(v, str) and v.replace('.', '', 1).isdigit():
+                    return int(v) if v.isdigit() else float(v)
+            except Exception:
+                pass
+            return v
+
+        # Collect all unique parameter value combinations
+        param_combinations = set()
+        for params in feature_to_params.values():
+            if all(cn in params for cn in canon_names):
+                vals = tuple(_norm_val(params[cn]) for cn in canon_names)
+                param_combinations.add(vals)
+
+        # Map each combination to matching features
+        grid: Dict[tuple, List[str]] = {}
+        for combo in param_combinations:
+            matching = []
+            for feat, params in feature_to_params.items():
+                if all(
+                    _norm_val(params.get(cn)) == cv
+                    for cn, cv in zip(canon_names, combo)
+                ):
+                    matching.append(feat)
+
+            # Apply feature_name filter
+            before_filter = list(matching)
+            if feature_name is not None:
+                try:
+                    matching = [
+                        f for f in matching
+                        if (
+                            str(helpers.parse_feature_column_name(f).get('feature')).lower()
+                            == str(feature_name).lower()
+                            or f"_{str(feature_name).lower()}_" in f.lower()
+                        )
+                    ]
+                except Exception:
+                    pass
+                if not matching:
+                    matching = before_filter
+            else:
+                # Exclude bool features by default
+                try:
+                    non_bool = [
+                        f for f in matching
+                        if 'bool' not in str(
+                            helpers.parse_feature_column_name(f).get('feature', '')
+                        ).lower()
+                    ]
+                    if non_bool:
+                        matching = non_bool
+                except Exception:
+                    pass
+
+            if matching:
+                grid[combo] = matching
+
+        if not grid:
+            available_modules = list(set(
+                meta.get('module', '') for meta in self.feature_metadata.values()
+            )) if self.feature_metadata else []
+            available_params = set()
+            for meta in (self.feature_metadata or {}).values():
+                if meta.get('module', '').lower() == module_name.lower():
+                    available_params.update(meta.get('parameters', {}).keys())
+            error_msg = [
+                f"No features found for module='{module_name}' with parameters {canon_names}."
+            ]
+            if available_modules:
+                error_msg.append(f"\nAvailable modules: {available_modules}")
+            if available_params:
+                error_msg.append(f"\nAvailable parameters for {module_name}: {list(available_params)}")
+            raise ValueError(''.join(error_msg))
+
+        return grid
+
     def plot_parameter_sensitivity(
         self,
         module_name: str,
@@ -617,89 +744,13 @@ class FeatureExplorer:
         
         param1_name = self._canonicalize_param_name(param1_name)
         param2_name = self._canonicalize_param_name(param2_name)
-        module_features = {}
-        print(f"Building parameter grid for module '{module_name}'")
-        
-        feature_to_params = {}
-        for feature_name, meta in self.feature_metadata.items():
-            if meta.get('module', '').lower() == module_name.lower():
-                feature_to_params[feature_name] = meta.get('parameters', {})
-        
-        def _norm_val(v):
-            try:
-                if isinstance(v, str) and v.replace('.', '', 1).isdigit():
-                    return int(v) if v.isdigit() else float(v)
-            except Exception:
-                pass
-            return v
 
-        param_combinations = set()
-        for params in feature_to_params.values():
-            if param1_name in params and param2_name in params:
-                v1 = _norm_val(params[param1_name])
-                v2 = _norm_val(params[param2_name])
-                param_combinations.add((v1, v2))
-        
-        for (param1_val, param2_val) in param_combinations:
-            matching_features = []
-            for feature, params in feature_to_params.items():
-                p1 = _norm_val(params.get(param1_name))
-                p2 = _norm_val(params.get(param2_name))
-                if p1 == param1_val and p2 == param2_val:
-                    matching_features.append(feature)
-            print(f"  [DEBUG] Param combo ({param1_val}, {param2_val}) initial matches: {len(matching_features)}")
-            before_filter = list(matching_features)
-            if feature_name is not None:
-                try:
-                    matching_features = [
-                        f for f in matching_features
-                        if (
-                            str(helpers.parse_feature_column_name(f).get('feature')).lower() == str(feature_name).lower()
-                            or f"_{str(feature_name).lower()}_" in f.lower()
-                        )
-                    ]
-                except Exception:
-                    pass
-            else:
-                try:
-                    non_bool = [
-                        f for f in matching_features
-                        if 'bool' not in str(helpers.parse_feature_column_name(f).get('feature', '')).lower()
-                    ]
-                    if non_bool:
-                        matching_features = non_bool
-                except Exception:
-                    pass
-            if feature_name is not None and not matching_features:
-                matching_features = before_filter
-            print(f"  [DEBUG] Param combo ({param1_val}, {param2_val}) after filter: {len(matching_features)}")
-            module_features[(param1_val, param2_val)] = matching_features
-        
-        if not module_features:
-            available_modules = list(set(meta['module'] for meta in self.feature_metadata.values()))
-            available_params = set()
-            for meta in self.feature_metadata.values():
-                if meta.get('module', '').lower() == module_name.lower():
-                    available_params.update(meta.get('parameters', {}).keys())
-            error_msg = [
-                f"No features found for module='{module_name}' with parameters '{param1_name}' and '{param2_name}'."
-            ]
-            if available_modules:
-                error_msg.append(f"\nAvailable modules: {available_modules}")
-            if available_params:
-                error_msg.append(f"\nAvailable parameters for {module_name}: {list(available_params)}")
-            else:
-                error_msg.append(f"\nNo parameters found for module '{module_name}'")
-            module_features_list = [
-                feature for feature, meta in self.feature_metadata.items()
-                if meta.get('module', '').lower() == module_name.lower()
-            ]
-            if module_features_list:
-                error_msg.append(f"\nFeatures found for module '{module_name}': {module_features_list[:5]}")
-                if len(module_features_list) > 5:
-                    error_msg.append(f" (and {len(module_features_list)-5} more)")
-            raise ValueError(''.join(error_msg))
-        
+        module_features = self._extract_parameter_grid(
+            module_name=module_name,
+            param_names=[param1_name, param2_name],
+            feature_name=feature_name
+        )
+
         analyzer = ParameterAnalyzer(self.features_df, self.targets_df)
         try:
             # Use default metric if not provided
@@ -736,7 +787,385 @@ class FeatureExplorer:
             print(f"Features in dataframe: {self.features_df.columns.tolist()}")
             print(f"Targets in dataframe: {self.targets_df.columns.tolist()}")
             raise ValueError(f"Error in 2D parameter sensitivity analysis: {str(e)}")
-    
+
+    def plot_nd_parameter_analysis(
+        self,
+        module_name: str,
+        param_names: List[str],
+        target_col: str = 'log_return',
+        metric: Optional[Any] = None,
+        n_bins: int = 5,
+        show_plot: bool = True,
+        plot_type: str = 'surface',
+        feature_name: Optional[str] = None,
+        base_model: Optional[Any] = None,
+    ) -> Tuple[pd.DataFrame, Any]:
+        """
+        Dispatcher for N-dimensional parameter sensitivity analysis and visualization.
+
+        Routes to the appropriate method based on the number of parameters:
+        - 1 param -> plot_parameter_sensitivity()
+        - 2 params -> plot_2d_parameter_surface()
+        - 3 params -> 3D interactive visualization
+        - 4 params -> 4D interactive visualization
+
+        Parameters
+        ----------
+        module_name : str
+            Name of the module (e.g., 'rsi', 'cmma').
+        param_names : List[str]
+            List of 1-4 parameter names.
+        target_col : str, default='log_return'
+            Target column for metrics.
+        metric : Optional[Any], default=None
+            Metric object with .compute() method. Defaults to SortinoRatio.
+        n_bins : int, default=5
+            Number of bins for the model.
+        show_plot : bool, default=True
+            Whether to show the plot.
+        plot_type : str, default='surface'
+            Plot type ('surface', 'heatmap', 'contour').
+        feature_name : Optional[str], default=None
+            Optional filter for feature type.
+        base_model : Optional[Any], default=None
+            Model instance. Defaults to QuantileBinningModel.
+
+        Returns
+        -------
+        Tuple[pd.DataFrame, Any]
+            Results DataFrame and Plotly figure.
+        """
+        n = len(param_names)
+
+        if n == 1:
+            return self.plot_parameter_sensitivity(
+                module_name=module_name,
+                param_name=param_names[0],
+                target_col=target_col,
+                metric=metric,
+                n_bins=n_bins,
+                show_plot=show_plot,
+                feature_name=feature_name,
+                base_model=base_model,
+            )
+
+        if n == 2:
+            return self.plot_2d_parameter_surface(
+                module_name=module_name,
+                param1_name=param_names[0],
+                param2_name=param_names[1],
+                target_col=target_col,
+                metric=metric,
+                n_bins=n_bins,
+                show_plot=show_plot,
+                plot_type=plot_type,
+                feature_name=feature_name,
+                base_model=base_model,
+            )
+
+        if n not in (3, 4):
+            raise ValueError(f"Supported param counts: 1-4, got {n}")
+
+        from eda.parameter_analysis import ParameterAnalyzer, _get_metric_name_from_object
+
+        canon_names = [self._canonicalize_param_name(p) for p in param_names]
+        grid = self._extract_parameter_grid(
+            module_name=module_name,
+            param_names=canon_names,
+            feature_name=feature_name,
+        )
+
+        if metric is None:
+            from metrics.performance import SortinoRatio
+            metric = SortinoRatio(annualization_factor=252)
+        metric_name = _get_metric_name_from_object(metric)
+
+        analyzer = ParameterAnalyzer(self.features_df, self.targets_df)
+        results_df = analyzer.analyze_nd_parameters(
+            feature_grid=grid,
+            param_names=canon_names,
+            target_col=target_col,
+            metric=metric,
+            n_bins=n_bins,
+            base_model=base_model,
+        )
+
+        if n == 3:
+            fig = plot_3d_parameter_interactive(
+                df=results_df,
+                param_names=canon_names,
+                metric=metric_name,
+                title=f"{module_name.upper()} {metric_name.capitalize()} — {', '.join(canon_names)}",
+                show_plot=show_plot,
+                plot_type=plot_type,
+            )
+        else:
+            fig = plot_4d_parameter_interactive(
+                df=results_df,
+                param_names=canon_names,
+                metric=metric_name,
+                title=f"{module_name.upper()} {metric_name.capitalize()} — {', '.join(canon_names)}",
+                show_plot=show_plot,
+                plot_type=plot_type,
+            )
+
+        return results_df, fig
+
+    def _format_parameter_sensitivity_report(
+        self,
+        module_name: str,
+        param_names: List[str],
+        results_df: 'pd.DataFrame',
+        robustness: Dict[str, Any],
+        metric_name: str,
+    ) -> str:
+        """
+        Build a formatted text report for parameter sensitivity analysis.
+
+        Parameters
+        ----------
+        module_name : str
+            Module name.
+        param_names : List[str]
+            Parameter names analyzed.
+        results_df : pd.DataFrame
+            Results from analysis.
+        robustness : Dict[str, Any]
+            Output of compute_robustness_metrics().
+        metric_name : str
+            Name of the primary metric.
+
+        Returns
+        -------
+        str
+            Formatted text report.
+        """
+        stats = robustness.get('statistics', {})
+        sensitivity = robustness.get('parameter_sensitivity', {})
+
+        lines = []
+        lines.append("=" * 70)
+        lines.append(f"PARAMETER SENSITIVITY REPORT: {module_name.upper()}")
+        lines.append("=" * 70)
+
+        # PARAMETER SPACE
+        lines.append("")
+        lines.append("PARAMETER SPACE")
+        lines.append("-" * 40)
+        for pn in param_names:
+            col = None
+            for c in results_df.columns:
+                if c.startswith('param') and c.endswith('_value'):
+                    idx = int(c.replace('param', '').replace('_value', ''))
+                    if idx <= len(param_names) and param_names[idx - 1] == pn:
+                        col = c
+                        break
+            if col and col in results_df.columns:
+                unique_vals = sorted(results_df[col].unique())
+                lines.append(f"  {pn}: {unique_vals}")
+            else:
+                lines.append(f"  {pn}: (data unavailable)")
+        lines.append(f"  Total configurations: {stats.get('n_configurations', 'N/A')}")
+
+        # PERFORMANCE SUMMARY
+        lines.append("")
+        lines.append("PERFORMANCE SUMMARY")
+        lines.append("-" * 40)
+        lines.append(f"  Metric: {metric_name}")
+        lines.append(f"  Mean:   {stats.get('mean', 'N/A'):.4f}" if isinstance(stats.get('mean'), (int, float)) else f"  Mean:   {stats.get('mean', 'N/A')}")
+        lines.append(f"  Median: {stats.get('median', 'N/A'):.4f}" if isinstance(stats.get('median'), (int, float)) else f"  Median: {stats.get('median', 'N/A')}")
+        lines.append(f"  Std:    {stats.get('std', 'N/A'):.4f}" if isinstance(stats.get('std'), (int, float)) else f"  Std:    {stats.get('std', 'N/A')}")
+
+        # Min/max with configurations
+        if metric_name in results_df.columns:
+            param_cols = [c for c in results_df.columns if c.startswith('param') and c.endswith('_value')]
+            if not results_df[metric_name].dropna().empty:
+                min_idx = results_df[metric_name].idxmin()
+                max_idx = results_df[metric_name].idxmax()
+                min_config = {pc: results_df.loc[min_idx, pc] for pc in param_cols if pc in results_df.columns}
+                max_config = {pc: results_df.loc[max_idx, pc] for pc in param_cols if pc in results_df.columns}
+                lines.append(f"  Min:    {stats.get('min', 'N/A'):.4f}  config={min_config}" if isinstance(stats.get('min'), (int, float)) else f"  Min:    {stats.get('min', 'N/A')}")
+                lines.append(f"  Max:    {stats.get('max', 'N/A'):.4f}  config={max_config}" if isinstance(stats.get('max'), (int, float)) else f"  Max:    {stats.get('max', 'N/A')}")
+
+        # Distribution
+        if metric_name in results_df.columns and len(results_df[metric_name].dropna()) > 0:
+            vals = results_df[metric_name].dropna()
+            lines.append(f"  Distribution: Q25={vals.quantile(0.25):.4f}, Q75={vals.quantile(0.75):.4f}")
+
+        # ROBUSTNESS ANALYSIS
+        lines.append("")
+        lines.append("ROBUSTNESS ANALYSIS")
+        lines.append("-" * 40)
+        lines.append(f"  Variance Score:    {robustness['variance_score']:.2f} / 10")
+        lines.append(f"  Consistency Score: {robustness['consistency_score']:.2f} / 10")
+        lines.append(f"  Risk Score:        {robustness['risk_score']:.2f} / 10")
+        lines.append(f"  Overall Score:     {robustness['overall_score']:.2f} / 10")
+        lines.append(f"  Rating:            {robustness['rating']}")
+
+        # PARAMETER SENSITIVITY RANKING
+        if sensitivity:
+            lines.append("")
+            lines.append("PARAMETER SENSITIVITY RANKING")
+            lines.append("-" * 40)
+            sorted_sens = sorted(sensitivity.items(), key=lambda x: x[1], reverse=True)
+            for rank, (param_key, contribution) in enumerate(sorted_sens, 1):
+                lines.append(f"  {rank}. {param_key}: {contribution:.2%} of variance")
+
+        # RECOMMENDATIONS
+        lines.append("")
+        lines.append("RECOMMENDATIONS")
+        lines.append("-" * 40)
+        if metric_name in results_df.columns:
+            param_cols = [c for c in results_df.columns if c.startswith('param') and c.endswith('_value')]
+            vals = results_df[metric_name].dropna()
+            if len(vals) > 0:
+                threshold_75 = vals.quantile(0.75)
+                top_region = results_df[results_df[metric_name] >= threshold_75]
+                if not top_region.empty and param_cols:
+                    lines.append(f"  Optimal region (top 25% by {metric_name}):")
+                    for pc in param_cols:
+                        if pc in top_region.columns:
+                            top_vals = sorted(top_region[pc].unique())
+                            lines.append(f"    {pc}: {top_vals}")
+
+        lines.append("")
+        lines.append("=" * 70)
+        return "\n".join(lines)
+
+    def generate_parameter_sensitivity_report(
+        self,
+        module_name: str,
+        param_names: Optional[List[str]] = None,
+        target_col: str = 'log_return',
+        metric: Optional[Any] = None,
+        metric_threshold: float = 1.0,
+        n_bins: int = 5,
+        base_model: Optional[Any] = None,
+        export_path: Optional[str] = None,
+        feature_name: Optional[str] = None,
+        verbose: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Generate a comprehensive parameter sensitivity report.
+
+        Auto-detects parameters if param_names is None, runs the appropriate
+        analysis, computes robustness metrics, generates a text report, and
+        optionally exports to file.
+
+        Parameters
+        ----------
+        module_name : str
+            Name of the module.
+        param_names : Optional[List[str]], default=None
+            Parameters to analyze. Auto-detected if None.
+        target_col : str, default='log_return'
+            Target column.
+        metric : Optional[Any], default=None
+            Metric object. Defaults to SortinoRatio.
+        metric_threshold : float, default=1.0
+            Threshold for robustness consistency scoring.
+        n_bins : int, default=5
+            Number of bins.
+        base_model : Optional[Any], default=None
+            Model instance.
+        export_path : Optional[str], default=None
+            File path to export the text report.
+        feature_name : Optional[str], default=None
+            Optional feature type filter.
+        verbose : bool, default=True
+            Whether to print the report.
+
+        Returns
+        -------
+        Dict[str, Any]
+            Keys: results_df, summary_stats, robustness_scores, figures,
+            parameter_sensitivity, report_text, report_path.
+        """
+        from eda.parameter_analysis import ParameterAnalyzer, _get_metric_name_from_object
+
+        # Auto-detect parameters if not provided
+        if param_names is None:
+            detected = set()
+            for (mod, pname), _ in self._feature_groups.items():
+                if mod.lower() == module_name.lower():
+                    detected.add(pname)
+            param_names = sorted(detected)
+            if verbose:
+                print(f"Auto-detected parameters for '{module_name}': {param_names}")
+
+        if not param_names:
+            raise ValueError(f"No parameters found for module '{module_name}'")
+
+        # Limit to 4 params max
+        if len(param_names) > 4:
+            if verbose:
+                print(f"Limiting to first 4 of {len(param_names)} parameters")
+            param_names = param_names[:4]
+
+        if metric is None:
+            from metrics.performance import SortinoRatio
+            metric = SortinoRatio(annualization_factor=252)
+        metric_name = _get_metric_name_from_object(metric)
+
+        canon_names = [self._canonicalize_param_name(p) for p in param_names]
+
+        # Run analysis and get figure
+        results_df, fig = self.plot_nd_parameter_analysis(
+            module_name=module_name,
+            param_names=canon_names,
+            target_col=target_col,
+            metric=metric,
+            n_bins=n_bins,
+            show_plot=False,
+            feature_name=feature_name,
+            base_model=base_model,
+        )
+
+        # Compute robustness metrics
+        analyzer = ParameterAnalyzer(self.features_df, self.targets_df)
+        robustness = analyzer.compute_robustness_metrics(
+            results_df=results_df,
+            metric_col=metric_name,
+            metric_threshold=metric_threshold,
+        )
+
+        # Format text report
+        report_text = self._format_parameter_sensitivity_report(
+            module_name=module_name,
+            param_names=canon_names,
+            results_df=results_df,
+            robustness=robustness,
+            metric_name=metric_name,
+        )
+
+        if verbose:
+            print(report_text)
+
+        # Export if requested
+        report_path = None
+        if export_path is not None:
+            with open(export_path, 'w') as f:
+                f.write(report_text)
+            report_path = export_path
+            if verbose:
+                print(f"\nReport exported to: {export_path}")
+
+        return {
+            'results_df': results_df,
+            'summary_stats': robustness.get('statistics', {}),
+            'robustness_scores': {
+                'variance_score': robustness['variance_score'],
+                'consistency_score': robustness['consistency_score'],
+                'risk_score': robustness['risk_score'],
+                'overall_score': robustness['overall_score'],
+                'rating': robustness['rating'],
+            },
+            'figures': [fig],
+            'parameter_sensitivity': robustness.get('parameter_sensitivity', {}),
+            'report_text': report_text,
+            'report_path': report_path,
+        }
+
     def plot_all_deciles(
         self,
         n_bins: int = 10,
