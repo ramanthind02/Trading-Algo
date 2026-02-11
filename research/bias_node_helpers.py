@@ -224,23 +224,24 @@ def generate_node_tearsheet(
     features_df: Optional[pd.DataFrame] = None,
     targets_df: Optional[pd.DataFrame] = None,
     bias_spec: Optional[Dict[str, Any]] = None,
-    strategy: str = "long",
+    strategy: str = "long-short",
     target_col: str = "log_return",
     tickers: Optional[Union[Ticker, List[Ticker]]] = None,
+    binning_model: Optional[BinningModelBase] = None,
 ) -> Optional[str]:
     """
     Generate a QuantStats HTML tearsheet for a bias node.
 
-    Uses pre-extracted features from feature analysis. Fits binning on full ensemble,
-    then generates predictions for all tickers and computes strategy returns across
-    the ensemble. Baseline is equal-weight buy-and-hold across the same tickers.
+    Uses pre-extracted features from feature analysis. Fits binning on full ensemble
+    (or uses provided binning_model), then generates predictions for all tickers
+    and computes strategy returns. Baseline is equal-weight buy-and-hold.
 
     Parameters
     ----------
     node_name : str
         Name of the node for display
     is_continuous : bool
-        Whether feature is continuous (for binning model selection)
+        Whether feature is continuous (used only if binning_model is None)
     start_date, end_date : datetime
         Date range for loading candles
     reports_dir : Path
@@ -249,12 +250,17 @@ def generate_node_tearsheet(
         Permutation results and pre-extracted features/targets from test_bias_node
     bias_spec : dict, optional
         Kept for API compatibility; not used
-    strategy : str, default='long'
-        Signal strategy: 'long', 'short', or 'long-short'.
+    strategy : str, default='long-short'
+        Passed to binning_model.predict() only (which exposure to emit). Does not affect
+        return calculation: returns are always position_fraction * instrument_return
+        (position is already signed -1/0/1 from node or binning model).
     target_col : str, default='log_return'
         Target column in targets_df for fitting (e.g. 'log_return', 'log_return_atr', 'log_return_ewsd').
     tickers : Ticker or List[Ticker], optional
         Tickers to include in the tearsheet. If None, inferred from features_df['ticker'].
+    binning_model : BinningModelBase, optional
+        If provided (e.g. results['binning_model'] from test_bias_node), use this model.
+        Required for rule-based nodes so RuleBasedBinningModel pass-through is used.
 
     Returns
     -------
@@ -301,12 +307,19 @@ def generate_node_tearsheet(
 
         print(f"    Using feature: {best_feature}, target: {target_col}, tickers: {[t.name if hasattr(t, 'name') else str(t) for t in tickers]}")
 
-        binning_model = get_binning_model(is_continuous)
         feature_series = features_df[best_feature].copy()
         feature_series.name = best_feature
         target_series = targets_df[target_col].copy()
-        binning_model.fit(feature_series, target_series)
-        print(f"    Model fitted on ensemble - best_long_bin: {binning_model.best_long_bin_}")
+        if binning_model is None:
+            raise ValueError(
+                "binning_model is required for tearsheet generation. "
+                "Pass results['binning_model'] from test_bias_node (or the same binning_model you passed to test_bias_node). "
+                "Do not rely on get_binning_model(); use the user-provided model so rule-based nodes (e.g. turtle) use the correct pass-through."
+            )
+        if not getattr(binning_model, "is_fitted_", False):
+            binning_model.fit(feature_series, target_series)
+        if getattr(binning_model, "best_long_bin_", None) is not None:
+            print(f"    Model fitted on ensemble - best_long_bin: {binning_model.best_long_bin_}")
 
         # Build positions for all tickers
         position_dfs = []
@@ -317,22 +330,10 @@ def generate_node_tearsheet(
             ticker_features.name = best_feature
             if len(ticker_features) == 0:
                 continue
-            if strategy == "long-short":
-                long_signals = binning_model.predict(ticker_features, strategy="long")
-                short_signals = binning_model.predict(ticker_features, strategy="short")
-                if isinstance(long_signals, pd.Series):
-                    long_vals = long_signals.values.astype(float)
-                    short_vals = short_signals.values.astype(float) if isinstance(short_signals, pd.Series) else np.asarray(short_signals, dtype=float).ravel()
-                else:
-                    long_vals = np.asarray(long_signals, dtype=float).ravel()
-                    short_vals = np.asarray(short_signals, dtype=float).ravel()
-                position_fraction = long_vals - short_vals
-                pred_series = pd.Series(position_fraction, index=ticker_features.index)
-            else:
-                pred_series = binning_model.predict(ticker_features, strategy=strategy)
-                if not isinstance(pred_series, pd.Series):
-                    pred_series = pd.Series(pred_series, index=ticker_features.index)
-                position_fraction = pred_series.values.astype(float)
+            pred_series = binning_model.predict(ticker_features, strategy=strategy)
+            if not isinstance(pred_series, pd.Series):
+                pred_series = pd.Series(pred_series, index=ticker_features.index)
+            position_fraction = pred_series.values.astype(float)
             positions_datetime = pred_series.index
             if hasattr(positions_datetime, "tz") and positions_datetime.tz is not None:
                 positions_datetime = positions_datetime.tz_localize(None)
@@ -345,7 +346,6 @@ def generate_node_tearsheet(
             print("  [FAIL] No positions generated for any ticker")
             return None
         positions_df = pd.concat(position_dfs, ignore_index=True)
-        positions_strategy = "long" if strategy == "long-short" else strategy
 
         # Load candles for all tickers (use same offset convention as multi-ticker features)
         if len(tickers) == 1:
@@ -372,8 +372,9 @@ def generate_node_tearsheet(
                 candles_df["datetime"] = pd.to_datetime(candles_df["timestamp"], unit="s")
         candles_df["datetime"] = pd.to_datetime(candles_df["datetime"])
 
+        # Returns = position_fraction * instrument_return (strategy param unused)
         strategy_returns = calculate_strategy_returns_from_positions(
-            positions_df, candles_df, strategy=positions_strategy
+            positions_df, candles_df
         )
         baseline_returns = calculate_baseline_returns(candles_df, equal_weight=True)
 

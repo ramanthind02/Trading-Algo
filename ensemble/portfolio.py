@@ -24,7 +24,7 @@ import pandas as pd
 
 from utils.enums import TimeFrame
 from utils.fast_volatility import compute_ewsd_annualized_from_closes
-from .weight_layer import WeightLayer
+from .weight_layer import BaseWeightLayer, WeightLayer
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ class Portfolio:
         trading_timeframe: TimeFrame = TimeFrame.D,
         target_volatility: Optional[float] = None,
         max_position_pct: float = 2.0,
-        weight_layer: Optional[WeightLayer] = None,
+        weight_layer: Optional[BaseWeightLayer] = None,
         instrument_weights: Optional[Dict[str, float]] = None,
         idm_max: float = 2.5,
         use_cache: bool = True
@@ -1483,13 +1483,13 @@ class Portfolio:
         forecasts_clean = forecasts_df[['ticker', 'datetime', 'forecast_score']].copy()
         forecasts_clean['datetime'] = pd.to_datetime(forecasts_clean['datetime'])
         # Remove microseconds (used to distinguish tickers in multi-ticker DataFrames)
-        forecasts_clean['datetime'] = forecasts_clean['datetime'].dt.floor('S')
+        forecasts_clean['datetime'] = forecasts_clean['datetime'].dt.floor('s')
         
         # Prepare candles subset with normalized datetime
         candles_subset = candles_df[['ticker', 'datetime']].copy()
         candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime'])
         # Remove microseconds (used to distinguish tickers in multi-ticker DataFrames)
-        candles_subset['datetime'] = candles_subset['datetime'].dt.floor('S')
+        candles_subset['datetime'] = candles_subset['datetime'].dt.floor('s')
         
         # Vectorized merge on (ticker, datetime) - O(n+m) complexity
         result = candles_subset.merge(
@@ -1658,16 +1658,15 @@ class Portfolio:
                     if isinstance(mean_corr, (int, float)):
                         print(f"      Mean Forecast Correlation: {mean_corr:.4f}")
                     
-                    # Show top weights for this ticker
+                    # Show full list of weights for this ticker (sorted by weight descending)
                     weights = ticker_info.get('weights')
                     if weights and isinstance(weights, dict):
                         valid_weights = {k: v for k, v in weights.items() if not pd.isna(v)}
                         if valid_weights:
-                            sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)[:3]
-                            if sorted_weights:
-                                print(f"      Top Weights:")
-                                for model_name, weight in sorted_weights:
-                                    print(f"        {model_name}: {weight:.4f}")
+                            sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)
+                            print(f"      Weights:")
+                            for model_name, weight in sorted_weights:
+                                print(f"        {model_name}: {weight:.4f}")
             else:
                 # Fallback: show global weights if available (old format)
                 weights = weight_layer_diag.get('weights')

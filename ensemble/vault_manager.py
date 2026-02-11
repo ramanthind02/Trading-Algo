@@ -441,15 +441,17 @@ def list_ensembles(vault_root: str) -> pd.DataFrame:
             
             # Parse ensemble name and direction from directory name
             dir_name = ensemble_dir.name
-            if not dir_name.endswith('_long') and not dir_name.endswith('_short'):
-                continue
-            
-            if dir_name.endswith('_long'):
+            if dir_name.endswith('_long_short'):
+                ensemble_name = dir_name[:-12]  # Remove '_long_short'
+                direction = 'long_short'
+            elif dir_name.endswith('_long'):
                 ensemble_name = dir_name[:-5]  # Remove '_long'
                 direction = 'long'
-            else:
+            elif dir_name.endswith('_short'):
                 ensemble_name = dir_name[:-6]  # Remove '_short'
                 direction = 'short'
+            else:
+                continue
             
             # Count features
             features_dir = ensemble_dir / 'features'
@@ -534,14 +536,19 @@ def add_feature_to_ensemble(
     else:
         # Backward compatibility: infer from directory name
         ensemble_dir_name = ensemble_path.name
-        if ensemble_dir_name.endswith('_long'):
+        if ensemble_dir_name.endswith('_long_short'):
+            expected_direction = 'long_short'
+        elif ensemble_dir_name.endswith('_long'):
             expected_direction = 'long'
         elif ensemble_dir_name.endswith('_short'):
             expected_direction = 'short'
         else:
-            raise ValueError(f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}")
+            raise ValueError(
+                f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}. "
+                f"Expected suffix _long, _short, or _long_short"
+            )
         expected_ticker_names = None  # No ticker validation for old ensembles
-    
+
     # Validate ensemble direction matches base model strategy
     if base_model.binning_model.strategy != expected_direction:
         raise ValueError(
@@ -1267,14 +1274,19 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
     else:
         # Backward compatibility: infer from directory name
         ensemble_dir_name = ensemble_path.name
-        if ensemble_dir_name.endswith('_long'):
+        if ensemble_dir_name.endswith('_long_short'):
+            expected_direction = 'long_short'
+        elif ensemble_dir_name.endswith('_long'):
             expected_direction = 'long'
         elif ensemble_dir_name.endswith('_short'):
             expected_direction = 'short'
         else:
-            raise ValueError(f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}")
+            raise ValueError(
+                f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}. "
+                f"Expected suffix _long, _short, or _long_short"
+            )
         expected_ticker_names = None  # No ticker validation for old ensembles
-    
+
     # Validate all feature control files
     for feature_file in features_dir.glob('*.json'):
         try:

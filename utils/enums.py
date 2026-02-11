@@ -56,6 +56,7 @@ class Ticker(Enum):
     FV = 'FIVE_YR_NOTE'  # 5Yr T.Note
     US = 'US_BONDS'  # 30Yr T.Bond
     TU = 'TWO_YR_NOTE'  # 2Yr T.Note
+    TLT = 'TWENTY_YR_NOTE'  # 20Yr T.Note
 
     def __lt__(self, other):
         return tuple(self.__class__).index(self) < tuple(self.__class__).index(other)
@@ -67,6 +68,16 @@ class Bias(Enum):
     BEARISH = -1
     NEUTRAL = 0
     ANY = None
+
+
+class PositionMode(Enum):
+    """
+    Position mode for bias nodes that can restrict output to long-only or short-only.
+    Used in BasicBreakout / BasicMR: LONG_ONLY clamps raw -1 to 0; SHORT_ONLY clamps raw 1 to 0.
+    """
+    LONG_SHORT = "long_short"   # Default: output 1, 0, -1
+    LONG_ONLY = "long_only"     # Clamp raw -1 to 0
+    SHORT_ONLY = "short_only"   # Clamp raw 1 to 0
 
 
 class ResamplingMethod(Enum):
@@ -82,19 +93,20 @@ class Direction(Enum):
     
     Ensembles are separated by direction to allow portfolio-level
     allocation between long and short strategies (e.g., 60% long, 40% short).
+    LONG_SHORT allows rule-based models that output -1, 0, 1 (short, flat, long).
     """
-    
     LONG = 'long'
     SHORT = 'short'
-    
+    LONG_SHORT = 'long_short'
+
     def __str__(self) -> str:
         """String representation returns the value."""
         return self.value
-    
+
     def __lt__(self, other):
-        """Enable sorting (LONG before SHORT)."""
+        """Enable sorting (definition order: LONG, SHORT, LONG_SHORT)."""
         return tuple(self.__class__).index(self) < tuple(self.__class__).index(other)
-    
+
     @classmethod
     def from_string(cls, direction_str: str) -> 'Direction':
         """
@@ -103,7 +115,7 @@ class Direction(Enum):
         Parameters
         ----------
         direction_str : str
-            Direction string ('long' or 'short')
+            Direction string ('long', 'short', or 'long_short' / 'both')
             
         Returns
         -------
@@ -115,11 +127,13 @@ class Direction(Enum):
         ValueError
             If direction string is invalid
         """
-        direction_lower = direction_str.lower()
+        direction_lower = direction_str.lower().strip()
+        if direction_lower in ('both', 'long_short'):
+            return cls.LONG_SHORT
         for direction in cls:
             if direction.value == direction_lower:
                 return direction
         raise ValueError(
             f"Invalid direction: '{direction_str}'. "
-            f"Must be 'long' or 'short'"
+            f"Must be 'long', 'short', or 'long_short'/'both'"
         )

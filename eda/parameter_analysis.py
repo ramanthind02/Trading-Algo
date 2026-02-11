@@ -183,11 +183,10 @@ class ParameterAnalyzer:
                 aligned = pd.concat([feature_series.rename('feature'), target_series.rename('target')], axis=1).dropna()
                 feature_data = aligned['feature']
                 target_data = aligned['target']
-                # Debug: basic counts
-                print(f"[DEBUG] analyze_parameter: '{feature_name}' samples={len(aligned)} (feature NaNs={feature_series.isna().sum()}, target NaNs={target_series.isna().sum()})")
+                
                 
                 if len(feature_data) == 0 or len(target_data) == 0:
-                    print(f"[DEBUG] Skipping '{feature_name}' due to empty aligned data")
+
                     continue
                 
                 metrics = self._compute_metrics(feature_data, target_data, model, metric_funcs)
@@ -203,8 +202,7 @@ class ParameterAnalyzer:
                 try:
                     # More diagnostics
                     unique_non_nan = feature_series.dropna().nunique()
-                    print(f"  [DEBUG] Unique non-NaN values in feature: {unique_non_nan}")
-                    print(f"  [DEBUG] Head aligned:\n{aligned.head(5)}")
+
                 except Exception:
                     pass
                 continue
@@ -293,7 +291,6 @@ class ParameterAnalyzer:
                     aligned = pd.concat([feature_series.rename('feature'), target_series.rename('target')], axis=1).dropna()
                     feature_data = aligned['feature']
                     target_data = aligned['target']
-                    print(f"      [DEBUG] aligned samples={len(aligned)} (feature NaNs={feature_series.isna().sum()}, target NaNs={target_series.isna().sum()})")
                     
                     if len(feature_data) == 0 or len(target_data) == 0:
                         print(f"      [WARNING] Empty data for {feature_name}")
@@ -312,8 +309,6 @@ class ParameterAnalyzer:
                     print(f"      Error processing {feature_name}: {str(e)}")
                     try:
                         unique_non_nan = feature_series.dropna().nunique()
-                        print(f"      [DEBUG] Unique non-NaN values in feature: {unique_non_nan}")
-                        print(f"      [DEBUG] Head aligned:\n{aligned.head(5)}")
                     except Exception:
                         pass
                     continue
