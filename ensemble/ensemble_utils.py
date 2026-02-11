@@ -18,6 +18,7 @@ from feature_selection.base_models import (
     BaseModel,
     DecisionTreeBinningModel,
     QuantileBinningModel,
+    RuleBasedBinningModel,
     TwoBinBinningModel,
 )
 from utils.enums import Ticker, TimeFrame
@@ -340,7 +341,7 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
         raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
     
     # Validate model_type
-    valid_model_types = ['QuantileBinningModel', 'DecisionTreeBinningModel', 'TwoBinBinningModel']
+    valid_model_types = ['QuantileBinningModel', 'DecisionTreeBinningModel', 'TwoBinBinningModel', 'RuleBasedBinningModel']
     if config['model_type'] not in valid_model_types:
         raise ValueError(
             f"{prefix}Invalid model_type: {config['model_type']}. "
@@ -348,7 +349,7 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
         )
     
     # Validate strategy
-    valid_strategies = ['long', 'short']
+    valid_strategies = ['long', 'short', 'long_short']
     if config['strategy'] not in valid_strategies:
         raise ValueError(
             f"{prefix}Invalid strategy: {config['strategy']}. "
@@ -410,10 +411,13 @@ def create_base_model_from_config(
         binning_model = DecisionTreeBinningModel(**constructor_params)
     elif model_type == 'TwoBinBinningModel':
         # TwoBinBinningModel doesn't accept n_bins (it's hardcoded to 2)
-        # Remove it from constructor_params if present
         two_bin_params = constructor_params.copy()
         two_bin_params.pop('n_bins', None)
         binning_model = TwoBinBinningModel(**two_bin_params)
+    elif model_type == 'RuleBasedBinningModel':
+        rule_params = constructor_params.copy()
+        rule_params.pop('n_bins', None)
+        binning_model = RuleBasedBinningModel(**rule_params)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
     

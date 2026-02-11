@@ -41,7 +41,11 @@ class TwoBinBinningModel(BinningModelBase):
         - 'mean': mean return only
     strategy : str, default='long'
         Strategy type: 'long' or 'short'
-        
+    split_threshold : float, default=0.0
+        Value at which to split into two bins. Use 0.0 for sign-based (negative vs positive).
+        Use 0.5 for binary 0/1 features so 0 -> bin 0 and 1 -> bin 1 (np.digitize with
+        one edge puts both 0 and 1 in the same bin when edge is 0.0).
+
     Attributes
     ----------
     thresholds_ : np.ndarray
@@ -76,19 +80,26 @@ class TwoBinBinningModel(BinningModelBase):
     >>> print(f"Best short bin: {model.best_short_bin_}")
     """
     
-    def __init__(self, selection_metric: str = 'sortino', strategy: str = 'long'):
+    def __init__(
+        self,
+        selection_metric: str = 'sortino',
+        strategy: str = 'long',
+        split_threshold: float = 0.0,
+    ):
         """
         Initialize two-bin binning model.
-        
+
         Parameters
         ----------
         selection_metric : str, default='sortino'
             Metric to use for bin selection ('sortino' or 'mean')
         strategy : str, default='long'
             Strategy type: 'long' or 'short'
+        split_threshold : float, default=0.0
+            Split point: values < split_threshold -> bin 0, >= -> bin 1. Use 0.5 for binary 0/1.
         """
-        # Always use 2 bins for this model
         super().__init__(n_bins=2, selection_metric=selection_metric, strategy=strategy)
+        self.split_threshold = split_threshold
     
     def _create_bins(self, feature_data: pd.Series, target_data: pd.Series) -> pd.Series:
         """
@@ -111,9 +122,8 @@ class TwoBinBinningModel(BinningModelBase):
         pd.Series
             Bin assignments for each sample (0 for negative, 1 for positive)
         """
-        # Split based on sign: negative (< 0) -> bin 0, positive (>= 0) -> bin 1
-        bins = (feature_data >= 0).astype(int)
-        
+        # Split at split_threshold: < threshold -> bin 0, >= -> bin 1
+        bins = (feature_data >= self.split_threshold).astype(int)
         return bins
     
     def _extract_thresholds(self, df: pd.DataFrame, n_bins: int) -> np.ndarray:
@@ -134,8 +144,7 @@ class TwoBinBinningModel(BinningModelBase):
         np.ndarray
             Threshold array containing [0.0]
         """
-        # Always split at 0.0 for positive/negative
-        return np.array([0.0])
+        return np.array([self.split_threshold])
     
     def get_params(self, deep: bool = True) -> dict:
         """
@@ -156,9 +165,10 @@ class TwoBinBinningModel(BinningModelBase):
             Parameter names mapped to their values
         """
         return {
-            'n_bins': self.n_bins,  # Always 2
+            'n_bins': self.n_bins,
             'selection_metric': self.selection_metric,
-            'normalize_by': self.normalize_by
+            'normalize_by': self.normalize_by,
+            'split_threshold': self.split_threshold,
         }
     
     def set_params(self, **params) -> 'TwoBinBinningModel':
@@ -222,15 +232,10 @@ class TwoBinBinningModel(BinningModelBase):
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before calling score()")
         
-        # Get predictions
         signals = self.predict(X, strategy=strategy)
-        
-        # Calculate mean return for selected signals
-        selected_returns = y[signals == 1]
-        
+        selected_returns = (y * signals)[signals != 0]
         if len(selected_returns) == 0:
             return 0.0
-        
         return selected_returns.mean()
     
     def __repr__(self) -> str:

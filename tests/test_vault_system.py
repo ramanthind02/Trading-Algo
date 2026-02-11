@@ -47,12 +47,14 @@ class TestDirectionEnum:
         """Test Direction enum values."""
         assert Direction.LONG.value == 'long'
         assert Direction.SHORT.value == 'short'
-    
+        assert Direction.LONG_SHORT.value == 'long_short'
+
     def test_direction_string_conversion(self):
         """Test Direction string conversion."""
         assert str(Direction.LONG) == 'long'
         assert str(Direction.SHORT) == 'short'
-    
+        assert str(Direction.LONG_SHORT) == 'long_short'
+
     def test_from_string_valid(self):
         """Test from_string with valid inputs."""
         assert Direction.from_string('long') == Direction.LONG
@@ -60,18 +62,20 @@ class TestDirectionEnum:
         assert Direction.from_string('Long') == Direction.LONG
         assert Direction.from_string('short') == Direction.SHORT
         assert Direction.from_string('SHORT') == Direction.SHORT
-    
+        assert Direction.from_string('long_short') == Direction.LONG_SHORT
+        assert Direction.from_string('both') == Direction.LONG_SHORT
+
     def test_from_string_invalid(self):
         """Test from_string with invalid inputs."""
         with pytest.raises(ValueError, match="Invalid direction"):
             Direction.from_string('invalid')
         with pytest.raises(ValueError, match="Invalid direction"):
-            Direction.from_string('both')
-    
+            Direction.from_string('neutral')
+
     def test_sorting(self):
-        """Test Direction sorting."""
-        directions = [Direction.SHORT, Direction.LONG]
-        assert sorted(directions) == [Direction.LONG, Direction.SHORT]
+        """Test Direction sorting (by definition order: LONG, SHORT, LONG_SHORT)."""
+        directions = [Direction.SHORT, Direction.LONG_SHORT, Direction.LONG]
+        assert sorted(directions) == [Direction.LONG, Direction.SHORT, Direction.LONG_SHORT]
 
 
 class TestModelIDGeneration:
