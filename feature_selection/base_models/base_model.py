@@ -42,7 +42,7 @@ class BinningModelBase(ABC):
     normalize_by : str, optional, default='ewsd'
         Normalization method: 'ewsd', 'atr', or None
     strategy : str, default='long'
-        Strategy type: 'long' or 'short'
+        Strategy type: 'long', 'short', or 'long_short' (both long and short bins).
     """
     
     def __init__(
@@ -55,7 +55,7 @@ class BinningModelBase(ABC):
         self.n_bins = n_bins
         self.selection_metric = selection_metric
         self.normalize_by = normalize_by  # 'ewsd', 'atr', or None
-        self.strategy = strategy  # 'long' or 'short'
+        self.strategy = strategy  # 'long', 'short', or 'long_short'
         
         # Feature column name (stored automatically from Series.name when fit() is called)
         self.feature_column: Optional[str] = None
@@ -368,75 +368,56 @@ class BinningModelBase(ABC):
         feature_data : pd.Series
             Feature values to classify - RAW, not normalized
         strategy : str, default='long'
-            Strategy to use: 'long' or 'short'
+            Strategy: 'long', 'short', or 'long-short'.
         normalization_data : Optional[pd.Series]
             Volatility data (EWSD or ATR) for scaling.
             Required if scaled=True and normalize_by is set.
         scaled : bool, default=False
-            If True, apply volatility scaling to signals (position sizes).
-            If False, return binary signals (1 or 0).
+            If True, apply volatility scaling to position sizes.
+            If False, return signed position fractions (-1, 0, 1).
             
         Returns
         -------
         pd.Series
-            If scaled=False: Binary signals (1 if in best bin, 0 otherwise)
-            If scaled=True: Volatility-scaled position sizes (0 or 1/volatility)
-            
-        Examples
-        --------
-        >>> # Get binary signals (1 or 0)
-        >>> signals = model.predict(X_test, strategy='long', scaled=False)
-        >>> 
-        >>> # Get volatility-scaled position sizes
-        >>> positions = model.predict(
-        ...     X_test,
-        ...     strategy='long',
-        ...     normalization_data=ewsd_test,
-        ...     scaled=True
-        ... )
+            Signed position: 1 (long), -1 (short), 0 (flat).
+            If scaled=True: position_sign / volatility for non-zero positions.
         """
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before calling predict()")
-        
-        # Select appropriate bin based on strategy
-        if strategy == 'long':
-            best_bin = self.best_long_bin_
-        elif strategy == 'short':
-            best_bin = self.best_short_bin_
-        else:
-            raise ValueError(f"Unknown strategy: {strategy}. Use 'long' or 'short'")
-        
+
         # Assign bins based on thresholds (always on RAW features)
-        # Handle constant features (empty or None thresholds)
         if self.thresholds_ is None or len(self.thresholds_) == 0:
-            # Constant feature: all values go to bin 0
             bins = np.zeros(len(feature_data), dtype=int)
         else:
             bins = np.digitize(feature_data.values, self.thresholds_)
-        
-        # Create binary signal: 1 if in best bin, 0 otherwise
-        signal = pd.Series((bins == best_bin).astype(int), index=feature_data.index)# If not scaled or no normalization, return binary signals
+
+        # Signed position: 1 (long bin), -1 (short bin), 0 (flat)
+        if strategy == 'long':
+            signal = pd.Series(np.where(bins == self.best_long_bin_, 1, 0), index=feature_data.index)
+        elif strategy == 'short':
+            signal = pd.Series(np.where(bins == self.best_short_bin_, -1, 0), index=feature_data.index)
+        elif strategy in ('long-short', 'long_short'):
+            out = np.zeros(len(feature_data), dtype=np.float64)
+            out[bins == self.best_long_bin_] = 1.0
+            out[bins == self.best_short_bin_] = -1.0
+            signal = pd.Series(out, index=feature_data.index)
+        else:
+            raise ValueError(
+                f"Unknown strategy: {strategy!r}. Use 'long', 'short', or 'long_short'/'long-short'"
+            )
+
         if not scaled or self.normalize_by is None:
             return signal
-        
-        # Apply volatility scaling to signals
+
         if normalization_data is None:
             raise ValueError(
                 f"scaled=True and normalize_by='{self.normalize_by}' but no normalization_data provided. "
                 f"Pass the {self.normalize_by.upper()} column when calling predict()."
             )
-        
-        # Align indices
         aligned_signal = signal.reindex(normalization_data.index, fill_value=0)
-        
-        # Safe division with minimum threshold
         MIN_VOL = 1e-8 if self.normalize_by == 'ewsd' else 1.0
         safe_vol = normalization_data.clip(lower=MIN_VOL)
-        
-        # Scale signals: signal / volatility
-        # If signal=0, result=0. If signal=1, result=1/vol (position size)
         scaled_signal = aligned_signal / safe_vol
-        
         return scaled_signal
     
     def get_bin_stats(self) -> Dict:
@@ -510,20 +491,12 @@ class BinningModelBase(ABC):
         # Fit the model
         self.fit(feature_data, target_data, normalization_data=normalization_data)
         
-        # Get predictions for the specified strategy
+        # Get predictions (signed position: 1, -1, 0)
         signals = self.predict(feature_data, strategy=strategy, normalization_data=normalization_data)
-        
-        # Get selected returns
-        selected_returns = target_data[signals == 1]
-        
+        # Strategy return = position * instrument_return; drop flat
+        selected_returns = (target_data * signals)[signals != 0]
         if len(selected_returns) == 0:
             return 0.0
-        
-        # For short strategy, negate returns (shorting profits from negative returns)
-        if strategy == 'short':
-            selected_returns = -selected_returns
-        
-        # Compute objective metric
         metric_value = objective_metric.compute(selected_returns)
         
         return metric_value

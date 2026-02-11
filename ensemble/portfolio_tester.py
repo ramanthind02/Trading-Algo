@@ -68,26 +68,23 @@ def calculate_strategy_returns_from_positions(
 ) -> pd.Series:
     """
     Calculate strategy returns from position fractions and candles.
-    
-    Strategy return calculation:
-    - For 'long' strategy: return = position_fraction * instrument_return
-    - For 'short' strategy: return = -position_fraction * instrument_return
-      (shorting profits from negative returns, so we negate)
-    
-    IMPORTANT: 
+
+    position_fraction is signed: 1 (long), -1 (short), 0 (flat).
+    Strategy return = position_fraction * instrument_return (no strategy branching).
+
+    IMPORTANT:
     - Positions are shifted forward by one period to avoid lookahead bias.
-      A prediction made at time x using candle x is only available at time x+1.
-    - Returns are NOT scaled by 1/N - instrument weights already account for capital allocation.
-    
+    - Returns are NOT scaled by 1/N; instrument weights account for capital allocation.
+
     Parameters
     ----------
     positions_df : pd.DataFrame
-        Position fractions with columns: ticker, datetime, position_fraction
+        Columns: ticker, datetime, position_fraction (signed: -1, 0, 1)
     candles_df : pd.DataFrame
-        Candles DataFrame with columns: datetime, ticker, close
+        Columns: datetime, ticker, close
     strategy : str, default='long'
-        Strategy direction: 'long' or 'short'. For short strategies, returns are negated.
-        
+        Kept for backward compatibility; ignored (position is already signed).
+
     Returns
     -------
     pd.Series
@@ -100,8 +97,8 @@ def calculate_strategy_returns_from_positions(
     candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
     
     # CRITICAL: Remove microsecond offsets used to distinguish tickers in multi-ticker DataFrames
-    # The positions DataFrame has already been normalized (floor('S')), so we need to match that
-    candles_sorted['datetime'] = candles_sorted['datetime'].dt.floor('S')
+    # The positions DataFrame has already been normalized (floor('s')), so we need to match that
+    candles_sorted['datetime'] = candles_sorted['datetime'].dt.floor('s')
 
     # Compute log returns per ticker (reused for all strategies)
     candles_sorted['log_close'] = np.log(candles_sorted['close'])
@@ -118,7 +115,7 @@ def calculate_strategy_returns_from_positions(
     positions = positions_df.copy()
     positions['datetime'] = pd.to_datetime(positions['datetime'])
     # Ensure positions datetime is also normalized (should already be, but ensure consistency)
-    positions['datetime'] = positions['datetime'].dt.floor('S')
+    positions['datetime'] = positions['datetime'].dt.floor('s')
     
     # #region agent log
     from utils.debug_helpers import safe_json_dumps
@@ -190,11 +187,8 @@ def calculate_strategy_returns_from_positions(
     if merged.empty:
         return _empty_returns_series('strategy_return')
 
-    # Strategy return calculation depends on strategy direction
-    if strategy == 'short':
-        merged['strategy_return'] = -merged['position_fraction'] * merged['instrument_return']
-    else:
-        merged['strategy_return'] = merged['position_fraction'] * merged['instrument_return']
+    # Position is signed (1 / -1 / 0); return = position * instrument_return
+    merged['strategy_return'] = merged['position_fraction'] * merged['instrument_return']
 
     # #region agent log
     from utils.debug_helpers import safe_json_dumps

@@ -173,13 +173,13 @@ class DiversifiedEnsemble:
         if len(feature_cols) == 0:
             raise ValueError("No feature columns found in input DataFrame")
         
-        # Validate feature columns are binary for fit method
+        # Validate feature columns are binary (0/1) or signed (-1/0/1) for fit method
         if method == "fit":
             for col in feature_cols:
                 unique_vals = X[col].dropna().unique()
-                if not set(unique_vals).issubset({0, 1, 0.0, 1.0}):
+                if not set(unique_vals).issubset({-1, 0, 1, -1.0, 0.0, 1.0}):
                     raise ValueError(
-                        f"Feature column '{col}' must be binary (0 or 1). "
+                        f"Feature column '{col}' must be binary (0 or 1) or signed (-1, 0, 1). "
                         f"Found unique values: {sorted(unique_vals)}"
                     )
         
@@ -642,12 +642,18 @@ class DiversifiedEnsemble:
         # Calculate diversified weights
         self.weights_ = self._calculate_diversified_weights(df[feature_cols])
         
-        # Calculate exposure fractions (h_i) - empirical (fraction of time signal=1)
+        # Calculate exposure fractions (h_i) - empirical
+        # For long/short: fraction of time in market (signal != 0). For long-only: fraction signal==1.
         self.exposure_fractions_ = {}
         for col in feature_cols:
             feature_data = df[col]
-            # Fraction of time feature == 1
-            self.exposure_fractions_[col] = feature_data.mean()
+            if set(feature_data.dropna().unique()).issubset({-1, 0, 1, -1.0, 0.0, 1.0}):
+                # Signed signals: exposure = fraction of time in market (long or short)
+                in_market = (feature_data != 0) & (feature_data.notna())
+                self.exposure_fractions_[col] = in_market.astype(float).mean()
+            else:
+                # Binary long-only: fraction of time signal == 1
+                self.exposure_fractions_[col] = feature_data.mean()
 
         # Calculate model exposure fractions from actual binary signals (empirical)
         # This accounts for non-uniform binning where bins may have different sample counts
@@ -664,10 +670,13 @@ class DiversifiedEnsemble:
                 # Buy_hold is always in market: h_i = 1.0
                 self.model_exposure_fractions_[model_name] = 1.0
             else:
-                # Calculate from actual binary signals (fraction of time signal=1)
-                # This handles non-uniform binning correctly
+                # Calculate from actual signals: long_short = fraction in market; long-only = fraction signal=1
                 if model_name in binary_df.columns:
-                    self.model_exposure_fractions_[model_name] = binary_df[model_name].mean()
+                    sig = binary_df[model_name]
+                    if set(sig.dropna().unique()).issubset({-1, 0, 1, -1.0, 0.0, 1.0}):
+                        self.model_exposure_fractions_[model_name] = (sig != 0).astype(float).mean()
+                    else:
+                        self.model_exposure_fractions_[model_name] = sig.mean()
                 else:
                     # Fallback: use theoretical 1/n_bins if binary signals not available
                     n_bins = getattr(base_model, 'n_bins', 10)
@@ -914,10 +923,13 @@ class DiversifiedEnsemble:
                                     f"Error generating signals for model '{model_name}' on ticker '{ticker_name}': {e}"
                                 )
                     
-                    # Calculate exposure fraction from actual binary signals
+                    # Calculate exposure fraction from actual signals
                     if model_signals:
                         all_signals = pd.concat(model_signals) if len(model_signals) > 1 else model_signals[0]
-                        self.model_exposure_fractions_[model_name] = all_signals.mean()
+                        if set(all_signals.dropna().unique()).issubset({-1, 0, 1, -1.0, 0.0, 1.0}):
+                            self.model_exposure_fractions_[model_name] = (all_signals != 0).astype(float).mean()
+                        else:
+                            self.model_exposure_fractions_[model_name] = all_signals.mean()
                     else:
                         # Fallback: use theoretical 1/n_bins if no signals generated
                         n_bins = getattr(base_model, 'n_bins', 10)
@@ -1187,20 +1199,23 @@ class DiversifiedEnsemble:
             ticker_predictions = []
             for model_name, base_model in self.base_models.items():
                 try:
-                    # Check if this base model supports this ticker
+                    # Only use this base model for tickers it explicitly supports.
+                    # If tickers is empty, skip (do not assume "all tickers"); per-ticker
+                    # weights are correct only when each model is used only for its tickers.
                     model_tickers = set(getattr(base_model, 'tickers', []))
-                    if model_tickers:
-                        # Normalize ticker names for comparison
-                        model_ticker_names = {_normalize_ticker_name(t) for t in model_tickers}
-                        normalized_ticker_name = _normalize_ticker_name(ticker_name)
-                        
-                        # Skip this base model if it doesn't support this ticker
-                        if normalized_ticker_name not in model_ticker_names:
-                            logger.debug(
-                                f"Base model '{model_name}' does not support ticker '{ticker_name}'. "
-                                f"Supported tickers: {model_ticker_names}. Skipping."
-                            )
-                            continue
+                    if not model_tickers:
+                        logger.debug(
+                            f"Base model '{model_name}' has no tickers configured; skipping for ticker '{ticker_name}'."
+                        )
+                        continue
+                    model_ticker_names = {_normalize_ticker_name(t) for t in model_tickers}
+                    normalized_ticker_name = _normalize_ticker_name(ticker_name)
+                    if normalized_ticker_name not in model_ticker_names:
+                        logger.debug(
+                            f"Base model '{model_name}' does not support ticker '{ticker_name}'. "
+                            f"Supported tickers: {model_ticker_names}. Skipping."
+                        )
+                        continue
                     
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
                     # BaseModel.predict() handles feature caching internally (if use_cache=True)
@@ -1332,9 +1347,9 @@ class DiversifiedEnsemble:
         candles_datetime_index = candles_df[['ticker', 'datetime']].copy()
         candles_datetime_index['datetime'] = pd.to_datetime(candles_datetime_index['datetime'])
         # Remove microseconds from candles (used to distinguish tickers in multi-ticker DataFrames)
-        candles_datetime_index['datetime'] = candles_datetime_index['datetime'].dt.floor('S')
+        candles_datetime_index['datetime'] = candles_datetime_index['datetime'].dt.floor('s')
         ensemble_result['datetime'] = pd.to_datetime(ensemble_result['datetime'])
-        ensemble_result['datetime'] = ensemble_result['datetime'].dt.floor('S')
+        ensemble_result['datetime'] = ensemble_result['datetime'].dt.floor('s')
         
         # Right merge: keep all candles datetimes, fill missing forecasts with 0
         ensemble_result = candles_datetime_index.merge(
@@ -1347,22 +1362,26 @@ class DiversifiedEnsemble:
         
         # Return structure based on flag
         if return_base_model_predictions:
-            # Combine base model predictions across tickers
+            # Combine base model predictions across tickers (only tickers this model supports).
+            # Do NOT merge with full candles_datetime_index: that would add rows for unsupported
+            # tickers (e.g. TLT for indices models) with 0, and the weight layer would then
+            # count that model for every ticker. Align only to candles for this model's tickers.
             combined_base_models = {}
             for model_name, model_dfs in base_model_predictions_dict.items():
                 base_model_df = pd.concat(model_dfs, ignore_index=True)
-                
-                # CRITICAL FIX: Align base model predictions to candles' datetime index too
                 base_model_df['datetime'] = pd.to_datetime(base_model_df['datetime'])
-                base_model_df['datetime'] = base_model_df['datetime'].dt.floor('S')
-                base_model_df = candles_datetime_index.merge(
+                base_model_df['datetime'] = base_model_df['datetime'].dt.floor('s')
+                tickers_in_model = base_model_df['ticker'].unique()
+                candles_subset = candles_datetime_index[
+                    candles_datetime_index['ticker'].isin(tickers_in_model)
+                ]
+                base_model_df = candles_subset.merge(
                     base_model_df,
                     on=['ticker', 'datetime'],
                     how='left'
                 )
                 base_model_df['forecast_score'] = base_model_df['forecast_score'].fillna(0.0)
                 base_model_df = base_model_df[['ticker', 'datetime', 'forecast_score']]
-                
                 combined_base_models[model_name] = base_model_df
         
         return {

@@ -129,16 +129,19 @@ class BaseModel:
             from feature_selection.base_models.quantile_binning import QuantileBinningModel
             from feature_selection.base_models.tree_binning import DecisionTreeBinningModel
             from feature_selection.base_models.twobin_binning import TwoBinBinningModel
-            
+            from feature_selection.base_models.rule_based_binning import RuleBasedBinningModel
+
             model_type = feature_config.get('model_type', 'QuantileBinningModel')
             constructor_params = feature_config.get('constructor_params', {})
-            
+
             if model_type == 'QuantileBinningModel':
                 self.binning_model = QuantileBinningModel(**constructor_params)
             elif model_type == 'DecisionTreeBinningModel':
                 self.binning_model = DecisionTreeBinningModel(**constructor_params)
             elif model_type == 'TwoBinBinningModel':
                 self.binning_model = TwoBinBinningModel(**constructor_params)
+            elif model_type == 'RuleBasedBinningModel':
+                self.binning_model = RuleBasedBinningModel(**constructor_params)
             else:
                 # Default to QuantileBinningModel
                 self.binning_model = QuantileBinningModel()
@@ -723,6 +726,10 @@ class BaseModel:
                 f"Insufficient aligned data: {final_n_aligned} samples aligned out of {len(feature_data)} features. "
                 f"This suggests a datetime alignment issue between features and returns."
             )
+
+        # Ensure feature_data has a name (required by RuleBasedBinningModel.fit and others)
+        if feature_data.name is None:
+            feature_data.name = column_name
 
         # Fit binning model
         self.binning_model.fit(feature_data, aligned_target)

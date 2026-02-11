@@ -251,15 +251,10 @@ class QuantileBinningModel(BinningModelBase):
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before calling score()")
         
-        # Get predictions
         signals = self.predict(X, strategy=strategy)
-        
-        # Calculate mean return for selected signals
-        selected_returns = y[signals == 1]
-        
+        selected_returns = (y * signals)[signals != 0]
         if len(selected_returns) == 0:
             return 0.0
-        
         return selected_returns.mean()
     
     def __repr__(self) -> str:

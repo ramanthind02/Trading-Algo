@@ -1666,68 +1666,18 @@ class FeatureExplorer:
             try:
                 # Generate signals: use binning model if provided, otherwise use feature series directly
                 if binning_model is not None:
-                    # Clone the binning model to avoid modifying the original
                     model_clone = copy.deepcopy(binning_model)
-                    
-                    # Fit the cloned model on (feature, target) for this feature
                     model_clone.fit(X_clean, y_clean)
-                    
-                    if strategy == 'long-short':
-                        # For long-short, we need both long and short signals
-                        # The model computes both best_long_bin_ and best_short_bin_ during fit
-                        # Get signals for both long and short bins
-                        long_signals = model_clone.predict(X_clean, strategy='long')
-                        short_signals = model_clone.predict(X_clean, strategy='short')
-                        
-                        if isinstance(long_signals, (pd.Series, pd.DataFrame)):
-                            long_signals = long_signals.squeeze()
-                        else:
-                            long_signals = pd.Series(long_signals, index=X_clean.index)
-                        
-                        if isinstance(short_signals, (pd.Series, pd.DataFrame)):
-                            short_signals = short_signals.squeeze()
-                        else:
-                            short_signals = pd.Series(short_signals, index=X_clean.index)
-                        
-                        # Long positions: use returns as-is
-                        # Short positions: negate returns (shorting profits from negative returns)
-                        gated_returns = (y_clean * long_signals) + (-y_clean * short_signals)
-                        signals_series = long_signals + short_signals  # For summary stats
+                    signals = model_clone.predict(X_clean, strategy=strategy)
+                    if isinstance(signals, (pd.Series, pd.DataFrame)):
+                        signals_series = signals.squeeze()
                     else:
-                        # For 'long' or 'short', update the cloned model's strategy attribute
-                        # This ensures any internal logic that depends on strategy works correctly
-                        if strategy == 'short' and model_clone.strategy == 'long':
-                            model_clone.strategy = 'short'
-                        elif strategy == 'long' and model_clone.strategy == 'short':
-                            model_clone.strategy = 'long'
-                        
-                        signals = model_clone.predict(X_clean, strategy=strategy)
-                        if isinstance(signals, (pd.Series, pd.DataFrame)):
-                            signals_series = signals.squeeze()
-                        else:
-                            signals_series = pd.Series(signals, index=X_clean.index)
-                        
-                        # For short strategy, negate returns (shorting profits from negative returns)
-                        # When shorting: if asset return is -0.01 (down 1%), we profit +0.01
-                        # Formula: gated_returns = -y_clean * signals_series
-                        # Example: -(-0.01) * 1 = +0.01 (profit from shorting a declining asset)
-                        if strategy == 'short':
-                            gated_returns = -y_clean * signals_series
-                        else:
-                            gated_returns = y_clean * signals_series
+                        signals_series = pd.Series(signals, index=X_clean.index)
+                    # Position is signed (-1, 0, 1); gated return = position * instrument return
+                    gated_returns = y_clean * signals_series
                 else:
-                    # Use feature series directly as signals (for binary features)
                     signals_series = X_clean
-                    # For short strategy, negate returns (shorting profits from negative returns)
-                    # When shorting: if asset return is -0.01 (down 1%), we profit +0.01
-                    if strategy == 'short':
-                        gated_returns = -y_clean * signals_series
-                    elif strategy == 'long-short':
-                        # For binary features, long-short doesn't make sense without a model
-                        # Treat as long-only
-                        gated_returns = y_clean * signals_series
-                    else:
-                        gated_returns = y_clean * signals_series
+                    gated_returns = y_clean * signals_series
                 
                 # CRITICAL: Sort by datetime index before calculating cumulative sum
                 # This ensures chronological order, especially important for multi-ticker data
@@ -2051,44 +2001,15 @@ class FeatureExplorer:
             try:
                 # Generate signals using the pre-fitted model (or feature series directly)
                 if fitted_model is not None:
-                    # Use the pre-fitted model to predict on this ticker's data
-                    if strategy == 'long-short':
-                        long_signals = fitted_model.predict(X_clean, strategy='long')
-                        short_signals = fitted_model.predict(X_clean, strategy='short')
-                        
-                        if isinstance(long_signals, (pd.Series, pd.DataFrame)):
-                            long_signals = long_signals.squeeze()
-                        else:
-                            long_signals = pd.Series(long_signals, index=X_clean.index)
-                        
-                        if isinstance(short_signals, (pd.Series, pd.DataFrame)):
-                            short_signals = short_signals.squeeze()
-                        else:
-                            short_signals = pd.Series(short_signals, index=X_clean.index)
-                        
-                        gated_returns = (y_clean * long_signals) + (-y_clean * short_signals)
-                        signals_series = long_signals + short_signals
+                    signals = fitted_model.predict(X_clean, strategy=strategy)
+                    if isinstance(signals, (pd.Series, pd.DataFrame)):
+                        signals_series = signals.squeeze()
                     else:
-                        signals = fitted_model.predict(X_clean, strategy=strategy)
-                        if isinstance(signals, (pd.Series, pd.DataFrame)):
-                            signals_series = signals.squeeze()
-                        else:
-                            signals_series = pd.Series(signals, index=X_clean.index)
-                        
-                        # For short strategy, negate returns (shorting profits from negative returns)
-                        if strategy == 'short':
-                            gated_returns = -y_clean * signals_series
-                        else:
-                            gated_returns = y_clean * signals_series
+                        signals_series = pd.Series(signals, index=X_clean.index)
+                    gated_returns = y_clean * signals_series
                 else:
-                    # Use feature series directly as signals
                     signals_series = X_clean
-                    if strategy == 'short':
-                        gated_returns = -y_clean * signals_series
-                    elif strategy == 'long-short':
-                        gated_returns = y_clean * signals_series
-                    else:
-                        gated_returns = y_clean * signals_series
+                    gated_returns = y_clean * signals_series
                 
                 # Sort by datetime index before calculating cumulative sum
                 if isinstance(gated_returns.index, pd.DatetimeIndex):

@@ -12,12 +12,21 @@ Date: 2025-11-23
 from .diversified_ensemble import DiversifiedEnsemble
 from .portfolio import Portfolio
 from .portfolio_manager import PortfolioManager
-from .weight_layer import WeightLayer, InverseCorrelationWeighter
+from .weight_layer import (
+    BaseWeightLayer,
+    InverseCorrelationWeighter,
+    InverseCorrelationWeightLayer,
+    SortinoOptimizedWeightLayer,
+    WeightLayer,
+)
 
 __all__ = [
     'DiversifiedEnsemble',
     'Portfolio',
     'PortfolioManager',
     'WeightLayer',
-    'InverseCorrelationWeighter'
+    'BaseWeightLayer',
+    'InverseCorrelationWeightLayer',
+    'SortinoOptimizedWeightLayer',
+    'InverseCorrelationWeighter',
 ]
