@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "cython_portfolio_backtest.md",
-                "mode": "source",
+                "file": "to-do/candle_permutation_specs.md",
+                "mode": "preview",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "cython_portfolio_backtest"
+              "title": "candle_permutation_specs"
             }
           }
         ]
@@ -171,6 +171,20 @@
   },
   "active": "363c7c083b797ca3",
   "lastOpenFiles": [
+    "to-do/feature_explorer_variants_specs.md",
+    "to-do/rule_based_grid_report_specs.md",
+    "to-do/grid_neighbor_smoothing_specs.md",
+    "to-do/candle_permutation_chapter.md",
+    "complete/prop_firm_challenge_simulator.md",
+    "complete/cache.md",
+    "complete/vault_specs.md",
+    "complete/param_sens.md",
+    "complete/ml_manager_specs.md",
+    "complete/monte_carlo_testing.md",
+    "complete/forecast_specs.md",
+    "complete/forecast_implementation_specs.md",
+    "complete",
+    "cython_portfolio_backtest.md",
     "to-do/forecast_implementation_specs.md",
     "to-do/walkforward_refactoring_summary.md",
     "to-do/walkforward_implementation_summary.md",
@@ -184,25 +198,12 @@
     "bias_nodes/to-do/rsi_percentile.md",
     "bias_nodes/to-do/rei.md",
     "bias_nodes/to-do/double_7.md",
-    "bias_nodes/to-do/detrend_rsi.md",
-    "bias_nodes/to-do/cycle_rsi.md",
-    "bias_nodes/to-do/casey_c%.md",
-    "bias_nodes/to-do/b%.md",
-    "bias_nodes/to-do/adaptive_rsi.md",
     "bias_nodes/to-do",
-    "bias_nodes/base_bias_node_specs.md",
     "bias_nodes/to-do/rsi_signal",
-    "bias_nodes/to-do/Untitled.md",
     "bias_nodes/vault",
     "bias_nodes",
-    "to-do/forecast_specs.md",
-    "to-do/ml_manager_specs.md",
-    "to-do/prop_firm_challenge_simulator.md",
-    "to-do/vault_specs.md",
     "ML pipeline overview.canvas",
-    "to-do/monte_carlo_testing.md",
     "to-do/ml_manager.specs",
-    "to-do/implementation_specs.md",
     "Base model",
     "EDA/Untitled",
     "EDA",
@@ -215,7 +216,6 @@
     "Feature engineering",
     "z-attachements/Pasted image 20251101141450.png",
     "z-attachements/Pasted image 20251030191937.png",
-    "z-attachements",
     "z-attachements/Pasted image 20251030191534.png",
     "z-attachements/Pasted image 20251030191358.png"
   ]
