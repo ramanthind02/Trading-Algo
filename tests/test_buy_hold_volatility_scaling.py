@@ -20,7 +20,7 @@ from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer
 from feature_selection.base_models.feature_base_model import BaseModel
-from feature_selection.base_models.quantile_binning import QuantileBinningModel
+from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from utils.models import Candle
 
 
@@ -35,9 +35,9 @@ BUY_HOLD_FEATURE_CONFIG = {
     },
     "base_models": [
         {
-            "model_id": "quantile_binning_2",
-            "model_name": "buy_hold_signal_D::quantile_binning_2",
-            "binning_model_type": "QuantileBinningModel",
+            "model_id": "continuous_binning_2",
+            "model_name": "buy_hold_signal_D::continuous_binning_2",
+            "binning_model_type": "continuous_binning",
             "strategy": "long",
             "binning_model_params": {
                 "n_bins": 2,

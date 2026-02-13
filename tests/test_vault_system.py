@@ -22,7 +22,7 @@ from unittest.mock import Mock, patch
 
 from utils.enums import Direction, TimeFrame, Ticker
 from feature_selection.base_models.feature_base_model import BaseModel
-from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel
+from feature_selection.base_models import ContinuousBinningModel, DecisionTreeBinningModel
 from ensemble.vault_manager import (
     generate_model_id,
     create_ensemble_directory,
@@ -81,28 +81,28 @@ class TestDirectionEnum:
 class TestModelIDGeneration:
     """Test suite for model ID generation."""
     
-    def test_quantile_binning_model_id(self):
-        """Test model ID generation for QuantileBinningModel."""
+    def test_continuous_binning_model_id(self):
+        """Test model ID generation for ContinuousBinningModel."""
         params = {'n_bins': 3, 'selection_metric': 'sortino', 'strategy': 'long'}
-        model_id = generate_model_id('QuantileBinningModel', params)
-        assert model_id == 'quantile_binning_3'
+        model_id = generate_model_id('continuous_binning', params)
+        assert model_id == 'continuous_binning_3'
     
-    def test_quantile_binning_model_id_different_bins(self):
+    def test_continuous_binning_model_id_different_bins(self):
         """Test model ID generation with different bin counts."""
         params_3 = {'n_bins': 3, 'selection_metric': 'sortino'}
         params_5 = {'n_bins': 5, 'selection_metric': 'sortino'}
         
-        id_3 = generate_model_id('QuantileBinningModel', params_3)
-        id_5 = generate_model_id('QuantileBinningModel', params_5)
+        id_3 = generate_model_id('continuous_binning', params_3)
+        id_5 = generate_model_id('continuous_binning', params_5)
         
-        assert id_3 == 'quantile_binning_3'
-        assert id_5 == 'quantile_binning_5'
+        assert id_3 == 'continuous_binning_3'
+        assert id_5 == 'continuous_binning_5'
         assert id_3 != id_5
     
     def test_decision_tree_binning_model_id(self):
         """Test model ID generation for DecisionTreeBinningModel."""
         params = {'n_bins': 5, 'min_samples_leaf_pct': 0.05, 'selection_metric': 'sortino'}
-        model_id = generate_model_id('DecisionTreeBinningModel', params)
+        model_id = generate_model_id('decision_tree_binning', params)
         assert model_id == 'decision_tree_binning_5'
 
 
@@ -167,7 +167,7 @@ class TestBaseModel:
     
     def test_base_model_initialization(self, bias_node_spec):
         """Test BaseModel initialization."""
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -182,7 +182,7 @@ class TestBaseModel:
     
     def test_add_candle(self, bias_node_spec, sample_candles):
         """Test adding candles to BaseModel."""
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -198,7 +198,7 @@ class TestBaseModel:
     
     def test_get_feature(self, bias_node_spec, sample_candles):
         """Test feature extraction from bias nodes."""
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -219,7 +219,7 @@ class TestBaseModel:
     
     def test_fit(self, bias_node_spec, candles_df, target_data):
         """Test BaseModel fitting."""
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -235,7 +235,7 @@ class TestBaseModel:
     
     def test_predict(self, bias_node_spec, candles_df, target_data):
         """Test BaseModel prediction."""
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -348,7 +348,7 @@ class TestVaultManager:
         )
         
         # Create and fit a base model
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -381,7 +381,7 @@ class TestVaultManager:
             base_model=base_model
         )
         
-        assert model_id == 'quantile_binning_3'
+        assert model_id == 'continuous_binning_3'
         
         # Check file was created
         feature_file = Path(ensemble_dir) / 'features' / f"{base_model.feature_column}.json"
@@ -403,7 +403,7 @@ class TestVaultManager:
         )
         
         # Create model with wrong strategy
-        binning_model = QuantileBinningModel(n_bins=3, strategy='short')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='short')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -427,7 +427,7 @@ class TestVaultManager:
         )
         
         # Create and save a model
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -479,7 +479,7 @@ class TestVaultManager:
         )
         
         # Create and save unfitted model
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -539,7 +539,7 @@ class TestVaultManager:
         )
         
         # Add a model
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -574,7 +574,7 @@ class TestVaultManager:
         
         # Add multiple features
         for i in range(3):
-            binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+            binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
             base_model = BaseModel(
                 feature_config={'bias_node_spec': bias_node_spec},
                 binning_model=binning_model,
@@ -619,7 +619,7 @@ class TestVaultManager:
         )
         
         # Add a feature
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -664,7 +664,7 @@ class TestVaultManager:
         
         # Add multiple models to same feature
         for n_bins in [3, 5]:
-            binning_model = QuantileBinningModel(n_bins=n_bins, strategy='long')
+            binning_model = ContinuousBinningModel(n_bins=n_bins, strategy='long')
             base_model = BaseModel(
                 feature_config={'bias_node_spec': bias_node_spec},
                 binning_model=binning_model,
@@ -698,8 +698,8 @@ class TestVaultManager:
         
         assert len(model_names) == 2
         assert all('::' in name for name in model_names)
-        assert any('quantile_binning_3' in name for name in model_names)
-        assert any('quantile_binning_5' in name for name in model_names)
+        assert any('continuous_binning_3' in name for name in model_names)
+        assert any('continuous_binning_5' in name for name in model_names)
     
     def test_validate_ensemble_directory(self, temp_vault, bias_node_spec):
         """Test ensemble directory validation."""
@@ -709,7 +709,7 @@ class TestVaultManager:
         )
         
         # Add a valid feature
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
@@ -754,7 +754,7 @@ class TestVaultManager:
         )
         
         # Create base model for ES
-        binning_model = QuantileBinningModel(n_bins=3, strategy='long')
+        binning_model = ContinuousBinningModel(n_bins=3, strategy='long')
         base_model_es = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,

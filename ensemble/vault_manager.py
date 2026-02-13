@@ -24,7 +24,7 @@ import pandas as pd
 import utils.helpers as helpers
 from feature_selection.base_models import (
     DecisionTreeBinningModel,
-    QuantileBinningModel,
+    ContinuousBinningModel,
     TwoBinBinningModel,
 )
 from feature_selection.base_models.feature_base_model import BaseModel
@@ -195,7 +195,7 @@ def generate_model_id(binning_model_type: str, binning_model_params: Dict[str, A
     Parameters
     ----------
     binning_model_type : str
-        Binning model class name (e.g., 'QuantileBinningModel')
+        Binning model class name (e.g., 'continuous_binning')
     binning_model_params : Dict[str, Any]
         Constructor parameters for the binning model
         
@@ -206,15 +206,18 @@ def generate_model_id(binning_model_type: str, binning_model_params: Dict[str, A
         
     Examples
     --------
-    >>> generate_model_id('QuantileBinningModel', {'n_bins': 3, 'selection_metric': 'sortino'})
-    'quantile_binning_3'
-    >>> generate_model_id('DecisionTreeBinningModel', {'n_bins': 5, 'min_samples_leaf_pct': 0.10})
+    >>> generate_model_id('continuous_binning', {'n_bins': 3, 'selection_metric': 'sortino'})
+    'continuous_binning_3'
+    >>> generate_model_id('decision_tree_binning', {'n_bins': 5, 'min_samples_leaf_pct': 0.10})
     'decision_tree_binning_5'
     """
-    # Convert CamelCase to snake_case and remove 'Model' suffix
-    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', binning_model_type)
-    name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
-    name = name.replace('_model', '')
+    # model_type identifiers are already snake_case.
+    if "_" in binning_model_type:
+        name = binning_model_type
+    else:
+        name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', binning_model_type)
+        name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+        name = name.replace('_model', '')
     
     # Append key hyperparameters (n_bins is always included)
     if 'n_bins' in binning_model_params:
@@ -576,7 +579,7 @@ def add_feature_to_ensemble(
     
     # Get binning model type and params
     binning_model = base_model.binning_model
-    binning_model_type = binning_model.__class__.__name__
+    binning_model_type = getattr(binning_model, "model_type", binning_model.__class__.__name__)
     binning_model_params = binning_model.get_params()
     
     # Generate model ID
@@ -664,12 +667,7 @@ def add_feature_to_ensemble(
     # Add fitted params if model is fitted
     if binning_model.is_fitted_:
         model_entry['fitted_at'] = datetime.now(timezone.utc).isoformat()
-        model_entry['fitted_params'] = {
-            'thresholds': binning_model.thresholds_.tolist() if binning_model.thresholds_ is not None else None,
-            'best_long_bin': binning_model.best_long_bin_,
-            'best_short_bin': binning_model.best_short_bin_,
-            'bin_stats': binning_model.bin_stats_
-        }
+        model_entry['fitted_params'] = binning_model.get_fitted_params()
     
     # Add model entry
     feature_config['base_models'].append(model_entry)
@@ -720,7 +718,7 @@ def load_feature_base_models(
     --------
     >>> # Using explicit ensemble_dir
     >>> models = load_feature_base_models('rsi_signal_D', ensemble_dir='vault/D/ensemble_long')
-    >>> es_model = models[(Ticker.ES, 'quantile_binning_3')]
+    >>> es_model = models[(Ticker.ES, 'continuous_binning_3')]
     >>> 
     >>> # Using default ensemble_dir (set by create_ensemble_directory)
     >>> create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)
@@ -841,15 +839,14 @@ def load_feature_base_models(
         binning_model_type = model_config['binning_model_type']
         binning_model_params = model_config['binning_model_params'].copy()
         
-        # Remove 'strategy' and 'normalize_by' from params (handled separately or not used in constructor)
+        # Remove 'strategy' from params (handled separately)
         strategy = binning_model_params.pop('strategy', 'long')
-        binning_model_params.pop('normalize_by', None)  # Not a constructor param
         
-        if binning_model_type == 'QuantileBinningModel':
-            binning_model = QuantileBinningModel(**binning_model_params, strategy=strategy)
-        elif binning_model_type == 'DecisionTreeBinningModel':
+        if binning_model_type == 'continuous_binning':
+            binning_model = ContinuousBinningModel(**binning_model_params, strategy=strategy)
+        elif binning_model_type == 'decision_tree_binning':
             binning_model = DecisionTreeBinningModel(**binning_model_params, strategy=strategy)
-        elif binning_model_type == 'TwoBinBinningModel':
+        elif binning_model_type == 'two_bin_binning':
             # TwoBinBinningModel doesn't accept n_bins (it's hardcoded to 2)
             # Remove it from params if present
             two_bin_params = binning_model_params.copy()
@@ -861,17 +858,24 @@ def load_feature_base_models(
         # Load fitted params if available
         if model_config.get('is_fitted', False) and model_config.get('fitted_params'):
             fitted_params = model_config['fitted_params']
-            # Handle thresholds: empty list/None for constant features, otherwise array
-            thresholds_data = fitted_params.get('thresholds')
-            if thresholds_data is None:
-                binning_model.thresholds_ = np.array([])  # Constant feature
-            elif len(thresholds_data) == 0:
-                binning_model.thresholds_ = np.array([])  # Constant feature (empty list)
-            else:
-                binning_model.thresholds_ = np.array(thresholds_data)
-            binning_model.best_long_bin_ = fitted_params.get('best_long_bin')
-            binning_model.best_short_bin_ = fitted_params.get('best_short_bin')
-            binning_model.bin_stats_ = fitted_params.get('bin_stats')
+            if fitted_params.get("model_version") != "binning_v2":
+                raise ValueError(
+                    "Unsupported fitted schema. Expected 'binning_v2'. "
+                    "Regenerate fitted models with the new binning architecture."
+                )
+            binning_model.bin_edges_ = fitted_params.get("bin_edges")
+            binning_model.bin_stats_ = fitted_params.get("bin_stats", {})
+            binning_model.significant_regions_ = fitted_params.get("significant_regions", [])
+            binning_model.active_bins_by_strategy_ = fitted_params.get(
+                "active_bins_by_strategy",
+                {"long": [], "short": [], "long_short": []},
+            )
+            binning_model.position_multipliers_by_strategy_ = fitted_params.get(
+                "position_multipliers_by_strategy",
+                {"long": {}, "short": {}, "long_short": {}},
+            )
+            binning_model.fit_config_ = fitted_params.get("fit_config", {})
+            binning_model.model_version_ = fitted_params.get("model_version", "binning_v2")
             binning_model.is_fitted_ = True
         
         # Create BaseModel instance for each ticker (bias nodes are ticker-specific)

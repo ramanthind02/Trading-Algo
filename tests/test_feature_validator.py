@@ -84,7 +84,7 @@ def create_test_portfolio(features_df, feature_col='rsi_signal_D_lookback_14'):
     base_model_config = {
         'name': feature_col,
         'feature_column': feature_col,
-        'model_type': 'QuantileBinningModel',
+        'model_type': 'continuous_binning',
         'strategy': 'long',
         'constructor_params': {'n_bins': 3},
         'bias_node_spec': {

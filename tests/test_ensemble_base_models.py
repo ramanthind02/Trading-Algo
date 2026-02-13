@@ -22,7 +22,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ensemble.diversified_ensemble import DiversifiedEnsemble
-from feature_selection.base_models import QuantileBinningModel, DecisionTreeBinningModel
+from feature_selection.base_models import ContinuousBinningModel, DecisionTreeBinningModel
 
 
 class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
@@ -79,7 +79,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_base_model_save_to_feature_list(self):
         """Test saving a base model to feature_list file."""
         # Create a base model
-        model = QuantileBinningModel(n_bins=3, selection_metric='sortino', strategy='long')
+        model = ContinuousBinningModel(n_bins=3, selection_metric='sortino', strategy='long')
         
         # Fit the model first to set feature_column from Series name
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
@@ -111,7 +111,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         # Check base model config
         model_config = control_file['base_models'][0]
         self.assertEqual(model_config['name'], 'rsi_signal_D_lookback_14_long')  # Auto-generated
-        self.assertEqual(model_config['model_type'], 'QuantileBinningModel')
+        self.assertEqual(model_config['model_type'], 'continuous_binning')
         self.assertEqual(model_config['feature_column'], 'rsi_signal_D_lookback_14')
         self.assertEqual(model_config['strategy'], 'long')
         self.assertIn('constructor_params', model_config)
@@ -153,13 +153,13 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         model_config = control_file['base_models'][0]
         self.assertEqual(model_config['name'], 'momentum_signal_D_lookback_20_short')  # Auto-generated
         self.assertEqual(model_config['strategy'], 'short')
-        self.assertEqual(model_config['model_type'], 'DecisionTreeBinningModel')
+        self.assertEqual(model_config['model_type'], 'decision_tree_binning')
         self.assertFalse(control_file['metadata']['is_fit'])
     
     def test_base_model_save_to_existing_feature_list(self):
         """Test adding multiple features to feature_list."""
         # Save first model
-        model1 = QuantileBinningModel(n_bins=3, strategy='long')
+        model1 = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series1 = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model1.fit(feature_series1, self.y)
         model1.save_to_feature_list(
@@ -194,7 +194,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_ensemble_initialize_from_control_file(self):
         """Test initializing ensemble from control file."""
         # Create control file
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(
@@ -211,7 +211,10 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         # Verify base models are initialized
         self.assertEqual(len(ensemble.base_models), 1)
         self.assertIn('rsi_signal_D_lookback_14_long', ensemble.base_models)
-        self.assertIsInstance(ensemble.base_models['rsi_signal_D_lookback_14_long'], QuantileBinningModel)
+        self.assertIsInstance(
+            ensemble.base_models['rsi_signal_D_lookback_14_long'].binning_model,
+            ContinuousBinningModel
+        )
         
         # Verify base models are not fitted yet
         self.assertFalse(ensemble.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
@@ -226,7 +229,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_ensemble_initialize_from_control_file_multiple_models(self):
         """Test initializing ensemble with multiple base models."""
         # Create control file with multiple models
-        model1 = QuantileBinningModel(n_bins=3, strategy='long')
+        model1 = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series1 = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model1.fit(feature_series1, self.y)
         model1.save_to_feature_list(
@@ -259,7 +262,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_ensemble_fit_with_base_models(self):
         """Test fitting ensemble with base models."""
         # Create control file
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(
@@ -284,8 +287,10 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify base model is fitted
         self.assertTrue(ensemble.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNotNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].thresholds_)
-        self.assertIsNotNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].best_long_bin_)
+        self.assertIsNotNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
+        self.assertTrue(
+            len(ensemble.base_models['rsi_signal_D_lookback_14_long'].active_bins_by_strategy_['long']) >= 0
+        )
         self.assertEqual(ensemble.base_models['rsi_signal_D_lookback_14_long'].feature_column, 'rsi_signal_D_lookback_14')
         
         # Verify ensemble is fitted
@@ -298,7 +303,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_ensemble_predict_with_base_models(self):
         """Test predicting with ensemble that uses base models."""
         # Create control file
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(
@@ -343,7 +348,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_ensemble_save_control_file(self):
         """Test saving complete control file with fitted parameters."""
         # Create control file
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(
@@ -387,9 +392,10 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         # Check fitted base models
         self.assertIn('rsi_signal_D_lookback_14_long', control_file['fitted_base_models'])
         fitted_model = control_file['fitted_base_models']['rsi_signal_D_lookback_14_long']
-        self.assertIn('thresholds', fitted_model)
-        self.assertIn('best_long_bin', fitted_model)
+        self.assertEqual(fitted_model['model_version'], 'binning_v2')
+        self.assertIn('bin_edges', fitted_model)
         self.assertIn('bin_stats', fitted_model)
+        self.assertIn('position_multipliers_by_strategy', fitted_model)
         
         # Check fitted ensemble
         fitted_ensemble = control_file['fitted_ensemble']
@@ -400,7 +406,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_ensemble_load_control_file(self):
         """Test loading control file with fitted states."""
         # Create, fit, and save ensemble
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(
@@ -431,7 +437,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify base model is fitted
         self.assertTrue(ensemble2.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNotNone(ensemble2.base_models['rsi_signal_D_lookback_14_long'].thresholds_)
+        self.assertIsNotNone(ensemble2.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
         
         # Verify ensemble is fitted
         self.assertTrue(ensemble2.is_fitted_)
@@ -455,7 +461,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_full_workflow(self):
         """Test complete end-to-end workflow."""
         # Step 1: Save base models to control file
-        model1 = QuantileBinningModel(n_bins=3, strategy='long')
+        model1 = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series1 = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model1.fit(feature_series1, self.y)
         model1.save_to_feature_list(
@@ -537,7 +543,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     
     def test_ensemble_fit_missing_columns(self):
         """Test that fit raises error if required columns are missing."""
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(
@@ -562,7 +568,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     
     def test_base_model_fit_without_series_name(self):
         """Test that fit raises error if Series has no name."""
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         # Create Series without name (explicitly set name=None)
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'].values, name=None)
         
@@ -572,7 +578,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     
     def test_base_model_save_without_fit(self):
         """Test that save_to_feature_list raises error if fit() not called."""
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         
         with self.assertRaises(ValueError) as context:
             model.save_to_feature_list(filepath=self.control_file_path)
@@ -582,7 +588,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_model_name_auto_generation(self):
         """Test that model_name is automatically generated as {feature_column}_{strategy}."""
         # Test long strategy
-        model_long = QuantileBinningModel(n_bins=3, strategy='long')
+        model_long = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model_long.fit(feature_series, self.y)
         model_long.save_to_feature_list(filepath=self.control_file_path)
@@ -609,7 +615,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_control_file_is_fit_flag(self):
         """Test that is_fit flag is correctly set in control files."""
         # Create unfitted control file
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(filepath=self.control_file_path)
@@ -644,7 +650,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     
     def test_column_name_validation(self):
         """Test that column names must follow standardized format."""
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         # Use a non-standardized column name
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='invalid_column_name')
         model.fit(feature_series, self.y)
@@ -659,7 +665,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         from ensemble.ensemble_utils import add_feature_to_control_file
         
         # Create and save first model (fitted, using normal method)
-        model1 = QuantileBinningModel(n_bins=3, strategy='long')
+        model1 = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series1 = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model1.fit(feature_series1, self.y)
         model1.save_to_feature_list(
@@ -671,7 +677,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         # This demonstrates that we can add base models to control files without fitted params
         feature_config2 = {
             'name': 'momentum_signal_D_lookback_20_long',
-            'model_type': 'DecisionTreeBinningModel',
+            'model_type': 'decision_tree_binning',
             'feature_column': 'momentum_signal_D_lookback_20',
             'strategy': 'long',
             'constructor_params': {
@@ -710,7 +716,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_load_control_file_partial_fitted_base_models(self):
         """Test loading control file with is_fit=True where some models have fitted params and some don't."""
         # Create control file with two models
-        model1 = QuantileBinningModel(n_bins=3, strategy='long')
+        model1 = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series1 = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model1.fit(feature_series1, self.y)
         model1.save_to_feature_list(
@@ -748,12 +754,9 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Create partial fitted_base_models (only model1)
         fitted_base_models = {
-            'rsi_signal_D_lookback_14_long': {
-                'thresholds': ensemble.base_models['rsi_signal_D_lookback_14_long'].thresholds_.tolist(),
-                'best_long_bin': ensemble.base_models['rsi_signal_D_lookback_14_long'].best_long_bin_,
-                'best_short_bin': ensemble.base_models['rsi_signal_D_lookback_14_long'].best_short_bin_,
-                'bin_stats': ensemble.base_models['rsi_signal_D_lookback_14_long'].bin_stats_
-            }
+            'rsi_signal_D_lookback_14_long': (
+                ensemble.base_models['rsi_signal_D_lookback_14_long'].binning_model.get_fitted_params()
+            )
             # Note: momentum model is NOT in fitted_base_models
         }
         
@@ -781,11 +784,11 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify model1 is fitted (has fitted params)
         self.assertTrue(ensemble_loaded.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNotNone(ensemble_loaded.base_models['rsi_signal_D_lookback_14_long'].thresholds_)
+        self.assertIsNotNone(ensemble_loaded.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
         
         # Verify model2 is NOT fitted (no fitted params)
         self.assertFalse(ensemble_loaded.base_models['momentum_signal_D_lookback_20_long'].is_fitted_)
-        self.assertIsNone(ensemble_loaded.base_models['momentum_signal_D_lookback_20_long'].thresholds_)
+        self.assertIsNone(ensemble_loaded.base_models['momentum_signal_D_lookback_20_long'].bin_edges_)
         
         # Verify ensemble is fitted
         self.assertTrue(ensemble_loaded.is_fitted_)
@@ -797,7 +800,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_save_control_file_partial_fitted_base_models(self):
         """Test saving control file where only some base models are fitted."""
         # Create control file with two models
-        model1 = QuantileBinningModel(n_bins=3, strategy='long')
+        model1 = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series1 = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model1.fit(feature_series1, self.y)
         model1.save_to_feature_list(
@@ -830,11 +833,20 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Manually unfit model2 to simulate partial fitting scenario
         # (e.g., model2 failed to fit or was intentionally not fitted)
-        ensemble.base_models['momentum_signal_D_lookback_20_long'].is_fitted_ = False
-        ensemble.base_models['momentum_signal_D_lookback_20_long'].thresholds_ = None
-        ensemble.base_models['momentum_signal_D_lookback_20_long'].best_long_bin_ = None
-        ensemble.base_models['momentum_signal_D_lookback_20_long'].best_short_bin_ = None
-        ensemble.base_models['momentum_signal_D_lookback_20_long'].bin_stats_ = None
+        momentum_binning_model = ensemble.base_models['momentum_signal_D_lookback_20_long'].binning_model
+        momentum_binning_model.is_fitted_ = False
+        momentum_binning_model.bin_edges_ = None
+        momentum_binning_model.bin_stats_ = {}
+        momentum_binning_model.active_bins_by_strategy_ = {
+            'long': [],
+            'short': [],
+            'long_short': [],
+        }
+        momentum_binning_model.position_multipliers_by_strategy_ = {
+            'long': {},
+            'short': {},
+            'long_short': {},
+        }
         
         # Save control file (should only save fitted params for model1)
         ensemble.save_control_file(self.control_file_path)
@@ -871,7 +883,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_load_control_file_empty_fitted_base_models(self):
         """Test loading control file with is_fit=True but empty fitted_base_models dict."""
         # Create control file
-        model = QuantileBinningModel(n_bins=3, strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
         model.fit(feature_series, self.y)
         model.save_to_feature_list(
@@ -909,7 +921,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify base model is NOT fitted (no fitted params)
         self.assertFalse(ensemble.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].thresholds_)
+        self.assertIsNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
         
         # Verify we can still fit the base model
         ensemble.fit(
@@ -926,4 +938,3 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

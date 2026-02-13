@@ -23,7 +23,7 @@ class UniformBinningModel(BinningModelBase):
     of feature values. This is useful when you want to understand behavior at
     specific feature value ranges, regardless of sample distribution.
     
-    Unlike QuantileBinningModel which uses equal-frequency bins (pd.qcut),
+    Unlike ContinuousBinningModel which uses equal-frequency bins (pd.qcut),
     UniformBinningModel uses equal-width bins (pd.cut).
     
     This model follows the sklearn estimator API:
@@ -182,11 +182,7 @@ class UniformBinningModel(BinningModelBase):
                 raise ValueError(f"Invalid parameter {key} for estimator {type(self).__name__}")
         
         # Reset fitted state when parameters change
-        self.is_fitted_ = False
-        self.thresholds_ = None
-        self.best_long_bin_ = None
-        self.best_short_bin_ = None
-        self.bin_stats_ = None
+        self._reset_fitted_state()
         
         return self
     
@@ -228,3 +224,4 @@ class UniformBinningModel(BinningModelBase):
         """User-friendly string representation."""
         fitted_str = "fitted" if self.is_fitted_ else "not fitted"
         return f"UniformBinningModel(n_bins={self.n_bins}, {fitted_str})"
+    model_type = "uniform_binning"

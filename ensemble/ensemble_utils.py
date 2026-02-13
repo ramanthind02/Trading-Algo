@@ -17,8 +17,8 @@ import utils.helpers as helpers
 from feature_selection.base_models import (
     BaseModel,
     DecisionTreeBinningModel,
-    QuantileBinningModel,
-    RuleBasedBinningModel,
+    ContinuousBinningModel,
+    RuleBasedModel,
     TwoBinBinningModel,
 )
 from utils.enums import Ticker, TimeFrame
@@ -341,7 +341,13 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
         raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
     
     # Validate model_type
-    valid_model_types = ['QuantileBinningModel', 'DecisionTreeBinningModel', 'TwoBinBinningModel', 'RuleBasedBinningModel']
+    valid_model_types = [
+        'continuous_binning',
+        'decision_tree_binning',
+        'two_bin_binning',
+        'uniform_binning',
+        'rule_based',
+    ]
     if config['model_type'] not in valid_model_types:
         raise ValueError(
             f"{prefix}Invalid model_type: {config['model_type']}. "
@@ -401,36 +407,46 @@ def create_base_model_from_config(
     strategy = config.get('strategy', 'long')
     constructor_params['strategy'] = strategy
     
-    # Remove normalize_by from constructor_params if present
-    constructor_params.pop('normalize_by', None)
-    
     # Create binning model instance
-    if model_type == 'QuantileBinningModel':
-        binning_model = QuantileBinningModel(**constructor_params)
-    elif model_type == 'DecisionTreeBinningModel':
-        binning_model = DecisionTreeBinningModel(**constructor_params)
-    elif model_type == 'TwoBinBinningModel':
+    if model_type == 'continuous_binning':
+        binning_model = ContinuousBinningModel(**constructor_params)
+    elif model_type == 'decision_tree_binning':
+        tree_params = constructor_params.copy()
+        tree_params.pop('normalize_by', None)
+        binning_model = DecisionTreeBinningModel(**tree_params)
+    elif model_type == 'two_bin_binning':
         # TwoBinBinningModel doesn't accept n_bins (it's hardcoded to 2)
         two_bin_params = constructor_params.copy()
         two_bin_params.pop('n_bins', None)
+        two_bin_params.pop('normalize_by', None)
         binning_model = TwoBinBinningModel(**two_bin_params)
-    elif model_type == 'RuleBasedBinningModel':
+    elif model_type == 'rule_based':
         rule_params = constructor_params.copy()
         rule_params.pop('n_bins', None)
-        binning_model = RuleBasedBinningModel(**rule_params)
+        binning_model = RuleBasedModel(**rule_params)
     else:
         raise ValueError(f"Unsupported model type: {model_type}")
     
     # Restore fitted state to binning model if provided
     if fitted_params is not None:
-        if 'thresholds' in fitted_params and fitted_params['thresholds'] is not None:
-            binning_model.thresholds_ = np.array(fitted_params['thresholds'])
-        if 'best_long_bin' in fitted_params:
-            binning_model.best_long_bin_ = fitted_params['best_long_bin']
-        if 'best_short_bin' in fitted_params:
-            binning_model.best_short_bin_ = fitted_params['best_short_bin']
-        if 'bin_stats' in fitted_params:
-            binning_model.bin_stats_ = fitted_params['bin_stats']
+        if fitted_params.get('model_version') != 'binning_v2':
+            raise ValueError(
+                "Unsupported fitted schema. Expected 'binning_v2'. "
+                "Regenerate fitted models with the new binning architecture."
+            )
+        binning_model.bin_edges_ = fitted_params.get('bin_edges')
+        binning_model.bin_stats_ = fitted_params.get('bin_stats', {})
+        binning_model.significant_regions_ = fitted_params.get('significant_regions', [])
+        binning_model.active_bins_by_strategy_ = fitted_params.get(
+            'active_bins_by_strategy',
+            {'long': [], 'short': [], 'long_short': []},
+        )
+        binning_model.position_multipliers_by_strategy_ = fitted_params.get(
+            'position_multipliers_by_strategy',
+            {'long': {}, 'short': {}, 'long_short': {}},
+        )
+        binning_model.fit_config_ = fitted_params.get('fit_config', {})
+        binning_model.model_version_ = fitted_params.get('model_version', 'binning_v2')
         binning_model.is_fitted_ = True
     
     # Get or extract bias_node_spec
@@ -794,5 +810,3 @@ def filter_dataframe_by_timeframe(df: pd.DataFrame, base_tf: TimeFrame) -> pd.Da
             matching_columns.append(col)
     
     return df[matching_columns]
-
-

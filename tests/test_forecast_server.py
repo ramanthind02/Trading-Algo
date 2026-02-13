@@ -381,7 +381,7 @@ class TestForecastServerIntegration(unittest.TestCase):
                 {
                     'model_name': 'rsi_2_D_1',
                     'feature_column': 'rsi_signal_D_lookback_2',
-                    'model_type': 'QuantileBinningModel',
+                    'model_type': 'continuous_binning',
                     'params': {'n_bins': 2}
                 }
             ],

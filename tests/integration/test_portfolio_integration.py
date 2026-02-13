@@ -63,9 +63,9 @@ BUY_HOLD_FEATURE_CONFIG = {
     "tickers": ["ES", "NQ", "RTY", "YM"],
     "base_models": [
         {
-            "model_id": "quantile_binning_2",
-            "model_name": "buy_hold_signal_D::quantile_binning_2",
-            "binning_model_type": "QuantileBinningModel",
+            "model_id": "continuous_binning_2",
+            "model_name": "buy_hold_signal_D::continuous_binning_2",
+            "binning_model_type": "continuous_binning",
             "strategy": "long",
             "binning_model_params": {
                 "n_bins": 2,
