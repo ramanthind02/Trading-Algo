@@ -171,3 +171,8 @@ def test_run_stage3_stability_basic(validator, sample_data):
         obj_value = fold_result.objective_values['objective'].iloc[0]
         assert isinstance(obj_value, (int, float, np.number))
         assert not np.isnan(obj_value)
+
+    # Check temporal consistency metrics
+    assert stability_report.best_region_stability in ['Stable', 'Moderate', 'Unstable']
+    # For single feature, rank correlation isn't meaningful, but should be set
+    assert isinstance(stability_report.rank_correlation_across_folds, (int, float, np.number))

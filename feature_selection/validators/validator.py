@@ -383,8 +383,39 @@ class FeatureValidator:
             )
             fold_results.append(fold_result)
 
-        # Create minimal stability report
-        n_param_combos = int(np.prod([len(v) for v in params_grid.values()]))
+        # Compute temporal consistency metrics
+        objectives_across_folds = np.array([fr.objective_values['objective'].iloc[0] for fr in fold_results])
+
+        # Stability classification based on objective consistency
+        if len(objectives_across_folds) >= 2:
+            obj_std = objectives_across_folds.std()
+            obj_mean = objectives_across_folds.mean()
+
+            # Classify stability based on coefficient of variation
+            if obj_mean != 0:
+                cv = abs(obj_std / obj_mean)
+                if cv < 0.3:
+                    stability_classification = "Stable"
+                elif cv < 0.7:
+                    stability_classification = "Moderate"
+                else:
+                    stability_classification = "Unstable"
+            else:
+                # If mean is zero, use absolute std
+                if obj_std < 0.1:
+                    stability_classification = "Stable"
+                elif obj_std < 0.3:
+                    stability_classification = "Moderate"
+                else:
+                    stability_classification = "Unstable"
+        else:
+            stability_classification = "Unknown"
+
+        # Rank correlation (not meaningful for single param combo)
+        rank_correlation = 0.0
+
+        # Create stability report
+        n_param_combos = int(np.prod([len(v) for v in params_grid.values()])) if params_grid else 1
 
         return StabilityReport(
             n_folds=len(fold_results),
@@ -396,8 +427,8 @@ class FeatureValidator:
             stable_neighborhoods=[],
             smoothed_objectives=pd.DataFrame(),
             stability_ratios=pd.DataFrame(),
-            rank_correlation_across_folds=0.0,
-            best_region_stability="Unknown",
+            rank_correlation_across_folds=rank_correlation,
+            best_region_stability=stability_classification,
             stability_heatmap=None,
             top_params_bar_chart=None,
             parameter_trajectory_plot=None,
