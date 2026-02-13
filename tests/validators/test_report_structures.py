@@ -140,3 +140,31 @@ def test_permutation_report_creation():
     assert report.stage == 'stage1_vector_shuffle'
     assert report.passed is True
     assert report.p_value == 0.01
+
+
+def test_validation_report_creation():
+    """Test ValidationReport creation and exports."""
+    from feature_selection.validators.reports.validation import ValidationReport
+    from datetime import datetime
+
+    # Create minimal validation report
+    report = ValidationReport(
+        feature_name="RSI_14",
+        feature_type='continuous',
+        timestamp=datetime(2026, 2, 12, 10, 0, 0),
+        validation_status='incomplete',
+    )
+
+    assert report.feature_name == "RSI_14"
+    assert report.feature_type == 'continuous'
+    assert report.validation_status == 'incomplete'
+
+    # Test JSON export
+    json_str = report.to_json()
+    assert "RSI_14" in json_str
+    assert "continuous" in json_str
+
+    # Test markdown export
+    md_str = report.to_markdown()
+    assert "# Validation Report: RSI_14" in md_str
+    assert "**Feature Type:** continuous" in md_str
