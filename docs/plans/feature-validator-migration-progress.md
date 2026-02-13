@@ -22,18 +22,18 @@ ruff check feature_selection/validators/
 
 ### Core Components
 
-- [ ] ValidationConfig dataclass
+- [x] ValidationConfig dataclass
 - [ ] FeatureValidator main class
-- [ ] Report data structures
-  - [ ] DescriptiveStats
-  - [ ] ADFTestResult, KPSSTestResult
-  - [ ] MonotonicityTestResult
-  - [ ] EDAReport
-  - [ ] ContinuousEDAReport
-  - [ ] RuleEDAReport
-  - [ ] PermutationReport
-  - [ ] StabilityReport
-  - [ ] FoldResult
+- [x] Report data structures
+  - [x] DescriptiveStats
+  - [x] ADFTestResult, KPSSTestResult
+  - [x] MonotonicityTestResult
+  - [x] EDAReport
+  - [x] ContinuousEDAReport
+  - [x] RuleEDAReport
+  - [x] PermutationReport
+  - [x] StabilityReport
+  - [x] FoldResult
   - [ ] ValidationReport (top-level)
 
 ### EDA Methods
@@ -117,40 +117,40 @@ ruff check feature_selection/validators/
 
 ## Implementation Tasks (from plan)
 
-### Phase 1: Report Data Structures ✅ / ⏳ / ❌
+### Phase 1: Report Data Structures ✅
 
-- [ ] Task 1: Foundation - Base Report Structures
-  - [ ] Step 1: Test for DescriptiveStats ❌
-  - [ ] Step 2: Run test (expect fail) ❌
-  - [ ] Step 3: Create directory structure ❌
-  - [ ] Step 4: Implement DescriptiveStats ❌
-  - [ ] Step 5: Run test (expect pass) ❌
-  - [ ] Step 6: Add tests for ADF/KPSS results ❌
-  - [ ] Step 7: Run all tests (expect pass) ❌
-  - [ ] Step 8: Commit ❌
+- [x] Task 1: Foundation - Base Report Structures
+  - [x] Step 1: Test for DescriptiveStats ✅
+  - [x] Step 2: Run test (expect fail) ✅
+  - [x] Step 3: Create directory structure ✅
+  - [x] Step 4: Implement DescriptiveStats ✅
+  - [x] Step 5: Run test (expect pass) ✅
+  - [x] Step 6: Add tests for ADF/KPSS results ✅
+  - [x] Step 7: Run all tests (expect pass) ✅
+  - [x] Step 8: Commit ✅
 
-- [ ] Task 2: EDA Report Structures
-  - [ ] Step 1: Test for EDAReport ❌
-  - [ ] Step 2: Run test (expect fail) ❌
-  - [ ] Step 3: Implement EDAReport ❌
-  - [ ] Step 4: Run test (expect pass) ❌
-  - [ ] Step 5: Commit ❌
+- [x] Task 2: EDA Report Structures
+  - [x] Step 1: Test for EDAReport ✅
+  - [x] Step 2: Run test (expect fail) ✅
+  - [x] Step 3: Implement EDAReport ✅
+  - [x] Step 4: Run test (expect pass) ✅
+  - [x] Step 5: Commit ✅
 
-- [ ] Task 3: Permutation & Stability Reports
-  - [ ] Step 1: Test for PermutationReport ❌
-  - [ ] Step 2: Run test (expect fail) ❌
-  - [ ] Step 3: Implement reports ❌
-  - [ ] Step 4: Run test (expect pass) ❌
-  - [ ] Step 5: Commit ❌
+- [x] Task 3: Permutation & Stability Reports
+  - [x] Step 1: Test for PermutationReport ✅
+  - [x] Step 2: Run test (expect fail) ✅
+  - [x] Step 3: Implement reports ✅
+  - [x] Step 4: Run test (expect pass) ✅
+  - [x] Step 5: Commit ✅
 
-### Phase 2: Configuration
+### Phase 2: Configuration ✅
 
-- [ ] Task 4: ValidationConfig
-  - [ ] Step 1: Test for ValidationConfig ❌
-  - [ ] Step 2: Run test (expect fail) ❌
-  - [ ] Step 3: Implement ValidationConfig ❌
-  - [ ] Step 4: Run tests (expect pass) ❌
-  - [ ] Step 5: Commit ❌
+- [x] Task 4: ValidationConfig
+  - [x] Step 1: Test for ValidationConfig ✅
+  - [x] Step 2: Run test (expect fail) ✅
+  - [x] Step 3: Implement ValidationConfig ✅
+  - [x] Step 4: Run tests (expect pass) ✅
+  - [x] Step 5: Commit ✅
 
 ### Phase 3: EDA Methods
 
@@ -179,13 +179,34 @@ ruff check feature_selection/validators/
 
 ## Current Status
 
-**Working on:** Creating progress ledger
-**Last completed:** N/A
-**Next up:** Task 1 - Base Report Structures
+**Iteration:** 1 (completed)
+**Working on:** Task 5 - Common EDA Methods
+**Last completed:** Task 4 - ValidationConfig
+**Next up:** Task 5 - Common EDA Methods
+
+### Summary of Iteration 1
+
+✅ **Completed:**
+- Created progress ledger and directory structure
+- Implemented all base report data structures (Tasks 1-3)
+- Implemented ValidationConfig (Task 4)
+- All tests passing (9/9)
+- 4 commits made following TDD approach
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 6 tests
+- tests/validators/test_config.py: 3 tests
+- Total: 9 tests, all passing
+
+🎯 **Next Steps for Iteration 2:**
+- Task 5: Common EDA Methods
+- Task 6: Continuous-Specific EDA
+- Task 7: Rule-Based-Specific EDA
 
 ## Notes
 
-- Following TDD approach: write test → fail → implement → pass → commit
-- Small, verifiable slices
-- Run verification commands after each slice
+- Following TDD approach: write test → fail → implement → pass → commit ✅
+- Small, verifiable slices ✅
+- Run verification commands after each slice ✅
 - Preserve existing FeatureExplorer behavior where needed
+- Moved legacy test file out of the way: `test_legacy_feature_explorer_contract.py`
