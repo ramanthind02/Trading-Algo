@@ -78,3 +78,10 @@
 - Codex now discovers the `superpowers` skill catalog via `~/.codex/superpowers/skills` and the symlink `~/.agents/skills/superpowers`.
 - Before starting creative work, run the `using-superpowers` skill flow to confirm which skills apply; refer to the relevant `SKILL.md` under the symlink.
 - The project-level instructions above (especially around planning, testing, and architecture) assume those skills are available; mention specific skill requirements when you open a `SKILL.md`.
+
+## Docs Landscape
+
+- `docs/api/` - auto-generated API docs guided by `docs/api/_template.md` and `_scope.md`; update relevant module pages whenever you touch public interfaces.
+- `docs/kanban/` - the new kanban workflow, with `README.md` enforcing scope/interfaces/tests, plus templates under `docs/kanban/templates/` for feature, bugfix, and docs tasks; put every coding intent here before modifying code.
+- `docs/library/`, `docs/methodology/`, `docs/plans/`, `docs/complete/`, and related subfolders hold domain research, validation philosophy, operational playbooks, and project plans—cite them when describing designs or documenting decisions.
+- Keep `docs/to-do/` (existing specs) and `docs/methodology/` in sync with new kanban tasks so implementation artifacts remain traceable.
