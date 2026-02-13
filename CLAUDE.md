@@ -25,6 +25,21 @@ pytest tests/test_integration.py::TestFormulaVerification -v
 python utils/setup_cython.py build_ext --inplace
 ```
 
+## Git Workflow
+
+**IMPORTANT**: When merging branches into main, ALWAYS use squash merge to maintain a clean commit history:
+
+```bash
+# Squash and merge workflow
+git checkout main
+git pull origin main
+git merge --squash <branch-name>
+git commit -m "feat: descriptive summary of changes"
+git push origin main
+```
+
+This keeps the main branch history linear and readable, with each merge representing a complete feature or fix.
+
 ## Architecture
 
 ### Pipeline (data flows left to right)
