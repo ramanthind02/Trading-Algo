@@ -17,6 +17,7 @@ Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 """
 
 import logging
+import json
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
@@ -53,7 +54,12 @@ class Portfolio:
     weight_layer : WeightLayer, optional
         Weight layer for combining forecasts. If None, creates default inverse correlation WeightLayer.
     instrument_weights : Dict[str, float], optional
-        Custom weights per instrument. If None, equal weight.
+        Custom weights per instrument. Ignored when sector_allocation_config_path
+        is provided.
+    sector_allocation_config_path : str, optional
+        JSON file path for a nested sector allocation tree. When provided, this
+        config is resolved to ticker-level instrument_weights and takes precedence
+        over instrument_weights.
     idm_max : float, default=2.5
         Maximum IDM value (Carver's recommendation)
 
@@ -69,6 +75,10 @@ class Portfolio:
         Maximum position size
     instrument_weights : Dict[str, float] or None
         Custom instrument weights
+    sector_allocation_config_path : str or None
+        Optional path to sector allocation config used to resolve instrument weights
+    sector_allocation_config_ : Dict[str, Any] or None
+        Loaded sector allocation config object when sector allocation is enabled
     idm_max : float
         Maximum IDM value
     idm_ : float
@@ -109,7 +119,8 @@ class Portfolio:
         weight_layer: Optional[BaseWeightLayer] = None,
         instrument_weights: Optional[Dict[str, float]] = None,
         idm_max: float = 2.5,
-        use_cache: bool = True
+        use_cache: bool = True,
+        sector_allocation_config_path: Optional[str] = None
     ):
         """
         Initialize Portfolio.
@@ -128,6 +139,10 @@ class Portfolio:
             Weight layer for combining forecasts. If None, creates default inverse correlation WeightLayer.
         instrument_weights : Dict[str, float], optional
             Custom weights per instrument. If None, equal weight.
+            Ignored when sector_allocation_config_path is provided.
+        sector_allocation_config_path : str, optional
+            Path to JSON sector allocation tree. If provided, resolved weights
+            override instrument_weights.
         idm_max : float, default=2.5
             Maximum IDM value (Carver's recommendation)
         """
@@ -149,7 +164,17 @@ class Portfolio:
         
         # Common attributes
         self.max_position_pct = max_position_pct
-        self.instrument_weights = instrument_weights
+        self.sector_allocation_config_path = sector_allocation_config_path
+        self.sector_allocation_config_: Optional[Dict[str, Any]] = None
+        if self.sector_allocation_config_path is not None:
+            self.sector_allocation_config_ = self._load_sector_allocation_config(
+                self.sector_allocation_config_path
+            )
+            self.instrument_weights = self._resolve_sector_allocation(
+                self.sector_allocation_config_
+            )
+        else:
+            self.instrument_weights = instrument_weights
         self.idm_max = idm_max
 
         # Fitted attributes
@@ -157,6 +182,164 @@ class Portfolio:
         self.mean_return_correlation_: Optional[float] = None
         self.instruments_: Optional[List[str]] = None
         self.is_fitted_: bool = False
+
+    def _load_sector_allocation_config(self, config_path: str) -> Dict[str, Any]:
+        """Load and validate a sector allocation configuration file."""
+        try:
+            with open(config_path, "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Sector allocation configuration file not found: {config_path}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in sector allocation configuration file: {exc}") from exc
+
+        if not isinstance(config, dict):
+            raise ValueError("Sector allocation root must be a JSON object")
+
+        self._validate_sector_allocation_node(config, seen_tickers=set(), node_path="root")
+        return config
+
+    def _validate_sector_allocation_node(
+        self,
+        node: Dict[str, Any],
+        seen_tickers: set[str],
+        node_path: str,
+    ) -> None:
+        """Validate node schema recursively before resolution."""
+        weight = node.get("weight")
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
+            raise ValueError(f"Node '{node_path}' weight must be > 0")
+
+        has_children = "children" in node
+        has_tickers = "tickers" in node
+        if has_children == has_tickers:
+            raise ValueError(
+                f"Node '{node_path}' must define exactly one of 'children' or 'tickers'"
+            )
+
+        if has_children:
+            children = node["children"]
+            if not isinstance(children, list) or len(children) == 0:
+                raise ValueError(f"Node '{node_path}' children must be a non-empty list")
+            for idx, child in enumerate(children):
+                if not isinstance(child, dict):
+                    raise ValueError(f"Node '{node_path}.children[{idx}]' must be an object")
+                self._validate_sector_allocation_node(
+                    child,
+                    seen_tickers=seen_tickers,
+                    node_path=f"{node_path}.children[{idx}]",
+                )
+            return
+
+        tickers = node["tickers"]
+        if not isinstance(tickers, list) or len(tickers) == 0:
+            raise ValueError(f"Node '{node_path}' must define at least one ticker")
+        if not all(isinstance(ticker, str) and ticker for ticker in tickers):
+            raise ValueError(f"Node '{node_path}' tickers must be non-empty strings")
+        if len(set(tickers)) != len(tickers):
+            raise ValueError(f"Node '{node_path}' contains duplicate tickers within a leaf")
+
+        duplicates = [ticker for ticker in tickers if ticker in seen_tickers]
+        if duplicates:
+            raise ValueError(f"Duplicate ticker in sector allocation config: {duplicates[0]}")
+        seen_tickers.update(tickers)
+
+        ticker_weights = node.get("ticker_weights")
+        if ticker_weights is None:
+            return
+
+        if not isinstance(ticker_weights, dict):
+            raise ValueError(f"Node '{node_path}' ticker_weights must be an object")
+        if set(ticker_weights.keys()) != set(tickers):
+            raise ValueError(
+                f"Node '{node_path}' ticker_weights keys must match tickers exactly"
+            )
+        for ticker, ticker_weight in ticker_weights.items():
+            if (
+                not isinstance(ticker_weight, (int, float))
+                or isinstance(ticker_weight, bool)
+                or ticker_weight <= 0
+            ):
+                raise ValueError(
+                    f"Node '{node_path}' ticker_weights values must be > 0 (ticker={ticker})"
+                )
+
+    def _resolve_sector_allocation(self, config: Dict[str, Any]) -> Dict[str, float]:
+        """Resolve sector tree into normalized ticker->weight mapping."""
+        resolved: Dict[str, float] = {}
+
+        if "children" in config:
+            children = config["children"]
+            total_weight = sum(child["weight"] for child in children)
+            for child in children:
+                contribution = child["weight"] / total_weight
+                self._resolve_sector_allocation_node(child, contribution, resolved)
+        elif "tickers" in config:
+            self._resolve_sector_allocation_node(config, 1.0, resolved)
+        else:
+            raise ValueError("Sector allocation root must define exactly one of 'children' or 'tickers'")
+
+        total_resolved = sum(resolved.values())
+        if total_resolved <= 0:
+            raise ValueError("Resolved sector allocation produced zero total weight")
+        return {
+            ticker: weight / total_resolved
+            for ticker, weight in resolved.items()
+        }
+
+    def _resolve_sector_allocation_node(
+        self,
+        node: Dict[str, Any],
+        parent_contribution: float,
+        resolved: Dict[str, float],
+    ) -> None:
+        """Recursively accumulate ticker contributions from a validated node tree."""
+        if "children" in node:
+            children = node["children"]
+            total_weight = sum(child["weight"] for child in children)
+            for child in children:
+                contribution = parent_contribution * (child["weight"] / total_weight)
+                self._resolve_sector_allocation_node(child, contribution, resolved)
+            return
+
+        tickers = node["tickers"]
+        ticker_weights = node.get("ticker_weights")
+        if ticker_weights is None:
+            equal_share = parent_contribution / len(tickers)
+            for ticker in tickers:
+                resolved[ticker] = resolved.get(ticker, 0.0) + equal_share
+            return
+
+        total_ticker_weight = sum(ticker_weights[ticker] for ticker in tickers)
+        for ticker in tickers:
+            ticker_share = parent_contribution * (ticker_weights[ticker] / total_ticker_weight)
+            resolved[ticker] = resolved.get(ticker, 0.0) + ticker_share
+
+    def _get_effective_instrument_weights(self, tickers: List[str]) -> Dict[str, float]:
+        """Return instrument weights for the provided tickers, including fallback handling."""
+        unique_tickers = list(dict.fromkeys(tickers))
+        if not unique_tickers:
+            return {}
+
+        if self.instrument_weights is None:
+            equal_weight = 1.0 / len(unique_tickers)
+            return {ticker: equal_weight for ticker in unique_tickers}
+
+        configured_weights = self.instrument_weights
+        missing_tickers = [ticker for ticker in unique_tickers if ticker not in configured_weights]
+        used_weight = sum(
+            configured_weights[ticker] for ticker in unique_tickers if ticker in configured_weights
+        )
+        remaining_weight = max(1.0 - used_weight, 0.0)
+        fallback_weight = (
+            remaining_weight / len(missing_tickers)
+            if missing_tickers
+            else 0.0
+        )
+        return {
+            ticker: configured_weights.get(ticker, fallback_weight)
+            for ticker in unique_tickers
+        }
 
     def fit(
         self,
@@ -352,27 +535,8 @@ class Portfolio:
             Columns: ['ticker', 'forecast_score', 'instrument_weight', 'position_weighted']
         """
         df = combined_forecasts.copy()
-
-        # Determine instrument weights
-        if self.instrument_weights is not None:
-            # Use custom weights
-            df['instrument_weight'] = df['ticker'].map(self.instrument_weights)
-
-            # Handle missing weights (instruments not in custom weights)
-            if df['instrument_weight'].isna().any():
-                missing = df[df['instrument_weight'].isna()]['ticker'].unique()
-                # Assign equal share of remaining weight
-                n_missing = len(missing)
-                used_weight = sum(self.instrument_weights.get(t, 0) for t in df['ticker'].unique() if t not in missing)
-                remaining_weight = max(1.0 - used_weight, 0.0)
-                fallback_weight = remaining_weight / n_missing if n_missing > 0 else 0.0
-                df['instrument_weight'] = df['instrument_weight'].fillna(fallback_weight)
-        else:
-            # Equal weight: divide capital equally across all instruments
-            # Each instrument gets 1/N where N = number of unique tickers
-            # IDM scales up total portfolio exposure, but weights must sum to 1.0
-            n_instruments = df['ticker'].nunique()
-            df['instrument_weight'] = 1.0 / n_instruments if n_instruments > 0 else 1.0
+        weights_by_ticker = self._get_effective_instrument_weights(df['ticker'].tolist())
+        df['instrument_weight'] = df['ticker'].map(weights_by_ticker)
 
         # Calculate weighted position
         df['position_weighted'] = df['forecast_score'] * df['instrument_weight']
@@ -1506,15 +1670,8 @@ class Portfolio:
         result['position_fraction'] = result['forecast_score'] * idm_value
         
         # Vectorized instrument weight application
-        if self.instrument_weights is not None:
-            result['position_fraction'] *= result['ticker'].map(self.instrument_weights).fillna(1.0)
-        else:
-            # Equal weight: divide capital equally across all instruments
-            # Each instrument gets 1/N where N = number of unique tickers
-            # IDM scales up total portfolio exposure, but weights must sum to 1.0
-            n_instruments = result['ticker'].nunique()
-            instrument_weight = 1.0 / n_instruments if n_instruments > 0 else 1.0
-            result['position_fraction'] *= instrument_weight
+        weights_by_ticker = self._get_effective_instrument_weights(result['ticker'].tolist())
+        result['position_fraction'] *= result['ticker'].map(weights_by_ticker)
         
         # Vectorized position cap
         if self.max_position_pct is not None:
