@@ -30,7 +30,7 @@ from feature_selection.validators.eda.rule_based import (
     compute_average_duration,
     compute_level_confidence_intervals,
 )
-from feature_selection.validators.permutation import run_vector_shuffle_test
+from feature_selection.validators.permutation import run_vector_shuffle_test, run_feature_shuffle_test
 
 
 class FeatureValidator:
@@ -244,6 +244,43 @@ class FeatureValidator:
             confidence_level=self.config.confidence_level,
             random_seed=self.config.random_seed,
         )
+
+    def run_stage2_permutation(
+        self,
+        feature_data: pd.DataFrame,
+        target: pd.Series,
+        permutation_type: str = 'feature_shuffle',
+    ) -> PermutationReport:
+        """
+        Run Stage 2: Pipeline Permutation Test.
+
+        Args:
+            feature_data: Feature DataFrame (single column for now)
+            target: Target series
+            permutation_type: Type of permutation ('feature_shuffle' or 'candle_shuffle')
+
+        Returns:
+            PermutationReport with test results
+        """
+        # Extract single feature column
+        if len(feature_data.columns) > 1:
+            raise NotImplementedError("Multi-feature permutation not yet implemented")
+
+        feature = feature_data.iloc[:, 0]
+
+        # Delegate based on permutation type
+        if permutation_type == 'feature_shuffle':
+            return run_feature_shuffle_test(
+                feature=feature,
+                target=target,
+                n_permutations=self.config.n_permutations,
+                confidence_level=self.config.confidence_level,
+                random_seed=self.config.random_seed,
+            )
+        elif permutation_type == 'candle_shuffle':
+            raise NotImplementedError("Candle shuffle permutation not yet implemented")
+        else:
+            raise ValueError(f"Unknown permutation_type: {permutation_type}")
 
     def run_full_validation(
         self,

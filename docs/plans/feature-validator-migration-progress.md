@@ -1,12 +1,12 @@
 # Feature Validator Migration Progress
 
-**STATUS:** DONE ✅
-**NEXT_TASK:** None (Phase 2 complete) - Phase 3 items documented below
+**STATUS:** IN PROGRESS (Phase 3 - Advanced Features)
+**NEXT_TASK:** Task 11 (Stage 2): Implement run_stage2_permutation - Continuous candle shuffle
 
 **Date Started:** 2026-02-12
 **Date Completed (MVP):** 2026-02-12 (Iteration 4)
 **Date Completed (Phase 2):** 2026-02-12 (Iteration 8)
-**Current Iteration:** 8 (complete)
+**Current Iteration:** 9 (complete)
 **Goal:** ✅ Functional validation pipeline with EDA, Stage 1 permutation, and workflow methods
 
 ## Phase 2 Completion Summary
@@ -94,13 +94,13 @@ ruff check feature_selection/validators/
 
 ### Permutation Testing
 
-- [ ] Stage 1: Vector Shuffle
-  - [ ] Shuffle feature vector
-  - [ ] Compute permuted Sharpe/t-stat
-  - [ ] p-value calculation
-  - [ ] Pass/fail verdict
+- [x] Stage 1: Vector Shuffle ✅
+  - [x] Shuffle feature vector ✅
+  - [x] Compute permuted Sharpe/t-stat ✅
+  - [x] p-value calculation ✅
+  - [x] Pass/fail verdict ✅
 - [ ] Stage 2: Pipeline Permutation
-  - [ ] Continuous: Feature shuffle
+  - [x] Continuous: Feature shuffle ✅
   - [ ] Continuous: Candle shuffle
   - [ ] Rule-based: Candle shuffle
   - [ ] Integration with binning pipeline
@@ -384,6 +384,31 @@ ruff check feature_selection/validators/
 - Enables step-by-step inspection during research
 
 **Next:** Final completion check and mark STATUS: DONE
+
+### Summary of Iteration 9
+
+✅ **What changed:**
+- Task 11 (Stage 2): Implemented run_stage2_permutation with feature shuffle mode
+- Added run_feature_shuffle_test function in permutation.py
+- Updated FeatureValidator with run_stage2_permutation method
+- Supports 'feature_shuffle' permutation type (candle_shuffle raises NotImplementedError)
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 7 tests
+- tests/validators/test_config.py: 3 tests
+- tests/validators/test_eda_common.py: 3 tests
+- tests/validators/test_eda_continuous.py: 3 tests
+- tests/validators/test_eda_rule_based.py: 3 tests
+- tests/validators/test_feature_validator.py: 6 tests
+- tests/validators/test_permutation_integration.py: 1 test
+- Total: 26 tests, all passing
+
+🎯 **Why:**
+- Enables Stage 2 pipeline permutation testing for continuous features
+- Follows same pattern as Stage 1 (quantile selection, Sharpe computation)
+- Foundation for adding candle shuffle mode next
+
+**Next:** Implement candle shuffle mode for continuous features
 
 ## Notes
 

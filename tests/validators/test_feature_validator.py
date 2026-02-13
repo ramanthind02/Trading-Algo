@@ -113,3 +113,22 @@ def test_run_progressive_validation(validator, sample_data):
     # Check report types
     assert hasattr(stages[0][1], 'feature_stats')  # EDAReport
     assert hasattr(stages[1][1], 'observed_sharpe')  # PermutationReport
+
+
+def test_run_stage2_permutation_feature_shuffle(validator, sample_data):
+    """Test run_stage2_permutation with feature shuffle mode."""
+    feature, target = sample_data
+
+    # Run Stage 2 permutation test (feature shuffle)
+    perm_report = validator.run_stage2_permutation(
+        feature_data=feature.to_frame(),
+        target=target,
+        permutation_type='feature_shuffle',
+    )
+
+    assert perm_report.stage == 'stage2_feature_shuffle'
+    assert perm_report.n_permutations == validator.config.n_permutations
+    assert perm_report.observed_sharpe != 0
+    assert len(perm_report.permuted_sharpes) == validator.config.n_permutations
+    assert hasattr(perm_report, 'p_value')
+    assert hasattr(perm_report, 'passed')

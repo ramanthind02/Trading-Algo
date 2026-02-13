@@ -110,3 +110,96 @@ def run_vector_shuffle_test(
         random_seed=random_seed,
         execution_time=execution_time,
     )
+
+
+def run_feature_shuffle_test(
+    feature: pd.Series,
+    target: pd.Series,
+    n_permutations: int = 1000,
+    confidence_level: float = 0.95,
+    random_seed: int | None = None,
+) -> PermutationReport:
+    """
+    Run Stage 2: Feature Shuffle Permutation Test.
+
+    Shuffles raw feature values and tests through pipeline.
+    Similar to vector shuffle but conceptually represents shuffling
+    before any binning/transformation step.
+
+    Args:
+        feature: Raw feature series (continuous values before binning)
+        target: Target series
+        n_permutations: Number of permutations
+        confidence_level: Confidence level (e.g., 0.95)
+        random_seed: Random seed for reproducibility
+
+    Returns:
+        PermutationReport with stage='stage2_feature_shuffle'
+    """
+    start_time = time.time()
+
+    # Align data
+    aligned = pd.DataFrame({'feature': feature, 'target': target}).dropna()
+
+    # Compute observed statistics
+    # Use same quantile-based selection as stage 1
+    q_high = aligned['feature'].quantile(0.75)
+    high_feature_mask = aligned['feature'] >= q_high
+    selected_returns = aligned.loc[high_feature_mask, 'target'].values
+
+    observed_sharpe = _compute_sharpe(selected_returns)
+    observed_t_stat = _compute_t_stat(selected_returns)
+    observed_returns_mean = float(selected_returns.mean())
+
+    # Run permutations
+    permuted_sharpes = []
+    permuted_t_stats = []
+
+    rng = np.random.RandomState(random_seed)
+
+    for _ in range(n_permutations):
+        # Shuffle feature (raw values)
+        shuffled_feature = aligned['feature'].values.copy()
+        rng.shuffle(shuffled_feature)
+
+        # Recompute pipeline: quantile selection on shuffled feature
+        q_high_perm = np.quantile(shuffled_feature, 0.75)
+        high_mask_perm = shuffled_feature >= q_high_perm
+        selected_returns_perm = aligned['target'].values[high_mask_perm]
+
+        permuted_sharpes.append(_compute_sharpe(selected_returns_perm))
+        permuted_t_stats.append(_compute_t_stat(selected_returns_perm))
+
+    permuted_sharpes_array = np.array(permuted_sharpes)
+    permuted_t_stats_array = np.array(permuted_t_stats)
+
+    # Compute p-value (one-sided: observed > permuted)
+    p_value = float((permuted_sharpes_array >= observed_sharpe).sum() / n_permutations)
+
+    # Compute critical value
+    critical_value = float(np.percentile(permuted_sharpes_array, confidence_level * 100))
+
+    # Verdict
+    passed = bool(observed_sharpe > critical_value)
+    margin = float(observed_sharpe - critical_value)
+
+    execution_time = time.time() - start_time
+
+    return PermutationReport(
+        stage='stage2_feature_shuffle',
+        observed_sharpe=observed_sharpe,
+        observed_t_stat=observed_t_stat,
+        observed_returns_mean=observed_returns_mean,
+        permuted_sharpes=permuted_sharpes_array,
+        permuted_t_stats=permuted_t_stats_array,
+        p_value=p_value,
+        confidence_level=confidence_level,
+        critical_value=critical_value,
+        passed=passed,
+        margin=margin,
+        permutation_histogram=None,
+        qq_plot=None,
+        n_permutations=n_permutations,
+        random_seed=random_seed,
+        execution_time=execution_time,
+    )
