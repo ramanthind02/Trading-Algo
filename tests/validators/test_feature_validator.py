@@ -132,3 +132,32 @@ def test_run_stage2_permutation_feature_shuffle(validator, sample_data):
     assert len(perm_report.permuted_sharpes) == validator.config.n_permutations
     assert hasattr(perm_report, 'p_value')
     assert hasattr(perm_report, 'passed')
+
+
+def test_run_stage3_stability_basic(validator, sample_data):
+    """Test run_stage3_stability method with basic parameter grid."""
+    feature, target = sample_data
+
+    # Add datetime index for walk-forward splitting
+    feature_df = feature.to_frame()
+    feature_df.index = pd.date_range(start='2020-01-01', periods=len(feature), freq='D')
+    target.index = feature_df.index
+
+    # Simple parameter grid
+    params_grid = {'lookback': [10, 20]}
+
+    # Run Stage 3 stability analysis
+    stability_report = validator.run_stage3_stability(
+        feature_data=feature_df,
+        target=target,
+        params_grid=params_grid,
+        train_start=pd.Timestamp('2020-01-01'),
+        train_end=pd.Timestamp('2020-10-01'),
+        test_step=60,
+        num_steps=2,
+    )
+
+    # Check basic structure
+    assert stability_report.n_folds >= 1
+    assert stability_report.params_grid == params_grid
+    assert len(stability_report.fold_results) >= 1

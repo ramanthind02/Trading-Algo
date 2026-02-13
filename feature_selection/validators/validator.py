@@ -31,6 +31,8 @@ from feature_selection.validators.eda.rule_based import (
     compute_level_confidence_intervals,
 )
 from feature_selection.validators.permutation import run_vector_shuffle_test, run_feature_shuffle_test
+from feature_selection.walkforward.walkforward_model import WalkForwardSplitter
+from feature_selection.validators.reports.stability import StabilityReport, FoldResult
 
 
 class FeatureValidator:
@@ -281,6 +283,93 @@ class FeatureValidator:
             raise NotImplementedError("Candle shuffle permutation not yet implemented")
         else:
             raise ValueError(f"Unknown permutation_type: {permutation_type}")
+
+    def run_stage3_stability(
+        self,
+        feature_data: pd.DataFrame,
+        target: pd.Series,
+        params_grid: dict[str, list],
+        train_start: datetime,
+        train_end: datetime,
+        test_step: int,
+        num_steps: int,
+    ) -> StabilityReport:
+        """
+        Run Stage 3: Walkforward Stability Analysis.
+
+        Args:
+            feature_data: Feature DataFrame with datetime index
+            target: Target series with datetime index
+            params_grid: Parameter grid to test (e.g., {'lookback': [10, 20, 30]})
+            train_start: Start date for initial training window
+            train_end: End date for initial training window
+            test_step: Number of days for test period
+            num_steps: Number of walk-forward steps
+
+        Returns:
+            StabilityReport with walkforward results
+        """
+        # Create walk-forward splitter
+        splitter = WalkForwardSplitter(
+            train_start=train_start,
+            train_end=train_end,
+            test_step=test_step,
+            num_steps=num_steps,
+        )
+
+        # Get splits
+        splits = splitter.split(feature_data.index)
+
+        if len(splits) == 0:
+            raise ValueError("No valid walk-forward splits generated")
+
+        # For now, create minimal fold results
+        fold_results = []
+        fold_dates = []
+
+        for fold_idx, (train_indices, test_indices) in enumerate(splits):
+            # Get train period dates
+            train_period_start = feature_data.index[train_indices[0]]
+            train_period_end = feature_data.index[train_indices[-1]]
+            fold_dates.append((train_period_start, train_period_end))
+
+            # Create placeholder fold result
+            # In future iterations, this will compute objectives for all param combos
+            objective_df = pd.DataFrame({
+                'param_combo': ['placeholder'],
+                'objective': [0.0],
+            })
+
+            fold_result = FoldResult(
+                fold_index=fold_idx,
+                train_period=(train_period_start, train_period_end),
+                objective_values=objective_df,
+                smoothed_objectives=pd.Series([0.0]),
+                stability_ratios=pd.Series([0.0]),
+                top_k_params=[],
+            )
+            fold_results.append(fold_result)
+
+        # Create minimal stability report
+        n_param_combos = int(np.prod([len(v) for v in params_grid.values()]))
+
+        return StabilityReport(
+            n_folds=len(fold_results),
+            fold_dates=fold_dates,
+            params_grid=params_grid,
+            n_param_combos=n_param_combos,
+            fold_results=fold_results,
+            top_params_consistency=pd.DataFrame(),
+            stable_neighborhoods=[],
+            smoothed_objectives=pd.DataFrame(),
+            stability_ratios=pd.DataFrame(),
+            rank_correlation_across_folds=0.0,
+            best_region_stability="Unknown",
+            stability_heatmap=None,
+            top_params_bar_chart=None,
+            parameter_trajectory_plot=None,
+            warnings=[],
+        )
 
     def run_full_validation(
         self,

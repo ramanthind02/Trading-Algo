@@ -22,16 +22,15 @@ Date: 2025-01-07
 """
 
 from feature_selection.base_models.base_model import BinningModelBase
-from feature_selection.base_models.quantile_binning import QuantileBinningModel
-
-from feature_selection.base_models.rule_based_binning import RuleBasedBinningModel
+from feature_selection.base_models.continuous_binning import ContinuousBinningModel
+from feature_selection.base_models.rule_based import RuleBasedModel
 from feature_selection.base_models.feature_base_model import BaseModel
 
 __all__ = [
     'BaseModel',  # New BaseModel that owns bias nodes and binning models
     'BinningModelBase',  # Abstract base for binning models
-    'QuantileBinningModel',
-    'RuleBasedBinningModel',
+    'ContinuousBinningModel',
+    'RuleBasedModel',
 ]
 
 __version__ = '1.0.0'
