@@ -234,3 +234,5 @@ research/reports/
 
 # Bias node cache (parquet files)
 cache/
+
+.worktrees/
