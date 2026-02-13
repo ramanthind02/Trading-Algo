@@ -28,15 +28,11 @@ Out of scope:
 - Documented API surfaces tied to this change (e.g., CLI options, config fields)
 - Mention any implicit contracts (e.g., “This config value maps 1:1 to `ExecutionConfig.max_leverage`”)
 
-## Acceptance tests
-1. `python -m mkdocs build` (or repo’s docs build command) completes without warnings for the changed pages.
-2. `pytest tests/docs/test_examples.py::test_example_snippets -q` (if available) succeeds.
-3. Manual review: changed files render correctly in preview (describe how to run if not automated).
 
 ## Definition of done
 - [ ] Updated docs checked into `docs/api/...`
 - [ ] Related code path referenced/linked where appropriate
-- [ ] `mkdocs build` (or equivalent) passes
+
 
 ## Notes
 - Mention follow-up doc cleanups or verification steps.
