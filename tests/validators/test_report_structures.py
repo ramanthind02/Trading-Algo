@@ -111,3 +111,32 @@ def test_eda_report_creation():
     assert report.feature_stats == feature_stats
     assert report.correlations['pearson'] == 0.15
     assert report.adf_test.is_stationary is True
+
+
+def test_permutation_report_creation():
+    """Test PermutationReport dataclass creation."""
+    from feature_selection.validators.reports.permutation import PermutationReport
+    import numpy as np
+
+    report = PermutationReport(
+        stage='stage1_vector_shuffle',
+        observed_sharpe=0.8,
+        observed_t_stat=2.5,
+        observed_returns_mean=0.05,
+        permuted_sharpes=np.random.randn(1000),
+        permuted_t_stats=np.random.randn(1000),
+        p_value=0.01,
+        confidence_level=0.95,
+        critical_value=0.5,
+        passed=True,
+        margin=0.3,
+        permutation_histogram=None,
+        qq_plot=None,
+        n_permutations=1000,
+        random_seed=42,
+        execution_time=5.2,
+    )
+
+    assert report.stage == 'stage1_vector_shuffle'
+    assert report.passed is True
+    assert report.p_value == 0.01
