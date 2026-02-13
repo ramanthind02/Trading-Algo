@@ -356,6 +356,32 @@ class TestReportDictStructure(unittest.TestCase):
         self.assertIn('rating', scores)
 
 
+class TestLegacyFeatureExplorerContracts(unittest.TestCase):
+    """Lock legacy output contracts during validator migration."""
+
+    def setUp(self):
+        self.features_df, self.targets_df, self.metadata = _build_synthetic_data(n_rows=150)
+        self.explorer = FeatureExplorer(self.features_df, self.targets_df, self.metadata)
+
+    def test_generate_parameter_sensitivity_report_contract(self):
+        result = self.explorer.generate_parameter_sensitivity_report(
+            module_name='rsi',
+            param_names=['lookback', 'threshold'],
+            verbose=False,
+        )
+        expected_keys = (
+            'results_df',
+            'summary_stats',
+            'robustness_scores',
+            'figures',
+            'parameter_sensitivity',
+            'report_text',
+            'report_path',
+        )
+        self.assertEqual(tuple(result.keys()), expected_keys)
+        self.assertIsNone(result['report_path'])
+
+
 class TestReportExport(unittest.TestCase):
     """Test generate_parameter_sensitivity_report exports to file."""
 
