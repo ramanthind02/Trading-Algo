@@ -16,7 +16,6 @@ from .weight_layer import (
     BaseWeightLayer,
     InverseCorrelationWeighter,
     InverseCorrelationWeightLayer,
-    SortinoOptimizedWeightLayer,
     WeightLayer,
 )
 
@@ -27,6 +26,5 @@ __all__ = [
     'WeightLayer',
     'BaseWeightLayer',
     'InverseCorrelationWeightLayer',
-    'SortinoOptimizedWeightLayer',
     'InverseCorrelationWeighter',
 ]

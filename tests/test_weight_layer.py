@@ -9,9 +9,21 @@ Tests cover:
 """
 
 import unittest
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 import pandas as pd
 import numpy as np
-from ensemble.weight_layer import WeightLayer, InverseCorrelationWeighter
+
+
+_WEIGHT_LAYER_PATH = Path(__file__).resolve().parents[1] / "ensemble" / "weight_layer.py"
+_WEIGHT_LAYER_SPEC = spec_from_file_location("weight_layer_module", _WEIGHT_LAYER_PATH)
+if _WEIGHT_LAYER_SPEC is None or _WEIGHT_LAYER_SPEC.loader is None:
+    raise RuntimeError(f"Unable to load weight_layer module from {_WEIGHT_LAYER_PATH}")
+_WEIGHT_LAYER_MODULE = module_from_spec(_WEIGHT_LAYER_SPEC)
+_WEIGHT_LAYER_SPEC.loader.exec_module(_WEIGHT_LAYER_MODULE)
+
+WeightLayer = _WEIGHT_LAYER_MODULE.WeightLayer
+InverseCorrelationWeighter = _WEIGHT_LAYER_MODULE.InverseCorrelationWeighter
 
 
 class TestInverseCorrelationWeighter(unittest.TestCase):
@@ -147,7 +159,8 @@ class TestWeightLayer(unittest.TestCase):
 
         layer.fit(single_model_forecasts, single_model_signals)
 
-        self.assertAlmostEqual(layer.fdm_, 1.0)
+        self.assertEqual(set(layer.fdm_.keys()), {'ES', 'NQ'})
+        self.assertTrue(all(np.isclose(fdm, 1.0) for fdm in layer.fdm_.values()))
 
     def test_fdm_capped_at_max(self):
         """FDM should be capped at fdm_max."""
@@ -171,7 +184,8 @@ class TestWeightLayer(unittest.TestCase):
 
         layer.fit(forecasts, signals)
 
-        self.assertLessEqual(layer.fdm_, 2.0)
+        self.assertIn('ES', layer.fdm_)
+        self.assertLessEqual(layer.fdm_['ES'], 2.0)
 
     def test_combine_applies_fdm(self):
         """Combined forecast should include FDM scaling."""
@@ -199,15 +213,21 @@ class TestWeightLayer(unittest.TestCase):
         diag = layer.get_diagnostics()
 
         self.assertTrue(diag['is_fitted'])
-        self.assertIn('weights', diag)
-        self.assertIn('fdm', diag)
-        self.assertIn('mean_forecast_correlation', diag)
-        self.assertEqual(diag['n_models'], 2)
+        self.assertIn('tickers', diag)
+        self.assertIn('summary', diag)
+        self.assertIn('ES', diag['tickers'])
+        self.assertIn('NQ', diag['tickers'])
+        self.assertEqual(diag['tickers']['ES']['n_models'], 2)
 
     def test_invalid_weight_method(self):
         """Should raise on invalid weight method."""
         with self.assertRaises(ValueError):
             WeightLayer(weight_method='invalid_method')
+
+    def test_sortino_weight_method_removed(self):
+        """Should reject sortino method and only allow inverse correlation."""
+        with self.assertRaises(ValueError):
+            WeightLayer(weight_method='sortino_optimized')
 
     def test_empty_forecast_vectors(self):
         """Should handle empty forecast vectors."""
