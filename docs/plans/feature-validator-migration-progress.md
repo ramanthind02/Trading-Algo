@@ -1,7 +1,7 @@
 # Feature Validator Migration Progress
 
 **STATUS:** IN PROGRESS (Phase 3 - Advanced Features)
-**NEXT_TASK:** Task 11 (Stage 2): Implement run_stage2_permutation - Continuous candle shuffle
+**NEXT_TASK:** Task 10: Integrate existing ParameterAnalyzer for parameter sensitivity analysis
 
 **Date Started:** 2026-02-12
 **Date Completed (MVP):** 2026-02-12 (Iteration 4)
@@ -101,10 +101,10 @@ ruff check feature_selection/validators/
   - [x] Pass/fail verdict ✅
 - [ ] Stage 2: Pipeline Permutation
   - [x] Continuous: Feature shuffle ✅
-  - [ ] Continuous: Candle shuffle
-  - [ ] Rule-based: Candle shuffle
+  - [ ] Continuous: Candle shuffle (DEFERRED - requires OHLC data + feature extractor API design)
+  - [ ] Rule-based: Candle shuffle (DEFERRED - same as above)
   - [ ] Integration with binning pipeline
-- [ ] Integration with existing PermutationEngine
+- [ ] Integration with existing PermutationEngine (DEFERRED - candle shuffle dependency)
 
 ### Stability Analysis (Stage 3)
 
