@@ -54,3 +54,21 @@ def test_run_eda_continuous(validator, sample_data):
     assert eda_report.kpss_test is not None
     assert eda_report.continuous_report is not None
     assert eda_report.rule_report is None
+
+
+def test_run_stage1_permutation(validator, sample_data):
+    """Test run_stage1_permutation method."""
+    feature, target = sample_data
+
+    # Run Stage 1 permutation test
+    perm_report = validator.run_stage1_permutation(
+        feature_data=feature.to_frame(),
+        target=target,
+    )
+
+    assert perm_report.stage == 'stage1_vector_shuffle'
+    assert perm_report.n_permutations == validator.config.n_permutations
+    assert perm_report.observed_sharpe != 0
+    assert len(perm_report.permuted_sharpes) == validator.config.n_permutations
+    assert hasattr(perm_report, 'p_value')
+    assert hasattr(perm_report, 'passed')

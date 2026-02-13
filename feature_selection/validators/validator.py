@@ -27,6 +27,7 @@ from feature_selection.validators.eda.rule_based import (
     compute_average_duration,
     compute_level_confidence_intervals,
 )
+from feature_selection.validators.permutation import run_vector_shuffle_test
 
 
 class FeatureValidator:
@@ -209,4 +210,34 @@ class FeatureValidator:
             transition_matrix=transition_matrix,
             average_duration=average_duration,
             transition_plot=None,
+        )
+
+    def run_stage1_permutation(
+        self,
+        feature_data: pd.DataFrame,
+        target: pd.Series,
+    ) -> PermutationReport:
+        """
+        Run Stage 1: Vector Shuffle Permutation Test.
+
+        Args:
+            feature_data: Feature DataFrame (single column for now)
+            target: Target series
+
+        Returns:
+            PermutationReport with test results
+        """
+        # Extract single feature column
+        if len(feature_data.columns) > 1:
+            raise NotImplementedError("Multi-feature permutation not yet implemented")
+
+        feature = feature_data.iloc[:, 0]
+
+        # Delegate to permutation testing function
+        return run_vector_shuffle_test(
+            feature=feature,
+            target=target,
+            n_permutations=self.config.n_permutations,
+            confidence_level=self.config.confidence_level,
+            random_seed=self.config.random_seed,
         )
