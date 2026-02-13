@@ -1,6 +1,6 @@
 # Feature Validator Migration Progress
 
-**NEXT_TASK:** Task 6 - Continuous-Specific EDA (Decile analysis)
+**NEXT_TASK:** Task 9 - FeatureValidator Init + EDA Orchestration
 
 **Date Started:** 2026-02-12
 **Goal:** Implement the new FeatureValidator class and migrate away from FeatureExplorer
@@ -47,19 +47,19 @@ ruff check feature_selection/validators/
   - [x] Lagged correlations
   - [x] Rolling correlation
   - [ ] Temporal stability (regime detection - deferred)
-- [ ] Continuous-specific EDA
-  - [ ] Decile analysis
-  - [ ] Monotonicity testing
-  - [ ] Outlier detection
-  - [ ] Non-linearity tests (polynomial regression)
-  - [ ] Binning diagnostics
-- [ ] Rule-based-specific EDA
-  - [ ] Level distribution
-  - [ ] Per-level statistics
-  - [ ] Transition matrix
-  - [ ] Average duration
-  - [ ] Confidence intervals
-  - [ ] Grid report integration
+- [x] Continuous-specific EDA
+  - [x] Decile analysis
+  - [x] Monotonicity testing
+  - [x] Outlier detection
+  - [x] Non-linearity tests (polynomial regression)
+  - [ ] Binning diagnostics (deferred to later)
+- [x] Rule-based-specific EDA
+  - [x] Level distribution
+  - [x] Per-level statistics
+  - [x] Transition matrix
+  - [x] Average duration
+  - [x] Confidence intervals
+  - [ ] Grid report integration (deferred to later)
 
 ### Permutation Testing
 
@@ -157,8 +157,8 @@ ruff check feature_selection/validators/
 ### Phase 3: EDA Methods
 
 - [x] Task 5: Common EDA Methods ✅
-- [ ] Task 6: Continuous-Specific EDA
-- [ ] Task 7: Rule-Based-Specific EDA
+- [x] Task 6: Continuous-Specific EDA ✅
+- [x] Task 7: Rule-Based-Specific EDA ✅
 
 ### Phase 4: Permutation Testing
 
@@ -181,10 +181,10 @@ ruff check feature_selection/validators/
 
 ## Current Status
 
-**Iteration:** 2 (in progress)
-**Working on:** Task 6 - Continuous-Specific EDA
-**Last completed:** Task 5 - Common EDA Methods
-**Next up:** Task 6 - Continuous-Specific EDA
+**Iteration:** 3 (in progress)
+**Working on:** Task 9 - FeatureValidator Init + EDA Orchestration
+**Last completed:** Task 7 - Rule-Based-Specific EDA
+**Next up:** Task 9 - FeatureValidator Init + EDA Orchestration
 
 ### Summary of Iteration 1
 
@@ -212,7 +212,26 @@ ruff check feature_selection/validators/
 - Needed foundational EDA methods before continuous/rule-specific implementations
 - Following implementation plan's phased approach
 
-**Next:** Task 6 - Continuous-Specific EDA (decile analysis, monotonicity, outliers)
+### Summary of Iteration 3
+
+✅ **What changed:**
+- Task 6: Continuous-Specific EDA (decile, monotonicity, outliers, polynomial regression)
+- Task 7: Rule-Based-Specific EDA (level distribution, transition matrix, confidence intervals)
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 6 tests
+- tests/validators/test_config.py: 3 tests
+- tests/validators/test_eda_common.py: 3 tests
+- tests/validators/test_eda_continuous.py: 3 tests
+- tests/validators/test_eda_rule_based.py: 3 tests
+- Total: 18 tests, all passing
+
+🎯 **Why:**
+- Completed all EDA building blocks (common, continuous, rule-based)
+- Ready to assemble the main FeatureValidator class
+- Following bottom-up implementation strategy
+
+**Next:** Task 9 - FeatureValidator Init + EDA Orchestration (assemble EDA methods into main class)
 
 ## Notes
 
