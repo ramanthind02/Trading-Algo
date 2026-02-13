@@ -72,3 +72,22 @@ def test_run_stage1_permutation(validator, sample_data):
     assert len(perm_report.permuted_sharpes) == validator.config.n_permutations
     assert hasattr(perm_report, 'p_value')
     assert hasattr(perm_report, 'passed')
+
+
+def test_run_full_validation(validator, sample_data):
+    """Test run_full_validation method."""
+    feature, target = sample_data
+
+    # Run full validation pipeline
+    validation_report = validator.run_full_validation(
+        feature_data=feature.to_frame(),
+        target=target,
+        feature_name='test_feature',
+    )
+
+    # Check ValidationReport structure
+    assert validation_report.feature_name == 'test_feature'
+    assert validation_report.feature_type == 'continuous'
+    assert validation_report.eda_report is not None
+    assert validation_report.stage1_report is not None
+    assert validation_report.validation_status in ['passed', 'failed', 'incomplete']

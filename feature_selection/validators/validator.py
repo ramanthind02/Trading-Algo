@@ -4,9 +4,12 @@ from typing import Generator, Any
 import pandas as pd
 import numpy as np
 
+from datetime import datetime
+
 from feature_selection.validators.config import ValidationConfig
 from feature_selection.validators.reports.eda import EDAReport, ContinuousEDAReport, RuleEDAReport
 from feature_selection.validators.reports.permutation import PermutationReport
+from feature_selection.validators.reports.validation import ValidationReport
 from feature_selection.validators.eda.common import (
     compute_distribution_stats,
     compute_correlations,
@@ -240,4 +243,58 @@ class FeatureValidator:
             n_permutations=self.config.n_permutations,
             confidence_level=self.config.confidence_level,
             random_seed=self.config.random_seed,
+        )
+
+    def run_full_validation(
+        self,
+        feature_data: pd.DataFrame,
+        target: pd.Series,
+        feature_name: str,
+        params_grid: dict[str, list] | None = None,
+    ) -> ValidationReport:
+        """
+        Execute complete validation pipeline: EDA → Stage 1 (→ Stage 2 → Stage 3 when implemented).
+
+        Returns accumulated ValidationReport. Stops early if permutation tests fail.
+
+        Args:
+            feature_data: Feature DataFrame
+            target: Target series
+            feature_name: Name of the feature being validated
+            params_grid: Parameter grid for stage 3 stability analysis (not yet implemented)
+
+        Returns:
+            ValidationReport with all completed stages
+        """
+        # Initialize report
+        timestamp = datetime.now()
+
+        # Stage 1: EDA
+        eda_report = self.run_eda(feature_data=feature_data, target=target)
+
+        # Stage 2: Stage 1 Permutation Test
+        stage1_report = self.run_stage1_permutation(feature_data=feature_data, target=target)
+
+        # Determine validation status based on stage 1
+        if not stage1_report.passed:
+            validation_status = 'failed'
+            failure_stage = 'Stage 1: Vector Shuffle'
+        else:
+            # For now, mark as incomplete since we haven't implemented Stages 2 & 3
+            validation_status = 'incomplete'
+            failure_stage = None
+
+        return ValidationReport(
+            feature_name=feature_name,
+            feature_type=self.config.feature_type,
+            timestamp=timestamp,
+            eda_report=eda_report,
+            stage1_report=stage1_report,
+            stage2_report=None,  # Not yet implemented
+            stage3_report=None,  # Not yet implemented
+            parameter_report=None,  # Not yet implemented
+            validation_status=validation_status,
+            failure_stage=failure_stage,
+            researcher_notes="",
+            ensemble_decision=None,
         )
