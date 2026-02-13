@@ -1,13 +1,13 @@
 # Feature Validator Migration Progress
 
 **STATUS:** PHASE 2 COMPLETE ✅
-**NEXT_TASK:** Phase 3 (Advanced Features) - Deferred
+**NEXT_TASK:** None (Phase 2 complete) - Phase 3 items documented below
 
 **Date Started:** 2026-02-12
 **Date Completed (MVP):** 2026-02-12 (Iteration 4)
-**Date Completed (Phase 2):** 2026-02-12 (Iteration 7)
-**Current Iteration:** 7 (complete)
-**Goal:** ✅ Core validation pipeline with EDA and Stage 1 permutation complete
+**Date Completed (Phase 2):** 2026-02-12 (Iteration 8)
+**Current Iteration:** 8 (complete)
+**Goal:** ✅ Functional validation pipeline with EDA, Stage 1 permutation, and workflow methods
 
 ## Phase 2 Completion Summary
 
@@ -18,15 +18,15 @@
 - ValidationReport with JSON and Markdown exports
 - **Stage 1 permutation testing integration** (run_vector_shuffle_test)
 - **Full validation pipeline** (run_full_validation with EDA + Stage 1)
+- **Progressive validation workflow** (run_progressive_validation)
 - **Early exit on permutation failure**
-- 24/24 tests passing
+- 25/25 tests passing
 - Production code does not depend on FeatureExplorer
 
 🎯 **Deferred to Phase 3 (Advanced Features):**
 - Stage 2 permutation testing (feature shuffle, candle shuffle)
 - Stage 3 walkforward stability analysis
-- Full parameter sensitivity analysis
-- run_progressive_validation (stage-by-stage workflow)
+- Full parameter sensitivity analysis (1D-4D visualizations)
 - HTML/PDF report exports
 - Comprehensive integration tests
 
@@ -359,6 +359,31 @@ ruff check feature_selection/validators/
 - Foundation for full pipeline with stages 2 & 3
 
 **Next:** Evaluate completion criteria and document phase 2 status
+
+### Summary of Iteration 8
+
+✅ **What changed:**
+- Task 12: Added run_progressive_validation method
+- Implements generator-based stage-by-stage workflow
+- Yields (stage_name, stage_report) tuples for interactive use
+- Early exit on permutation failure
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 7 tests
+- tests/validators/test_config.py: 3 tests
+- tests/validators/test_eda_common.py: 3 tests
+- tests/validators/test_eda_continuous.py: 3 tests
+- tests/validators/test_eda_rule_based.py: 3 tests
+- tests/validators/test_feature_validator.py: 5 tests
+- tests/validators/test_permutation_integration.py: 1 test
+- Total: 25 tests, all passing
+
+🎯 **Why:**
+- Provides flexible workflow for interactive validation
+- Complements run_full_validation for different use cases
+- Enables step-by-step inspection during research
+
+**Next:** Final completion check and mark STATUS: DONE
 
 ## Notes
 
