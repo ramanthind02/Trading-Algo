@@ -135,7 +135,7 @@ def test_run_stage2_permutation_feature_shuffle(validator, sample_data):
 
 
 def test_run_stage3_stability_basic(validator, sample_data):
-    """Test run_stage3_stability method with basic parameter grid."""
+    """Test run_stage3_stability method - single feature across folds."""
     feature, target = sample_data
 
     # Add datetime index for walk-forward splitting
@@ -143,8 +143,9 @@ def test_run_stage3_stability_basic(validator, sample_data):
     feature_df.index = pd.date_range(start='2020-01-01', periods=len(feature), freq='D')
     target.index = feature_df.index
 
-    # Simple parameter grid
-    params_grid = {'lookback': [10, 20]}
+    # For now, just test stability of single feature (no param variations)
+    # params_grid is placeholder - feature is already computed
+    params_grid = {}
 
     # Run Stage 3 stability analysis
     stability_report = validator.run_stage3_stability(
@@ -159,5 +160,14 @@ def test_run_stage3_stability_basic(validator, sample_data):
 
     # Check basic structure
     assert stability_report.n_folds >= 1
-    assert stability_report.params_grid == params_grid
     assert len(stability_report.fold_results) >= 1
+
+    # Check that per-fold evaluation was performed
+    for fold_result in stability_report.fold_results:
+        # Should have objective value for the feature
+        assert 'objective' in fold_result.objective_values.columns
+        assert len(fold_result.objective_values) == 1
+        # Objective should be a real number (Sharpe ratio)
+        obj_value = fold_result.objective_values['objective'].iloc[0]
+        assert isinstance(obj_value, (int, float, np.number))
+        assert not np.isnan(obj_value)

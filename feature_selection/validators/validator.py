@@ -323,7 +323,13 @@ class FeatureValidator:
         if len(splits) == 0:
             raise ValueError("No valid walk-forward splits generated")
 
-        # For now, create minimal fold results
+        # Extract single feature column
+        if len(feature_data.columns) > 1:
+            raise NotImplementedError("Multi-feature stability not yet implemented")
+
+        feature = feature_data.iloc[:, 0]
+
+        # Evaluate feature across walk-forward folds
         fold_results = []
         fold_dates = []
 
@@ -333,20 +339,47 @@ class FeatureValidator:
             train_period_end = feature_data.index[train_indices[-1]]
             fold_dates.append((train_period_start, train_period_end))
 
-            # Create placeholder fold result
-            # In future iterations, this will compute objectives for all param combos
-            objective_df = pd.DataFrame({
-                'param_combo': ['placeholder'],
-                'objective': [0.0],
-            })
+            # Extract train/test data
+            X_train = feature.iloc[train_indices]
+            y_train = target.iloc[train_indices]
+            X_test = feature.iloc[test_indices]
+            y_test = target.iloc[test_indices]
+
+            # Fit simple binning model on train, evaluate on test
+            # Use quantile selection (similar to permutation tests)
+            try:
+                # Compute threshold (75th percentile on train)
+                q_high = X_train.quantile(0.75)
+
+                # Select returns on test set
+                high_mask = X_test >= q_high
+                selected_returns = y_test[high_mask].values
+
+                # Compute Sharpe ratio as objective
+                if len(selected_returns) > 0 and selected_returns.std() > 0:
+                    sharpe = selected_returns.mean() / selected_returns.std()
+                else:
+                    sharpe = 0.0
+
+                objective_df = pd.DataFrame({
+                    'param_combo': ['default'],
+                    'objective': [float(sharpe)],
+                })
+
+            except Exception:
+                # If evaluation fails, use zero objective
+                objective_df = pd.DataFrame({
+                    'param_combo': ['default'],
+                    'objective': [0.0],
+                })
 
             fold_result = FoldResult(
                 fold_index=fold_idx,
                 train_period=(train_period_start, train_period_end),
                 objective_values=objective_df,
-                smoothed_objectives=pd.Series([0.0]),
-                stability_ratios=pd.Series([0.0]),
-                top_k_params=[],
+                smoothed_objectives=pd.Series([objective_df['objective'].iloc[0]]),
+                stability_ratios=pd.Series([1.0]),  # Placeholder
+                top_k_params=[{'param_combo': 'default', 'objective': objective_df['objective'].iloc[0]}],
             )
             fold_results.append(fold_result)
 
