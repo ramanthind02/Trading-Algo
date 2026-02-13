@@ -1,5 +1,7 @@
 # Feature Validator Migration Progress
 
+**NEXT_TASK:** Task 6 - Continuous-Specific EDA (Decile analysis)
+
 **Date Started:** 2026-02-12
 **Goal:** Implement the new FeatureValidator class and migrate away from FeatureExplorer
 
@@ -38,13 +40,13 @@ ruff check feature_selection/validators/
 
 ### EDA Methods
 
-- [ ] Common EDA
-  - [ ] Distribution statistics
-  - [ ] Correlation analysis (Pearson, Spearman, Kendall)
-  - [ ] Stationarity tests (ADF, KPSS)
-  - [ ] Lagged correlations
-  - [ ] Rolling correlation
-  - [ ] Temporal stability
+- [x] Common EDA
+  - [x] Distribution statistics
+  - [x] Correlation analysis (Pearson, Spearman, Kendall)
+  - [x] Stationarity tests (ADF, KPSS)
+  - [x] Lagged correlations
+  - [x] Rolling correlation
+  - [ ] Temporal stability (regime detection - deferred)
 - [ ] Continuous-specific EDA
   - [ ] Decile analysis
   - [ ] Monotonicity testing
@@ -154,7 +156,7 @@ ruff check feature_selection/validators/
 
 ### Phase 3: EDA Methods
 
-- [ ] Task 5: Common EDA Methods
+- [x] Task 5: Common EDA Methods ✅
 - [ ] Task 6: Continuous-Specific EDA
 - [ ] Task 7: Rule-Based-Specific EDA
 
@@ -179,10 +181,10 @@ ruff check feature_selection/validators/
 
 ## Current Status
 
-**Iteration:** 1 (completed)
-**Working on:** Task 5 - Common EDA Methods
-**Last completed:** Task 4 - ValidationConfig
-**Next up:** Task 5 - Common EDA Methods
+**Iteration:** 2 (in progress)
+**Working on:** Task 6 - Continuous-Specific EDA
+**Last completed:** Task 5 - Common EDA Methods
+**Next up:** Task 6 - Continuous-Specific EDA
 
 ### Summary of Iteration 1
 
@@ -193,15 +195,24 @@ ruff check feature_selection/validators/
 - All tests passing (9/9)
 - 4 commits made following TDD approach
 
+### Summary of Iteration 2
+
+✅ **What changed:**
+- Task 5: Common EDA Methods completed
+- Implemented distribution stats, correlations, stationarity tests
+- Installed statsmodels dependency
+
 📊 **Test Coverage:**
 - tests/validators/test_report_structures.py: 6 tests
 - tests/validators/test_config.py: 3 tests
-- Total: 9 tests, all passing
+- tests/validators/test_eda_common.py: 3 tests
+- Total: 12 tests, all passing
 
-🎯 **Next Steps for Iteration 2:**
-- Task 5: Common EDA Methods
-- Task 6: Continuous-Specific EDA
-- Task 7: Rule-Based-Specific EDA
+🎯 **Why:**
+- Needed foundational EDA methods before continuous/rule-specific implementations
+- Following implementation plan's phased approach
+
+**Next:** Task 6 - Continuous-Specific EDA (decile analysis, monotonicity, outliers)
 
 ## Notes
 
