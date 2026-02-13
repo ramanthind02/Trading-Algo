@@ -1,34 +1,40 @@
 # Feature Validator Migration Progress
 
-**STATUS:** MVP COMPLETE ✅
+**STATUS:** PHASE 2 COMPLETE ✅
+**NEXT_TASK:** Phase 3 (Advanced Features) - Deferred
 
 **Date Started:** 2026-02-12
 **Date Completed (MVP):** 2026-02-12 (Iteration 4)
-**Current Iteration:** 4 (complete)
-**Goal:** Implement the new FeatureValidator class and migrate away from FeatureExplorer
+**Date Completed (Phase 2):** 2026-02-12 (Iteration 7)
+**Current Iteration:** 7 (complete)
+**Goal:** ✅ Core validation pipeline with EDA and Stage 1 permutation complete
 
-## MVP Completion Summary
+## Phase 2 Completion Summary
 
 ✅ **Core Deliverables Complete:**
 - FeatureValidator class with full EDA orchestration
 - All report data structures (EDA, Permutation, Stability, Validation)
 - Common, Continuous, and Rule-based EDA methods
 - ValidationReport with JSON and Markdown exports
-- 21/21 tests passing
+- **Stage 1 permutation testing integration** (run_vector_shuffle_test)
+- **Full validation pipeline** (run_full_validation with EDA + Stage 1)
+- **Early exit on permutation failure**
+- 24/24 tests passing
 - Production code does not depend on FeatureExplorer
 
-🎯 **Deferred to Future Iterations:**
-- Permutation testing integration (stages 1-3)
-- Walkforward stability analysis
+🎯 **Deferred to Phase 3 (Advanced Features):**
+- Stage 2 permutation testing (feature shuffle, candle shuffle)
+- Stage 3 walkforward stability analysis
 - Full parameter sensitivity analysis
+- run_progressive_validation (stage-by-stage workflow)
 - HTML/PDF report exports
-- Integration tests
+- Comprehensive integration tests
 
 📝 **Notes:**
 - Research code (`research/bias_node_helpers.py`) still uses FeatureExplorer - acceptable per spec
 - No production code depends on FeatureExplorer
-- MVP provides complete EDA capabilities for both feature types
-- Foundation is solid for adding permutation/stability features later
+- Phase 2 provides functional validation pipeline for real-world use
+- Foundation is solid for adding advanced features (stages 2-3, parameter analysis)
 
 ## Verification Commands
 
@@ -120,10 +126,10 @@ ruff check feature_selection/validators/
 
 ### High-Level Workflows
 
-- [ ] `run_full_validation()` - complete pipeline
-- [ ] `run_progressive_validation()` - stage-by-stage
-- [ ] Early exit on permutation failure
-- [ ] ValidationReport accumulation
+- [x] `run_full_validation()` - complete pipeline ✅
+- [ ] `run_progressive_validation()` - stage-by-stage (deferred)
+- [x] Early exit on permutation failure ✅
+- [x] ValidationReport accumulation ✅
 
 ### Report Export
 
@@ -187,14 +193,14 @@ ruff check feature_selection/validators/
 
 ### Phase 4: Permutation Testing
 
-- [ ] Task 8: Permutation Testing Integration
+- [x] Task 8: Permutation Testing Integration ✅
 
 ### Phase 5: Core Orchestration
 
 - [x] Task 9: FeatureValidator Init + EDA Orchestration ✅
-- [ ] Task 10: Stability Analysis Methods
-- [ ] Task 11: Permutation Stages
-- [ ] Task 12: Full Pipeline
+- [ ] Task 10: Stability Analysis Methods (deferred)
+- [x] Task 11: Permutation Stages ✅
+- [x] Task 12: Full Pipeline ✅
 
 ### Phase 6: Report Export
 
@@ -280,6 +286,79 @@ ruff check feature_selection/validators/
 - Major milestone: EDA pipeline fully functional
 
 **Next:** ValidationReport (top-level accumulation), basic report exports (markdown, JSON)
+
+### Summary of Iteration 5
+
+✅ **What changed:**
+- Task 8: Permutation Testing Integration completed
+- Implemented run_vector_shuffle_test for Stage 1 vector shuffle
+- Created permutation.py module with Sharpe/t-stat computation
+- Added test_permutation_integration.py with 1 test
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 7 tests
+- tests/validators/test_config.py: 3 tests
+- tests/validators/test_eda_common.py: 3 tests
+- tests/validators/test_eda_continuous.py: 3 tests
+- tests/validators/test_eda_rule_based.py: 3 tests
+- tests/validators/test_feature_validator.py: 2 tests
+- tests/validators/test_permutation_integration.py: 1 test
+- Total: 22 tests, all passing
+
+🎯 **Why:**
+- Provides foundation for permutation testing stages
+- Integrates with existing PermutationReport structure
+- Enables statistical validation of features
+
+**Next:** Task 11 - Add permutation stage methods to FeatureValidator (run_stage1_permutation)
+
+### Summary of Iteration 6
+
+✅ **What changed:**
+- Task 11: Added run_stage1_permutation method to FeatureValidator
+- Integrated vector shuffle test into FeatureValidator class
+- Uses config parameters for n_permutations, confidence_level, random_seed
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 7 tests
+- tests/validators/test_config.py: 3 tests
+- tests/validators/test_eda_common.py: 3 tests
+- tests/validators/test_eda_continuous.py: 3 tests
+- tests/validators/test_eda_rule_based.py: 3 tests
+- tests/validators/test_feature_validator.py: 3 tests
+- tests/validators/test_permutation_integration.py: 1 test
+- Total: 23 tests, all passing
+
+🎯 **Why:**
+- Completes Stage 1 permutation integration into main validator
+- Provides clean API for permutation testing
+
+**Next:** Task 12 - Add high-level workflow methods (run_full_validation, run_progressive_validation)
+
+### Summary of Iteration 7
+
+✅ **What changed:**
+- Task 12: Added run_full_validation method to FeatureValidator
+- Implements complete validation pipeline (EDA + Stage 1 permutation)
+- Early exit on permutation test failure
+- Returns accumulated ValidationReport
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 7 tests
+- tests/validators/test_config.py: 3 tests
+- tests/validators/test_eda_common.py: 3 tests
+- tests/validators/test_eda_continuous.py: 3 tests
+- tests/validators/test_eda_rule_based.py: 3 tests
+- tests/validators/test_feature_validator.py: 4 tests
+- tests/validators/test_permutation_integration.py: 1 test
+- Total: 24 tests, all passing
+
+🎯 **Why:**
+- Provides end-to-end validation workflow
+- Integrates EDA and permutation testing into single method
+- Foundation for full pipeline with stages 2 & 3
+
+**Next:** Evaluate completion criteria and document phase 2 status
 
 ## Notes
 
