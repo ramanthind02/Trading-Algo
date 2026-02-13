@@ -21,7 +21,7 @@ from feature_selection.os_feature_selector import OSFeatureSelector
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.ensemble_utils import save_control_file
 from feature_extraction.ml_manager import MLManager
-from feature_selection.base_models.quantile_binning import QuantileBinningModel
+from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 
 
 logger = get_logger(__name__)
@@ -287,7 +287,7 @@ class ProductionTrainingPipeline:
             )
             
             # Import required models and metrics
-            from feature_selection.base_models.quantile_binning import QuantileBinningModel
+            from feature_selection.base_models.continuous_binning import ContinuousBinningModel
             from metrics.performance import SortinoRatio
             from datetime import datetime, timedelta
             
@@ -310,7 +310,7 @@ class ProductionTrainingPipeline:
                        f"test_step={test_step} days, steps={num_steps}")
             
             # Initialize model and metric for feature selection
-            model = QuantileBinningModel(
+            model = ContinuousBinningModel(
                 n_bins=3,
                 selection_metric='sortino',
                 strategy='long'
@@ -421,7 +421,7 @@ class ProductionTrainingPipeline:
             model_name = f"model_{i}"
             
             # Create and fit quantile binning model
-            model = QuantileBinningModel(
+            model = ContinuousBinningModel(
                 n_bins=3,
                 selection_metric='sortino',
                 strategy='long'
@@ -438,7 +438,7 @@ class ProductionTrainingPipeline:
                 # Store model configuration
                 base_model_configs.append({
                     'name': model_name,
-                    'model_type': 'QuantileBinningModel',
+                    'model_type': 'continuous_binning',
                     'feature_column': feature,
                     'strategy': 'long',
                     'constructor_params': {
@@ -469,12 +469,7 @@ class ProductionTrainingPipeline:
         # Create fitted base model parameters
         fitted_base_models = {}
         for model_name, model in base_models.items():
-            fitted_base_models[model_name] = {
-                'thresholds': model.thresholds_.tolist() if model.thresholds_ is not None else None,
-                'best_long_bin': model.best_long_bin_,
-                'best_short_bin': model.best_short_bin_,
-                'bin_stats': model.bin_stats_
-            }
+            fitted_base_models[model_name] = model.get_fitted_params()
         
         # Create ensemble weights (equal weighting for simplicity)
         n_models = len(base_models)

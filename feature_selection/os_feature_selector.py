@@ -183,7 +183,7 @@ class OSFeatureSelector:
         Parameters
         ----------
         model : BinningModelBase
-            Model to use for walk-forward analysis (e.g., QuantileBinningModel,
+            Model to use for walk-forward analysis (e.g., ContinuousBinningModel,
             DecisionTreeBinningModel). The model will be fitted on each training
             window and used to predict on test windows.
         objective_metric : ObjectiveMetric

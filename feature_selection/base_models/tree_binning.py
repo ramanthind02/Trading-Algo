@@ -212,7 +212,7 @@ class DecisionTreeBinningModel(BinningModelBase):
             'normalize_by': self.normalize_by
         }
     
-    def set_params(self, **params) -> 'DecisionTreeBinningModel':
+    def set_params(self, **params) -> 'decision_tree_binning':
         """
         Set the parameters of this estimator.
         
@@ -236,11 +236,7 @@ class DecisionTreeBinningModel(BinningModelBase):
                 raise ValueError(f"Invalid parameter {key} for estimator {type(self).__name__}")
         
         # Reset fitted state when parameters change
-        self.is_fitted_ = False
-        self.thresholds_ = None
-        self.best_long_bin_ = None
-        self.best_short_bin_ = None
-        self.bin_stats_ = None
+        self._reset_fitted_state()
         self.tree_ = None
         
         return self
@@ -299,3 +295,4 @@ class DecisionTreeBinningModel(BinningModelBase):
         """User-friendly string representation."""
         fitted_str = "fitted" if self.is_fitted_ else "not fitted"
         return f"DecisionTreeBinningModel(n_bins={self.n_bins}, {fitted_str})"
+    model_type = "decision_tree_binning"

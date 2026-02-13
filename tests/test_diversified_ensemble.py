@@ -75,7 +75,7 @@ class TestDiversifiedEnsemble(unittest.TestCase):
             dummy_feature_col = f"dummy_signal_D_{feature_name}"
             base_models.append({
                 'name': f"{dummy_feature_col}_long",
-                'model_type': 'QuantileBinningModel',
+                'model_type': 'continuous_binning',
                 'feature_column': dummy_feature_col,
                 'strategy': 'long',
                 'constructor_params': {
@@ -305,7 +305,7 @@ class TestDiversifiedEnsembleEdgeCases(unittest.TestCase):
             dummy_feature_col = f"dummy_signal_D_{feature_name}"
             base_models.append({
                 'name': f"{dummy_feature_col}_long",
-                'model_type': 'QuantileBinningModel',
+                'model_type': 'continuous_binning',
                 'feature_column': dummy_feature_col,
                 'strategy': 'long',
                 'constructor_params': {

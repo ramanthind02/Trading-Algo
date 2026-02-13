@@ -442,7 +442,7 @@ class TestEndToEnd:
     def test_cache_with_base_model(self, sample_candles_df, temp_cache_dir):
         """Test that BaseModel can use cached features."""
         from feature_selection.base_models.feature_base_model import BaseModel
-        from feature_selection.base_models.quantile_binning import QuantileBinningModel
+        from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 
         # Create and populate cache
         rsi_node = RSI(
@@ -477,7 +477,7 @@ class TestEndToEnd:
                 'timeframes': [TimeFrame.D],
                 'params': {'lookback': 14}
             },
-            'model_type': 'QuantileBinningModel',
+            'model_type': 'continuous_binning',
             'constructor_params': {'n_bins': 5}
         }
 

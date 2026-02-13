@@ -606,18 +606,22 @@ class DiversifiedEnsemble:
             if normalization_data is not None and feature_column in normalization_data.columns:
                 norm_data = normalization_data[feature_column]
             
+            underlying_model = (
+                base_model.binning_model if hasattr(base_model, "binning_model") else base_model
+            )
+
             # Fit model if not already fitted (from ensemble_model)
-            if not base_model.is_fitted_:
-                base_model.fit(
+            if not underlying_model.is_fitted_:
+                underlying_model.fit(
                     feature_data=feature_data,
                     target_data=y,
-                    normalization_data=norm_data
+                    normalization_data=norm_data,
                 )
             
-            # Generate binary signals using the model's strategy
-            binary_signals[model_name] = base_model.predict(
+            # Generate binned forecast signals using the model's strategy
+            binary_signals[model_name] = underlying_model.predict(
                 feature_data,
-                strategy=base_model.strategy,
+                strategy=underlying_model.strategy,
                 normalization_data=norm_data
             )
         
@@ -868,7 +872,7 @@ class DiversifiedEnsemble:
                         logger.debug(
                             f"Model '{model_name}' fitted: "
                             f"n_bins={base_model.binning_model.n_bins}, "
-                            f"best_long_bin={base_model.binning_model.best_long_bin_}, "
+                            f"active_long_bins={base_model.binning_model.active_bins_by_strategy_.get('long', [])}, "
                             f"n_bins_with_stats={len(bin_stats)}"
                         )
             except Exception as e:
@@ -1526,10 +1530,14 @@ class DiversifiedEnsemble:
             if normalization_data is not None and feature_column in normalization_data.columns:
                 norm_data = normalization_data[feature_column]
             
-            # Get binary signals using the model's strategy
-            binary_signals[model_name] = base_model.predict(
+            underlying_model = (
+                base_model.binning_model if hasattr(base_model, "binning_model") else base_model
+            )
+
+            # Get forecast signals using the model's strategy
+            binary_signals[model_name] = underlying_model.predict(
                 feature_data,
-                strategy=base_model.strategy,
+                strategy=underlying_model.strategy,
                 normalization_data=norm_data
             )
         
@@ -1753,13 +1761,11 @@ class DiversifiedEnsemble:
             # This allows partial fitted states (some models fitted, some not)
             fitted_base_models = {}
             for model_name, base_model in self.base_models.items():
-                if base_model.is_fitted_:
-                    fitted_base_models[model_name] = {
-                        'thresholds': base_model.thresholds_.tolist() if base_model.thresholds_ is not None else None,
-                        'best_long_bin': base_model.best_long_bin_,
-                        'best_short_bin': base_model.best_short_bin_,
-                        'bin_stats': base_model.bin_stats_
-                    }
+                underlying_model = (
+                    base_model.binning_model if hasattr(base_model, "binning_model") else base_model
+                )
+                if underlying_model.is_fitted_:
+                    fitted_base_models[model_name] = underlying_model.get_fitted_params()
             # Note: fitted_base_models can be empty dict if no base models are fitted
             
             fitted_ensemble = {

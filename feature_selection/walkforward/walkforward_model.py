@@ -194,7 +194,7 @@ class WalkForwardModel(BinningModelBase):
     Parameters
     ----------
     base_model : BinningModelBase
-        The model to wrap (e.g., QuantileBinningModel, DecisionTreeBinningModel)
+        The model to wrap (e.g., ContinuousBinningModel, DecisionTreeBinningModel)
     train_start : datetime
         Start date for initial training window
     train_end : datetime
@@ -217,11 +217,11 @@ class WalkForwardModel(BinningModelBase):
         
     Examples
     --------
-    >>> from feature_selection.base_models import QuantileBinningModel
+    >>> from feature_selection.base_models import ContinuousBinningModel
     >>> from metrics.performance import SortinoRatio
     >>> 
     >>> # Create walk-forward wrapper
-    >>> base_model = QuantileBinningModel(n_bins=3)
+    >>> base_model = ContinuousBinningModel(n_bins=3)
     >>> wf_model = WalkForwardModel(
     ...     base_model=base_model,
     ...     train_start=datetime(2010, 1, 1),

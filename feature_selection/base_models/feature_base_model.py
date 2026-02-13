@@ -58,7 +58,7 @@ class BaseModel:
             'params': dict
         }
     binning_model : BinningModelBase
-        Binning model instance (QuantileBinningModel or DecisionTreeBinningModel)
+        Binning model instance (ContinuousBinningModel or DecisionTreeBinningModel)
         
     Returns
     -------
@@ -126,25 +126,25 @@ class BaseModel:
         # Get or create binning model
         if binning_model is None:
             # Try to create from feature_config
-            from feature_selection.base_models.quantile_binning import QuantileBinningModel
+            from feature_selection.base_models.continuous_binning import ContinuousBinningModel
             from feature_selection.base_models.tree_binning import DecisionTreeBinningModel
             from feature_selection.base_models.twobin_binning import TwoBinBinningModel
-            from feature_selection.base_models.rule_based_binning import RuleBasedBinningModel
+            from feature_selection.base_models.rule_based import RuleBasedModel
 
-            model_type = feature_config.get('model_type', 'QuantileBinningModel')
+            model_type = feature_config.get('model_type', 'continuous_binning')
             constructor_params = feature_config.get('constructor_params', {})
 
-            if model_type == 'QuantileBinningModel':
-                self.binning_model = QuantileBinningModel(**constructor_params)
-            elif model_type == 'DecisionTreeBinningModel':
+            if model_type == 'continuous_binning':
+                self.binning_model = ContinuousBinningModel(**constructor_params)
+            elif model_type == 'decision_tree_binning':
                 self.binning_model = DecisionTreeBinningModel(**constructor_params)
-            elif model_type == 'TwoBinBinningModel':
+            elif model_type == 'two_bin_binning':
                 self.binning_model = TwoBinBinningModel(**constructor_params)
-            elif model_type == 'RuleBasedBinningModel':
-                self.binning_model = RuleBasedBinningModel(**constructor_params)
+            elif model_type == 'rule_based':
+                self.binning_model = RuleBasedModel(**constructor_params)
             else:
-                # Default to QuantileBinningModel
-                self.binning_model = QuantileBinningModel()
+                # Default to ContinuousBinningModel
+                self.binning_model = ContinuousBinningModel()
         else:
             self.binning_model = binning_model
         
@@ -193,12 +193,20 @@ class BaseModel:
         Delegate attribute access to binning_model for compatibility.
         
         This allows the ensemble to access binning_model attributes
-        (is_fitted_, strategy, thresholds_, etc.) directly on BaseModel.
+        directly on BaseModel.
         """
         # List of attributes to delegate to binning_model
         delegated_attrs = {
-            'is_fitted_', 'strategy', 'n_bins', 'thresholds_',
-            'best_long_bin_', 'best_short_bin_', 'bin_stats_'
+            'is_fitted_',
+            'strategy',
+            'n_bins',
+            'bin_edges_',
+            'bin_stats_',
+            'significant_regions_',
+            'active_bins_by_strategy_',
+            'position_multipliers_by_strategy_',
+            'fit_config_',
+            'model_version_',
         }
         
         if name in delegated_attrs:
@@ -727,7 +735,7 @@ class BaseModel:
                 f"This suggests a datetime alignment issue between features and returns."
             )
 
-        # Ensure feature_data has a name (required by RuleBasedBinningModel.fit and others)
+        # Ensure feature_data has a name (required by RuleBasedModel.fit and others)
         if feature_data.name is None:
             feature_data.name = column_name
 
@@ -1089,7 +1097,7 @@ class BaseModel:
         ensemble_dir : str
             Path to ensemble directory
         model_id : str
-            Model ID to update (e.g., 'quantile_binning_3')
+            Model ID to update (e.g., 'continuous_binning_3')
         train_start : str
             Training start date (YYYY-MM-DD)
         train_end : str
@@ -1104,12 +1112,7 @@ class BaseModel:
             raise ValueError("feature_column not set")
         
         # Extract fitted params from owned binning model
-        fitted_params = {
-            'thresholds': self.binning_model.thresholds_.tolist() if self.binning_model.thresholds_ is not None else None,
-            'best_long_bin': self.binning_model.best_long_bin_,
-            'best_short_bin': self.binning_model.best_short_bin_,
-            'bin_stats': self.binning_model.bin_stats_
-        }
+        fitted_params = self.binning_model.get_fitted_params()
         
         update_base_model_fitted_params(
             ensemble_dir=ensemble_dir,

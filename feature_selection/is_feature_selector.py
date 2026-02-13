@@ -179,7 +179,7 @@ class ISFeatureSelector:
         Perform walk-forward analysis using any BaseModel.
         
         This method is now FLEXIBLE and accepts any model that implements the
-        BaseModel interface (QuantileBinningModel, DecisionTreeBinningModel, etc.).
+        BaseModel interface (ContinuousBinningModel, DecisionTreeBinningModel, etc.).
         
         For each walk-forward step:
         1. Fit model on training window
@@ -190,7 +190,7 @@ class ISFeatureSelector:
         Parameters
         ----------
         model : BinningModelBase
-            Model to use for walk-forward analysis (e.g., QuantileBinningModel,
+            Model to use for walk-forward analysis (e.g., ContinuousBinningModel,
             DecisionTreeBinningModel). The model will be fitted on each training
             window and used to predict on test windows.
         objective_metric : ObjectiveMetric
@@ -226,11 +226,11 @@ class ISFeatureSelector:
             
         Examples
         --------
-        >>> from feature_selection.base_models.quantile_binning import QuantileBinningModel
+        >>> from feature_selection.base_models.continuous_binning import ContinuousBinningModel
         >>> from metrics.performance import SortinoRatio
         >>> 
         >>> # Use quantile binning model
-        >>> model = QuantileBinningModel(n_bins=3, selection_metric='sortino')
+        >>> model = ContinuousBinningModel(n_bins=3, selection_metric='sortino')
         >>> metric = SortinoRatio(annualization_factor=252)
         >>> 
         >>> results_df, step_info, fig = explorer.walkforward_analysis(
