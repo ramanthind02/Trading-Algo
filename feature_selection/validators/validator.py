@@ -298,3 +298,35 @@ class FeatureValidator:
             researcher_notes="",
             ensemble_decision=None,
         )
+
+    def run_progressive_validation(
+        self,
+        feature_data: pd.DataFrame,
+        target: pd.Series,
+        params_grid: dict[str, list] | None = None,
+    ) -> Generator[tuple[str, EDAReport | PermutationReport], None, None]:
+        """
+        Yield stage-by-stage results for interactive workflow.
+
+        Args:
+            feature_data: Feature DataFrame
+            target: Target series
+            params_grid: Parameter grid for stage 3 stability analysis (not yet implemented)
+
+        Yields:
+            (stage_name, stage_report) tuples as each stage completes
+        """
+        # Stage 1: EDA
+        eda_report = self.run_eda(feature_data=feature_data, target=target)
+        yield ("EDA", eda_report)
+
+        # Stage 2: Stage 1 Permutation Test
+        stage1_report = self.run_stage1_permutation(feature_data=feature_data, target=target)
+        yield ("Stage 1: Vector Shuffle", stage1_report)
+
+        # Early exit if Stage 1 failed
+        if not stage1_report.passed:
+            return
+
+        # Stage 3 (Stage 2 permutation) - not yet implemented
+        # Stage 4 (Stage 3 stability) - not yet implemented

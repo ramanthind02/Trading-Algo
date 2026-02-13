@@ -91,3 +91,25 @@ def test_run_full_validation(validator, sample_data):
     assert validation_report.eda_report is not None
     assert validation_report.stage1_report is not None
     assert validation_report.validation_status in ['passed', 'failed', 'incomplete']
+
+
+def test_run_progressive_validation(validator, sample_data):
+    """Test run_progressive_validation generator method."""
+    feature, target = sample_data
+
+    # Collect all stages from progressive validation
+    stages = []
+    for stage_name, stage_report in validator.run_progressive_validation(
+        feature_data=feature.to_frame(),
+        target=target,
+    ):
+        stages.append((stage_name, stage_report))
+
+    # Should have at least EDA and Stage 1
+    assert len(stages) >= 2
+    assert stages[0][0] == "EDA"
+    assert stages[1][0] == "Stage 1: Vector Shuffle"
+
+    # Check report types
+    assert hasattr(stages[0][1], 'feature_stats')  # EDAReport
+    assert hasattr(stages[1][1], 'observed_sharpe')  # PermutationReport
