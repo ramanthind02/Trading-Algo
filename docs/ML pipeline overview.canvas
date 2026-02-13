@@ -33,7 +33,7 @@
 		{"id":"8f3d7411f5076e99","type":"text","text":"Walk forward analysis","x":-1878,"y":-119,"width":275,"height":136,"color":"4"},
 		{"id":"5c491a4796924631","type":"text","text":"Walkforward permutation test","x":-1878,"y":441,"width":275,"height":136,"color":"4"},
 		{"id":"338137ab43fd5f0c","type":"text","text":"CV permutation test","x":-1878,"y":627,"width":275,"height":136,"color":"4"},
-		{"id":"3bc6ed755448289e","type":"text","text":"Ensemble models can vary among each based on things like \n- Instrument / sector\n- TimeFrame (D, H1, M5)\n- Direction (long only, long/short)\n- Model type (averaging, Linear, RF, NN, etc...)\n- Style (Momentum/Mean reversion)\n","x":3360,"y":-431,"width":560,"height":296,"color":"1"}
+		{"id":"3bc6ed755448289e","type":"text","text":"Ensemble models can vary among each based on things like \n- Instrument / 5\n- TimeFrame (D, H1, M5)\n- Direction (long only, long/short)\n- Model type (averaging, Linear, RF, NN, etc...)\n- Style (Momentum/Mean reversion)\n","x":3360,"y":-431,"width":560,"height":296,"color":"1"}
 	],
 	"edges":[
 		{"id":"dd5898440e3f61a7","fromNode":"37f7829fc61cd404","fromSide":"bottom","toNode":"fd07cc490de2e646","toSide":"top"},

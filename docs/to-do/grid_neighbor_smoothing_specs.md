@@ -56,13 +56,17 @@ Each parameter has a **finite, ordered set of levels** (e.g. `lookback in [7, 14
 For a row with parameter values \( (p_1, p_2, \ldots, p_n) \), a **neighbor** is any other row that:
 
 1. Differs in **exactly one** parameter, and  
-2. In that parameter, is exactly **one step** away (previous or next in that parameter’s ordered set).
+2. In that parameter, is **adjacent** in the sorted list of levels (one step = previous or next in that parameter’s ordered set; step size may be non-uniform — see Step size below).
 
 No diagonal or multi-parameter steps: only single-parameter, single-step moves.
 
+### Step size (non-uniform grids)
+
+Grid search results often do **not** have a step value of 1 between parameter levels. For example, `lookback` might be `[5, 10, 20, 40]` or `[7, 14, 21]` with varying gaps. The algorithm must **sort** the distinct values for each parameter and treat **one step** as movement to the **adjacent** value in that sorted sequence — i.e. the previous or next level in the ordered list, regardless of the numeric difference. So for `lookback in [5, 10, 20, 40]`, the neighbors of `10` are `5` and `20` (one step back and one step forward in the sorted order), not numeric steps of 1.
+
 ### Ordering of levels
 
-- **Numeric parameters**: Use natural numeric order (ascending).
+- **Numeric parameters**: Use natural numeric order (ascending). Extract the ordered set of distinct values from the DataFrame (or from an explicit list if provided), then define adjacency as previous/next in that sequence.
 - **Categorical parameters**: Use the order of **first appearance** in the DataFrame (first occurrence defines the sequence). The spec does not require an explicit ordering API for categories; implementers may add one later.
 
 ### Smoothed value formula
