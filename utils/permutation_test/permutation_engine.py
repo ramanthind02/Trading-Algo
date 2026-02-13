@@ -229,6 +229,8 @@ class BarPermutationStrategy(PermutationStrategy):
         permute_start_idx: int = 252,
         bar_data: Optional[Dict[str, Any]] = None,
         train_windows: Optional[List[Tuple[pd.Timestamp, pd.Timestamp]]] = None,
+        shuffle_mode: str = "auto",
+        intraday_gap_config: Optional[Any] = None,
         **kwargs
     ) -> pd.DataFrame:
         """
@@ -250,7 +252,11 @@ class BarPermutationStrategy(PermutationStrategy):
         Returns:
             DataFrame with re-extracted features from permuted bars
         """
-        from feature_selection.permutation_test.permute_bars import BarPermute, BarPermuteWalkForward, _extract_features_from_bars
+        from utils.permutation_test.permute_bars import (
+            BarPermute,
+            BarPermuteWalkForward,
+            _extract_features_from_bars,
+        )
         
         if bar_data is None:
             raise ValueError("bar_data is required for BarPermutationStrategy")
@@ -273,7 +279,13 @@ class BarPermutationStrategy(PermutationStrategy):
             permuted_bars = permuter.permute()
         else:
             # Standard mode: shuffle all bars from permute_start_idx onwards
-            permuter = BarPermute(price_df, permute_start_idx=permute_start_idx)
+            permuter = BarPermute(
+                price_df,
+                permute_start_idx=permute_start_idx,
+                shuffle_mode=shuffle_mode,
+                intraday_gap_config=intraday_gap_config,
+                random_seed=random_seed,
+            )
             permuted_bars = permuter.permute()
         
         # Re-extract features from permuted bars

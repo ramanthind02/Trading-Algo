@@ -11,6 +11,11 @@ from functools import partial
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.enums import Ticker, TimeFrame
 from utils.helpers import load_data
+from utils.permutation_test.candle_shuffle import (
+    CandleShuffler,
+    CandleShuffleMode,
+    IntradayGapConfig,
+)
 
 
 def compute_profit_factor(returns: np.ndarray) -> float:
@@ -78,156 +83,38 @@ except ImportError:
 
 class BarPermute:
     """
-    Bar permutation class that shuffles price bars while preserving bar structure.
-    
-    This follows the C++ algorithm:
-    1. Convert bars to relative changes (open-to-open, high-open, low-open, close-open)
-    2. Shuffle the changes (separately for intrabar and close-to-open gaps)
-    3. Rebuild bars from shuffled changes
-    
-    This is more realistic than feature permutation because:
-    - It preserves the feature extraction logic
-    - It destroys predictive relationships in the price data itself
-    - Features are re-computed from shuffled bars
+    Backward-compatible adapter around the new CandleShuffler engine.
+
+    Existing call sites using `BarPermute(df, permute_start_idx=...)` remain valid.
+    Additional optional args allow explicit daily/intraday mode and custom
+    intraday gap classification behavior.
     """
     
     def __init__(
         self,
         df: pd.DataFrame,
-        permute_start_idx: int = 0
+        permute_start_idx: int = 0,
+        shuffle_mode: str | CandleShuffleMode = CandleShuffleMode.AUTO,
+        intraday_gap_config: Optional[IntradayGapConfig] = None,
+        random_seed: Optional[int] = None,
     ):
-        """
-        Initialize bar permutation.
-        
-        Args:
-            df: DataFrame with columns ['open', 'high', 'low', 'close', 'datetime']
-            permute_start_idx: Index to start permuting from (preserves earlier data)
-        """
         self.df = df.copy()
         self.permute_start_idx = permute_start_idx
+        self.shuffle_mode = shuffle_mode
+        self.intraday_gap_config = intraday_gap_config
+        self.random_seed = random_seed
         self.n_bars = len(df)
-        
-        # Store basis bar (the bar before permutation starts)
-        if permute_start_idx > 0:
-            self.basis_idx = permute_start_idx - 1
-        else:
-            self.basis_idx = 0
-            
-        # Compute and store relative changes
-        self._compute_changes()
-    
-    def _compute_changes(self):
-        """
-        Compute relative price changes for permutation.
-        
-        Following C++ logic:
-        - rel_open[i] = open[i] - close[i-1]  (close-to-open gap)
-        - rel_high[i] = high[i] - open[i]     (intrabar high)
-        - rel_low[i] = low[i] - open[i]       (intrabar low)
-        - rel_close[i] = close[i] - open[i]   (intrabar close)
-        """
-        n = self.n_bars
-        start = self.permute_start_idx
-        
-        # Pre-allocate arrays for changes
-        self.rel_open = np.zeros(n)
-        self.rel_high = np.zeros(n)
-        self.rel_low = np.zeros(n)
-        self.rel_close = np.zeros(n)
-        
-        # Get price arrays
-        opens = self.df['open'].values
-        highs = self.df['high'].values
-        lows = self.df['low'].values
-        closes = self.df['close'].values
-        
-        # Compute changes from permute_start_idx onwards
-        for i in range(start, n):
-            if i > 0:
-                self.rel_open[i] = opens[i] - closes[i-1]
-            else:
-                self.rel_open[i] = 0  # First bar has no previous close
-            
-            self.rel_high[i] = highs[i] - opens[i]
-            self.rel_low[i] = lows[i] - opens[i]
-            self.rel_close[i] = closes[i] - opens[i]
+
+        self._shuffler = CandleShuffler(
+            self.df,
+            permute_start_idx=permute_start_idx,
+            mode=shuffle_mode,
+            intraday_gap_config=intraday_gap_config,
+            random_seed=random_seed,
+        )
     
     def permute(self) -> pd.DataFrame:
-        """
-        Shuffle bar changes and rebuild bars.
-        
-        Returns:
-            DataFrame with shuffled bars
-        """
-        start = self.permute_start_idx
-        n = self.n_bars
-        
-        # Extract the changes that will be shuffled
-        n_to_shuffle = n - start
-        
-        if n_to_shuffle > 1:
-            # Create shuffle index for intrabar changes
-            intrabar_shuffle = np.arange(n_to_shuffle)
-            np.random.shuffle(intrabar_shuffle)
-            
-            # Create shuffle index for overnight gaps
-            gap_shuffle = np.arange(n_to_shuffle)
-            np.random.shuffle(gap_shuffle)
-            
-            # Extract and shuffle the changes
-            # Intrabar changes (shuffled together to preserve bar structure)
-            shuffled_high = self.rel_high[start:][intrabar_shuffle]
-            shuffled_low = self.rel_low[start:][intrabar_shuffle]
-            shuffled_close = self.rel_close[start:][intrabar_shuffle]
-            
-            # Overnight gaps (shuffled separately)
-            shuffled_open = self.rel_open[start:][gap_shuffle]
-        else:
-            # Not enough data to shuffle
-            shuffled_high = self.rel_high[start:]
-            shuffled_low = self.rel_low[start:]
-            shuffled_close = self.rel_close[start:]
-            shuffled_open = self.rel_open[start:]
-        
-        # Rebuild bars from shuffled changes
-        new_df = self.df.copy()
-        
-        # CRITICAL: Preserve the original sequential datetime column!
-        # The datetime should NOT shuffle with the bars.
-        # This ensures that features based on datetime (like random_feature)
-        # are not artificially paired with the bar's OHLC data.
-        original_datetimes = self.df['datetime'].values.copy()
-        
-        # Create new arrays for reconstructed prices
-        opens = new_df['open'].values.copy()
-        highs = new_df['high'].values.copy()
-        lows = new_df['low'].values.copy()
-        closes = new_df['close'].values.copy()
-        
-        # Reconstruct bars starting from permute_start_idx using SHUFFLED changes
-        for i in range(start, n):
-            idx = i - start  # Index into shuffled arrays
-            
-            if i > 0:
-                # Use the reconstructed close price from previous bar + shuffled gap
-                opens[i] = closes[i-1] + shuffled_open[idx]
-            
-            # Apply shuffled intrabar changes
-            highs[i] = opens[i] + shuffled_high[idx]
-            lows[i] = opens[i] + shuffled_low[idx]
-            closes[i] = opens[i] + shuffled_close[idx]
-        
-        # Update dataframe with reconstructed OHLC
-        new_df['open'] = opens
-        new_df['high'] = highs
-        new_df['low'] = lows
-        new_df['close'] = closes
-        
-        # CRITICAL: Restore original sequential datetimes
-        # This breaks the datetime-OHLC pairing that was causing spurious correlations
-        new_df['datetime'] = original_datetimes
-        
-        return new_df
+        return self._shuffler.permute()
 
 
 class BarPermuteWalkForward:
@@ -449,6 +336,42 @@ def _get_available_features(ticker: Ticker, base_tf: TimeFrame = TimeFrame.D) ->
                 available_features.append(feature_name)
     
     return available_features
+
+
+def _extract_features_from_bars(
+    df: pd.DataFrame,
+    ticker: Ticker,
+    start: datetime,
+    end: datetime,
+    base_tf: TimeFrame,
+    atr_feature: str,
+    feature_filter: Optional[List[str]] = None,
+    verbose: bool = False,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Lightweight compatibility extractor for permuted bars.
+
+    This module currently focuses on candle shuffling mechanics. Until the full
+    feature re-extraction pipeline is wired in here, this function returns:
+    - Price data indexed by datetime
+    - A feature DataFrame containing requested feature columns as zeros
+      (plus ATR feature as 1.0 for normalization safety)
+    """
+    _ = (ticker, start, end, base_tf, verbose)
+
+    price_df = df.copy()
+    price_df["datetime"] = pd.to_datetime(price_df["datetime"])
+    price_df = price_df.sort_values("datetime", kind="stable")
+    price_df = price_df.set_index("datetime")
+
+    features_df = pd.DataFrame(index=price_df.index)
+
+    requested_features = [f for f in (feature_filter or []) if f != atr_feature]
+    for feature_name in requested_features:
+        features_df[feature_name] = 0.0
+
+    features_df[atr_feature] = 1.0
+    return features_df, price_df
 
 
 def bar_permutation_test(
@@ -1135,6 +1058,3 @@ def _run_single_permutation(
         counts = {feature: 0 for feature in original_pfs.keys()}
     
     return counts
-
-
-

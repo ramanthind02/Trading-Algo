@@ -19,6 +19,14 @@ from utils.permutation_test.permute_bars import (
     BarPermuteWalkForward,
     WalkForwardValidator
 )
+from utils.permutation_test.candle_shuffle import (
+    CandleShuffler,
+    CandleShuffleMode,
+    GapType,
+    IntradayGapConfig,
+    classify_daily_gap,
+    classify_intraday_gap,
+)
 
 __all__ = [
     # Core engine
@@ -32,4 +40,10 @@ __all__ = [
     'BarPermute',
     'BarPermuteWalkForward',
     'WalkForwardValidator',
+    'CandleShuffler',
+    'CandleShuffleMode',
+    'GapType',
+    'IntradayGapConfig',
+    'classify_daily_gap',
+    'classify_intraday_gap',
 ]
