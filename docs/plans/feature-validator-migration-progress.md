@@ -1,6 +1,6 @@
 # Feature Validator Migration Progress
 
-**NEXT_TASK:** Task 9 - FeatureValidator Init + EDA Orchestration
+**NEXT_TASK:** ValidationReport (top-level accumulation) + Basic exports
 
 **Date Started:** 2026-02-12
 **Goal:** Implement the new FeatureValidator class and migrate away from FeatureExplorer
@@ -25,7 +25,7 @@ ruff check feature_selection/validators/
 ### Core Components
 
 - [x] ValidationConfig dataclass
-- [ ] FeatureValidator main class
+- [x] FeatureValidator main class (run_eda implemented)
 - [x] Report data structures
   - [x] DescriptiveStats
   - [x] ADFTestResult, KPSSTestResult
@@ -166,7 +166,7 @@ ruff check feature_selection/validators/
 
 ### Phase 5: Core Orchestration
 
-- [ ] Task 9: FeatureValidator Init + EDA Orchestration
+- [x] Task 9: FeatureValidator Init + EDA Orchestration ✅
 - [ ] Task 10: Stability Analysis Methods
 - [ ] Task 11: Permutation Stages
 - [ ] Task 12: Full Pipeline
@@ -181,10 +181,10 @@ ruff check feature_selection/validators/
 
 ## Current Status
 
-**Iteration:** 3 (in progress)
-**Working on:** Task 9 - FeatureValidator Init + EDA Orchestration
-**Last completed:** Task 7 - Rule-Based-Specific EDA
-**Next up:** Task 9 - FeatureValidator Init + EDA Orchestration
+**Iteration:** 4 (in progress)
+**Working on:** ValidationReport + exports
+**Last completed:** Task 9 - FeatureValidator with EDA orchestration
+**Next up:** ValidationReport (top-level) + Basic report exports
 
 ### Summary of Iteration 1
 
@@ -232,6 +232,29 @@ ruff check feature_selection/validators/
 - Following bottom-up implementation strategy
 
 **Next:** Task 9 - FeatureValidator Init + EDA Orchestration (assemble EDA methods into main class)
+
+### Summary of Iteration 4
+
+✅ **What changed:**
+- Task 9: FeatureValidator core class with full EDA orchestration
+- Implemented run_eda method for both continuous and rule-based features
+- All EDA methods integrated and working end-to-end
+
+📊 **Test Coverage:**
+- tests/validators/test_report_structures.py: 6 tests
+- tests/validators/test_config.py: 3 tests
+- tests/validators/test_eda_common.py: 3 tests
+- tests/validators/test_eda_continuous.py: 3 tests
+- tests/validators/test_eda_rule_based.py: 3 tests
+- tests/validators/test_feature_validator.py: 2 tests
+- Total: 20 tests, all passing
+
+🎯 **Why:**
+- Core FeatureValidator class now exists and can perform complete EDA
+- Ready to add ValidationReport and remaining workflow methods
+- Major milestone: EDA pipeline fully functional
+
+**Next:** ValidationReport (top-level accumulation), basic report exports (markdown, JSON)
 
 ## Notes
 
