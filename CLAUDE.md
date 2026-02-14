@@ -6,11 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Systematic trading framework implementing Robert Carver's methodology. Generates trading signals from technical indicators (bias nodes), combines them through ensemble learning with diversification multipliers, and converts signals to tradeable positions.
 
+## Environment Setup
+
+**CRITICAL**: This repository uses a **shared virtual environment** located at the repository root.
+
+- The venv is shared across all git worktrees
+- **NEVER** create new virtual environments in worktrees or subdirectories
+- Always use the absolute path to activate: `source /home/raman/repos/Trading-Algo/venv/bin/activate`
+
 ## Commands
 
 ```bash
-# Activate venv (required for all Python operations)
-source venv/bin/activate
+# Activate venv (REQUIRED for all Python operations)
+# Use absolute path - works from any worktree
+source /home/raman/repos/Trading-Algo/venv/bin/activate
 
 # Run all tests
 pytest tests/

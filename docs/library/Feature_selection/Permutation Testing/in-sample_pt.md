@@ -33,6 +33,7 @@ Ensemble formation is **deferred to the end** of the pipeline. Stages 1–2 vali
 
 - Applied **per parameter combination**. A feature (e.g. RSI) has many param combos (e.g. lookback 2, 3, 4, 5). Each combo is tested separately; some may pass, some fail.
 - **Output:** Only param combos that **pass** this test are passed to the next stage. No pipeline re-run — vectors only.
+- **Early stopping:** Param combos that fail Stage 1 are **excluded** from Stage 2 testing (saves computation).
 
 ### Reference
 
@@ -75,6 +76,7 @@ So we ask: "If the order of bars had been random, would our rule still produce a
 ### Pass/fail
 
 - Same idea as in §1: run many replicates, build null distribution; original **passes** if it beats the **(1 − α)** quantile of the null. Applied **per param combo** for both continuous and rule-based.
+- **Early stopping:** Only param combos that passed Stage 1 are tested in Stage 2. Param combos that fail Stage 2 are **excluded** from Stage 3 (walkforward stability).
 
 ---
 
@@ -236,20 +238,21 @@ The ensemble from §4 is **fixed**. Deploy on the **hold-out test set** (most re
 
 1. **User:** Specifies **objective metric**, **α** (default 0.1), **replicate count** (e.g. 500–1000), and **pre-specified metric threshold** (e.g. Sharpe > 0.5) for all tests.
 
-2. **Shuffling permutation (vector, §1):** Shuffle feature vector (binned continuous or rule-based) → compare objective to null. **Per param combo;** only **passing** params are noted. Fast initial filter.
+2. **Shuffling permutation (vector, §1):** Shuffle feature vector (binned continuous or rule-based) → compare objective to null. **Per param combo;** only **passing** params proceed to Stage 2. Fast initial filter.
 
 3. **Pipeline permutation (§2):**
    - **Continuous:** **Quick screen** with shuffle raw feature, then **rigorous test** with shuffle candles (recommended) → run full [Continuous_binning](../feature_types/Continuous_binning.md) with **pre-specified threshold**; no valid bins → 0.
    - **Rule-based:** **Shuffle bars** → feed to all param-combo rule models → evaluate.
-   Per param combo; only passing params are noted.
+   Per param combo; only passing params proceed to Stage 3. **Early stopping:** params that failed Stage 1 are excluded.
 
-4. **Walkforward stability analysis (§3):** Evaluate ALL params on each walkforward fold independently. Compute smoothed neighbor metric per fold. Select top K per fold. Compare selections across folds. Output: stability report.
+4. **Walkforward stability analysis (§3):** Evaluate ALL params on each walkforward fold independently (including those that failed §1–§2 for neighbor smoothing). Compute smoothed neighbor metric per fold. Select top K per fold. Compare selections across folds. Output: stability report.
 
-5. **Researcher ensemble formation (§4):** Researcher reviews permutation test results (§1–§2) + stability report (§3). Manually selects ensemble from params that passed permutation tests AND show temporal stability. Defines ensemble members and locks them.
+5. **Researcher ensemble formation (§4):** Researcher reviews permutation test results (§1–§2) + stability report (§3). Manually selects ensemble from params that **passed permutation tests AND show temporal stability**. Defines ensemble members and locks them.
 
 6. **Lock for OOS (§5):** Ensemble is fixed. Deploy on hold-out test set. No re-tuning.
 
-**Pipeline:** vector shuffle (per param) → pipeline permutation (per param) → walkforward stability (all params, per fold) → researcher forms ensemble → lock for OOS.
+**Pipeline (with early stopping):**
+- Stage 1 (all params) → Stage 2 (only Stage 1 passers) → Stage 3 (all params for smoothing) → researcher selects from (Stage 1 + 2 passers that are also stable in Stage 3) → lock for OOS.
 
 ---
 
@@ -257,7 +260,12 @@ The ensemble from §4 is **fixed**. Deploy on the **hold-out test set** (most re
 
 ### Funnel and cost
 
-- **Stages §1–§2** are the permutation testing funnel: many param combos enter, only statistically validated ones survive.
+- **Stages §1–§2** are the permutation testing funnel with **early stopping**: many param combos enter Stage 1, only statistically validated ones proceed to Stage 2.
+- **Computational savings from early stopping:**
+  - If 50% of params fail Stage 1, Stage 2 runs on only 50% of params → ~50% reduction in Stage 2 compute
+  - Example: 20 param combos, 1000 replicates each
+    - Without early stopping: 20 × 1000 (Stage 1) + 20 × 1000 (Stage 2) = 40,000 evaluations
+    - With early stopping (50% fail): 20 × 1000 (Stage 1) + 10 × 1000 (Stage 2) = 30,000 evaluations
 - **Stage §3** (walkforward stability) runs on ALL params (needed for neighbor smoothing), but is computationally cheaper than permutation testing (no replicates — just one evaluation per fold per param).
 - **Stage §4** (researcher ensemble formation) is a manual step with no computational cost.
 - Total permutation replicates are concentrated in §1–§2. The walkforward stability analysis adds only `n_folds × n_params` evaluations.

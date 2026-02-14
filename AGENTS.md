@@ -8,8 +8,10 @@
 
 ## Environment
 
-- Use the project virtual environment for all Python work: `source venv/bin/activate`.
-- Keep dependencies scoped to `venv`; do not rely on system Python packages.
+- **CRITICAL**: Use the shared project virtual environment located at `/home/raman/repos/Trading-Algo/venv/` for all Python work.
+- Always activate with: `source /home/raman/repos/Trading-Algo/venv/bin/activate`
+- **NEVER** create new virtual environments in worktrees or subdirectories - the venv is shared across all worktrees.
+- Keep dependencies scoped to the shared `venv`; do not rely on system Python packages.
 - Primary test runner is `pytest`.
 
 ## Architecture Map
