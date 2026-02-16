@@ -58,6 +58,9 @@ from metrics.plotting.parameter_plots import (
     plot_2d_parameter_surface,
     plot_3d_parameter_interactive,
     plot_4d_parameter_interactive,
+    plot_parameter_sensitivity_with_stability,
+    plot_2d_stability_heatmap,
+    plot_3d_slices,
 )
 
 # Graphing utilities (portfolio analytics, quantstats)
@@ -98,6 +101,9 @@ __all__ = [
     'plot_2d_parameter_surface',
     'plot_3d_parameter_interactive',
     'plot_4d_parameter_interactive',
+    'plot_parameter_sensitivity_with_stability',
+    'plot_2d_stability_heatmap',
+    'plot_3d_slices',
     # Graphing
     'generate_tearsheet',
     'compute_baseline_results',
