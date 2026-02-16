@@ -523,9 +523,6 @@ for param_combo in validated_params:  # e.g., RSI lookback [3, 4, 5]
 - `metrics/plotting/parameter_plots.py` — Parameter visualization
 - `utils/permutation_test/permutation_engine.py` — `PermutationEngine`
 
-**API Documentation:**
-- [Feature Validator API (Draft)](../../api/feature_validator_api.md) — Public API specification
-- [Feature Validator Implementation Plan](../../plans/2026-02-12-feature-validator-api.md) — TDD implementation roadmap
 
 ---
 
