@@ -7,6 +7,10 @@ Define fixed-date roll rules for all futures tickers using type-safe dataclasses
 - Roll rules from old data provider (fixed-date schedule: ES 5d before expiration, CL 3d before, GC 2d from month end, etc.)
 - `utils/enums.py` - Ticker enum
 - `docs/plans/2026-02-15-data-migration-design.md` - Architecture overview
+- `docs/library/Data/Norgate.md` - Norgate data structure and migration context
+
+## Data Source
+Norgate Data is the migration target and comparison baseline. See `docs/library/Data/Norgate.md` for schema, formats, and constraints. These roll rules represent the legacy fixed-date schedule; Norgate continuous futures roll is volume-based, so roll dates are expected to diverge in validation.
 
 ## Scope
 - In scope:

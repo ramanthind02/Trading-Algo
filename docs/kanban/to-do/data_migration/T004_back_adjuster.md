@@ -6,6 +6,10 @@ Apply arithmetic back-adjustment to OHLC data using cumulative adjustment factor
 ## Context / References
 - `data_cleaning/back_adjustment/gap_calculator.py` - AdjustmentFactor dataclass (Task 3)
 - `docs/plans/2026-02-15-data-migration-design.md` - Adjustment application algorithm
+- `docs/library/Data/Norgate.md` - Norgate data structure and migration context
+
+## Data Source
+Back-adjusted outputs are produced from legacy fixed-date roll events. See `docs/library/Data/Norgate.md` for schema, formats, and constraints. Norgate continuous futures data uses volume-based rolling, so comparisons focus on level alignment and roll-date differences rather than exact parity.
 
 ## Scope
 - In scope:
@@ -28,8 +32,9 @@ Apply arithmetic back-adjustment to OHLC data using cumulative adjustment factor
 - Input DataFrame: columns `['datetime', 'timestamp', 'open', 'high', 'low', 'close', 'volume']`
 - Output DataFrame: same columns, same row count, same order
 - Adjustments applied to: open, high, low, close (NOT volume, timestamp, datetime)
-- For each row, determine which adjustment period it falls into based on roll_date
+- `roll_date` denotes the first timestamp of the new contract; apply adjustments to rows with `T < roll_date`
 - Add cumulative_adjustment to OHLC prices
+- For rows earlier than the earliest roll_date, apply the sum of all gaps (pre-first-roll segment)
 
 ## Dependencies
 - `data_cleaning/back_adjustment/gap_calculator.py` (AdjustmentFactor)
@@ -57,6 +62,7 @@ Apply arithmetic back-adjustment to OHLC data using cumulative adjustment factor
 - [ ] `pytest tests/back_adjustment/test_back_adjuster.py -v` passes
 
 ## Notes
-- For row at time T, find latest roll_date ≤ T, use that cumulative_adjustment
-- If no rolls before time T, adjustment = 0 (most recent data period)
-- Validation checks: same row count, no negative prices, monotonic adjustments
+- For row at time T, find latest roll_date < T, use that cumulative_adjustment
+- If T is on/after the most recent roll_date, adjustment = 0 (most recent data period)
+- If T is earlier than the earliest roll_date, apply the sum of all gaps (pre-first-roll segment)
+- Validation checks: same row count, no negative prices, adjustments match expected cumulative sums
