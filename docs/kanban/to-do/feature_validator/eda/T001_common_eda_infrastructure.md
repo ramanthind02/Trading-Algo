@@ -8,6 +8,7 @@ Build shared EDA infrastructure that computes descriptive statistics, temporal s
 - `eda/eda_runner.py` — Existing EDA infrastructure to extend/refactor
 - `utils/models.py` — Candle Pydantic model with OHLCV data
 - `utils/enums.py` — TimeFrame, Ticker, Direction enums
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards
 
 ## Scope
 In scope:
@@ -75,19 +76,38 @@ Out of scope:
 - Index alignment: validate that feature and target indices match exactly before computation
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/eda/test_common_eda.py::test_descriptive_stats_deterministic` — Verify descriptive stats match expected values for known RSI feature (lookback=5, TimeFrame.D)
-2. `pytest tests/integration/feature_validator/eda/test_common_eda.py::test_temporal_stability_no_lookahead` — Ensure rolling correlation at timestamp t only uses data up to t
-3. `pytest tests/integration/feature_validator/eda/test_common_eda.py::test_correlation_analysis_lagged` — Validate lagged correlations detect known lead/lag structure
-4. `pytest tests/integration/feature_validator/eda/test_common_eda.py::test_rolling_objective_sharpe` — Compute rolling Sharpe (window=252) and verify matches manual calculation
-5. `pytest tests/integration/feature_validator/eda/test_common_eda.py::test_common_eda_plots_creation` — Smoke test that plot generation succeeds without errors
-6. `pytest tests/integration/feature_validator/eda/test_common_eda.py::test_nan_handling` — Verify NaN counts and statistics exclude NaNs appropriately
+
+**Unit tests** (location: `tests/validators/eda/test_common_eda.py`):
+- `test_descriptive_stats_known_values()` — synthetic Series with known mean/std/skew, verify stats match expected values exactly
+- `test_temporal_stability_no_lookahead()` — handcrafted time series, assert rolling correlation at timestamp t only uses data up to t
+- `test_correlation_analysis_lagged_synthetic()` — construct synthetic feature with known 1-lag lead structure, verify lagged correlation is highest at lag=1
+- `test_rolling_objective_sharpe_manual()` — small synthetic returns series (10 observations), verify rolling Sharpe matches manual calculation
+- `test_nan_handling_explicit()` — Series with known NaN positions, verify nan_count and nan_pct fields are correct and dropna is applied before stats
+- `test_index_misalignment_raises()` — feature and target with different DatetimeIndex → raises ValueError
+- `test_rolling_window_exceeds_length_raises()` — window > len(feature) → raises ValueError
+- `test_common_eda_plots_smoke()` — synthetic data, verify all three Figure objects are created without errors
+
+**Integration tests** (location: `tests/integration/feature_validator/test_eda_pipeline.py`):
+- Covered by `test_common_eda_continuous()` in `tests/integration/feature_validator/test_eda_pipeline.py`
+- Uses default config: RSI lookback 5, ES daily, 2020-2023 (from `data/ohlc_data/`)
+- Feature extracted via `extract_features_for_bias_node(bias_module='rsi', param_name='lookback', param_value=5, ticker=Ticker.ES, timeframe=TimeFrame.D)`
+- Verifies: descriptive stats non-null, rolling correlation computed for full date range, lagged correlations dict has keys 1-5, plots saved to output directory
+- Customizable: `bias_module`, `param_name`, `param_value`, `ticker`, `timeframe` exposed as parameters for researcher exploration with any bias node
+- Cache policy: `USE_CACHE=True`; if cache missing, skip with message "Run CacheManager.populate_cache() first"
+- Cache spec: RSI lookback 5, ES, D, 2020-2023
+- Researcher manual verification:
+  - Inspect terminal output for descriptive stats (mean, std, skew, NaN count)
+  - Check rolling correlation plot visually — expect stable or trending pattern for RSI on ES
+  - Review lagged correlations — expect near-zero for RSI (no strong lead/lag structure expected)
+  - Confirm all three plots saved to output directory
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/eda/test_common_eda.py`
+- [ ] Unit tests added under `tests/validators/eda/test_common_eda.py`
+- [ ] Integration test covered by `tests/integration/feature_validator/test_eda_pipeline.py`
 - [ ] Implementation in `feature_selection/eda/common_eda.py`
 - [ ] Dataclasses in `feature_selection/eda/eda_dataclasses.py`
 - [ ] Docs updated in `docs/api/feature_selection.md` (or create if needed)
-- [ ] `pytest tests/integration/feature_validator/eda/test_common_eda.py -q` passes
+- [ ] `pytest tests/validators/eda/test_common_eda.py -q` passes
 - [ ] Type hints pass strict mypy/pyright checks
 - [ ] All dataclasses are frozen and immutable
 

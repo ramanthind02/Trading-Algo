@@ -34,6 +34,16 @@ pytest tests/test_integration.py::TestFormulaVerification -v
 python utils/setup_cython.py build_ext --inplace
 ```
 
+## Testing Boundaries
+
+- Keep a strict separation between **unit** and **integration** tests:
+  - Unit tests: isolated logic, synthetic fixtures/mocks allowed.
+  - Integration tests: real end-to-end pipeline behavior with repository data/cache.
+- Never place synthetic/mock-heavy tests under `tests/integration/`.
+- Integration tests must use persisted data from repo-backed sources (for example `data/ohlc_data`) and real pipeline entrypoints (`extract_features_for_bias_node`, `BaseModel`, validators, etc.).
+- For integration tests, default to cache-backed execution (`USE_CACHE=True`); if cache does not exist, populate through `CacheManager.populate_cache(...)` or skip with an explicit message.
+- Integration test data config (tickers, date range, bias spec, cache policy) must be explicit in the test and driven by user requirements for that task.
+
 ## Git Workflow
 
 **IMPORTANT**: When merging branches into main, ALWAYS use squash merge to maintain a clean commit history:

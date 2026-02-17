@@ -8,6 +8,7 @@ Compute stability ratios for parameter combinations and identify contiguous stab
 - `docs/library/Feature_selection/stability/grid_search_parameter_stability.md` — Grid search parameter stability theory
 - `eda/parameter_analysis.py` — `ParameterAnalyzer.compute_robustness_metrics()` (existing reference)
 - T009 — Grid-aware neighbor smoothing (dependency)
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards
 
 ## Scope
 In scope:
@@ -73,17 +74,34 @@ Out of scope:
 - Threshold interpretation: stability_ratio > 0.8 (high) = stable, < 0.5 (low) = isolated peak
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/param_sens/test_stable_region_1d.py::test_rsi_stable_region` — 1D grid with RSI lookback=[2,3,4,5,6,7,8,9,10], manually set stability ratios, verify contiguous region [4,5,6,7] identified
-2. `pytest tests/integration/feature_validator/param_sens/test_stable_region_2d.py::test_ewmac_stable_plateau` — 2D grid with stable plateau in center, verify region boundaries and mean metrics
-3. `pytest tests/integration/feature_validator/param_sens/test_stable_region_boundary.py::test_boundary_detection` — Verify `is_boundary_region=True` when region touches grid edge
-4. `pytest tests/integration/feature_validator/param_sens/test_multiple_stable_regions.py::test_two_separate_regions` — Grid with two separate stable regions, verify both identified and non-overlapping
+
+**Unit tests:**
+- `test_identify_stable_regions_1d_contiguous()` — synthetic 1D DataFrame with manually set stability_ratios=[0.6, 0.85, 0.9, 0.88, 0.7]; verify region [1,2,3] (indices) is identified with threshold=0.8
+- `test_identify_stable_regions_1d_two_regions()` — synthetic 1D DataFrame with two separate stable sub-sequences; verify both regions identified and non-overlapping
+- `test_identify_stable_regions_2d_plateau()` — synthetic 2D 4x4 DataFrame with stable plateau in center cells; verify BFS/DFS finds correct connected component, boundaries reported correctly
+- `test_boundary_region_flag()` — 1D grid where stable region includes first or last param value; verify `is_boundary_region=True`
+- `test_interior_region_flag()` — 1D grid where stable region does not touch boundary; verify `is_boundary_region=False`
+- `test_minimum_region_size_enforced()` — synthetic DataFrame with one isolated stable point (n_combinations=1); verify it is excluded from results
+- `test_region_metadata()` — synthetic DataFrame with known values; verify `mean_stability_ratio`, `mean_objective`, `min_objective`, `max_objective`, `n_combinations` computed correctly
+- `test_no_stable_regions()` — all stability_ratios below threshold; verify empty list returned
+- `test_determinism()` — identical inputs and threshold → identical list of StableRegion objects
+- Location: `tests/validators/param_sens/test_stability_ratio_computation.py`
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_parameter_sensitivity.py::test_parameter_sensitivity_pipeline()`
+- Default config: RSI lookback grid [3, 4, 5, 10, 14, 20], ES daily, 2020-2023
+- Customizable for any bias node/param grid (see INTEGRATION_TESTING_SPEC.md)
+- Verifies: at least one stable region identified, region metadata fields all populated, no overlapping regions
+- Cache policy: `USE_CACHE=True`; skip with message if cache missing: "Run CacheManager.populate_cache() first"
+- Researcher manual verification: inspect terminal output showing stable region parameter ranges and mean stability ratios; confirm stable regions are contiguous and make intuitive sense for RSI lookback (e.g., medium lookbacks 5-14 expected to cluster)
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/param_sens/`
+- [ ] Unit tests added under `tests/validators/param_sens/test_stability_ratio_computation.py`
 - [ ] `StableRegion` dataclass added to `eda/parameter_analysis.py`
 - [ ] `identify_stable_regions()` implemented with full type hints and docstrings
-- [ ] All acceptance tests pass: `pytest tests/integration/feature_validator/param_sens/test_stable_region*.py -v`
-- [ ] Minimum region size enforced (≥ 2 combinations)
+- [ ] All unit tests pass: `pytest tests/validators/param_sens/test_stability_ratio_computation.py -v`
+- [ ] Integration coverage provided by `tests/integration/feature_validator/test_parameter_sensitivity.py::test_parameter_sensitivity_pipeline()`
+- [ ] Minimum region size enforced (>= 2 combinations)
 
 ## Notes
 - Contiguity algorithm (1D): Simple consecutive scan
@@ -104,3 +122,5 @@ Out of scope:
   - Low ratio (< 0.5): Isolated peak, likely overfit
 
 - Region size heuristic: Larger regions (more param combos) indicate robustness
+
+- T010 is a pure algorithm; unit tests are sufficient for correctness verification. Integration coverage is inherited from the full parameter sensitivity pipeline test (T012 scope).

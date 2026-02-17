@@ -10,6 +10,7 @@ Provide a researcher-facing public API (`FeatureValidator` class) that orchestra
 - `feature_selection/base_models/base_model.py` — `BinningModelBase` interface
 - `eda/eda_runner.py` — existing EDA infrastructure
 - `utils/permutation_test/permutation_engine.py` — `PermutationEngine`
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards
 
 ## Scope
 In scope:
@@ -306,35 +307,52 @@ class PermutationTestReport:
 
 ## Acceptance tests
 
-1. `pytest tests/integration/feature_validator/test_api_orchestration.py::test_full_pipeline_continuous_rsi -v`
-   - Setup: RSI lookback [2, 3, 4, 5, 6, 7, 8, 9, 10], TimeFrame.D, ES, dates 2000-2024
-   - Validates: Full pipeline runs without errors, returns ValidationReport
-   - Checks: All four phases executed, reports populated, validated_params list present
+**Unit tests:**
+- `test_feature_validator_init()` — construct `FeatureValidator` with mock config; verify fields stored correctly
+- `test_feature_type_routing_continuous()` — stub all phase runners; call `run_full_pipeline`; assert binning phase invoked
+- `test_feature_type_routing_rule_based()` — stub all phase runners; call `run_full_pipeline`; assert binning phase NOT invoked, `binning_reports` is `None`
+- `test_early_stopping_funnel_logic()` — stub permutation runner to return controllable pass/fail per param; verify params failing Stage 1 are excluded from Stage 2 and Stage 3 input lists
+- `test_get_validated_params_empty()` — pipeline where all params fail; verify `get_validated_params()` returns empty list
+- `test_report_is_frozen()` — assert `ValidationReport` is a frozen dataclass; attempting attribute assignment raises `FrozenInstanceError`
+- `test_run_eda_dispatches_per_param()` — stub EDA runner; verify called once per param combination
 
-2. `pytest tests/integration/feature_validator/test_api_orchestration.py::test_full_pipeline_rule_based -v`
-   - Setup: Rule-based feature with parameter grid
-   - Validates: Binning phase skipped, other phases run correctly
-   - Checks: binning_reports is None, EDA/ParamSens/PermTest results present
+Location: `tests/validators/test_feature_validator_api.py`
 
-3. `pytest tests/integration/feature_validator/test_api_orchestration.py::test_early_stopping_funnel -v`
-   - Setup: Synthetic data where some params should fail Stage 1
-   - Validates: Early stopping works correctly (failed params don't proceed)
-   - Checks: len(params_passed_stage2) < len(params_passed_stage1)
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_feature_validator_e2e.py::test_end_to_end_validation_workflow()`
+- Also see `tests/integration/feature_validator/test_api_orchestration.py` for API-focused integration coverage
 
-4. `pytest tests/integration/feature_validator/test_api_orchestration.py::test_determinism -v`
-   - Setup: Run pipeline twice with same seed
-   - Validates: Identical reports (all metrics, plots, validated params)
-   - Checks: report1 == report2 (excluding timestamp)
+Key integration scenarios:
+1. `test_api_full_pipeline_continuous_rsi` — RSI lookback 5, ES daily 2020-2023; verifies all four phases complete, `ValidationReport` returned with all fields populated, output directory contains plots and report JSON
+2. `test_api_full_pipeline_rule_based` — rule-based feature; verifies `binning_reports is None`, EDA/ParamSens/PermTest results present
+3. `test_api_individual_phases` — RSI continuous feature; verifies `run_eda()`, `run_binning_diagnostics()`, `run_parameter_sensitivity()`, `run_permutation_tests()` each work when called independently
+4. `test_api_determinism` — run pipeline twice with same seed and config; verify `report1.validated_params == report2.validated_params` and all numeric results match
 
-5. `pytest tests/integration/feature_validator/test_api_orchestration.py::test_individual_phases -v`
-   - Setup: RSI continuous feature
-   - Validates: Each phase can be run independently
-   - Checks: run_eda(), run_binning_diagnostics(), run_parameter_sensitivity(), run_permutation_tests() all work
+Default integration config:
+```python
+DEFAULT_CONFIG = {
+    'bias_module': 'rsi',
+    'param_name': 'lookback',
+    'param_value': 5,
+    'ticker': Ticker.ES,
+    'timeframe': TimeFrame.D,
+    'date_range': ('2020-01-01', '2023-12-31'),
+    'direction': Direction.LONG
+}
+```
 
-6. `pytest tests/integration/feature_validator/test_api_orchestration.py::test_get_validated_params -v`
-   - Setup: Run full pipeline, then call get_validated_params()
-   - Validates: Returns only params meeting all criteria (perm tests + stability + walkforward)
-   - Checks: validated_params is subset of original grid, all criteria verified
+All integration tests customizable: bias module, param name/value, ticker, timeframe, and date range can all be overridden.
+
+**Cache policy:**
+- Use existing cache: `USE_CACHE=True`
+- If cache missing: skip with message "Run `CacheManager.populate_cache()` first"
+- Cache spec: RSI lookback [5], ES, D, 2020-2023
+
+**Researcher manual verification:**
+- Inspect terminal output: confirm all four phases logged ("Starting EDA phase...", "Completed Binning...", etc.)
+- Verify early-stopping log lines: "Stage 1: X/Y params passed"
+- Check output directory for `validation_report_{timestamp}.json` and `plots/` subdirectory
+- Confirm `validated_params` list is non-empty and is a subset of original param grid
 
 ## Definition of done
 - [ ] Tests added under `tests/integration/feature_validator/test_api_orchestration.py`

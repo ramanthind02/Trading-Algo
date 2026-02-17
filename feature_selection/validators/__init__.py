@@ -22,6 +22,7 @@ from feature_selection.validators.binning import (
     plot_position_multiplier_curve,
     plot_region_boundaries,
     save_report,
+    select_best_regions,
     validate_binning_success,
 )
 
@@ -51,5 +52,6 @@ __all__ = [
     "generate_binning_report",
     "detect_failure_mode",
     "save_report",
+    "select_best_regions",
     "display_report_summary",
 ]

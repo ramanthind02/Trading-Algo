@@ -8,6 +8,7 @@ Implement grid-aware neighbor smoothing to compute smoothed objective metrics fo
 - `docs/library/Feature_selection/stability/grid_search_parameter_stability.md` — Grid-aware neighbor smoothing theory
 - `eda/parameter_analysis.py` — `ParameterAnalyzer` class (existing infrastructure)
 - `metrics/plotting/parameter_plots.py` — Parameter visualization functions
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards
 
 ## Scope
 In scope:
@@ -65,15 +66,31 @@ Out of scope:
 - Missing neighbors: If a parameter is at grid boundary, use available neighbors only (no extrapolation)
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/param_sens/test_1d_neighbor_smoothing.py::test_rsi_lookback_smoothing` — 1D grid with RSI lookback=[2,3,4,5,6,7,8,9,10], verify edge cases (lookback=2 has 1 neighbor, lookback=5 has 2 neighbors)
-2. `pytest tests/integration/feature_validator/param_sens/test_2d_neighbor_smoothing.py::test_ewmac_fast_slow_grid` — 2D grid with fast=[8,16,32,64] slow=[32,64,128,256], verify corner/edge/interior neighbors
-3. `pytest tests/integration/feature_validator/param_sens/test_nd_neighbor_smoothing.py::test_3d_grid_stability_ratio` — 3D grid, verify stability ratio = smoothed/raw for all points
-4. `pytest tests/integration/feature_validator/param_sens/test_neighbor_determinism.py` — Fixed seed, identical inputs → identical smoothed values and stability ratios
+
+**Unit tests:**
+- `test_identify_neighbors_1d()` — synthetic 1D grid [10, 14, 20, 30]; verify lookback=14 has neighbors {10, 20}, lookback=10 (boundary) has only {14}
+- `test_identify_neighbors_2d()` — synthetic 2D grid fast=[8,16,32] x slow=[32,64,128]; verify interior point (16,64) has 4 neighbors, corner point (8,32) has 2 neighbors, edge point (16,32) has 3 neighbors
+- `test_identify_neighbors_3d()` — synthetic 3D grid; verify interior point has up to 6 neighbors, boundary points have fewer
+- `test_compute_neighbor_smoothing_known_values()` — handcrafted 1D DataFrame with 5 points and explicit metric values; manually verify smoothed values match expected formula: `smoothed(P) = mean([raw(P)] + [raw(N) for N in neighbors(P)])`
+- `test_stability_ratio_formula()` — verify stability_ratio = smoothed_metric / raw_metric for each row in synthetic DataFrame
+- `test_determinism()` — identical inputs → identical smoothed values and stability ratios (no random state)
+- `test_n_neighbors_column()` — verify `n_neighbors` column counts correctly: boundary=1, edge=2, interior=2 for 1D grid of size 3
+- `test_single_point_grid()` — grid with exactly one parameter value; verify n_neighbors=0, smoothed=raw, stability_ratio=1.0
+- Location: `tests/validators/param_sens/test_grid_neighbor_smoothing.py`
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_parameter_sensitivity.py::test_parameter_sensitivity_pipeline()`
+- Default config: RSI lookback grid [3, 4, 5, 10, 14, 20], ES daily, 2020-2023
+- Customizable for any bias node/param grid (see INTEGRATION_TESTING_SPEC.md)
+- Verifies: smoothed metrics computed for all grid points, stability ratios non-negative, `n_neighbors` correct for boundary vs interior points
+- Cache policy: `USE_CACHE=True`; skip with message if cache missing: "Run CacheManager.populate_cache() first"
+- Researcher manual verification: inspect terminal output showing per-param smoothed values, confirm boundary params (lookback=3, lookback=20) have fewer neighbors than interior params
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/param_sens/`
+- [ ] Unit tests added under `tests/validators/param_sens/test_grid_neighbor_smoothing.py`
 - [ ] Implementation in `eda/parameter_analysis.py` with type hints and docstrings
-- [ ] All acceptance tests pass: `pytest tests/integration/feature_validator/param_sens/test_*neighbor*.py -v`
+- [ ] All unit tests pass: `pytest tests/validators/param_sens/test_grid_neighbor_smoothing.py -v`
+- [ ] Integration coverage provided by `tests/integration/feature_validator/test_parameter_sensitivity.py::test_parameter_sensitivity_pipeline()`
 - [ ] Edge cases handled: grid boundaries, isolated points, missing neighbors
 
 ## Notes
@@ -86,3 +103,4 @@ Out of scope:
   smoothed_objective(P) = mean([objective(P)] + [objective(N) for N in neighbors(P)])
   stability_ratio = smoothed_objective / raw_objective
   ```
+- T009 is a pure algorithm; unit tests are sufficient for correctness verification. Integration coverage is inherited from the full parameter sensitivity pipeline test (T012 scope).

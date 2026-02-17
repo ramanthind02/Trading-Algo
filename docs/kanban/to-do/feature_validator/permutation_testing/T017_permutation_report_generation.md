@@ -7,6 +7,7 @@ Implement comprehensive report generation and visualization layer for permutatio
 - `docs/library/Feature_selection/feature_validator.md` — Phase 4: Permutation Testing (lines 257-352), Researcher Ensemble Formation (lines 355-376)
 - `docs/library/Feature_selection/Permutation Testing/in-sample_pt.md` — §4 Researcher Ensemble Formation (lines 172-224)
 - Tasks T013 (Stage 1), T014 (Stage 2), T015 (Stage 3), T016 (Orchestration)
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards, default config, cache policy
 
 ## Scope
 In scope:
@@ -105,21 +106,41 @@ Out of scope:
 - Exportable: JSON format should be parseable for downstream tools (e.g., automated meta-analysis)
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py::test_markdown_summary` — Verify markdown report includes all required sections (feature overview, funnel stats, ensemble candidates, guidance)
-2. `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py::test_json_export` — Verify JSON export is valid and contains all suite data (can round-trip deserialize)
-3. `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py::test_null_distribution_plot` — Verify plot has histogram, original metric line, critical value line, p-value annotation
-4. `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py::test_walkforward_stability_plot` — Verify multi-panel plot with fold heatmap, landscape evolution, stability timeline
-5. `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py::test_funnel_diagram` — Verify funnel plot shows correct param counts at each stage
-6. `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py::test_report_bundle_completeness` — Verify ReportBundle contains paths to all expected artifacts (markdown, JSON, plots)
-7. `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py::test_rsi_full_suite_report` — End-to-end test: run full permutation suite on RSI [2,3,4,5,6,7,8,9,10], generate reports, verify completeness
+
+**Unit tests:**
+- `test_markdown_contains_required_sections()` — build a synthetic PermutationTestSuite with known values, call `generate_permutation_reports(..., format='markdown')`, assert the output markdown string contains: "Feature Overview", "Funnel Statistics", "Ensemble Candidates", "Interpretation Guidance", "Red Flags", "Next Steps"
+- `test_json_export_round_trips()` — build synthetic PermutationTestSuite, export to JSON, deserialize, assert all numeric fields (p-values, savings_pct, consistency metrics) round-trip without loss
+- `test_null_distribution_plot_elements()` — mock VectorShuffleReport with known null_distribution, original_metric, and critical_value, call `plot_null_distribution()`, assert figure has histogram bars, a vertical line for original_metric, a vertical line for critical_value, and a p-value annotation
+- `test_walkforward_stability_plot_panels()` — mock WalkforwardStabilityReport with 2 folds, call `plot_walkforward_stability()`, assert figure has 3 subplots (fold heatmap, landscape evolution, stability timeline)
+- `test_funnel_diagram_counts()` — build FunnelStatistics with known counts (total=10, stage1_pass=7, stage2_pass=5, stable=3, candidates=3), call `plot_funnel_diagram()`, assert displayed counts match
+- `test_report_bundle_fields()` — assert ReportBundle contains all required fields: `suite_json`, `suite_markdown`, `suite_html`, `stage1_plots`, `stage2_plots`, `stage3_plot`, `funnel_plot`, `timestamp`
+- `test_report_bundle_paths_exist()` — call `generate_permutation_reports()` with synthetic suite into a temp directory, assert all Path fields in the returned ReportBundle point to existing files
+- `test_red_flags_borderline_pvalue()` — build suite with a Stage 2 param having p=0.12 (borderline), assert markdown output contains a "WARNING" or "borderline" mention for that param
+- `test_red_flags_unstable_feature()` — build suite with `is_stable=False` in Stage 3 report, assert markdown output contains an instability warning
+
+**Integration tests:**
+- There is no dedicated integration test function for T017 in isolation; report generation is exercised as part of the full permutation testing pipeline. The integration test entry point is `tests/integration/feature_validator/test_permutation_testing.py::test_early_stopping_orchestration()` (T016), which runs the full suite including report generation.
+- If standalone report generation integration verification is needed: use default config RSI lookback 5, ES daily, 2020-2023 to produce a real PermutationTestSuite, then call `generate_permutation_reports()` and assert ReportBundle files exist and are non-empty.
+- Customizable: `output_format` ('json', 'markdown', 'html'), `output_dir`, and suite configuration are exposed as function parameters.
+- Researcher manual verification:
+  - After running the orchestration test, open the generated markdown summary and confirm all sections are present and coherent
+  - Inspect null distribution plots: histogram should be visible, original metric and critical value lines should be clearly annotated
+  - Inspect walkforward stability plot: fold heatmap rows should correspond to walkforward folds, stable regions should be highlighted
+  - Open JSON export and verify it is valid and contains p-values, consistency metrics, and ensemble candidates
+
+**Cache policy (integration):**
+- Depends on T016 orchestration test cache: RSI lookback [5], ES, D, 2020-2023
+- Use existing cache: `USE_CACHE=True`
+- If cache missing: skip with message "Run CacheManager.populate_cache() first"
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/permutation_testing/test_report_generation.py`
+- [ ] Unit tests added under `tests/validators/permutation/test_report_generation_unit.py`
+- [ ] Integration coverage provided by `tests/integration/feature_validator/test_permutation_testing.py::test_early_stopping_orchestration()` (T016), which exercises full report generation end-to-end
 - [ ] `ReportBundle` dataclass defined in `feature_selection/validation/reports.py`
 - [ ] Report generation functions implemented in `feature_selection/validation/report_generator.py`
 - [ ] Plotting functions implemented (null distribution, walkforward stability, funnel diagram)
 - [ ] Markdown and JSON export formats implemented
-- [ ] `pytest tests/integration/feature_validator/permutation_testing/test_report_generation.py -v` passes
+- [ ] `pytest tests/validators/permutation/test_report_generation_unit.py -v` passes
 - [ ] Docs updated: example reports in docs/examples/, docstrings with usage examples
 
 ## Notes

@@ -9,6 +9,7 @@ Define the `ParameterSensitivityReport` dataclass to encapsulate per-parameter r
 - T010 — Stable region identification (provides regions)
 - T011 — Interactive visualizations (provides plots)
 - Existing: `utils/models.py` — Dataclass patterns (frozen, Pydantic models)
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards
 
 ## Scope
 In scope:
@@ -96,16 +97,43 @@ Out of scope:
 - Timestamp: ISO 8601 format (e.g., "2026-02-15T10:30:45Z")
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/param_sens/test_report_generation.py::test_1d_rsi_report` — 1D grid with RSI lookback=[2,3,4,5,6,7,8,9,10], verify report contains grid_results, stable_regions, recommendations, plot_1d
-2. `pytest tests/integration/feature_validator/param_sens/test_report_2d.py::test_ewmac_2d_report` — 2D grid, verify `plot_2d` is populated and `recommended_combinations` are ranked by smoothed objective
-3. `pytest tests/integration/feature_validator/param_sens/test_report_top_k.py::test_top_k_selection` — Grid with 10 stable combos, verify `top_k_combinations` contains exactly 3 when K=3
-4. `pytest tests/integration/feature_validator/param_sens/test_report_determinism.py::test_report_reproducibility` — Fixed seed, identical inputs → identical report fields (excluding timestamp)
+
+**Unit tests:**
+- `test_report_dataclass_construction()` — build a `ParameterSensitivityReport` directly with mock/synthetic data for all fields; verify it is frozen (mutation raises `FrozenInstanceError`) and all fields accessible
+- `test_generate_report_1d_synthetic()` — synthetic 1D DataFrame with 6 param values and known metric values; verify report contains `grid_results` with smoothed columns, `stable_regions` list, `recommended_combinations` ranked by smoothed metric, `plot_1d` populated, `plot_2d=None`, `plot_3d=None`
+- `test_generate_report_2d_synthetic()` — synthetic 2x3 2D DataFrame; verify `plot_2d` populated, `plot_1d=None`, `plot_3d=None`
+- `test_top_k_selection()` — synthetic DataFrame with 10 stable param combos; call with `top_k=3`; verify `top_k_combinations` has exactly 3 entries ranked by smoothed metric descending
+- `test_top_k_fewer_than_k()` — synthetic DataFrame with only 2 stable combos and `top_k=5`; verify `top_k_combinations` has 2 entries (all available)
+- `test_recommendations_subset_of_stable()` — verify every entry in `recommended_combinations` has `stability_ratio > stability_threshold` in `grid_results`
+- `test_summary_statistics()` — synthetic DataFrame with known stability ratios; verify `mean_stability_ratio`, `median_stability_ratio`, `pct_stable_combinations` computed correctly
+- `test_determinism()` — identical inputs → identical report fields (excluding timestamp)
+- `test_timestamp_iso_format()` — verify `report.timestamp` parses as valid ISO 8601 datetime
+- Location: `tests/validators/param_sens/test_param_sensitivity_report.py`
+
+**Integration tests:**
+- `tests/integration/feature_validator/test_parameter_sensitivity.py::test_parameter_sensitivity_pipeline()`
+- Default config: RSI lookback grid [3, 4, 5, 10, 14, 20], ES daily, 2020-2023
+- Customizable for any bias node/param grid (see INTEGRATION_TESTING_SPEC.md)
+- Verifies:
+  - Real RSI features extracted via `extract_features_for_bias_node()` for each lookback value in grid
+  - Grid search results DataFrame constructed from real extraction outputs
+  - `generate_parameter_sensitivity_report()` called end-to-end
+  - Report contains all expected fields: `grid_results`, `stable_regions`, `recommended_combinations`, `top_k_combinations`, `plot_1d`
+  - Terminal output prints configuration summary, per-param smoothed metrics, stable region ranges, and top-K recommendations
+  - HTML plot saved to temp directory; path printed for manual inspection
+- Cache policy: `USE_CACHE=True`; skip with message if cache missing: "Run CacheManager.populate_cache() first"
+- Researcher manual verification:
+  - Inspect terminal output: confirm stable region parameter ranges are printed (e.g., "Stable region: lookback [4, 5, 10, 14]")
+  - Review stability heatmap HTML: confirm stable regions appear as coherent bands, no isolated single-point peaks
+  - Confirm `top_k_combinations` in terminal output are within the identified stable region
+  - Identify stable regions visually: expect medium RSI lookbacks (roughly 4-14) to form a stable band
 
 ## Definition of done
+- [ ] Unit tests added under `tests/validators/param_sens/test_param_sensitivity_report.py`
 - [ ] `ParameterSensitivityReport` dataclass added to `eda/parameter_analysis.py`
 - [ ] `generate_parameter_sensitivity_report()` implemented with full type hints and docstrings
-- [ ] Tests added under `tests/integration/feature_validator/param_sens/`
-- [ ] All acceptance tests pass: `pytest tests/integration/feature_validator/param_sens/test_report*.py -v`
+- [ ] All unit tests pass: `pytest tests/validators/param_sens/test_param_sensitivity_report.py -v`
+- [ ] Integration test implemented and passes: `pytest tests/integration/feature_validator/test_parameter_sensitivity.py::test_parameter_sensitivity_pipeline() -v`
 - [ ] Report serialization tested (can save/load as JSON or pickle)
 
 ## Notes
@@ -139,7 +167,7 @@ Out of scope:
 - Plot assignment by dimensionality:
   - 1D grid (N=1): `plot_1d` populated, `plot_2d=None`, `plot_3d=None`
   - 2D grid (N=2): `plot_2d` populated, `plot_1d=None`, `plot_3d=None`
-  - 3D+ grid (N≥3): `plot_3d` populated, `plot_1d=None`, `plot_2d=None`
+  - 3D+ grid (N>=3): `plot_3d` populated, `plot_1d=None`, `plot_2d=None`
 
 - Serialization considerations:
   - Plotly figures can be saved as HTML (preserve interactivity)

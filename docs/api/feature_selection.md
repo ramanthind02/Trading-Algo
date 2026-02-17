@@ -164,6 +164,13 @@ Public symbols commonly used by integration/tests:
 - `run_feature_shuffle_test(...) -> PermutationReport`
 - `feature_selection.validators.validator.FeatureValidator`
 - Report contracts: `EDAReport`, `ContinuousEDAReport`, `RuleEDAReport`, `PermutationReport`, `FoldResult`, `StabilityReport`, `ValidationReport`
+- Binning diagnostics contracts:
+  - `BinningSuccessCriteria`
+  - `RegionMetadata`
+  - `validate_binning_success(...)`
+  - `extract_region_metadata(...)`
+  - `detect_region_shape(...)`
+  - `calculate_coverage(...)`
 
 ## Examples
 ```python

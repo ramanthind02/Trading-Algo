@@ -8,6 +8,7 @@ Implement Stage 3 temporal stability analysis that assesses whether the same par
 - `docs/library/Feature_selection/Permutation Testing/in-sample_pt.md` — §3 Walkforward Stability Analysis (lines 82-169)
 - `docs/library/Feature_selection/stability/grid_search_parameter_stability.md` — Grid-aware neighbor smoothing theory
 - `eda/parameter_analysis.py` — `ParameterAnalyzer` class for neighbor smoothing
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards, default config, cache policy
 
 ## Scope
 In scope:
@@ -69,19 +70,44 @@ Out of scope:
 - Consistent evaluation: same objective_func, binning config, and threshold across all folds
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py::test_stable_feature_example` — RSI lookbacks [2,3,4,5,10,14,20], 4 folds, verify consistent top-K around {3,4,5} produces is_stable=True
-2. `pytest tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py::test_unstable_feature_example` — RSI lookbacks [2,3,4,5,10,14,20], 4 folds with injected instability (top-K jumps from {3,4,5} to {14,20,10}), verify is_stable=False
-3. `pytest tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py::test_neighbor_smoothing` — Verify smoothed_objective computation matches hand-calculated values for 1D and 2D grids
-4. `pytest tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py::test_permutation_overlay` — Given permutation_passers={RSI_3, RSI_4, RSI_5}, verify overlay correctly flags which top-K params passed permutation tests
-5. `pytest tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py::test_continuous_vs_rule_based` — Test both continuous (RSI) and rule-based (breakout) features
-6. `pytest tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py::test_fold_independence` — Verify each fold evaluation is independent (refits binning model per fold for continuous features)
+
+**Unit tests:**
+- `test_neighbor_smoothing_1d()` — synthetic 1D param grid with known objective values, assert smoothed_objective matches hand-calculated neighbor averages for each grid point
+- `test_neighbor_smoothing_2d()` — synthetic 2D param grid (e.g., 3x3), assert boundary points (with fewer neighbors) are averaged correctly
+- `test_neighbor_smoothing_single_point()` — grid with one param combination, assert smoothed value equals original (no neighbors)
+- `test_top_k_selection()` — synthetic per-fold smoothed objectives with known rankings, assert top_k_params matches expected set
+- `test_stable_feature_detection()` — synthetic FoldResult list where top-K is {A, B, C} in all 4 folds, assert `is_stable=True` and overlap_rate=1.0
+- `test_unstable_feature_detection()` — synthetic FoldResult list with alternating top-K sets ({A,B,C} vs {X,Y,Z}), assert `is_stable=False`
+- `test_permutation_overlay_flags()` — synthetic top-K list and permutation_passers set, assert `passed_permutation_overlay` booleans match expected per-param membership
+- `test_fold_result_fields()` — assert FoldResult contains all required fields: `fold_id`, `fold_period`, `top_k_params`, `smoothed_objectives`, `passed_permutation_overlay`
+- `test_walkforward_stability_report_fields()` — assert WalkforwardStabilityReport contains: `feature_name`, `feature_type`, `fold_results`, `consistency_metrics`, `is_stable`, `stability_verdict`, `top_k`
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_permutation_testing.py::test_walkforward_stability_stage3()`
+- Uses default config: RSI lookback 5, ES daily, 2020-2023
+- Loads real candles from `data/ohlc_data/` via `CacheManager`; skips if cache is missing
+- Customizable: `bias_module`, `param_value`, `ticker`, `timeframe`, and `fold_structure` are exposed as function parameters to allow researcher exploration with different feature types and periods
+- Runs `run_walkforward_stability()` over RSI lookback grid [3, 5, 10, 14] with 2-year non-overlapping folds (2020-2021, 2022-2023)
+- Verifies: `WalkforwardStabilityReport` returned, `fold_results` has one entry per fold, `consistency_metrics` dict is non-empty, `is_stable` is a boolean, `stability_verdict` is a non-empty string
+- Researcher manual verification:
+  - Inspect terminal output for per-fold top-K param selections
+  - Confirm consistency metrics (overlap rate, median parameter distance) are printed
+  - Review stability verdict and check if top-K params cluster in a consistent region or jump across the grid
+  - Check `passed_permutation_overlay` flags if permutation_passers are provided
+
+**Cache policy (integration):**
+- Use existing cache: `USE_CACHE=True`
+- If cache missing: skip with message "Run CacheManager.populate_cache() first"
+- Cache spec: RSI lookback [5], ES, D, 2020-2023
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py`
+- [ ] Unit tests added under `tests/validators/permutation/test_walkforward_stability_unit.py`
+- [ ] Integration test `test_walkforward_stability_stage3()` added to `tests/integration/feature_validator/test_permutation_testing.py`
 - [ ] `WalkforwardStabilityReport` and `FoldResult` dataclasses defined in `feature_selection/validation/reports.py`
 - [ ] `run_walkforward_stability()` implemented in `feature_selection/validation/stability_analysis.py`
 - [ ] `ParameterAnalyzer.compute_neighbor_smoothed_grid()` method added
-- [ ] `pytest tests/integration/feature_validator/permutation_testing/test_walkforward_stability.py -v` passes
+- [ ] `pytest tests/validators/permutation/test_walkforward_stability_unit.py -v` passes
+- [ ] `pytest tests/integration/feature_validator/test_permutation_testing.py::test_walkforward_stability_stage3 -v` passes
 - [ ] Docs updated: docstrings with examples, references to in-sample_pt.md spec
 
 ## Notes

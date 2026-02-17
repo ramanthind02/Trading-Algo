@@ -7,6 +7,7 @@ Implement detailed shape classification (tail vs hump patterns) and comprehensiv
 - `docs/library/Feature_selection/feature_validator.md` (lines 165-167: shape detection and coverage specification)
 - `feature_selection/validators/binning/diagnostics.py` — T005 infrastructure (RegionMetadata, detect_region_shape)
 - `feature_selection/base_models/base_model.py` — bin_stats_ structure
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards
 
 ## Scope
 In scope:
@@ -81,19 +82,40 @@ Out of scope:
 - Shape classification: mutually exclusive categories
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/binning/test_shape_classification.py::test_classify_long_tail -q` — RSI region at bins 0-2 with positive Sharpe classified as "long_tail"
-2. `pytest tests/integration/feature_validator/binning/test_shape_classification.py::test_classify_short_hump -q` — region at bins 5-7 with negative Sharpe classified as "short_hump"
-3. `pytest tests/integration/feature_validator/binning/test_multi_region_shapes.py::test_analyze_shapes_rsi -q` — RSI with multiple regions, verify shape count dictionary accuracy
-4. `pytest tests/integration/feature_validator/binning/test_coverage_breakdown.py::test_region_coverage_rsi -q` — calculate per-region and cumulative coverage for RSI lookback=14
-5. `pytest tests/integration/feature_validator/binning/test_adjacency.py::test_detect_gaps -q` — identify gaps between regions, verify isolation score calculation
-6. `pytest tests/integration/feature_validator/binning/test_adjacency.py::test_connected_regions -q` — regions with small gaps (<=2 bins) marked as connected
+
+**Unit tests** (location: `tests/validators/binning/`):
+- `test_classify_long_tail()` — synthetic RegionMetadata at bins 0-2 with positive mean_sharpe; assert shape_type == "long_tail", touches_extreme == True, is_monotonic == True
+- `test_classify_short_tail()` — synthetic RegionMetadata at bins 13-14 (n_bins=15) with negative mean_sharpe; assert shape_type == "short_tail"
+- `test_classify_long_hump()` — synthetic RegionMetadata at bins 5-7 with positive mean_sharpe, not touching extremes; assert shape_type == "long_hump", touches_extreme == False
+- `test_classify_short_hump()` — synthetic RegionMetadata at bins 5-7 with negative mean_sharpe; assert shape_type == "short_hump"
+- `test_analyze_multi_region_shapes_counts()` — list of 3 synthetic regions with known types; assert returned dict counts are exact
+- `test_calculate_region_coverage_breakdown_order()` — synthetic regions with known feature_ranges and feature_data; assert cumulative_coverage_pct is monotonically increasing
+- `test_calculate_region_coverage_breakdown_sum()` — assert sum of individual_coverage_pct values equals total (non-overlapping regions)
+- `test_detect_region_adjacency_gaps()` — synthetic regions with known bin gaps; assert gap_sizes list matches expected
+- `test_detect_region_adjacency_connected()` — all gaps <= 2 bins; assert is_connected == True
+- `test_detect_region_adjacency_isolated()` — large gaps between regions; assert is_connected == False, isolation_score > 0
+
+**Note:** T006 is primarily a pure logic/algorithm task. The shape classification and adjacency algorithms can be fully verified with synthetic RegionMetadata inputs, so unit tests are the primary test vehicle.
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
+- Default config: RSI lookback 5, Ticker.ES, TimeFrame.D, date range 2020-01-01 to 2023-12-31
+- Customizable: accepts bias_module, param_name, param_value, ticker, timeframe as parameters for researcher exploration
+- Verifies: classify_region_shape returns valid ShapeClassification, coverage breakdown sums correctly, adjacency analysis identifies real gaps/connections from live data
+- Cache policy: use existing cache (USE_CACHE=True); skip with message "Run CacheManager.populate_cache() first" if cache missing
+- Researcher manual verification:
+  - Inspect terminal output for per-region shape_type labels (expect "long_tail" or "short_tail" for RSI extremes)
+  - Check cumulative coverage percentage looks plausible
+  - Verify isolation_score reflects whether RSI regions are contiguous or fragmented
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/binning/`
+- [ ] Unit tests added under `tests/validators/binning/`
+- [ ] Integration test covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
 - [ ] ShapeClassification, RegionCoverage, AdjacencyAnalysis dataclasses implemented
 - [ ] Shape classification, multi-region analysis, coverage breakdown, adjacency detection functions implemented
 - [ ] Docs updated under `docs/api/feature_selection/validators.md`
-- [ ] `pytest tests/integration/feature_validator/binning/test_shape* tests/integration/feature_validator/binning/test_coverage* tests/integration/feature_validator/binning/test_adjacency* -q` passes
+- [ ] `pytest tests/validators/binning/ -q` passes (unit tests)
+- [ ] `pytest tests/integration/feature_validator/test_binning_diagnostics.py -q` passes (integration test)
 
 ## Notes
 - Test with RSI continuous feature: lookback=[2,3,4,5,6,7,8,9,10], TimeFrame.D

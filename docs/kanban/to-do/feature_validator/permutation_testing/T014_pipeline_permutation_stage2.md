@@ -9,6 +9,7 @@ Implement Stage 2 pipeline permutation test that validates the entire feature ex
 - `utils/permutation_test/permutation_engine.py` — `PermutationEngine`, `BarPermutationStrategy`
 - `docs/library/Feature_selection/features/Continuous_binning.md` — Quantile binning pipeline specification
 - `docs/library/Feature_selection/features/rule_based.md` — Rule-based feature specification
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards, default config, cache policy
 
 ## Scope
 In scope:
@@ -71,19 +72,41 @@ Out of scope:
 - Consistent pipeline: binning pipeline configuration (n_bins, selection_metric, strategy) must be identical for original and permuted data
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py::test_continuous_feature_shuffle` — Test RSI lookback=5 with feature_shuffle mode, PERMUTATION_REPS=100, verify p-value computation
-2. `pytest tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py::test_continuous_candle_shuffle` — Test RSI lookback=5 with candle_shuffle mode, verify stronger null (should have higher p-values than feature_shuffle for same feature)
-3. `pytest tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py::test_rule_based_candle_shuffle` — Test rule-based feature (e.g., breakout rule) with candle_shuffle, verify rule logic is recomputed from shuffled bars
-4. `pytest tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py::test_no_valid_bins_handling` — Verify that permutations with no bins meeting threshold assign 0 signal and metric=0
-5. `pytest tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py::test_early_stopping_integration` — Only param combos that passed Stage 1 are tested in Stage 2
-6. `pytest tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py::test_rsi_grid_stage2` — Test RSI lookbacks [2,3,4,5,6,7,8,9,10], PERMUTATION_REPS=100, both feature_shuffle and candle_shuffle modes
+
+**Unit tests:**
+- `test_pipeline_permutation_report_fields()` — assert PipelinePermutationReport contains all required fields: `param_combo`, `feature_type`, `permutation_mode`, `original_metric`, `null_distribution`, `critical_value`, `p_value`, `passed`, `alpha`, `nreps`, `no_trade_permutations`
+- `test_no_valid_bins_assigns_zero()` — synthetic binning pipeline that returns no valid bins for shuffled data, assert metric=0 and no_trade_permutations increments
+- `test_feature_shuffle_uses_feature_permutation_strategy()` — mock PermutationEngine, assert `run_pipeline_permutation_continuous()` selects `FeaturePermutationStrategy` when mode='feature_shuffle'
+- `test_candle_shuffle_uses_bar_permutation_strategy()` — mock PermutationEngine, assert `BarPermutationStrategy` is selected when mode='candle_shuffle'
+- `test_rule_based_uses_bar_permutation_only()` — assert `run_pipeline_permutation_rule_based()` raises or rejects any non-candle_shuffle mode
+- `test_deterministic_pipeline_permutation()` — synthetic DataFrame with fixed seed, assert same null distribution across two calls
+- `test_fixed_threshold_applied_consistently()` — synthetic permutation replicates, assert same metric_threshold is used for original and all permutations
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_permutation_testing.py::test_pipeline_permutation_stage2()`
+- Uses default config: RSI lookback 5, ES daily, 2020-2023
+- Loads real candles from `data/ohlc_data/` via `CacheManager`; skips if cache is missing
+- Customizable: `bias_module`, `param_value`, `ticker`, `timeframe`, and `permutation_mode` ('feature_shuffle' or 'candle_shuffle') are exposed as function parameters
+- Runs both `run_pipeline_permutation_continuous()` modes (feature_shuffle and candle_shuffle) with `nreps=100`
+- Verifies: `PipelinePermutationReport` returned for each mode, `p_value` in [0, 1], `null_distribution` length == nreps, `no_trade_permutations` >= 0
+- Researcher manual verification:
+  - Inspect terminal output for p-values in each mode; candle_shuffle p-value should be >= feature_shuffle p-value for a genuine feature (stronger null is harder to pass)
+  - Confirm `no_trade_permutations` count is printed; high values indicate sparse signal
+  - Verify `passed` field is consistent with printed p-value vs alpha threshold
+
+**Cache policy (integration):**
+- Use existing cache: `USE_CACHE=True`
+- If cache missing: skip with message "Run CacheManager.populate_cache() first"
+- Cache spec: RSI lookback [5], ES, D, 2020-2023
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py`
+- [ ] Unit tests added under `tests/validators/permutation/test_pipeline_permutation_unit.py`
+- [ ] Integration test `test_pipeline_permutation_stage2()` added to `tests/integration/feature_validator/test_permutation_testing.py`
 - [ ] `PipelinePermutationReport` dataclass defined in `feature_selection/validation/reports.py`
 - [ ] `run_pipeline_permutation_continuous()` implemented in `feature_selection/validation/permutation_tests.py`
 - [ ] `run_pipeline_permutation_rule_based()` implemented in `feature_selection/validation/permutation_tests.py`
-- [ ] `pytest tests/integration/feature_validator/permutation_testing/test_pipeline_permutation.py -v` passes
+- [ ] `pytest tests/validators/permutation/test_pipeline_permutation_unit.py -v` passes
+- [ ] `pytest tests/integration/feature_validator/test_permutation_testing.py::test_pipeline_permutation_stage2 -v` passes
 - [ ] Docs updated: docstrings with examples, references to in-sample_pt.md spec
 
 ## Notes

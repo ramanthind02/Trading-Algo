@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
 
@@ -48,7 +49,19 @@ def classify_region_shape(region: RegionMetadata, n_bins: int) -> ShapeClassific
     Returns:
         Shape classification with type, monotonicity, extremes, direction
     """
-    raise NotImplementedError("Agent shape-analyzer will implement")
+    direction: Literal["long", "short"] = "long" if region.mean_sharpe > 0 else "short"
+    touches_extreme = region.start_bin == 0 or region.end_bin == n_bins - 1
+    is_monotonic = touches_extreme
+
+    shape_base: Literal["tail", "hump"] = "tail" if touches_extreme else "hump"
+    shape_type = f"{direction}_{shape_base}"
+
+    return ShapeClassification(
+        shape_type=shape_type,  # type: ignore[arg-type]
+        is_monotonic=is_monotonic,
+        touches_extreme=touches_extreme,
+        direction=direction,
+    )
 
 
 def analyze_multi_region_shapes(
@@ -63,7 +76,8 @@ def analyze_multi_region_shapes(
     Returns:
         Dictionary mapping shape_type to count
     """
-    raise NotImplementedError("Agent shape-analyzer will implement")
+    classifications = [classify_region_shape(r, n_bins) for r in regions]
+    return dict(Counter(c.shape_type for c in classifications))
 
 
 def calculate_region_coverage_breakdown(
@@ -78,7 +92,28 @@ def calculate_region_coverage_breakdown(
     Returns:
         List of RegionCoverage with individual and cumulative percentages
     """
-    raise NotImplementedError("Agent shape-analyzer will implement")
+    clean_data = feature_data.dropna()
+    if clean_data.empty or not regions:
+        return []
+
+    n = len(clean_data)
+    cumulative = 0.0
+    coverages: list[RegionCoverage] = []
+
+    for idx, region in enumerate(regions):
+        low, high = region.feature_range
+        count = int(((clean_data >= low) & (clean_data <= high)).sum())
+        individual_pct = count / n * 100.0
+        cumulative += individual_pct
+        coverages.append(
+            RegionCoverage(
+                region_id=idx,
+                individual_coverage_pct=individual_pct,
+                cumulative_coverage_pct=cumulative,
+            )
+        )
+
+    return coverages
 
 
 def detect_region_adjacency(regions: list[RegionMetadata]) -> AdjacencyAnalysis:
@@ -90,4 +125,23 @@ def detect_region_adjacency(regions: list[RegionMetadata]) -> AdjacencyAnalysis:
     Returns:
         Adjacency analysis with gap sizes, connectivity flag, isolation score
     """
-    raise NotImplementedError("Agent shape-analyzer will implement")
+    if len(regions) <= 1:
+        return AdjacencyAnalysis(gap_sizes=[], is_connected=True, isolation_score=0.0)
+
+    sorted_regions = sorted(regions, key=lambda r: r.start_bin)
+    gap_sizes = [
+        sorted_regions[i + 1].start_bin - sorted_regions[i].end_bin - 1
+        for i in range(len(sorted_regions) - 1)
+    ]
+
+    is_connected = all(gap <= 2 for gap in gap_sizes)
+
+    total_span = sorted_regions[-1].end_bin - sorted_regions[0].start_bin + 1
+    mean_gap = sum(gap_sizes) / len(gap_sizes) if gap_sizes else 0.0
+    isolation_score = min(mean_gap / total_span, 1.0) if total_span > 0 else 0.0
+
+    return AdjacencyAnalysis(
+        gap_sizes=gap_sizes,
+        is_connected=is_connected,
+        isolation_score=isolation_score,
+    )

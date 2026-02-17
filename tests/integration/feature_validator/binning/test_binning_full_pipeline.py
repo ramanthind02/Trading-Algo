@@ -124,21 +124,26 @@ def test_binning_full_pipeline_integration() -> None:
 
     # Fit binning model
     model = ContinuousBinningModel(
-        n_bins=15,
+        n_bins=20,
         selection_metric="sharpe",
         strategy="long",
         metric_threshold=0.0,
         t_threshold=0.5,
-        min_region_width=1,
+        min_region_width=2,
     )
     model.fit(feature_series, target_series)
 
     # Generate comprehensive report (T005-T008)
     criteria = BinningSuccessCriteria(
-        metric_threshold=0.0, t_threshold=0.5, min_region_width=1
+        metric_threshold=0.0, t_threshold=0.5, min_region_width=2
     )
     report = generate_binning_report(
-        model=model, feature_data=feature_series, criteria=criteria, strategy="long"
+        model=model,
+        feature_data=feature_series,
+        criteria=criteria,
+        strategy="long",
+        max_regions=1,
+        direction_filter="long",
     )
 
     # Verify report structure

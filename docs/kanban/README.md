@@ -24,6 +24,10 @@ Every task document must include:
 - **One task = one change** — Every code change must map back to a kanban task. Create or update the task before touching the code it describes.
 - **Interface changes** must simultaneously update the appropriate `docs/api/*` page (even if the change is small) and note that in the task’s `Definition of done` checklist.
 - **Acceptance tests** must be executable and deterministic (exact assertions, exact pytest commands, or simple scripts with a fixed dataset). Agents should not invent their own acceptance tests.
+- **Unit vs integration is mandatory and explicit**:
+  - Unit tests (synthetic/mocked fixtures, isolated logic) belong outside `tests/integration/`.
+  - Integration tests (cross-layer pipeline verification) must live under `tests/integration/` and use real persisted repository data (for example `data/ohlc_data`) plus real pipeline entrypoints.
+  - If integration requires caches, task specs must state whether to populate cache or require existing cache, and include exact data config (tickers, timeframe, date range, node spec).
 - **No unrelated edits** — Do not touch files outside the task’s stated scope.
 - **One active task per agent** — Keep `docs/kanban/in-progress/` limited to a single file per developer/branch; otherwise, move spec back to `todo/` until it has an owner.
 
