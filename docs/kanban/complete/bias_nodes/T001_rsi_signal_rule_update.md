@@ -50,3 +50,8 @@ Out of scope:
 
 ## Notes
 - Fixed exit defaults to 5 bars; for long-short mode it exits to flat.
+
+## Result
+- Implemented in: c561453
+- Tests: `pytest tests/test_new_bias_nodes.py::TestRSISignal -v` ✅
+- Notes: None.
