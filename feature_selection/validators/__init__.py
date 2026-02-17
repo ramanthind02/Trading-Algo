@@ -16,6 +16,7 @@ from feature_selection.validators.binning import (
     detect_region_adjacency,
     detect_region_shape,
     display_report_summary,
+    extract_directional_regions,
     extract_region_metadata,
     generate_binning_report,
     plot_bin_heatmap,
@@ -53,5 +54,6 @@ __all__ = [
     "detect_failure_mode",
     "save_report",
     "select_best_regions",
+    "extract_directional_regions",
     "display_report_summary",
 ]

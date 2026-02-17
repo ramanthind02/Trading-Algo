@@ -18,6 +18,7 @@ from feature_selection.validators.binning.report import (
     BinningDiagnosticsReport,
     detect_failure_mode,
     display_report_summary,
+    extract_directional_regions,
     generate_binning_report,
     save_report,
     select_best_regions,
@@ -55,5 +56,6 @@ __all__ = [
     "detect_failure_mode",
     "save_report",
     "select_best_regions",
+    "extract_directional_regions",
     "display_report_summary",
 ]

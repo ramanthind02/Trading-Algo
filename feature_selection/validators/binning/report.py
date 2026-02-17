@@ -17,6 +17,7 @@ from feature_selection.validators.binning.diagnostics import (
     RegionMetadata,
     extract_region_metadata,
     validate_binning_success,
+    _require_fitted_model,
 )
 from feature_selection.validators.binning.shape_analysis import (
     AdjacencyAnalysis,
@@ -33,32 +34,134 @@ from feature_selection.validators.binning.plots import (
 )
 
 
+def _build_region_metadata(model: BinningModelBase, bins: list[int]) -> RegionMetadata:
+    """Build RegionMetadata from a list of bin indices.
+
+    Args:
+        model: Fitted binning model
+        bins: List of bin indices to include in region
+
+    Returns:
+        RegionMetadata with aggregated statistics
+    """
+    sharpe_values = [float(model.bin_stats_[b]["sharpe"]) for b in bins]
+    t_values = [float(model.bin_stats_[b]["t_stat"]) for b in bins]
+    counts = [int(model.bin_stats_[b]["count"]) for b in bins]
+    feature_mins = [float(model.bin_stats_[b]["feature_min"]) for b in bins]
+    feature_maxs = [float(model.bin_stats_[b]["feature_max"]) for b in bins]
+
+    return RegionMetadata(
+        start_bin=bins[0],
+        end_bin=bins[-1],
+        bins=bins,
+        mean_sharpe=sum(sharpe_values) / len(sharpe_values),
+        mean_t_stat=sum(t_values) / len(t_values),
+        sample_count=sum(counts),
+        feature_range=(min(feature_mins), max(feature_maxs)),
+    )
+
+
+def extract_directional_regions(
+    model: BinningModelBase,
+    criteria: BinningSuccessCriteria,
+    direction_filter: Literal["long", "short", "both"] = "both",
+) -> list[RegionMetadata]:
+    """Extract regions by filtering bins directionally using SIGNED t-stat.
+
+    Filters individual bins by directional criteria, then forms contiguous regions
+    from the qualified bins. This ensures each region contains only bins with
+    consistent directional edge.
+
+    Args:
+        model: Fitted binning model
+        criteria: Success criteria with thresholds
+        direction_filter: Direction to filter ("long", "short", or "both")
+
+    Returns:
+        List of regions formed from directionally-qualified bins
+    """
+    _require_fitted_model(model)
+
+    # Filter bins by directional criteria using SIGNED t-stat
+    qualified_bins: list[int] = []
+
+    for bin_idx in sorted(model.bin_stats_.keys()):
+        stat = model.bin_stats_[bin_idx]
+        t_stat = float(stat["t_stat"])
+        sharpe = float(stat["sharpe"])
+        metric_threshold = float(criteria.metric_threshold)
+        t_threshold = float(criteria.t_threshold)
+
+        # Directional filtering - uses SIGNED t-stat (not absolute!)
+        if direction_filter == "long":
+            # For long: positive edge with positive t-stat
+            if t_stat > t_threshold and sharpe > metric_threshold:
+                qualified_bins.append(bin_idx)
+        elif direction_filter == "short":
+            # For short: negative edge with negative t-stat
+            if t_stat < -t_threshold and sharpe < -metric_threshold:
+                qualified_bins.append(bin_idx)
+        else:  # "both"
+            # Accept bins meeting criteria in either direction
+            long_ok = t_stat > t_threshold and sharpe > metric_threshold
+            short_ok = t_stat < -t_threshold and sharpe < -metric_threshold
+            if long_ok or short_ok:
+                qualified_bins.append(bin_idx)
+
+    if not qualified_bins:
+        return []
+
+    # Form contiguous regions from qualified bins
+    regions: list[RegionMetadata] = []
+    current_region_bins: list[int] = [qualified_bins[0]]
+
+    for i in range(1, len(qualified_bins)):
+        if qualified_bins[i] == current_region_bins[-1] + 1:
+            # Contiguous - add to current region
+            current_region_bins.append(qualified_bins[i])
+        else:
+            # Gap found - finalize current region if meets min_width
+            if len(current_region_bins) >= criteria.min_region_width:
+                regions.append(_build_region_metadata(model, current_region_bins))
+            # Start new region
+            current_region_bins = [qualified_bins[i]]
+
+    # Finalize the last region
+    if len(current_region_bins) >= criteria.min_region_width:
+        regions.append(_build_region_metadata(model, current_region_bins))
+
+    return regions
+
+
 def select_best_regions(
     regions: list[RegionMetadata],
     max_regions: int = 1,
     direction_filter: Literal["long", "short", "both"] = "both",
 ) -> list[RegionMetadata]:
-    """Filter regions by direction and select top N by absolute t-stat.
+    """Select top N regions by SIGNED t-stat (respects direction).
 
     Args:
-        regions: All detected regions
+        regions: Directionally-filtered regions
         max_regions: Maximum number of regions to return
-        direction_filter: Direction filter ("long", "short", or "both")
+        direction_filter: Direction context ("long", "short", or "both")
 
     Returns:
-        Filtered and ranked regions (up to max_regions)
+        Top regions ranked by signed t-stat
     """
-    if direction_filter == "long":
-        filtered = [r for r in regions if r.mean_sharpe > 0]
-    elif direction_filter == "short":
-        filtered = [r for r in regions if r.mean_sharpe < 0]
-    else:  # "both"
-        filtered = regions
-
-    if not filtered:
+    if not regions:
         return []
 
-    sorted_regions = sorted(filtered, key=lambda r: abs(r.mean_t_stat), reverse=True)
+    # Rank by SIGNED t-stat (not absolute)
+    # For long: highest positive t-stat wins
+    # For short: most negative t-stat wins
+    # For both: highest absolute t-stat wins
+    if direction_filter == "long":
+        sorted_regions = sorted(regions, key=lambda r: r.mean_t_stat, reverse=True)
+    elif direction_filter == "short":
+        sorted_regions = sorted(regions, key=lambda r: r.mean_t_stat, reverse=False)
+    else:  # "both"
+        sorted_regions = sorted(regions, key=lambda r: abs(r.mean_t_stat), reverse=True)
+
     return sorted_regions[:max_regions]
 
 
@@ -102,8 +205,13 @@ def generate_binning_report(
         Comprehensive diagnostics report
     """
     success_verdict = validate_binning_success(model, criteria)
-    all_regions = extract_region_metadata(model)
-    regions = select_best_regions(all_regions, max_regions, direction_filter)
+
+    # Extract directionally-filtered regions using signed t-stat
+    directional_regions = extract_directional_regions(model, criteria, direction_filter)
+
+    # Select best regions by signed t-stat
+    regions = select_best_regions(directional_regions, max_regions, direction_filter)
+
     n_bins = int(model.n_bins)
 
     shape_summary = analyze_multi_region_shapes(regions, n_bins)
