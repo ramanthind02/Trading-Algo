@@ -33,6 +33,7 @@ def compute_decile_analysis(
 
     Raises:
         ValueError: If n_bins > len(feature.dropna()) / 10.
+        ValueError: If actual distinct quantile bins formed != n_bins.
     """
     aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
     max_bins = len(aligned) // 10
@@ -46,26 +47,34 @@ def compute_decile_analysis(
         aligned["f"], q=n_bins, labels=False, retbins=True, duplicates="drop"
     )
 
-    actual_bins = sorted(aligned["bin"].dropna().unique())
+    actual_n_bins = len(bin_edges) - 1
+    if actual_n_bins != n_bins:
+        raise ValueError(
+            f"n_bins ({n_bins}) requested but only {actual_n_bins} distinct quantile bins "
+            f"could be formed (duplicate quantile boundaries). "
+            f"Reduce n_bins or use a feature with more distinct values."
+        )
+
+    grp_stats = aligned.groupby("bin")["t"].agg(["mean", "std", "count"])
+
     mean_return = np.full(n_bins, np.nan)
     volatility = np.full(n_bins, np.nan)
     sharpe = np.full(n_bins, np.nan)
     t_stat = np.full(n_bins, np.nan)
     sample_count = np.zeros(n_bins, dtype=int)
 
-    for b in actual_bins:
-        i = int(b)
-        grp = aligned.loc[aligned["bin"] == b, "t"]
-        n = len(grp)
-        sample_count[i] = n
-        m = float(grp.mean())
-        v = float(grp.std())
-        mean_return[i] = m
-        volatility[i] = v
+    for i in grp_stats.index:
+        idx_i = int(i)
+        m = float(grp_stats.loc[i, "mean"])
+        v = float(grp_stats.loc[i, "std"])
+        n = int(grp_stats.loc[i, "count"])
+        mean_return[idx_i] = m
+        volatility[idx_i] = v
+        sample_count[idx_i] = n
         if v > _VOL_THRESHOLD:
-            sharpe[i] = m / v
+            sharpe[idx_i] = m / v
             if n >= 2:
-                t_stat[i] = m / (v / np.sqrt(n))
+                t_stat[idx_i] = m / (v / np.sqrt(n))
 
     valid_means = mean_return[~np.isnan(mean_return)]
     tau, p = stats.kendalltau(np.arange(len(valid_means)), valid_means)
@@ -115,7 +124,7 @@ def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnost
     else:
         result = stats.anderson(clean, dist="norm")
         stat = float(result.statistic)
-        p_value = 0.05 if stat < result.critical_values[2] else 0.01
+        p_value = 0.051 if stat < result.critical_values[2] else 0.01
 
     return DistributionDiagnostics(
         skewness=skewness,
