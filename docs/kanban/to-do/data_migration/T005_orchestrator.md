@@ -9,6 +9,10 @@ Build CLI orchestrator to execute the full back-adjustment pipeline for one or a
 - `data_cleaning/back_adjustment/gap_calculator.py` - calculate_adjustments() (Task 3)
 - `data_cleaning/back_adjustment/back_adjuster.py` - apply_back_adjustment() (Task 4)
 - `docs/plans/2026-02-15-data-migration-design.md` - Pipeline orchestration
+- `docs/library/Data/Norgate.md` - Norgate data structure and migration context
+
+## Data Source
+Orchestration produces legacy back-adjusted data for comparison against Norgate continuous futures (volume-based roll). See `docs/library/Data/Norgate.md` for schema, formats, and constraints. Metadata outputs should retain enough context to reconcile roll differences during validation.
 
 ## Scope
 - In scope:

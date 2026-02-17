@@ -8,6 +8,7 @@ Tests verify:
 """
 
 import unittest
+from unittest.mock import patch
 import numpy as np
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -319,20 +320,94 @@ class TestRSISignal(unittest.TestCase):
             result = node.add_candle(candle)
             self.assertIn(result[0], [-1.0, 0.0, 1.0])
 
-    def test_threshold_mode(self):
-        """Verify threshold mode generates signals at extremes."""
-        node = RSISignal(Ticker.ES, TimeFrame.D, mode="threshold")
+    def test_strategy_mode_validation(self):
+        """Verify invalid strategy mode raises ValueError."""
+        with self.assertRaises(ValueError):
+            RSISignal(Ticker.ES, TimeFrame.D, strategy_mode="invalid")
 
-        # Strong downtrend should produce long signals (RSI < 30)
-        candles = generate_candles(100, trend=-0.02, volatility=0.01)
+    def test_long_mode_fixed_exit(self):
+        """Verify long mode exits after fixed bars or threshold cross."""
+        with patch("nodes.rsi_signal.compute_rsi_initial") as mock_init, \
+             patch("nodes.rsi_signal.update_rsi") as mock_update:
+            mock_init.return_value = (1.0, 1.0)
+            rsi_values = iter([25.0, 26.0, 27.0, 80.0])
 
-        signals = []
-        for candle in candles:
-            result = node.add_candle(candle)
-            signals.append(result[0])
+            def update_side_effect(prev_close, curr_close, upsum, dnsum, rsi_period):
+                rsi = next(rsi_values)
+                return upsum, dnsum, rsi
 
-        # Should have some long signals (1.0) in downtrend
-        self.assertIn(1.0, signals)
+            mock_update.side_effect = update_side_effect
+
+            node = RSISignal(
+                Ticker.ES,
+                TimeFrame.D,
+                rsi_period=2,
+                oversold=30.0,
+                overbought=70.0,
+                strategy_mode="long",
+                exit_policy="threshold_or_bars",
+                exit_bars=2,
+            )
+            candles = generate_candles(6, volatility=0.0)
+            signals = [node.add_candle(candle)[0] for candle in candles]
+
+            self.assertEqual(signals, [0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+
+    def test_short_mode_fixed_exit(self):
+        """Verify short mode exits after fixed bars or threshold cross."""
+        with patch("nodes.rsi_signal.compute_rsi_initial") as mock_init, \
+             patch("nodes.rsi_signal.update_rsi") as mock_update:
+            mock_init.return_value = (1.0, 1.0)
+            rsi_values = iter([80.0, 79.0, 78.0, 25.0])
+
+            def update_side_effect(prev_close, curr_close, upsum, dnsum, rsi_period):
+                rsi = next(rsi_values)
+                return upsum, dnsum, rsi
+
+            mock_update.side_effect = update_side_effect
+
+            node = RSISignal(
+                Ticker.ES,
+                TimeFrame.D,
+                rsi_period=2,
+                oversold=30.0,
+                overbought=70.0,
+                strategy_mode="short",
+                exit_policy="threshold_or_bars",
+                exit_bars=2,
+            )
+            candles = generate_candles(6, volatility=0.0)
+            signals = [node.add_candle(candle)[0] for candle in candles]
+
+            self.assertEqual(signals, [0.0, 0.0, -1.0, 0.0, 0.0, 0.0])
+
+    def test_long_short_mode_fixed_exit(self):
+        """Verify long-short mode exits to flat after fixed bars."""
+        with patch("nodes.rsi_signal.compute_rsi_initial") as mock_init, \
+             patch("nodes.rsi_signal.update_rsi") as mock_update:
+            mock_init.return_value = (1.0, 1.0)
+            rsi_values = iter([25.0, 26.0, 80.0, 81.0])
+
+            def update_side_effect(prev_close, curr_close, upsum, dnsum, rsi_period):
+                rsi = next(rsi_values)
+                return upsum, dnsum, rsi
+
+            mock_update.side_effect = update_side_effect
+
+            node = RSISignal(
+                Ticker.ES,
+                TimeFrame.D,
+                rsi_period=2,
+                oversold=30.0,
+                overbought=70.0,
+                strategy_mode="long-short",
+                exit_policy="threshold_or_bars",
+                exit_bars=2,
+            )
+            candles = generate_candles(6, volatility=0.0)
+            signals = [node.add_candle(candle)[0] for candle in candles]
+
+            self.assertEqual(signals, [0.0, 0.0, 1.0, 0.0, -1.0, 0.0])
 
 
 class TestStochasticRSI(unittest.TestCase):

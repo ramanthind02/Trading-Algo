@@ -6,8 +6,12 @@ Build comparison tools to analyze differences between back-adjusted old data (fi
 ## Context / References
 - `data_cleaning/back_adjustment/orchestrator.py` - AdjustmentMetadata (Task 5)
 - `data/intraday_1min_adjusted/` - Back-adjusted old data
-- Norgate daily data location (TBD by user)
+- Norgate daily data location (placeholder: `data/norgate/continuous_futures/` — update when ingestion path is finalized)
 - `docs/plans/2026-02-15-data-migration-design.md` - Comparison methodology
+- `docs/library/Data/Norgate.md` - Norgate data structure and migration context
+
+## Data Source
+Norgate continuous futures data uses volume-based rolling; legacy data uses fixed-date roll rules. See `docs/library/Data/Norgate.md` for schema, formats, and constraints. Comparisons should expect roll-date differences and focus on aligned level statistics. Daily Norgate series should be aligned with resampled legacy 1-minute data for fair comparison.
 
 ## Scope
 - In scope:
@@ -32,6 +36,8 @@ Build comparison tools to analyze differences between back-adjusted old data (fi
 - `compare_roll_dates()` returns DataFrame with columns: `roll_date_old`, `roll_date_new`, `delta_days`
 - `generate_comparison_report()` returns markdown string and saves to file
 - Comparison report includes: price statistics, roll date comparison table, summary findings
+- Norgate input path placeholder: `data/norgate/continuous_futures/` (daily). Update once ingestion path is finalized.
+- `roll_date_new` is the first `Date` (daily close) where `Delivery Month` changes in the Norgate continuous futures series; if the column is unavailable, report `None` and note the missing field in the report.
 
 ## Dependencies
 - `data_cleaning/back_adjustment/orchestrator.py` (AdjustmentMetadata)
