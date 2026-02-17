@@ -8,6 +8,7 @@ Generate rich visualizations for binning diagnostics, including bin heatmaps col
 - `feature_selection/validators/binning/diagnostics.py` — T005 infrastructure (RegionMetadata)
 - `feature_selection/validators/binning/shape_analysis.py` — T006 (ShapeClassification, RegionCoverage)
 - `feature_selection/base_models/base_model.py` — position_multipliers_by_strategy_, bin_stats_
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards
 
 ## Scope
 In scope:
@@ -77,20 +78,40 @@ Out of scope:
 - Axis labels: clear units (Sharpe dimensionless, feature values in native units)
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/binning/test_plots.py::test_plot_bin_heatmap_sharpe -q` — generate heatmap for RSI model, verify color coding matches bin_stats_
-2. `pytest tests/integration/feature_validator/binning/test_plots.py::test_plot_bin_heatmap_t_stat -q` — heatmap with t_stat metric, verify high |t| bins highlighted
-3. `pytest tests/integration/feature_validator/binning/test_plots.py::test_plot_region_boundaries_rsi -q` — overlay regions on RSI distribution, verify boundary alignment
-4. `pytest tests/integration/feature_validator/binning/test_plots.py::test_plot_multiplier_curve_long -q` — plot long strategy multiplier curve, verify step heights match position_multipliers_
-5. `pytest tests/integration/feature_validator/binning/test_plots.py::test_create_diagnostic_panel -q` — generate 3-panel figure, verify all subplots present and titled
-6. `pytest tests/integration/feature_validator/binning/test_plots.py::test_save_diagnostic_plots -q` — save plots to temp directory, verify files created and readable
+
+**Unit tests** (location: `tests/validators/binning/`):
+- `test_plot_bin_heatmap_returns_figure()` — synthetic BinningModelBase stub with known bin_stats_; assert returns matplotlib Figure with correct number of axes
+- `test_plot_bin_heatmap_metric_options()` — call with each valid metric ("sharpe", "t_stat", "sample_count", "mean_return"); assert no exceptions raised
+- `test_plot_bin_heatmap_invalid_metric()` — call with invalid metric string; assert raises ValueError
+- `test_plot_region_boundaries_returns_figure()` — synthetic RegionMetadata list + handcrafted feature_data Series; assert returns Figure
+- `test_plot_region_boundaries_shaded_regions()` — assert number of shaded patches in axes matches len(regions)
+- `test_plot_position_multiplier_curve_returns_figure()` — synthetic position_multipliers_by_strategy_ dict; assert returns Figure
+- `test_plot_position_multiplier_curve_step_count()` — assert number of steps in plot matches number of bins
+- `test_create_diagnostic_panel_subplot_count()` — assert 3-panel figure has exactly 3 axes
+- `test_save_diagnostic_plots_to_tempdir()` — call save function with tempfile.TemporaryDirectory; assert PNG files exist after save
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
+- Default config: RSI lookback 5, Ticker.ES, TimeFrame.D, date range 2020-01-01 to 2023-12-31
+- Customizable: accepts bias_module, param_name, param_value, ticker, timeframe as parameters for researcher exploration
+- Verifies: all 4 plot functions return Figure objects, diagnostic panel saves to temp directory, PNG files are readable
+- Cache policy: use existing cache (USE_CACHE=True); skip with message "Run CacheManager.populate_cache() first" if cache missing
+- Researcher manual verification:
+  - Print paths to saved plots in terminal output
+  - Researcher opens binning_heatmap.png: expect green coloring on RSI extreme bins with positive Sharpe
+  - Researcher opens region_boundaries.png: expect shaded zones on left/right tail of RSI histogram
+  - Researcher opens multiplier_curve.png: expect step function with non-zero multipliers only at tradeable bins
+  - If SAVE_INTEGRATION_OUTPUTS env var set, plots are copied to tests/integration/outputs/ for persistent review
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/binning/`
+- [ ] Unit tests added under `tests/validators/binning/`
+- [ ] Integration test covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
 - [ ] Plot functions implemented in `feature_selection/validators/binning/plots.py`
 - [ ] All plots include clear titles, axis labels, legends, and annotations
 - [ ] Colormap customization tested (RdYlGn default, alternative colormaps work)
 - [ ] Docs updated under `docs/api/feature_selection/validators.md`
-- [ ] `pytest tests/integration/feature_validator/binning/test_plots.py -q` passes
+- [ ] `pytest tests/validators/binning/ -q` passes (unit tests)
+- [ ] `pytest tests/integration/feature_validator/test_binning_diagnostics.py -q` passes (integration test)
 
 ## Notes
 - Test with RSI continuous feature: lookback=[2,3,4,5,6,7,8,9,10], TimeFrame.D

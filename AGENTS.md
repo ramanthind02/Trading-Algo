@@ -8,8 +8,8 @@
 
 ## Environment
 
-- **CRITICAL**: Use the shared project virtual environment located at `/home/raman/repos/Trading-Algo/venv/` for all Python work.
-- Always activate with: `source /home/raman/repos/Trading-Algo/venv/bin/activate`
+- **CRITICAL**: Use the shared project virtual environment located at `/venv/` for all Python work.
+- Always activate with: `source venv/bin/activate`
 - **NEVER** create new virtual environments in worktrees or subdirectories - the venv is shared across all worktrees.
 - Keep dependencies scoped to the shared `venv`; do not rely on system Python packages.
 - Primary test runner is `pytest`.
@@ -63,6 +63,14 @@
 
 ## Validation Expectations
 
+- **Test taxonomy is strict**:
+  - **Unit tests** validate isolated logic with synthetic/mocked data and belong under `tests/validators/`, `tests/base_models/`, or other unit-focused folders.
+  - **Integration tests** validate real pipeline behavior and belong under `tests/integration/`.
+  - Any test using handcrafted fixtures to mimic model state is **unit**, never integration.
+- **Integration tests must use persisted pipeline data**:
+  - Load data from repository-backed sources (for example `data/ohlc_data`) and run through real extraction/model paths.
+  - Prefer cache-backed execution (`USE_CACHE=True`); if cache is missing, populate via `CacheManager.populate_cache(...)` or skip with a clear reason.
+  - Integration dataset/date range/tickers/specs are user-driven and must be explicitly declared in the test.
 - Run targeted tests for changed modules first (for example `pytest tests/test_ensemble_base_models.py -v`).
 - Run relevant integration tests when cross-layer behavior changes.
 - Run full suite (`pytest tests/`) before finalizing substantial architecture or pipeline changes.

@@ -9,7 +9,8 @@ Provide comprehensive end-to-end integration tests that validate the complete Fe
 - T018 — FeatureValidator API
 - T019 — ValidationConfig
 - T020 — Vault integration
-- RSI test setup: lookback=[2,3,4,5,6,7,8,9,10], TimeFrame.D, ES, 2000-2024
+- RSI default config: lookback=5, TimeFrame.D, ES, 2020-2023
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards and template
 
 ## Scope
 In scope:
@@ -29,7 +30,7 @@ Out of scope:
 
 ## Interfaces (must match)
 
-### Add: `tests/integration/feature_validator/test_end_to_end.py`
+### Add: `tests/integration/feature_validator/test_feature_validator_e2e.py`
 
 **Core integration tests:**
 ```python
@@ -485,44 +486,172 @@ class TestPerformance:
 
 ## Acceptance tests
 
-All tests listed in the interface section above are acceptance tests. Key ones:
+T021 is the **critical end-to-end integration test** for the entire Feature Validator system. It is the single test that validates the complete research workflow: EDA → Binning → Parameter Sensitivity → Permutation Testing → Vault persistence. All other integration tests (T018-T020) cover narrower integration scenarios; T021 is the authoritative end-to-end check.
 
-1. `pytest tests/integration/feature_validator/test_end_to_end.py::TestContinuousFeatureEndToEnd::test_full_pipeline_rsi_multi_param_grid -v`
-   - Primary end-to-end test with RSI grid [2,3,4,5,6,7,8,9,10]
-   - Validates all four phases execute correctly
-   - Checks funnel logic and validated params identified
+**Unit tests:**
 
-2. `pytest tests/integration/feature_validator/test_end_to_end.py::TestContinuousFeatureEndToEnd::test_vault_integration_full_workflow -v`
-   - Full workflow from validation to vault persistence
-   - Validates researcher can save validated features to vault
-   - Checks ensemble directory structure and feature files
+Unit tests are not required for T021 itself — T021's scope is end-to-end integration. Any pure logic in test helpers (e.g., fixture construction, assertion helpers) should be kept minimal. Unit-level coverage of individual components belongs to their respective tasks (EDA, Binning, ParamSens, PermTest).
 
-3. `pytest tests/integration/feature_validator/test_end_to_end.py::TestContinuousFeatureEndToEnd::test_determinism_with_fixed_seed -v`
-   - Critical reproducibility test
-   - Ensures pipeline is fully deterministic
-   - Identical results with same seed and config
+**Integration tests:**
 
-4. `pytest tests/integration/feature_validator/test_end_to_end.py::TestRuleBasedFeatureEndToEnd::test_full_pipeline_rule_based_feature -v`
-   - Rule-based feature pipeline (no binning phase)
-   - Validates feature type routing works correctly
-   - Checks candle shuffle permutation mode
+Primary test file: `tests/integration/feature_validator/test_feature_validator_e2e.py`
 
-5. `pytest tests/integration/feature_validator/test_end_to_end.py::TestConfigurationManagement::test_exploratory_config_preset -v`
-   - Validates exploratory config preset behavior
-   - Checks relaxed thresholds allow more params through
+This is the main end-to-end integration test covering orchestration tasks T018-T021.
+
+**Default integration configuration (use for all tests unless overridden):**
+```python
+DEFAULT_INTEGRATION_CONFIG = {
+    'bias_module': 'rsi',
+    'param_name': 'lookback',
+    'param_value': 5,
+    'ticker': Ticker.ES,
+    'timeframe': TimeFrame.D,
+    'date_range': ('2020-01-01', '2023-12-31'),
+    'direction': Direction.LONG
+}
+```
+
+**Primary test — full EDA → Binning → ParamSens → PermTest → Vault workflow:**
+```python
+@pytest.mark.integration
+def test_end_to_end_validation_workflow(
+    bias_module: str = 'rsi',
+    param_name: str = 'lookback',
+    param_value: int = 5,
+    ticker: Ticker = Ticker.ES,
+    timeframe: TimeFrame = TimeFrame.D,
+    date_range: tuple = ('2020-01-01', '2023-12-31'),
+    direction: Direction = Direction.LONG,
+    use_cache: bool = True
+):
+    """End-to-end integration test for the complete Feature Validator pipeline.
+
+    Covers T018 (API), T019 (config), T020 (vault), T021 (orchestration).
+    Default: RSI lookback 5, ES daily, 2020-2023.
+    Customizable for any bias node/param/ticker for researcher exploration.
+
+    Pipeline phases verified:
+    1. EDA — descriptive stats, decile analysis, report generated
+    2. Binning diagnostics — region detection, heatmap, coverage metric
+    3. Parameter sensitivity — stability ratios, smoothed objectives, stable regions
+    4. Permutation testing — Stage 1 (vector shuffle), Stage 2 (pipeline perm),
+                             Stage 3 (walkforward stability)
+    5. Vault persistence — ensemble directory created, feature JSON saved, reload works
+    """
+    print("=" * 60)
+    print("Integration Test: Feature Validator End-to-End")
+    print("=" * 60)
+
+    # Load real data from cache
+    cache_manager = CacheManager()
+    bias_spec = {
+        'module_name': bias_module,
+        'params': {param_name: param_value},
+        'timeframes': [timeframe]
+    }
+    features = cache_manager.load_cache(bias_spec, ticker, timeframe)
+    if features is None:
+        pytest.skip("Cache not populated. Run CacheManager.populate_cache() first.")
+
+    print(f"Bias: {bias_module}_signal_{timeframe.value}_{param_name}_{param_value}")
+    print(f"Ticker: {ticker.value}")
+    print(f"Date range: {date_range[0]} to {date_range[1]}")
+    print(f"Samples: {len(features)} observations")
+
+    # Build validator with exploratory config
+    config = ValidationConfig.exploratory()
+    validator = FeatureValidator(
+        feature_type='continuous',
+        bias_node_spec={
+            'module_name': bias_module,
+            'timeframes': [timeframe],
+            'params': {param_name: [param_value]}
+        },
+        ticker=ticker,
+        config=config
+    )
+
+    # Run full pipeline
+    report = validator.run_full_pipeline(
+        candles=candles,
+        target=target,
+        date_range=date_range,
+        output_dir=output_dir
+    )
+
+    # Phase 1: EDA assertions
+    assert report.eda_reports is not None
+    assert len(report.eda_reports) >= 1
+    print(f"\nEDA: {len(report.eda_reports)} parameter combination(s) analyzed")
+
+    # Phase 2: Binning assertions
+    assert report.binning_reports is not None
+    print(f"Binning: reports generated for {len(report.binning_reports)} param(s)")
+
+    # Phase 3: Parameter sensitivity assertions
+    assert report.param_sensitivity_report is not None
+    assert report.param_sensitivity_report.stability_ratios is not None
+    print(f"ParamSens: stability ratios computed")
+
+    # Phase 4: Permutation test assertions
+    assert report.permutation_test_report is not None
+    assert report.permutation_test_report.stage1_results is not None
+    assert report.permutation_test_report.stage2_results is not None
+    print(f"PermTest: Stage 1 and Stage 2 results present")
+
+    # Phase 5: Vault assertions
+    summary = get_ensemble_summary(ensemble_dir)
+    assert summary['num_feature_columns'] >= 1
+    print(f"Vault: {summary['num_feature_columns']} feature(s) saved")
+
+    print(f"\nPlots saved to: {output_dir}")
+    print("PASS: End-to-end validation workflow successful")
+```
+
+**Additional integration tests in the same file:**
+
+1. `test_e2e_rule_based_feature()` — rule-based feature (no binning phase); verify `report.binning_reports is None`; verify Stage 2 permutation uses candle shuffle
+2. `test_e2e_early_stopping_funnel()` — use RSI grid with at least 3 param values (e.g., lookback [3, 5, 14]); run full pipeline; verify `params_passed_stage2 <= params_passed_stage1 <= total_params`; verify Stage 3 only receives params that passed Stage 2
+3. `test_e2e_determinism()` — run `test_end_to_end_validation_workflow` twice with same seed; assert `report1.validated_params == report2.validated_params` and all p-values and stability ratios match
+4. `test_e2e_report_serialization()` — run pipeline; call `report.to_json(path)`; reload with `ValidationReport.from_json(path)`; assert reloaded report matches original
+5. `test_e2e_exploratory_vs_production_config()` — run pipeline with `ValidationConfig.exploratory()` and with `ValidationConfig.production()`; assert exploratory config passes >= as many params as production config (relaxed thresholds)
+
+**Customization:** All tests accept keyword arguments for `bias_module`, `param_name`, `param_value`, `ticker`, `timeframe`, `date_range`, enabling researchers to run with any bias node by modifying the call site.
+
+**Cache policy:**
+- Default: `USE_CACHE=True`
+- If cache missing: `pytest.skip("Cache not populated. Run CacheManager.populate_cache() first.")`
+- Cache spec: RSI lookback [5], ES, D, 2020-2023
+- Vault output: use `tmp_path` pytest fixture for all vault writes (auto-cleaned, never writes to repo vault)
+
+**Researcher manual verification steps:**
+
+After running `pytest tests/integration/feature_validator/test_feature_validator_e2e.py -v -s`:
+
+1. **Terminal summary block** — confirm printed header shows correct bias node, ticker, date range, and sample count
+2. **EDA phase** — verify printed decile analysis: Sharpe ratios and t-stats for each bin look plausible (not all zero, not all NaN); skew and kurtosis of feature distribution printed
+3. **Binning phase** — verify printed region summary: number of regions identified (expect 1-2 for RSI), coverage percentage (expect 20-50%), region boundaries look reasonable given RSI distribution
+4. **Parameter sensitivity phase** — verify stability ratios printed; for a single param (lookback=5), expect stability ratio = 1.0 (no neighbors to smooth over)
+5. **Permutation test phase** — verify p-values printed for Stage 1 and Stage 2; check whether RSI lookback 5 passes at exploratory alpha=0.10
+6. **Vault phase** — verify summary: `num_feature_columns=1`, `feature_columns=['rsi_signal_D_lookback_5']`, model ID present
+7. **Plots** — run with `SAVE_INTEGRATION_OUTPUTS=1` env var to persist plots; open EDA decile plot, binning heatmap, and parameter sensitivity heatmap and visually inspect for coherent structure
+8. **Report JSON** — open saved report JSON from `output_dir`; confirm all phase results present, no null fields, `validated_params` field is a non-empty list (or empty with clear reason printed)
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/test_end_to_end.py`
-- [ ] Test fixtures created for ES daily data (2000-2024)
-- [ ] All continuous feature tests passing
-- [ ] All rule-based feature tests passing
-- [ ] All configuration tests passing
-- [ ] All error handling tests passing
-- [ ] Performance benchmarks established
-- [ ] Test data properly isolated (no cross-contamination)
+- [ ] Tests added under `tests/integration/feature_validator/test_feature_validator_e2e.py`
+- [ ] Test fixtures load real candle data from `data/ohlc_data/` via `CacheManager` (default: RSI lookback 5, ES daily, 2020-2023)
+- [ ] `test_end_to_end_validation_workflow()` passes: all five phases complete, report fields populated, vault file created
+- [ ] `test_e2e_rule_based_feature()` passes: binning phase skipped, candle shuffle permutation confirmed
+- [ ] `test_e2e_early_stopping_funnel()` passes: funnel logic verified for multi-param grid
+- [ ] `test_e2e_determinism()` passes: identical results with same seed
+- [ ] `test_e2e_report_serialization()` passes: JSON round-trip preserves all fields
+- [ ] All tests accept customization parameters (bias module, param, ticker, timeframe)
+- [ ] All tests print terminal summary: config, key metrics, pass/fail verdict
+- [ ] Cache policy explicit in each test: skip with message if cache missing
+- [ ] Vault writes use `tmp_path` (never write to repo vault)
 - [ ] Docs updated in `docs/testing/integration_tests.md`
-- [ ] `pytest tests/integration/feature_validator/test_end_to_end.py -v` passes (full suite)
-- [ ] `pytest tests/integration/feature_validator/test_end_to_end.py -q` completes in < 30 minutes
+- [ ] `pytest tests/integration/feature_validator/test_feature_validator_e2e.py -v -s` passes with readable terminal output
+- [ ] Full suite completes in < 30 minutes
 
 ## Notes
 

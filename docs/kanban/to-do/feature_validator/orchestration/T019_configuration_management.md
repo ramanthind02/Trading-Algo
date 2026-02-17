@@ -8,6 +8,7 @@ Provide a frozen configuration dataclass (`ValidationConfig`) with pre-specified
 - `docs/library/Feature_selection/permutation_testing/in-sample_pt.md` — permutation test parameters
 - `docs/library/Feature_selection/stability/grid_search_parameter_stability.md` — stability ratio thresholds
 - `utils/enums.py` — TimeFrame enum for window size defaults
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards
 
 ## Scope
 In scope:
@@ -341,55 +342,38 @@ class ValidationConfig:
 
 ## Acceptance tests
 
-1. `pytest tests/unit/feature_validator/test_validation_config.py::test_default_config -v`
-   - Setup: Create config with defaults
-   - Validates: All fields have expected default values
-   - Checks: n_bins=15, metric_threshold=0.5, significance_level=0.10
+**Unit tests:**
 
-2. `pytest tests/unit/feature_validator/test_validation_config.py::test_exploratory_preset -v`
-   - Setup: Create exploratory config
-   - Validates: Relaxed thresholds for initial screening
-   - Checks: metric_threshold=0.4, significance_level=0.10, permutation_replicates=500
+All config logic is pure (no I/O, no external dependencies) — unit tests are the primary test vehicle. Location: `tests/validators/test_validation_config.py`
 
-3. `pytest tests/unit/feature_validator/test_validation_config.py::test_production_preset -v`
-   - Setup: Create production config
-   - Validates: Strict thresholds for deployment
-   - Checks: metric_threshold=0.6, significance_level=0.05, permutation_replicates=1000
+- `test_default_config()` — construct with defaults; assert `n_bins=15`, `metric_threshold=0.5`, `significance_level=0.10`, `permutation_replicates=500`
+- `test_exploratory_preset()` — `ValidationConfig.exploratory()`; assert `metric_threshold=0.4`, `significance_level=0.10`, `permutation_replicates=500`, `t_stat_threshold=1.5`
+- `test_production_preset()` — `ValidationConfig.production()`; assert `metric_threshold=0.6`, `significance_level=0.05`, `permutation_replicates=1000`, `t_stat_threshold=2.5`
+- `test_conservative_preset()` — `ValidationConfig.conservative()`; assert `metric_threshold=0.8`, `significance_level=0.01`, `permutation_replicates=2000`, `walkforward_min_folds=4`
+- `test_rolling_window_auto_defaults()` — config with `rolling_window_days=None`; call `get_rolling_window()` for each `TimeFrame`; assert `D→252`, `W→52`, `M→24`
+- `test_rolling_window_explicit()` — config with `rolling_window_days=100`; assert returns `100` for all timeframes regardless
+- `test_json_round_trip()` — create config, call `to_json()` to a temp file, call `from_json()`; assert `loaded_config == original_config` for all fields
+- `test_invalid_metric_threshold()` — `metric_threshold=0` raises `ValueError`
+- `test_invalid_significance_level()` — `significance_level=1.5` raises `ValueError`
+- `test_invalid_n_bins()` — `n_bins=2` raises `ValueError`
+- `test_invalid_permutation_replicates()` — `permutation_replicates=50` raises `ValueError`
+- `test_immutability()` — attempt to assign to any field on frozen instance raises `FrozenInstanceError`
+- `test_custom_config()` — create config with all fields set to non-default values; assert all values preserved exactly
 
-4. `pytest tests/unit/feature_validator/test_validation_config.py::test_conservative_preset -v`
-   - Setup: Create conservative config
-   - Validates: Very strict thresholds
-   - Checks: metric_threshold=0.8, significance_level=0.01, permutation_replicates=2000
+**Integration tests:**
 
-5. `pytest tests/unit/feature_validator/test_validation_config.py::test_rolling_window_auto_defaults -v`
-   - Setup: Config with rolling_window_days=None
-   - Validates: get_rolling_window() returns timeframe-appropriate defaults
-   - Checks: Daily=252, Weekly=52, Monthly=24
+`ValidationConfig` has no pipeline dependencies — integration tests are not required for config parsing and field validation. However, config loading from a real JSON file stored on disk is verified as follows:
 
-6. `pytest tests/unit/feature_validator/test_validation_config.py::test_rolling_window_explicit -v`
-   - Setup: Config with rolling_window_days=100
-   - Validates: get_rolling_window() returns explicit value regardless of timeframe
-   - Checks: Returns 100 for all timeframes
+- `test_config_load_from_real_file()` — save `ValidationConfig.production()` to a temp file path, reload with `ValidationConfig.from_json()`, assert equality. Confirms JSON round-trip works with the filesystem.
+- Covered by `tests/integration/feature_validator/test_feature_validator_e2e.py`: the end-to-end test constructs `ValidationConfig.exploratory()` and passes it into the full pipeline, verifying that config values (thresholds, seed, replicates) actually govern pipeline behavior.
 
-7. `pytest tests/unit/feature_validator/test_validation_config.py::test_json_serialization -v`
-   - Setup: Create config, save to JSON, load back
-   - Validates: Round-trip serialization preserves all fields
-   - Checks: loaded_config == original_config
+Location: `tests/integration/feature_validator/test_feature_validator_e2e.py` (config exercised as part of the full workflow; no standalone integration test file required).
 
-8. `pytest tests/unit/feature_validator/test_validation_config.py::test_invalid_thresholds -v`
-   - Setup: Try to create configs with invalid thresholds
-   - Validates: ValueError raised for invalid values
-   - Checks: metric_threshold <= 0, significance_level not in (0,1), n_bins < 3
+**Cache policy:** Not applicable — config tests use no external data.
 
-9. `pytest tests/unit/feature_validator/test_validation_config.py::test_immutability -v`
-   - Setup: Create config, try to modify field
-   - Validates: Frozen dataclass prevents modification
-   - Checks: Raises FrozenInstanceError
-
-10. `pytest tests/unit/feature_validator/test_validation_config.py::test_custom_config -v`
-    - Setup: Create config with all custom values
-    - Validates: All fields can be customized
-    - Checks: All custom values preserved
+**Researcher manual verification:**
+- Inspect JSON file written by `to_json()` and confirm all field values match the preset documentation
+- Confirm that using `exploratory` vs `production` preset in the end-to-end test changes how many params survive validation (exploratory should pass more params than production)
 
 ## Definition of done
 - [ ] Tests added under `tests/unit/feature_validator/test_validation_config.py`

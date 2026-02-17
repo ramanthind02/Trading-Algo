@@ -8,6 +8,7 @@ Build continuous-specific EDA infrastructure that performs decile analysis, dist
 - `feature_selection/base_models/quantile_binning.py` — QuantileBinningModel for bin creation
 - `docs/library/Feature_selection/features/Continuous_binning.md` — Continuous binning specification
 - `feature_selection/eda/common_eda.py` — Common EDA infrastructure (T001 dependency)
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards
 
 ## Scope
 In scope:
@@ -82,20 +83,41 @@ Out of scope:
 - Monotonicity criterion: |kendall_tau| > 0.5 and p < 0.05 → is_monotonic = True
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/eda/test_continuous_eda.py::test_decile_analysis_rsi` — Verify decile analysis for RSI (lookback=5, TimeFrame.D) produces 15 bins with expected statistics
-2. `pytest tests/integration/feature_validator/eda/test_continuous_eda.py::test_monotonicity_test_synthetic` — Create synthetic monotonic feature, verify monotonicity test detects it
-3. `pytest tests/integration/feature_validator/eda/test_continuous_eda.py::test_distribution_diagnostics` — Validate distribution diagnostics (skew, kurtosis, normality test) for RSI feature
-4. `pytest tests/integration/feature_validator/eda/test_continuous_eda.py::test_decile_plot_generation` — Smoke test that decile plot creation succeeds (mean return, Sharpe, t-stat subplots)
-5. `pytest tests/integration/feature_validator/eda/test_continuous_eda.py::test_histogram_with_quantile_overlays` — Verify histogram overlays show bin edges correctly
-6. `pytest tests/integration/feature_validator/eda/test_continuous_eda.py::test_edge_case_few_bins` — Test with n_bins=3 (minimum viable) and n_bins=30 (many bins)
-7. `pytest tests/integration/feature_validator/eda/test_continuous_eda.py::test_sharpe_zero_volatility_bin` — Bin with constant returns → volatility=0 → Sharpe=NaN (no crash)
+
+**Unit tests** (location: `tests/validators/eda/test_continuous_eda.py`):
+- `test_decile_analysis_known_values()` — synthetic 150-sample Series with deterministic bin membership, verify bin counts and mean returns match expected values exactly
+- `test_monotonicity_test_monotonic_increasing()` — synthetic feature with strictly increasing bin means, verify `is_monotonic=True` and positive `kendall_tau`
+- `test_monotonicity_test_flat()` — synthetic feature with flat bin means, verify `is_monotonic=False`
+- `test_distribution_diagnostics_known_skew()` — normally distributed synthetic data (np.random.seed(42)), verify `is_normal=True` and skew near zero
+- `test_decile_plot_smoke()` — synthetic data, verify three-subplot Figure created without errors
+- `test_histogram_quantile_overlays_smoke()` — synthetic data, verify histogram Figure created with bin edge lines
+- `test_edge_case_n_bins_2()` — n_bins=2 (minimum), verify two bins computed without error
+- `test_edge_case_n_bins_30()` — n_bins=30 with 300 samples, verify 30 bins computed
+- `test_sharpe_zero_volatility_bin()` — synthetic bin where all returns are identical (std=0), verify Sharpe=NaN, no crash
+- `test_n_bins_too_large_raises()` — n_bins > len(feature)/10 → raises ValueError
+
+**Integration tests** (location: `tests/integration/feature_validator/test_eda_pipeline.py`):
+- Covered by `test_common_eda_continuous()` in `tests/integration/feature_validator/test_eda_pipeline.py`
+- Uses default config: RSI lookback 5, ES daily, 2020-2023 (from `data/ohlc_data/`)
+- Feature extracted via `extract_features_for_bias_node(bias_module='rsi', param_name='lookback', param_value=5, ticker=Ticker.ES, timeframe=TimeFrame.D)`
+- Verifies: 15 bins produced, all bin stats non-null (except edge bins), monotonicity tau computed, all plots saved to output directory
+- Customizable: `bias_module`, `param_name`, `param_value`, `ticker`, `timeframe`, `n_bins` exposed as parameters for researcher exploration with any continuous bias node
+- Cache policy: `USE_CACHE=True`; if cache missing, skip with message "Run CacheManager.populate_cache() first"
+- Cache spec: RSI lookback 5, ES, D, 2020-2023
+- Researcher manual verification:
+  - Inspect terminal output for per-bin Sharpe and t-stat — check for any bins with notably high signal
+  - Review decile plot visually — expect mild monotonic or U-shaped pattern for RSI on ES
+  - Check histogram — verify RSI distribution is roughly uniform (as expected for quantile binning)
+  - Inspect Q-Q plot — RSI values may deviate from normal at tails
+  - Note `monotonicity_tau` value — guide for whether feature warrants further investigation
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/eda/test_continuous_eda.py`
+- [ ] Unit tests added under `tests/validators/eda/test_continuous_eda.py`
+- [ ] Integration test covered by `tests/integration/feature_validator/test_eda_pipeline.py`
 - [ ] Implementation in `feature_selection/eda/continuous_eda.py`
 - [ ] Dataclasses extended in `feature_selection/eda/eda_dataclasses.py`
 - [ ] Docs updated in `docs/api/feature_selection.md`
-- [ ] `pytest tests/integration/feature_validator/eda/test_continuous_eda.py -q` passes
+- [ ] `pytest tests/validators/eda/test_continuous_eda.py -q` passes
 - [ ] Type hints pass strict mypy/pyright checks
 - [ ] All dataclasses are frozen and immutable
 

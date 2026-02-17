@@ -7,6 +7,7 @@ Implement Stage 1 vector-level shuffling permutation test as a quick filter to i
 - `docs/library/Feature_selection/feature_validator.md` — Phase 4: Permutation Testing (lines 257-289)
 - `docs/library/Feature_selection/Permutation Testing/in-sample_pt.md` — §1 Shuffling Permutation Test (lines 20-41)
 - `utils/permutation_test/permutation_engine.py` — `PermutationEngine`, `FeaturePermutationStrategy`
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards, default config, cache policy
 
 ## Scope
 In scope:
@@ -56,17 +57,41 @@ Out of scope:
 - No lookahead: feature vector is from fitted model on in-sample data only
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/permutation_testing/test_vector_shuffle.py::test_deterministic_shuffle` — Fixed seed yields identical p-values across runs
-2. `pytest tests/integration/feature_validator/permutation_testing/test_vector_shuffle.py::test_null_hypothesis_rsi` — Test RSI with lookbacks [2,3,4,5,6,7,8,9,10], PERMUTATION_REPS=100, verify p-values are computed correctly
-3. `pytest tests/integration/feature_validator/permutation_testing/test_vector_shuffle.py::test_continuous_vs_rule_based` — Verify both continuous (binned) and rule-based feature vectors produce valid VectorShuffleReports
-4. `pytest tests/integration/feature_validator/permutation_testing/test_vector_shuffle.py::test_early_stopping_filter` — Given 10 param combos, verify only those passing Stage 1 (p <= alpha) are flagged for Stage 2
+
+**Unit tests:**
+- `test_deterministic_shuffle()` — synthetic feature/target Series with fixed seed, assert identical null distribution and p-value across two runs
+- `test_shuffle_preserves_marginal_distribution()` — synthetic Series with known value frequencies, assert shuffled vector has same value counts as original
+- `test_pass_fail_criterion()` — synthetic null distribution where original metric is above 90th percentile, assert `passed=True`; below 90th percentile, assert `passed=False`
+- `test_early_stopping_filter_unit()` — synthetic list of 10 VectorShuffleReports with known p-values, assert filter returns only those with p <= alpha
+- `test_vector_shuffle_report_fields()` — assert VectorShuffleReport contains all required fields: `param_combo`, `original_metric`, `null_distribution`, `critical_value`, `p_value`, `passed`, `alpha`, `nreps`
+- `test_get_fitted_vector_continuous()` — mock BinningModelBase, assert `get_fitted_vector()` returns pd.Series aligned to target index
+- `test_get_fitted_vector_rule_based()` — mock rule-based model output (-1, 0, +1), assert alignment and value set
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_permutation_testing.py::test_vector_shuffle_stage1()`
+- Uses default config: RSI lookback 5, ES daily, 2020-2023
+- Loads real candles from `data/ohlc_data/` via `CacheManager`; skips if cache is missing
+- Customizable: `bias_module`, `param_value`, `ticker`, `timeframe` are exposed as function parameters to allow researcher exploration across any bias node/parameter
+- Runs `run_vector_shuffle_test()` with `nreps=100` (fast) on fitted RSI feature vector
+- Verifies: `VectorShuffleReport` returned, `p_value` is in [0, 1], `null_distribution` has length == nreps, `critical_value` matches (1-alpha) quantile of null distribution
+- Researcher manual verification:
+  - Inspect terminal output for p-value, critical value, and pass/fail verdict
+  - Confirm null distribution histogram (printed shape summary) is unimodal and centred near zero
+  - Verify `passed` field is consistent with printed p-value vs alpha comparison
+
+**Cache policy (integration):**
+- Use existing cache: `USE_CACHE=True`
+- If cache missing: skip with message "Run CacheManager.populate_cache() first"
+- Cache spec: RSI lookback [5], ES, D, 2020-2023
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/permutation_testing/test_vector_shuffle.py`
+- [ ] Unit tests added under `tests/validators/permutation/test_vector_shuffle_unit.py`
+- [ ] Integration test `test_vector_shuffle_stage1()` added to `tests/integration/feature_validator/test_permutation_testing.py`
 - [ ] `VectorShuffleReport` dataclass defined in `feature_selection/validation/reports.py`
 - [ ] `run_vector_shuffle_test()` implemented in `feature_selection/validation/permutation_tests.py`
 - [ ] `BaseModel.get_fitted_vector()` method added
-- [ ] `pytest tests/integration/feature_validator/permutation_testing/test_vector_shuffle.py -v` passes
+- [ ] `pytest tests/validators/permutation/test_vector_shuffle_unit.py -v` passes
+- [ ] `pytest tests/integration/feature_validator/test_permutation_testing.py::test_vector_shuffle_stage1 -v` passes
 - [ ] Docs updated: docstrings with examples, references to in-sample_pt.md spec
 
 ## Notes

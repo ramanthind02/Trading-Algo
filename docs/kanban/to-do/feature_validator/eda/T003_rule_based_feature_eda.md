@@ -8,6 +8,7 @@ Build rule-based feature EDA infrastructure that computes per-level statistics w
 - `docs/library/Feature_selection/features/rule_based.md` — Rule-based features specification
 - `feature_selection/eda/common_eda.py` — Common EDA infrastructure (T001 dependency)
 - `utils/enums.py` — Direction enum (LONG, SHORT, BOTH)
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards
 
 ## Scope
 In scope:
@@ -82,20 +83,30 @@ Out of scope:
 - Transition matrix: first timestamp has no previous state, exclude from transition counts
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py::test_per_level_stats_synthetic` — Create synthetic rule feature with known returns per level, verify statistics match
-2. `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py::test_bootstrap_ci_deterministic` — Fixed seed produces identical bootstrap CIs across runs
-3. `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py::test_bootstrap_ci_coverage` — Simulate known distribution, verify 95% CI contains true mean ~95% of time
-4. `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py::test_transition_matrix_probabilities` — Verify transition matrix rows sum to 1.0
-5. `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py::test_level_plot_generation` — Smoke test that level plot creates bar chart with CI error bars
-6. `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py::test_edge_case_missing_level` — Feature never takes value +1 → stats for +1 level are NaN or excluded
-7. `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py::test_invalid_level_value` — Feature contains value 2 (not in [-1, 0, 1]) → raises ValueError
+
+**Unit tests** (location: `tests/validators/eda/test_rule_based_eda.py`):
+- `test_per_level_stats_known_values()` — synthetic Series with hardcoded returns per level (-1, 0, +1), verify mean_return, volatility, Sharpe match hand-computed expected values
+- `test_bootstrap_ci_deterministic()` — run bootstrap twice with same seed=42, verify identical `ci_lower` and `ci_upper` both times
+- `test_bootstrap_ci_coverage_simulation()` — 1000-sample synthetic returns from known normal distribution, verify 95% CI contains true mean in ~95% of simulated draws
+- `test_transition_matrix_rows_sum_to_one()` — synthetic 10-step signal sequence with known transitions, verify each row of `transition_probs` sums to 1.0
+- `test_transition_matrix_counts_correct()` — signal sequence [−1, 0, 1, 0, −1], verify transition counts match expected 4-entry count matrix
+- `test_level_plot_smoke()` — synthetic per-level stats and bootstrap CIs, verify bar chart Figure created without errors with error bars
+- `test_edge_case_missing_level()` — feature never takes value +1, verify stats for +1 are either absent from dict or flagged as NaN/unreliable
+- `test_invalid_level_value_raises()` — feature contains value 2 (not in [-1, 0, 1]) → raises ValueError
+- `test_sharpe_zero_volatility_level()` — level with constant returns (std=0), verify Sharpe=NaN and no crash
+- `test_low_sample_count_flagged()` — level with only 5 samples, verify `is_reliable=False` on LevelStats
+
+**Integration tests:**
+- Integration test: Not required (pure logic, covered by unit tests)
+- Rationale: bootstrap CI, per-level stats, and transition matrix computations are self-contained algorithms that take a Series as input. There is no cross-module pipeline interaction requiring real data. The integration test for the full EDA pipeline in `tests/integration/feature_validator/test_eda_pipeline.py::test_rule_based_eda()` exercises these functions transitively when a rule-based bias node is used.
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/eda/test_rule_based_eda.py`
+- [ ] Unit tests added under `tests/validators/eda/test_rule_based_eda.py`
+- [ ] No standalone integration test required; rule-based EDA is exercised transitively by `test_eda_pipeline.py::test_rule_based_eda()` when implemented
 - [ ] Implementation in `feature_selection/eda/rule_based_eda.py`
 - [ ] Dataclasses extended in `feature_selection/eda/eda_dataclasses.py`
 - [ ] Docs updated in `docs/api/feature_selection.md`
-- [ ] `pytest tests/integration/feature_validator/eda/test_rule_based_eda.py -q` passes
+- [ ] `pytest tests/validators/eda/test_rule_based_eda.py -q` passes
 - [ ] Type hints pass strict mypy/pyright checks
 - [ ] All dataclasses are frozen and immutable
 

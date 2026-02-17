@@ -9,6 +9,7 @@ Build EDA report generation infrastructure that aggregates common, continuous, a
 - `feature_selection/eda/continuous_eda.py` — Continuous feature EDA (T002)
 - `feature_selection/eda/rule_based_eda.py` — Rule-based feature EDA (T003)
 - `eda/eda_runner.py` — Existing EDA infrastructure to extend
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — Unit vs integration test standards
 
 ## Scope
 In scope:
@@ -98,20 +99,41 @@ Out of scope:
 - Report versioning: include EDA framework version in metadata for reproducibility
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/eda/test_eda_reporter.py::test_continuous_eda_report_generation_rsi` — Run full EDA for RSI (lookback=5, TimeFrame.D), verify report structure
-2. `pytest tests/integration/feature_validator/eda/test_eda_reporter.py::test_rule_based_eda_report_generation_synthetic` — Run full EDA for synthetic rule feature, verify report structure
-3. `pytest tests/integration/feature_validator/eda/test_eda_reporter.py::test_diagnostic_flags_warnings` — Feature with 15% NaNs → warning flagged
-4. `pytest tests/integration/feature_validator/eda/test_eda_reporter.py::test_diagnostic_flags_red_flags` — Feature with zero variance → red flag, `is_viable=False`
-5. `pytest tests/integration/feature_validator/eda/test_eda_reporter.py::test_report_persistence_and_reload` — Save report to disk, reload, verify identical to original
-6. `pytest tests/integration/feature_validator/eda/test_eda_reporter.py::test_multiple_param_combos_independent` — Run EDA for RSI with lookback=[2,3,4,5,6,7,8,9,10], verify 9 independent reports generated
-7. `pytest tests/integration/feature_validator/eda/test_eda_reporter.py::test_report_directory_structure` — Verify output directory structure matches spec
+
+**Unit tests** (location: `tests/validators/eda/test_eda_reporter.py`):
+- `test_diagnostic_flags_high_nan_warning()` — mock `CommonEDAStats` with `nan_pct=0.15`, verify "high NaN" warning present in `DiagnosticFlags.warnings`
+- `test_diagnostic_flags_low_sample_warning()` — mock stats with `sample_size=100`, verify "low sample size" warning present
+- `test_diagnostic_flags_zero_variance_red_flag()` — mock stats with `feature_std=0.0`, verify red flag present and `is_viable=False`
+- `test_diagnostic_flags_extreme_skewness_red_flag()` — mock stats with `feature_skew=6.0`, verify red flag present and `is_viable=False`
+- `test_diagnostic_flags_clean_data_is_viable()` — mock clean stats, verify `warnings=[]`, `red_flags=[]`, `is_viable=True`
+- `test_report_persistence_and_reload()` — build `ContinuousEDAReport` from mocked sub-components, save to `tempfile.TemporaryDirectory`, reload, verify all JSON metadata fields round-trip correctly
+- `test_report_directory_structure()` — after `save_eda_report()`, verify directory contains `metadata.json`, `common_stats.json`, `feature_stats.json`, `diagnostics.json`, and `plots/` subdirectory
+- `test_report_overwrite_false_raises()` — call `save_eda_report()` twice with `overwrite=False` → second call raises error
+- `test_rule_based_report_smoke()` — build `RuleBasedEDAReport` from mocked sub-components, verify dataclass fields populated without errors
+- `test_param_combo_hash_deterministic()` — same `param_combo` dict always produces the same directory hash
+
+**Integration tests** (location: `tests/integration/feature_validator/test_eda_pipeline.py`):
+- Covered by `test_common_eda_continuous()` in `tests/integration/feature_validator/test_eda_pipeline.py`
+- Uses default config: RSI lookback 5, ES daily, 2020-2023 (from `data/ohlc_data/`)
+- Feature extracted via `extract_features_for_bias_node(bias_module='rsi', param_name='lookback', param_value=5, ticker=Ticker.ES, timeframe=TimeFrame.D)`
+- Verifies: full `ContinuousEDAReport` generated without errors, `DiagnosticFlags.is_viable` is True for clean RSI data, all output files saved to `tempfile.TemporaryDirectory`, plots present in `plots/` subdirectory
+- Customizable: `bias_module`, `param_name`, `param_value`, `ticker`, `timeframe` exposed as parameters; researcher can run with any continuous bias node to generate a full EDA report for inspection
+- Cache policy: `USE_CACHE=True`; if cache missing, skip with message "Run CacheManager.populate_cache() first"
+- Cache spec: RSI lookback 5, ES, D, 2020-2023
+- Researcher manual verification:
+  - Inspect terminal output for `DiagnosticFlags` — confirm no unexpected warnings or red flags for RSI data
+  - Open `metadata.json` to confirm feature name, param combo, and date range are recorded correctly
+  - Open `plots/` directory and review decile plot and rolling correlation plot visually
+  - Confirm `is_viable=True` is printed to terminal for a clean feature
+  - For multiple param combos (e.g., lookback=[2,5,10]): verify 3 independent subdirectories created with distinct param hashes
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/eda/test_eda_reporter.py`
+- [ ] Unit tests added under `tests/validators/eda/test_eda_reporter.py`
+- [ ] Integration test covered by `tests/integration/feature_validator/test_eda_pipeline.py`
 - [ ] Implementation in `feature_selection/eda/eda_reporter.py`
 - [ ] Dataclasses extended in `feature_selection/eda/eda_dataclasses.py`
 - [ ] Docs updated in `docs/api/feature_selection.md`
-- [ ] `pytest tests/integration/feature_validator/eda/test_eda_reporter.py -q` passes
+- [ ] `pytest tests/validators/eda/test_eda_reporter.py -q` passes
 - [ ] Type hints pass strict mypy/pyright checks
 - [ ] All dataclasses are frozen and immutable
 

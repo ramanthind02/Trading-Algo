@@ -9,6 +9,7 @@ Create BinningDiagnosticsReport dataclass and generation logic to aggregate all 
 - `feature_selection/validators/binning/shape_analysis.py` — T006 shape and coverage
 - `feature_selection/validators/binning/plots.py` — T007 diagnostic plots
 - `feature_selection/validators/reports/base.py` — base report structure
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards
 
 ## Scope
 In scope:
@@ -98,20 +99,40 @@ Out of scope:
 - Timestamp format: ISO 8601 (YYYY-MM-DDTHH:MM:SS)
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/binning/test_report.py::test_generate_report_success -q` — RSI model with valid regions generates success report (verdict=True, failure_mode="none")
-2. `pytest tests/integration/feature_validator/binning/test_report.py::test_generate_report_no_regions -q` — model with no significant_regions_ generates failure report (verdict=False, failure_mode="no_regions")
-3. `pytest tests/integration/feature_validator/binning/test_report.py::test_detect_failure_mode_isolated_spikes -q` — model with single-bin spikes classified as "isolated_spikes"
-4. `pytest tests/integration/feature_validator/binning/test_report.py::test_save_and_load_report -q` — save report to JSON, reload and verify metadata matches
-5. `pytest tests/integration/feature_validator/binning/test_report.py::test_display_summary -q` — display report summary to console (no errors, key metrics visible)
-6. `pytest tests/integration/feature_validator/binning/test_report.py::test_report_with_multiple_params -q` — generate reports for RSI lookback=[2,3,4,5,6,7,8,9,10], verify each has correct parameter_combo
+
+**Unit tests** (location: `tests/validators/binning/`):
+- `test_generate_report_success_verdict()` — synthetic BinningModelBase stub with valid regions; assert BinningDiagnosticsReport.success_verdict == True and failure_mode == "none"
+- `test_generate_report_no_regions_verdict()` — stub with empty significant_regions_; assert success_verdict == False and failure_mode == "no_regions"
+- `test_detect_failure_mode_isolated_spikes()` — stub with only single-bin spikes (width < min_region_width); assert failure_mode == "isolated_spikes"
+- `test_detect_failure_mode_insufficient_edge()` — stub with regions present but all below metric_threshold; assert failure_mode == "insufficient_edge"
+- `test_detect_failure_mode_none()` — stub with at least one valid region; assert failure_mode == "none"
+- `test_report_dataclass_fields()` — construct BinningDiagnosticsReport with synthetic inputs; assert all required fields are present and types are correct
+- `test_save_report_creates_json()` — call save_report with tempfile.TemporaryDirectory; assert JSON file exists at expected path
+- `test_save_report_json_fields()` — load saved JSON; assert all non-Figure fields are present and values match original report
+- `test_display_report_summary_no_exception()` — call display_report_summary with synthetic report; assert no exceptions raised and key terms ("verdict", "coverage", "regions") appear in stdout
+- `test_report_parameter_combo_stored()` — generate report with {"lookback": 14}; assert parameter_combo in JSON matches input
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
+- Default config: RSI lookback 5, Ticker.ES, TimeFrame.D, date range 2020-01-01 to 2023-12-31
+- Customizable: accepts bias_module, param_name, param_value, ticker, timeframe as parameters for researcher exploration
+- Verifies: generate_binning_report returns BinningDiagnosticsReport with all fields populated, save_report creates JSON in temp directory, display_report_summary prints readable terminal output
+- Cache policy: use existing cache (USE_CACHE=True); skip with message "Run CacheManager.populate_cache() first" if cache missing
+- Researcher manual verification:
+  - Terminal output from display_report_summary should show: feature name, success verdict, failure mode, number of regions, total coverage %, shape summary counts
+  - Open saved JSON file and confirm all metadata fields are present and human-readable
+  - Confirm plot PNG files are saved alongside JSON in the output directory
+  - If SAVE_INTEGRATION_OUTPUTS env var set, report files are copied to tests/integration/outputs/ for persistent review
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/binning/`
+- [ ] Unit tests added under `tests/validators/binning/`
+- [ ] Integration test covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
 - [ ] BinningDiagnosticsReport dataclass implemented in `feature_selection/validators/binning/report.py`
 - [ ] Report generation, failure mode detection, save/load, display functions implemented
 - [ ] JSON serialization preserves all metadata (plots saved separately)
 - [ ] Docs updated under `docs/api/feature_selection/validators.md`
-- [ ] `pytest tests/integration/feature_validator/binning/test_report.py -q` passes
+- [ ] `pytest tests/validators/binning/ -q` passes (unit tests)
+- [ ] `pytest tests/integration/feature_validator/test_binning_diagnostics.py -q` passes (integration test)
 
 ## Notes
 - Test with RSI continuous feature: lookback=[2,3,4,5,6,7,8,9,10], TimeFrame.D

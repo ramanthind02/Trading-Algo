@@ -7,6 +7,7 @@ Build core infrastructure for binning success validation, including success crit
 - `docs/library/Feature_selection/feature_validator.md` (lines 133-179: Phase 2 specification)
 - `feature_selection/base_models/base_model.py` — BinningModelBase interface with fitted state
 - `feature_selection/base_models/continuous_binning.py` — ContinuousBinningModel implementation
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards
 
 ## Scope
 In scope:
@@ -70,21 +71,41 @@ Out of scope:
 - Shape detection: mutually exclusive (tail XOR hump)
 
 ## Acceptance tests
-1. `pytest tests/integration/feature_validator/binning/test_success_criteria.py::test_validate_binning_success_with_valid_regions -q` — fitted RSI model with 2+ consecutive bins exceeding thresholds passes validation
-2. `pytest tests/integration/feature_validator/binning/test_success_criteria.py::test_validate_binning_success_no_regions -q` — model with only isolated single-bin spikes fails validation
-3. `pytest tests/integration/feature_validator/binning/test_region_metadata.py::test_extract_region_metadata_rsi -q` — extract RegionMetadata from fitted RSI model, verify mean_sharpe and feature_range accuracy
-4. `pytest tests/integration/feature_validator/binning/test_shape_detection.py::test_detect_tail_vs_hump -q` — classify region at bin 0-2 as "tail", region at bin 5-7 (n_bins=15) as "hump"
-5. `pytest tests/integration/feature_validator/binning/test_coverage.py::test_calculate_coverage_rsi -q` — RSI with lookback=14, TimeFrame.D, verify coverage matches expected percentage
+
+**Unit tests** (location: `tests/validators/binning/`):
+- `test_validate_binning_success_valid_regions()` — synthetic BinningModelBase stub with 2+ consecutive bins exceeding thresholds; assert returns True
+- `test_validate_binning_success_no_regions()` — stub with empty significant_regions_; assert returns False
+- `test_validate_binning_success_isolated_spikes()` — stub with single-bin spikes only (width < min_region_width); assert returns False
+- `test_extract_region_metadata_structure()` — synthetic bin_stats_ and significant_regions_ with known values; assert RegionMetadata fields match expected values
+- `test_detect_region_shape_tail_low()` — region starting at bin 0; assert shape == "tail"
+- `test_detect_region_shape_tail_high()` — region ending at bin n_bins-1; assert shape == "tail"
+- `test_detect_region_shape_hump()` — region surrounded by neutral bins; assert shape == "hump"
+- `test_calculate_coverage_known_range()` — synthetic feature_data Series with known distribution; handcrafted feature_range; assert coverage percentage matches arithmetic expectation
+- `test_calculate_coverage_zero()` — feature_range outside all feature values; assert coverage == 0.0
+- `test_calculate_coverage_full()` — feature_range spans all feature values; assert coverage == 100.0
+
+**Integration tests:**
+- Covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
+- Default config: RSI lookback 5, Ticker.ES, TimeFrame.D, date range 2020-01-01 to 2023-12-31
+- Customizable: accepts bias_module, param_name, param_value, ticker, timeframe as parameters for researcher exploration
+- Verifies: validate_binning_success returns bool, extract_region_metadata returns non-empty list with correct fields, detect_region_shape returns "tail" or "hump", calculate_coverage returns float in [0.0, 100.0]
+- Cache policy: use existing cache (USE_CACHE=True); skip with message "Run CacheManager.populate_cache() first" if cache missing
+- Researcher manual verification:
+  - Inspect terminal output for per-bin Sharpe ratios and t-stats
+  - Confirm region metadata (start_bin, end_bin, mean_sharpe, feature_range) looks plausible for RSI
+  - Confirm coverage percentage is in a sensible range (e.g., 20-50% for typical RSI)
 
 ## Definition of done
-- [ ] Tests added under `tests/integration/feature_validator/binning/`
+- [ ] Unit tests added under `tests/validators/binning/`
+- [ ] Integration test covered by `tests/integration/feature_validator/test_binning_diagnostics.py::test_binning_full_pipeline()`
 - [ ] BinningSuccessCriteria, RegionMetadata dataclasses implemented in `feature_selection/validators/binning/diagnostics.py`
 - [ ] Success validation, metadata extraction, shape detection, coverage functions implemented
 - [ ] Docs updated under `docs/api/feature_selection/validators.md`
-- [ ] `pytest tests/integration/feature_validator/binning/ -q` passes
+- [ ] `pytest tests/validators/binning/ -q` passes (unit tests)
+- [ ] `pytest tests/integration/feature_validator/test_binning_diagnostics.py -q` passes (integration test)
 
 ## Notes
 - Test with RSI continuous feature: lookback=[2,3,4,5,6,7,8,9,10], TimeFrame.D
-- Use quantile binning (n_bins=15, default from spec)
+- Use quantile binning (n_bins=5, default from spec)
 - Shape detection enables researcher to distinguish tail effects (monotonic extremes) from hump patterns (non-monotonic optimal regions)
 - Coverage metric helps identify features with narrow tradeable zones (potential overfitting) vs broad applicability

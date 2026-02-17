@@ -9,6 +9,7 @@ Provide seamless integration between the FeatureValidator pipeline and the Vault
 - `ensemble/vault_manager.py` — Existing vault management utilities
 - `feature_selection/base_models/base_model.py` — BaseModel save_to_vault() interface
 - `docs/library/Feature_selection/permutation_testing/in-sample_pt.md` — Ensemble formation section (§4)
+- `docs/kanban/to-do/feature_validator/INTEGRATION_TESTING_SPEC.md` — unit vs integration test standards
 
 ## Scope
 In scope:
@@ -307,55 +308,56 @@ vault/
 
 ## Acceptance tests
 
-1. `pytest tests/integration/feature_validator/test_vault_integration.py::test_save_single_feature_to_vault -v`
-   - Setup: Validate RSI lookback 14, save to vault
-   - Validates: Feature JSON file created in correct location
-   - Checks: File exists, correct directory structure, valid JSON
+**Unit tests:**
 
-2. `pytest tests/integration/feature_validator/test_vault_integration.py::test_save_multiple_features_to_vault -v`
-   - Setup: Validate RSI lookback [3, 4, 5, 10], save all to vault
-   - Validates: All features saved correctly
-   - Checks: 4 JSON files created, all in same ensemble directory
+Validation helpers (`validate_feature_column_timeframe`, `validate_strategy_direction_match`) and directory-path construction are pure logic and must be covered by unit tests. Location: `tests/validators/test_vault_integration.py`
 
-3. `pytest tests/integration/feature_validator/test_vault_integration.py::test_ensemble_directory_creation -v`
-   - Setup: Create new ensemble directory
-   - Validates: Directory structure matches vault spec
-   - Checks: {vault_root}/{timeframe}/{ensemble_name}_{direction}/features/
+- `test_validate_feature_column_timeframe_match()` — pass `rsi_signal_D_lookback_14` and `TimeFrame.D`; assert no error raised
+- `test_validate_feature_column_timeframe_mismatch()` — pass `rsi_signal_D_lookback_14` and `TimeFrame.W`; assert `ValueError`
+- `test_validate_strategy_direction_match_long()` — strategy `'long'` and `Direction.LONG`; assert no error
+- `test_validate_strategy_direction_mismatch()` — strategy `'long'` and `Direction.SHORT`; assert `ValueError` with clear message
+- `test_ensemble_directory_path_construction()` — call `create_ensemble_directory` with a temp root; verify returned path equals `{root}/{timeframe}/{ensemble_name}_{direction}/features/`
+- `test_model_id_collision_raises()` — write a stub JSON file at the expected model path; attempt save without `force_refit`; assert `FileExistsError`
+- `test_force_refit_overwrites()` — write a stub JSON file; save again with `force_refit=True`; assert file content updated
+- `test_get_ensemble_summary_empty_dir()` — call `get_ensemble_summary` on an empty features directory; assert zero counts
 
-4. `pytest tests/integration/feature_validator/test_vault_integration.py::test_strategy_direction_validation -v`
-   - Setup: Try to save long binning model to short ensemble
-   - Validates: ValueError raised with clear message
-   - Checks: No files created, error message mentions strategy/direction mismatch
+**Integration tests:**
 
-5. `pytest tests/integration/feature_validator/test_vault_integration.py::test_timeframe_validation -v`
-   - Setup: Try to save Daily feature to Weekly ensemble
-   - Validates: ValueError raised
-   - Checks: Feature column timeframe doesn't match ensemble timeframe
+Location: `tests/integration/feature_validator/test_vault_integration.py`
 
-6. `pytest tests/integration/feature_validator/test_vault_integration.py::test_model_id_collision -v`
-   - Setup: Save feature, then try to save again with same binning config
-   - Validates: FileExistsError raised (force_refit=False)
-   - Checks: Error message mentions duplicate model ID
+These tests use real feature data extracted from `data/ohlc_data/` and verify actual file I/O to a temporary vault directory.
 
-7. `pytest tests/integration/feature_validator/test_vault_integration.py::test_force_refit -v`
-   - Setup: Save feature, then save again with force_refit=True
-   - Validates: File overwritten successfully
-   - Checks: New fitted state replaces old
+Default integration config:
+```python
+DEFAULT_CONFIG = {
+    'bias_module': 'rsi',
+    'param_name': 'lookback',
+    'param_value': 5,
+    'ticker': Ticker.ES,
+    'timeframe': TimeFrame.D,
+    'date_range': ('2020-01-01', '2023-12-31'),
+    'direction': Direction.LONG
+}
+```
 
-8. `pytest tests/integration/feature_validator/test_vault_integration.py::test_create_ensemble_from_validated_params -v`
-   - Setup: Run validation, identify stable neighborhood, create ensemble
-   - Validates: Convenience method works end-to-end
-   - Checks: Ensemble directory created, all params saved, summary returned
+- `test_save_single_feature_to_vault()` — extract real RSI lookback 5 features from `data/ohlc_data/`; fit model; call `save_validated_features_to_vault()`; assert JSON file created at `{vault_root}/D/rsi_long/features/rsi_signal_D_lookback_5.json`; assert valid JSON with expected keys (`feature_column`, `model_id`, `fitted_state`, `metadata`)
+- `test_save_multiple_features_to_vault()` — RSI lookback [3, 4, 5]; save all to vault; assert 3 JSON files created in same ensemble directory
+- `test_vault_directory_structure()` — create ensemble directory; assert path matches `{vault_root}/{timeframe}/{ensemble_name}_{direction}/features/`
+- `test_vault_load_reload_roundtrip()` — save a fitted model to vault; reload the JSON; assert `fitted_state.bin_edges` and `fitted_state.position_multipliers` match original
+- `test_create_ensemble_from_validated_params()` — run minimal validation on RSI lookback 5, ES daily 2020-2023; call `create_ensemble_from_validated_params()` with stable neighborhood `[(lookback=5,)]`; assert ensemble directory created; assert `get_ensemble_summary()` returns `num_feature_columns=1`
+- `test_full_workflow_rsi_example()` — end-to-end: validate RSI lookback 5, save to vault, reload via `get_ensemble_summary()`; print summary to terminal for manual inspection
+- Also covered by `tests/integration/feature_validator/test_feature_validator_e2e.py::test_end_to_end_validation_workflow()` (vault save step at end of full pipeline)
 
-9. `pytest tests/integration/feature_validator/test_vault_integration.py::test_get_ensemble_summary -v`
-   - Setup: Create ensemble with multiple features
-   - Validates: Summary returns correct counts and metadata
-   - Checks: num_feature_columns, num_models, feature_columns list
+**Cache policy:**
+- Use existing cache: `USE_CACHE=True`
+- If cache missing: skip with message "Run `CacheManager.populate_cache()` first"
+- Cache spec: RSI lookback [5], ES, D, 2020-2023
+- Vault directory: use `tmp_path` fixture (auto-cleaned); do not write to repo vault
 
-10. `pytest tests/integration/feature_validator/test_vault_integration.py::test_full_workflow_rsi_example -v`
-    - Setup: RSI lookback [2,3,4,5,6,7,8,9,10], TimeFrame.D, validate, save stable subset [3,4,5,10]
-    - Validates: Full workflow from validation to vault persistence
-    - Checks: Validated params identified, stable neighborhood saved, ensemble ready for deployment
+**Researcher manual verification:**
+- After running vault integration tests, inspect printed summary: verify `num_feature_columns`, `feature_columns` list, and `model_ids_per_feature`
+- Open generated JSON file in `tmp_path` and confirm `fitted_state.bin_edges` are monotonically increasing and `position_multipliers` are 0 or 1
+- Verify directory structure matches `vault/{timeframe}/{ensemble_name}_{direction}/features/*.json`
 
 ## Definition of done
 - [ ] Tests added under `tests/integration/feature_validator/test_vault_integration.py`
