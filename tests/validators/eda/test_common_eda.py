@@ -91,7 +91,7 @@ def test_correlation_analysis_lagged_synthetic() -> None:
     base = pd.Series(np.random.randn(n), index=idx)
     target = base.shift(1).fillna(0)
     result = compute_correlation_analysis(base, target, max_lag=5)
-    assert result.lagged_correlations[1] > result.lagged_correlations[0]
+    assert result.lagged_correlations[1] > result.pearson
     assert result.lagged_correlations[1] > result.lagged_correlations[2]
 
 

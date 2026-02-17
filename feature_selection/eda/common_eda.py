@@ -18,25 +18,6 @@ from feature_selection.eda.eda_dataclasses import (
 )
 
 
-class _LaggedCorrelationDict(dict):  # type: ignore[type-arg]
-    """Dict subclass that exposes lag-0 (contemporaneous) via key 0 without
-    including it in the reported key set (keys(), items(), __iter__).
-
-    This allows test_correlation_analysis_lagged_synthetic to access
-    result.lagged_correlations[0] (contemporaneous Pearson) while
-    test_correlation_analysis_has_all_lags sees keys == {1..max_lag}.
-    """
-
-    def __init__(self, lag_dict: dict[int, float], pearson: float) -> None:
-        super().__init__(lag_dict)
-        self._pearson = pearson
-
-    def __missing__(self, key: int) -> float:
-        if key == 0:
-            return self._pearson
-        raise KeyError(key)
-
-
 def _validate_aligned_index(feature: pd.Series, target: pd.Series) -> None:
     """Raise ValueError if feature and target do not share the same DatetimeIndex."""
     if not feature.index.equals(target.index):
@@ -109,7 +90,6 @@ def compute_correlation_analysis(
     """Compute Pearson, Spearman, Kendall, and lagged correlations.
 
     Lags 1..max_lag are stored in lagged_correlations dict.
-    Key 0 (contemporaneous) is accessible via dict.__missing__ but not in keys().
     """
     aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
     f, t = aligned["f"], aligned["t"]
@@ -122,13 +102,12 @@ def compute_correlation_analysis(
         lag: float(f.corr(t.shift(-lag), method="pearson"))
         for lag in range(1, max_lag + 1)
     }
-    lagged_dict = _LaggedCorrelationDict(lagged, pearson)
 
     return CorrelationAnalysis(
         pearson=pearson,
         spearman=spearman,
         kendall=kendall,
-        lagged_correlations=lagged_dict,
+        lagged_correlations=lagged,
     )
 
 
@@ -142,14 +121,11 @@ def compute_rolling_objective(
 
     First (window-1) values are NaN (no partial windows).
     """
-    result_values: list[float] = []
-    for i in range(len(returns)):
-        if i < window - 1:
-            result_values.append(float("nan"))
-        else:
-            s_window = signals.iloc[i - window + 1: i + 1]
-            r_window = returns.iloc[i - window + 1: i + 1]
-            result_values.append(float(objective_fn(s_window, r_window)))
+    result_values = [
+        float("nan") if i < window - 1
+        else float(objective_fn(signals.iloc[i - window + 1: i + 1], returns.iloc[i - window + 1: i + 1]))
+        for i in range(len(returns))
+    ]
     return pd.Series(result_values, index=returns.index)
 
 
