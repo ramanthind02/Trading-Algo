@@ -194,6 +194,31 @@ Observable behavior:
 - Warmup output is `50.0` until lookback is reached.
 - Uses Cython fast kernels (`compute_rsi_initial_fast`, `update_rsi_fast`) via `utils.fast_nodes`.
 
+### `nodes.rsi_signal.RSISignal`
+Type: class
+
+Signature:
+```python
+class RSISignal(BiasNode):
+    def __init__(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        rsi_period: int = 14,
+        oversold: float = 30.0,
+        overbought: float = 70.0,
+        strategy_mode: str = "long",
+        exit_policy: str = "threshold_or_bars",
+        exit_bars: int = 5,
+    )
+```
+
+Observable behavior:
+- Outputs `-1`, `0`, or `1` based on RSI threshold crosses.
+- `strategy_mode` controls long-only, short-only, or long-short behavior.
+- `exit_policy="threshold_or_bars"` exits after `exit_bars` or threshold cross.
+- Warmup outputs `0` until `rsi_period` candles.
+
 ### `nodes.atr.ATRNode`
 Type: class
 
