@@ -2,17 +2,26 @@
 Parameter Sensitivity Analysis and Visualization
 
 This module provides tools for analyzing and visualizing parameter sensitivity
-for feature engineering modules, including 1D and 2D parameter sweeps.
+for feature engineering modules, including 1D and 2D parameter sweeps,
+grid-aware neighbor smoothing, stable region identification, and report generation.
 """
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Union, Optional, Any
+
 import numpy as np
 import pandas as pd
-from feature_selection.base_models.quantile_binning import QuantileBinningModel
+import plotly.graph_objects as go
+from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from metrics.performance import SortinoRatio, SharpeRatio
 from metrics.plotting.parameter_plots import (
     plot_parameter_sensitivity as plot_parameter_sensitivity_pure,
     plot_2d_parameter_surface as plot_2d_parameter_surface_pure,
 )
+from utils.grid_smoothing import add_smoothed_objective
 
 def _get_metric_name_from_object(metric_obj: Any) -> str:
     """
@@ -42,6 +51,430 @@ def _get_metric_name_from_object(metric_obj: Any) -> str:
     
     # Fallback: just lowercase the class name
     return class_name.lower()
+
+
+# ---------------------------------------------------------------------------
+# T009 — Grid-Aware Neighbor Smoothing (wrapper around utils.grid_smoothing)
+# ---------------------------------------------------------------------------
+
+def identify_neighbors(
+    param_values: Tuple,
+    grid_structure: Dict[str, List],
+) -> List[Tuple]:
+    """
+    Return all 1-step axis-aligned neighbor tuples for a given parameter combination.
+
+    Parameters
+    ----------
+    param_values : Tuple
+        Current parameter combination (p1, p2, ..., pN).
+    grid_structure : Dict[str, List]
+        Ordered mapping of param names to their sorted unique values.
+        Example: {"lookback": [2, 3, 4, 5], "threshold": [0.3, 0.5, 0.7]}
+
+    Returns
+    -------
+    List[Tuple]
+        Neighbor tuples that differ in exactly one dimension by one grid step.
+    """
+    param_names = list(grid_structure.keys())
+    neighbors: List[Tuple] = []
+
+    for dim_idx, name in enumerate(param_names):
+        sorted_vals = grid_structure[name]
+        current_val = param_values[dim_idx]
+
+        try:
+            pos = sorted_vals.index(current_val)
+        except ValueError:
+            continue
+
+        for offset in (-1, 1):
+            neighbor_pos = pos + offset
+            if 0 <= neighbor_pos < len(sorted_vals):
+                neighbor_list = list(param_values)
+                neighbor_list[dim_idx] = sorted_vals[neighbor_pos]
+                neighbors.append(tuple(neighbor_list))
+
+    return neighbors
+
+
+def compute_neighbor_smoothing(
+    results_df: pd.DataFrame,
+    param_names: List[str],
+    metric_col: str,
+) -> pd.DataFrame:
+    """
+    Add smoothed objective, stability ratio, and neighbor count columns.
+
+    Wraps ``utils.grid_smoothing.add_smoothed_objective()`` and enriches the
+    result with:
+    - ``smoothed_{metric_col}``: neighbor-averaged metric
+    - ``stability_ratio``: smoothed / raw (NaN when raw == 0)
+    - ``n_neighbors``: number of existing grid neighbors per row
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame
+        Grid search results with ``param1_value`` … ``paramN_value`` columns
+        and the metric column.
+    param_names : List[str]
+        Human-readable parameter names (same order as paramK_value columns).
+    metric_col : str
+        Column name of the raw objective metric (e.g. ``'sortino'``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *results_df* with three new columns added.
+    """
+    n_params = len(param_names)
+    param_cols = [f"param{k}_value" for k in range(1, n_params + 1)]
+
+    smoothed_col = f"smoothed_{metric_col}"
+
+    # Delegate to the core smoothing algorithm
+    smoothed_df = add_smoothed_objective(
+        df=results_df,
+        param_columns=param_cols,
+        objective_column=metric_col,
+        output_column=smoothed_col,
+    )
+
+    # Stability ratio: smoothed / raw  (NaN when raw == 0)
+    raw = smoothed_df[metric_col].values.astype(float)
+    smoothed = smoothed_df[smoothed_col].values.astype(float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(raw != 0.0, smoothed / raw, np.nan)
+    smoothed_df["stability_ratio"] = ratio
+
+    # Compute n_neighbors per row using identify_neighbors()
+    grid_structure: Dict[str, List] = {}
+    for col, name in zip(param_cols, param_names):
+        unique_vals = sorted(smoothed_df[col].dropna().unique())
+        grid_structure[name] = unique_vals
+
+    # Build a set of all existing grid points for O(1) membership checks
+    existing_points = set(
+        tuple(row) for row in smoothed_df[param_cols].values
+    )
+
+    n_neighbors_arr = np.empty(len(smoothed_df), dtype=int)
+    param_values_arr = smoothed_df[param_cols].values
+
+    for i, row_params in enumerate(param_values_arr):
+        all_neighbors = identify_neighbors(tuple(row_params), grid_structure)
+        n_neighbors_arr[i] = sum(1 for nb in all_neighbors if nb in existing_points)
+
+    smoothed_df["n_neighbors"] = n_neighbors_arr
+
+    return smoothed_df
+
+
+# ---------------------------------------------------------------------------
+# T010 — Stable Region Identification
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class StableRegion:
+    """A contiguous set of parameter combinations with high stability ratio."""
+
+    param_ranges: Dict[str, Tuple[Any, Any]]
+    param_combinations: List[Tuple]
+    mean_stability_ratio: float
+    mean_objective: float
+    min_objective: float
+    max_objective: float
+    n_combinations: int
+    is_boundary_region: bool
+
+
+def identify_stable_regions(
+    smoothed_df: pd.DataFrame,
+    metric_col: str,
+    stability_threshold: float = 0.8,
+) -> List[StableRegion]:
+    """
+    Find contiguous regions of the parameter grid where stability_ratio > threshold.
+
+    Uses BFS on an axis-aligned adjacency graph to discover connected components
+    among grid points that exceed the stability threshold.
+
+    Parameters
+    ----------
+    smoothed_df : pd.DataFrame
+        DataFrame from ``compute_neighbor_smoothing()`` with ``paramK_value``,
+        ``smoothed_{metric_col}``, and ``stability_ratio`` columns.
+    metric_col : str
+        Name of the *smoothed* metric column (e.g. ``'smoothed_sortino'``).
+        The corresponding raw column is inferred by stripping the ``smoothed_``
+        prefix if present.
+    stability_threshold : float, default 0.8
+        Minimum stability ratio to include a point in a stable region.
+
+    Returns
+    -------
+    List[StableRegion]
+        Stable regions with ≥ 2 parameter combinations, sorted by
+        ``mean_objective`` descending.
+    """
+    param_cols = sorted(
+        [c for c in smoothed_df.columns if c.startswith("param") and c.endswith("_value")]
+    )
+    n_params = len(param_cols)
+
+    # Infer human-readable param names from column names (param1_value -> param1)
+    param_names = [c.replace("_value", "") for c in param_cols]
+
+    # Build grid structure for neighbor lookups
+    grid_structure: Dict[str, List] = {}
+    for col, name in zip(param_cols, param_names):
+        grid_structure[name] = sorted(smoothed_df[col].dropna().unique())
+
+    # Grid boundary values for boundary detection
+    grid_min_max: Dict[str, Tuple] = {}
+    for name, vals in grid_structure.items():
+        grid_min_max[name] = (vals[0], vals[-1]) if vals else (None, None)
+
+    # Filter to stable points
+    stable_mask = smoothed_df["stability_ratio"] > stability_threshold
+    stable_df = smoothed_df[stable_mask].copy()
+
+    if stable_df.empty:
+        return []
+
+    # Build point -> index mapping for BFS
+    stable_points: Dict[Tuple, int] = {}
+    for idx, row in enumerate(stable_df[param_cols].values):
+        stable_points[tuple(row)] = idx
+
+    # BFS to find connected components
+    visited: set = set()
+    components: List[List[Tuple]] = []
+
+    for point in stable_points:
+        if point in visited:
+            continue
+
+        # BFS from this point
+        component: List[Tuple] = []
+        queue = deque([point])
+        visited.add(point)
+
+        while queue:
+            current = queue.popleft()
+            component.append(current)
+
+            neighbors = identify_neighbors(current, grid_structure)
+            for nb in neighbors:
+                if nb in stable_points and nb not in visited:
+                    visited.add(nb)
+                    queue.append(nb)
+
+        components.append(component)
+
+    # Build StableRegion objects (minimum size = 2)
+    smoothed_metric_col = metric_col if metric_col.startswith("smoothed_") else f"smoothed_{metric_col}"
+    raw_metric_col = metric_col.replace("smoothed_", "") if metric_col.startswith("smoothed_") else metric_col
+
+    regions: List[StableRegion] = []
+    for component in components:
+        if len(component) < 2:
+            continue
+
+        # Gather metrics for points in this component
+        component_set = set(component)
+        mask = stable_df[param_cols].apply(lambda row: tuple(row) in component_set, axis=1)
+        region_df = stable_df[mask]
+
+        # Param ranges
+        param_range_dict: Dict[str, Tuple[Any, Any]] = {}
+        for col, name in zip(param_cols, param_names):
+            vals = region_df[col].values
+            param_range_dict[name] = (vals.min(), vals.max())
+
+        # Boundary detection: check if any param value touches grid min/max
+        is_boundary = False
+        for col, name in zip(param_cols, param_names):
+            gmin, gmax = grid_min_max[name]
+            if gmin in region_df[col].values or gmax in region_df[col].values:
+                is_boundary = True
+                break
+
+        # Use the smoothed metric column for objective values
+        obj_col = smoothed_metric_col if smoothed_metric_col in region_df.columns else raw_metric_col
+        obj_values = region_df[obj_col].values
+
+        regions.append(StableRegion(
+            param_ranges=param_range_dict,
+            param_combinations=component,
+            mean_stability_ratio=float(region_df["stability_ratio"].mean()),
+            mean_objective=float(np.nanmean(obj_values)),
+            min_objective=float(np.nanmin(obj_values)),
+            max_objective=float(np.nanmax(obj_values)),
+            n_combinations=len(component),
+            is_boundary_region=is_boundary,
+        ))
+
+    # Sort by mean_objective descending
+    regions.sort(key=lambda r: r.mean_objective, reverse=True)
+    return regions
+
+
+# ---------------------------------------------------------------------------
+# T012 — ParameterSensitivityReport dataclass
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ParameterSensitivityReport:
+    """Structured output of Phase 3 parameter sensitivity analysis."""
+
+    # Input metadata
+    param_names: List[str]
+    metric_name: str
+    stability_threshold: float
+
+    # Grid analysis results
+    grid_results: pd.DataFrame
+    stable_regions: List[StableRegion]
+
+    # Summary statistics
+    mean_stability_ratio: float
+    median_stability_ratio: float
+    pct_stable_combinations: float
+
+    # Recommendations
+    recommended_combinations: List[Tuple]
+    top_k_combinations: List[Tuple]
+
+    # Visualizations
+    plot_1d: Optional[go.Figure] = None
+    plot_2d: Optional[go.Figure] = None
+    plot_3d: Optional[go.Figure] = None
+
+    # Diagnostic info
+    n_parameter_combinations: int = 0
+    n_stable_regions: int = 0
+    timestamp: str = ""
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+def generate_parameter_sensitivity_report(
+    results_df: pd.DataFrame,
+    param_names: List[str],
+    metric_col: str,
+    stability_threshold: float = 0.8,
+    top_k: int = 3,
+) -> ParameterSensitivityReport:
+    """
+    Orchestrate T009 → T010 → T011 to produce a ParameterSensitivityReport.
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame
+        Grid search results with ``paramK_value`` columns and *metric_col*.
+    param_names : List[str]
+        Human-readable parameter names (same order as paramK_value columns).
+    metric_col : str
+        Column name of the raw objective metric (e.g. ``'sortino'``).
+    stability_threshold : float, default 0.8
+        Minimum stability ratio for stable region membership.
+    top_k : int, default 3
+        Number of top recommended parameter combinations.
+
+    Returns
+    -------
+    ParameterSensitivityReport
+    """
+    from metrics.plotting.parameter_plots import (
+        plot_parameter_sensitivity_with_stability,
+        plot_2d_stability_heatmap,
+        plot_3d_slices,
+    )
+
+    # Step 1: Neighbor smoothing (T009)
+    smoothed_df = compute_neighbor_smoothing(results_df, param_names, metric_col)
+
+    # Step 2: Stable region identification (T010)
+    stable_regions = identify_stable_regions(
+        smoothed_df, metric_col, stability_threshold
+    )
+
+    # Step 3: Generate plots (T011) based on dimensionality
+    n_dims = len(param_names)
+    plot_1d: Optional[go.Figure] = None
+    plot_2d: Optional[go.Figure] = None
+    plot_3d: Optional[go.Figure] = None
+
+    if n_dims == 1:
+        plot_1d = plot_parameter_sensitivity_with_stability(
+            df=smoothed_df,
+            param_name=param_names[0],
+            metric=metric_col,
+            stable_regions=stable_regions,
+            stability_threshold=stability_threshold,
+            show_plot=False,
+        )
+    elif n_dims == 2:
+        plot_2d = plot_2d_stability_heatmap(
+            df=smoothed_df,
+            param1=param_names[0],
+            param2=param_names[1],
+            metric=metric_col,
+            stable_regions=stable_regions,
+            show_plot=False,
+        )
+    else:
+        plot_3d = plot_3d_slices(
+            df=smoothed_df,
+            param_names=param_names,
+            metric=metric_col,
+            show_plot=False,
+        )
+
+    # Step 4: Recommendations — filter to stable combos, rank by smoothed metric
+    smoothed_metric_col = f"smoothed_{metric_col}"
+    param_cols = [f"param{k}_value" for k in range(1, n_dims + 1)]
+
+    stable_combos_set: set = set()
+    for region in stable_regions:
+        stable_combos_set.update(region.param_combinations)
+
+    stable_mask = smoothed_df[param_cols].apply(
+        lambda row: tuple(row) in stable_combos_set, axis=1
+    )
+    stable_rows = smoothed_df[stable_mask].sort_values(
+        by=smoothed_metric_col, ascending=False
+    )
+    recommended = [tuple(row) for row in stable_rows[param_cols].values]
+    top_k_combos = recommended[:top_k]
+
+    # Step 5: Summary statistics
+    ratios = smoothed_df["stability_ratio"].dropna()
+    mean_ratio = float(ratios.mean()) if len(ratios) > 0 else 0.0
+    median_ratio = float(ratios.median()) if len(ratios) > 0 else 0.0
+    pct_stable = float((ratios > stability_threshold).mean()) if len(ratios) > 0 else 0.0
+
+    return ParameterSensitivityReport(
+        param_names=param_names,
+        metric_name=metric_col,
+        stability_threshold=stability_threshold,
+        grid_results=smoothed_df,
+        stable_regions=stable_regions,
+        mean_stability_ratio=mean_ratio,
+        median_stability_ratio=median_ratio,
+        pct_stable_combinations=pct_stable,
+        recommended_combinations=recommended,
+        top_k_combinations=top_k_combos,
+        plot_1d=plot_1d,
+        plot_2d=plot_2d,
+        plot_3d=plot_3d,
+        n_parameter_combinations=len(smoothed_df),
+        n_stable_regions=len(stable_regions),
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 class ParameterAnalyzer:
@@ -142,9 +575,9 @@ class ParameterAnalyzer:
             Metric object from metrics.performance (e.g., SortinoRatio, SharpeRatio).
             Must have a .compute() method. If None, defaults to SortinoRatio.
         n_bins : int, default=5
-            Number of bins for QuantileBinningModel
+            Number of bins for ContinuousBinningModel
         base_model : Optional[Any], default=None
-            Model instance with fit/predict methods. If None, uses QuantileBinningModel.
+            Model instance with fit/predict methods. If None, uses ContinuousBinningModel.
         **metric_kwargs
             DEPRECATED: Additional keyword arguments for metric functions.
             Pass metric configuration directly to the metric object constructor.
@@ -155,7 +588,7 @@ class ParameterAnalyzer:
             DataFrame with parameter values and computed metrics
         """
         # Initialize model
-        model = base_model if base_model is not None else QuantileBinningModel(n_bins=n_bins)
+        model = base_model if base_model is not None else ContinuousBinningModel(n_bins=n_bins)
         
         # Use provided metric or default to SortinoRatio
         if metric is None:
@@ -246,9 +679,9 @@ class ParameterAnalyzer:
             Metric object from metrics.performance (e.g., SortinoRatio, SharpeRatio).
             Must have a .compute() method. If None, defaults to SortinoRatio.
         n_bins : int, default=5
-            Number of bins for QuantileBinningModel
+            Number of bins for ContinuousBinningModel
         base_model : Optional[Any], default=None
-            Model instance with fit/predict methods. If None, uses QuantileBinningModel.
+            Model instance with fit/predict methods. If None, uses ContinuousBinningModel.
         **metric_kwargs
             DEPRECATED: Additional keyword arguments for metric functions.
             Pass metric configuration directly to the metric object constructor.
@@ -259,7 +692,7 @@ class ParameterAnalyzer:
             DataFrame with parameter values and computed metrics
         """
         # Initialize model
-        model = base_model if base_model is not None else QuantileBinningModel(n_bins=n_bins)
+        model = base_model if base_model is not None else ContinuousBinningModel(n_bins=n_bins)
         
         # Use provided metric or default to SortinoRatio
         if metric is None:
@@ -359,16 +792,16 @@ class ParameterAnalyzer:
         metric : Optional[Any], default=None
             Metric object with .compute() method. Defaults to SortinoRatio.
         n_bins : int, default=5
-            Number of bins for QuantileBinningModel.
+            Number of bins for ContinuousBinningModel.
         base_model : Optional[Any], default=None
-            Model instance with fit/predict methods. Defaults to QuantileBinningModel.
+            Model instance with fit/predict methods. Defaults to ContinuousBinningModel.
 
         Returns
         -------
         pd.DataFrame
             DataFrame with paramK_value columns (K=1..N) and computed metrics.
         """
-        model = base_model if base_model is not None else QuantileBinningModel(n_bins=n_bins)
+        model = base_model if base_model is not None else ContinuousBinningModel(n_bins=n_bins)
 
         if metric is None:
             metric = SortinoRatio(annualization_factor=252)

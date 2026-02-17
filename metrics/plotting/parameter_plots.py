@@ -8,12 +8,17 @@ Author: Trading Research Team
 Date: 2025-01-XX
 """
 
-from typing import Optional, List
+from __future__ import annotations
+
+from typing import Optional, List, TYPE_CHECKING
 from itertools import combinations
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+if TYPE_CHECKING:
+    from eda.parameter_analysis import StableRegion
 
 
 def plot_parameter_sensitivity(
@@ -739,5 +744,465 @@ def plot_4d_parameter_interactive(
     if show_plot:
         fig.show()
 
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# T011 — Stability-Aware Visualizations
+# ---------------------------------------------------------------------------
+
+def plot_parameter_sensitivity_with_stability(
+    df: pd.DataFrame,
+    param_name: str,
+    metric: str = "sortino",
+    stable_regions: Optional[List["StableRegion"]] = None,
+    stability_threshold: float = 0.8,
+    title: Optional[str] = None,
+    show_plot: bool = True,
+) -> go.Figure:
+    """
+    1D parameter sensitivity with raw + smoothed lines and shaded stable regions.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain ``param1_value``, *metric*, ``smoothed_{metric}``,
+        ``stability_ratio``, and optionally ``n_neighbors``.
+    param_name : str
+        Human-readable parameter name for axis labels.
+    metric : str
+        Raw metric column name.
+    stable_regions : list of StableRegion, optional
+        Regions to shade. When *None*, shading is derived from
+        ``stability_ratio > stability_threshold``.
+    stability_threshold : float
+        Threshold for inline stability shading when *stable_regions* is None.
+    title : str, optional
+        Plot title.
+    show_plot : bool
+        Whether to call ``fig.show()``.
+
+    Returns
+    -------
+    go.Figure
+    """
+    smoothed_col = f"smoothed_{metric}"
+    x_col = "param1_value"
+
+    plot_df = df[[c for c in [x_col, metric, smoothed_col, "stability_ratio", "n_neighbors"]
+                  if c in df.columns]].copy()
+    plot_df[x_col] = pd.to_numeric(plot_df[x_col], errors="coerce")
+    plot_df = plot_df.dropna(subset=[x_col, metric]).sort_values(x_col)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # Raw metric line
+    fig.add_trace(
+        go.Scatter(
+            x=plot_df[x_col], y=plot_df[metric],
+            mode="lines+markers",
+            name=f"{metric.capitalize()} (raw)",
+            line=dict(color="#1f77b4"),
+            marker=dict(size=8),
+            hovertemplate=(
+                f"<b>{param_name}</b>: %{{x}}<br>"
+                f"<b>{metric.capitalize()} (raw)</b>: %{{y:.4f}}<br>"
+                "<extra></extra>"
+            ),
+        ),
+        secondary_y=False,
+    )
+
+    # Smoothed metric line
+    if smoothed_col in plot_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=plot_df[x_col], y=plot_df[smoothed_col],
+                mode="lines+markers",
+                name=f"{metric.capitalize()} (smoothed)",
+                line=dict(color="#ff7f0e", dash="dash"),
+                marker=dict(size=6, symbol="diamond"),
+                hovertemplate=(
+                    f"<b>{param_name}</b>: %{{x}}<br>"
+                    f"<b>{metric.capitalize()} (smoothed)</b>: %{{y:.4f}}<br>"
+                    "<extra></extra>"
+                ),
+            ),
+            secondary_y=False,
+        )
+
+    # Stability ratio on secondary y-axis
+    if "stability_ratio" in plot_df.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=plot_df[x_col], y=plot_df["stability_ratio"],
+                mode="lines",
+                name="Stability Ratio",
+                line=dict(color="gray", dash="dot", width=1),
+                opacity=0.5,
+                hovertemplate=(
+                    f"<b>{param_name}</b>: %{{x}}<br>"
+                    "<b>Stability Ratio</b>: %{y:.2f}<br>"
+                    "<extra></extra>"
+                ),
+            ),
+            secondary_y=True,
+        )
+
+    # Shaded stable regions
+    if stable_regions:
+        for region in stable_regions:
+            x_vals = [combo[0] for combo in region.param_combinations]
+            x_lo, x_hi = min(x_vals), max(x_vals)
+            fig.add_vrect(
+                x0=x_lo, x1=x_hi,
+                fillcolor="rgba(0,200,0,0.12)",
+                layer="below",
+                line_width=0,
+                annotation_text="stable",
+                annotation_position="top left",
+                annotation_font_size=9,
+                annotation_font_color="green",
+            )
+    else:
+        # Derive contiguous stable runs from stability_ratio directly
+        _add_inline_stable_shading(fig, plot_df, x_col, stability_threshold)
+
+    if title is None:
+        title = f"Parameter Sensitivity with Stability: {param_name}"
+
+    fig.update_layout(
+        title=title,
+        xaxis_title=param_name,
+        yaxis_title=metric.capitalize(),
+        yaxis2_title="Stability Ratio",
+        hovermode="x unified",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=50, r=50, t=100, b=50),
+    )
+
+    if show_plot:
+        fig.show()
+    return fig
+
+
+def _add_inline_stable_shading(
+    fig: go.Figure,
+    plot_df: pd.DataFrame,
+    x_col: str,
+    threshold: float,
+) -> None:
+    """Add vrects for contiguous runs where stability_ratio > threshold."""
+    if "stability_ratio" not in plot_df.columns:
+        return
+
+    x_vals = plot_df[x_col].values
+    ratios = plot_df["stability_ratio"].values
+    stable = ratios > threshold
+
+    i = 0
+    while i < len(stable):
+        if stable[i]:
+            start = i
+            while i < len(stable) and stable[i]:
+                i += 1
+            end = i - 1
+            if end > start:  # at least 2 contiguous points
+                fig.add_vrect(
+                    x0=float(x_vals[start]), x1=float(x_vals[end]),
+                    fillcolor="rgba(0,200,0,0.12)",
+                    layer="below",
+                    line_width=0,
+                )
+        else:
+            i += 1
+
+
+def plot_2d_stability_heatmap(
+    df: pd.DataFrame,
+    param1: str,
+    param2: str,
+    metric: str = "sortino",
+    stable_regions: Optional[List["StableRegion"]] = None,
+    title: Optional[str] = None,
+    show_plot: bool = True,
+) -> go.Figure:
+    """
+    2D heatmap of smoothed objective with stable region contour overlay.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain ``param1_value``, ``param2_value``,
+        ``smoothed_{metric}``, ``stability_ratio``.
+    param1 : str
+        Name for the y-axis parameter.
+    param2 : str
+        Name for the x-axis parameter.
+    metric : str
+        Raw metric column name.
+    stable_regions : list of StableRegion, optional
+        Regions whose boundaries are highlighted.
+    title : str, optional
+    show_plot : bool
+
+    Returns
+    -------
+    go.Figure
+    """
+    smoothed_col = f"smoothed_{metric}"
+    obj_col = smoothed_col if smoothed_col in df.columns else metric
+
+    pivot_obj = df.pivot_table(
+        index="param1_value", columns="param2_value", values=obj_col,
+    ).sort_index(axis=0).sort_index(axis=1)
+
+    fig = go.Figure()
+
+    # Main heatmap (smoothed objective, Viridis)
+    fig.add_trace(go.Heatmap(
+        z=pivot_obj.values,
+        x=[str(v) for v in pivot_obj.columns],
+        y=[str(v) for v in pivot_obj.index],
+        colorscale="Viridis",
+        colorbar=dict(title=f"{metric.capitalize()}<br>(smoothed)", x=1.0),
+        name="Smoothed Objective",
+        hovertemplate=(
+            f"<b>{param1}</b>: %{{y}}<br>"
+            f"<b>{param2}</b>: %{{x}}<br>"
+            f"<b>{metric} (smoothed)</b>: %{{z:.4f}}<br>"
+            "<extra></extra>"
+        ),
+    ))
+
+    # Stability ratio contour overlay (RdYlGn)
+    if "stability_ratio" in df.columns:
+        pivot_sr = df.pivot_table(
+            index="param1_value", columns="param2_value", values="stability_ratio",
+        ).sort_index(axis=0).sort_index(axis=1)
+
+        fig.add_trace(go.Contour(
+            z=pivot_sr.values,
+            x=[str(v) for v in pivot_sr.columns],
+            y=[str(v) for v in pivot_sr.index],
+            colorscale="RdYlGn",
+            opacity=0.35,
+            showscale=True,
+            colorbar=dict(title="Stability<br>Ratio", x=1.12),
+            contours=dict(showlabels=True, labelfont=dict(size=10, color="black")),
+            name="Stability Ratio",
+            hovertemplate=(
+                f"<b>{param1}</b>: %{{y}}<br>"
+                f"<b>{param2}</b>: %{{x}}<br>"
+                "<b>Stability Ratio</b>: %{z:.2f}<br>"
+                "<extra></extra>"
+            ),
+        ))
+
+    # Highlight stable region boundaries
+    if stable_regions:
+        for region in stable_regions:
+            xs = [str(combo[1]) for combo in region.param_combinations]
+            ys = [str(combo[0]) for combo in region.param_combinations]
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys,
+                mode="markers",
+                marker=dict(
+                    size=14,
+                    color="rgba(0,0,0,0)",
+                    line=dict(color="lime", width=2),
+                    symbol="square",
+                ),
+                name=f"Stable Region (n={region.n_combinations})",
+                hovertemplate=(
+                    f"<b>Stable Region</b><br>"
+                    f"<b>Mean Obj</b>: {region.mean_objective:.4f}<br>"
+                    f"<b>Stability</b>: {region.mean_stability_ratio:.2f}<br>"
+                    "<extra></extra>"
+                ),
+            ))
+
+    if title is None:
+        title = f"2D Stability Heatmap: {param1} vs {param2} ({metric.capitalize()})"
+
+    fig.update_layout(
+        title=title,
+        xaxis_title=param2,
+        yaxis_title=param1,
+        template="plotly_white",
+        margin=dict(l=60, r=120, t=80, b=60),
+    )
+
+    if show_plot:
+        fig.show()
+    return fig
+
+
+def plot_3d_slices(
+    df: pd.DataFrame,
+    param_names: List[str],
+    metric: str = "sortino",
+    title: Optional[str] = None,
+    show_plot: bool = True,
+) -> go.Figure:
+    """
+    3D+ parameter sensitivity via 2D slices with dropdown + slider.
+
+    For each choice of a fixed parameter, show a heatmap of the smoothed
+    metric across the remaining two parameters.  A dropdown selects which
+    parameter to fix; a slider steps through its values.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Must contain ``param1_value`` … ``paramN_value`` (N ≥ 3) and
+        ``smoothed_{metric}`` (or falls back to *metric*).
+    param_names : list of str
+        Human-readable names for each dimension.
+    metric : str
+        Raw metric column name.
+    title : str, optional
+    show_plot : bool
+
+    Returns
+    -------
+    go.Figure
+    """
+    n_params = len(param_names)
+    if n_params < 3:
+        raise ValueError(f"plot_3d_slices requires >= 3 params, got {n_params}")
+
+    param_cols = [f"param{k}_value" for k in range(1, n_params + 1)]
+    smoothed_col = f"smoothed_{metric}"
+    obj_col = smoothed_col if smoothed_col in df.columns else metric
+
+    traces: list = []
+    dropdown_buttons: list = []
+    slider_groups: dict = {}
+
+    trace_idx = 0
+    for fixed_idx in range(n_params):
+        fixed_col = param_cols[fixed_idx]
+        free_indices = [i for i in range(n_params) if i != fixed_idx]
+        # Pick first two free dims for the 2D slice
+        free_cols = [param_cols[free_indices[0]], param_cols[free_indices[1]]]
+        free_names = [param_names[free_indices[0]], param_names[free_indices[1]]]
+
+        fixed_values = sorted(df[fixed_col].unique())
+        group_start = trace_idx
+
+        for fixed_val in fixed_values:
+            subset = df[df[fixed_col] == fixed_val]
+
+            # If there are more free dims (>2 remaining), aggregate over them
+            if len(free_indices) > 2:
+                subset = subset.groupby(free_cols, as_index=False)[obj_col].mean()
+
+            if subset.empty or subset[free_cols[0]].nunique() < 2 or subset[free_cols[1]].nunique() < 2:
+                traces.append(go.Heatmap(z=[[0]], x=["0"], y=["0"], visible=False, showscale=False))
+                trace_idx += 1
+                continue
+
+            pivot = subset.pivot_table(
+                index=free_cols[0], columns=free_cols[1], values=obj_col,
+            ).sort_index(axis=0).sort_index(axis=1)
+
+            trace = go.Heatmap(
+                z=pivot.values,
+                x=[str(v) for v in pivot.columns],
+                y=[str(v) for v in pivot.index],
+                colorscale="Viridis",
+                visible=False,
+                showscale=True,
+                colorbar=dict(title=metric.capitalize()),
+                hovertemplate=(
+                    f"<b>{free_names[0]}</b>: %{{y}}<br>"
+                    f"<b>{free_names[1]}</b>: %{{x}}<br>"
+                    f"<b>{metric}</b>: %{{z:.4f}}<br>"
+                    f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
+                    "<extra></extra>"
+                ),
+            )
+            traces.append(trace)
+            trace_idx += 1
+
+        group_end = trace_idx
+        slider_groups[fixed_idx] = {
+            "start": group_start,
+            "end": group_end,
+            "values": fixed_values,
+            "free_names": free_names,
+        }
+
+    fig = go.Figure(data=traces)
+    total_traces = len(traces)
+
+    # Dropdown buttons
+    for fixed_idx in range(n_params):
+        group = slider_groups[fixed_idx]
+        vis = [False] * total_traces
+        if group["start"] < group["end"]:
+            vis[group["start"]] = True
+
+        dropdown_buttons.append(dict(
+            label=f"Fix {param_names[fixed_idx]}",
+            method="update",
+            args=[
+                {"visible": vis},
+                {
+                    "xaxis_title": group["free_names"][1],
+                    "yaxis_title": group["free_names"][0],
+                },
+            ],
+        ))
+
+    # Slider for default group (fixed_idx=0)
+    default_group = slider_groups[0]
+    slider_steps = []
+    for i, val in enumerate(default_group["values"]):
+        vis = [False] * total_traces
+        vis[default_group["start"] + i] = True
+        slider_steps.append(dict(
+            method="update",
+            args=[{"visible": vis}],
+            label=str(val),
+        ))
+
+    if default_group["start"] < default_group["end"]:
+        fig.data[default_group["start"]].visible = True
+
+    if title is None:
+        title = f"{metric.capitalize()} — Multi-Parameter Slices: {', '.join(param_names)}"
+
+    layout_kwargs: dict = dict(
+        title=title,
+        title_x=0.5,
+        xaxis_title=default_group["free_names"][1],
+        yaxis_title=default_group["free_names"][0],
+        template="plotly_white",
+        margin=dict(l=60, r=60, t=120, b=100),
+        updatemenus=[dict(
+            type="dropdown",
+            direction="down",
+            x=0.05, xanchor="left",
+            y=1.12, yanchor="top",
+            buttons=dropdown_buttons,
+            active=0,
+        )],
+    )
+
+    if slider_steps:
+        layout_kwargs["sliders"] = [dict(
+            active=0,
+            currentvalue=dict(prefix=f"{param_names[0]}="),
+            pad=dict(t=60),
+            steps=slider_steps,
+        )]
+
+    fig.update_layout(**layout_kwargs)
+
+    if show_plot:
+        fig.show()
     return fig
 
