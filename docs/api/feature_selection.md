@@ -2,7 +2,7 @@
 
 > **Path:** `feature_selection/`  
 > **Status:** Draft  
-> **Last updated:** 2026-02-13
+> **Last updated:** 2026-02-17
 
 ## Purpose
 `feature_selection` provides the public runtime APIs for feature validation workflows: in-sample/out-of-sample selectors, walk-forward split utilities, and permutation/stability entrypoints that are reused by training, deployment, and utility modules.
@@ -171,6 +171,22 @@ Public symbols commonly used by integration/tests:
   - `extract_region_metadata(...)`
   - `detect_region_shape(...)`
   - `calculate_coverage(...)`
+
+### EDA pipeline entrypoints
+Type: dataclass/functions modules  
+Modules:
+- `feature_selection/eda/common_eda.py`
+- `feature_selection/eda/continuous_eda.py`
+- `feature_selection/eda/rule_based_eda.py`
+- `feature_selection/eda/eda_reporter.py`
+- `feature_selection/eda/eda_dataclasses.py`
+
+Public symbols commonly used by integration/tests:
+- Common EDA: `compute_descriptive_stats(...)`, `compute_temporal_stability(...)`, `compute_correlation_analysis(...)`, `compute_rolling_objective(...)`, `create_common_eda_plots(...)`
+- Continuous EDA: `compute_decile_analysis(...)`, `compute_monotonicity_test(...)`, `compute_distribution_diagnostics(...)`, `create_continuous_eda_plots(...)`
+- Rule-based EDA: `compute_per_level_stats(...)`, `compute_bootstrap_ci(...)`, `compute_transition_matrix(...)`, `create_rule_based_eda_plots(...)`
+- Reporter/orchestration: `run_eda_for_continuous_feature(...)`, `run_eda_for_rule_based_feature(...)`, `compute_diagnostic_flags(...)`, `save_eda_report(...)`, `load_eda_report(...)`
+- Contracts: `CommonEDAStats`, `ContinuousEDAStats`, `RuleBasedEDAStats`, `ContinuousEDAReport`, `RuleBasedEDAReport`, `EDAConfig`, `EDAMetadata`, `DiagnosticFlags`
 
 ## Examples
 ```python
