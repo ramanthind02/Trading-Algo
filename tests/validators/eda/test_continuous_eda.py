@@ -1,0 +1,116 @@
+"""Unit tests for continuous_eda.py (T002).
+
+All synthetic data — no real market data, no cache required.
+"""
+from __future__ import annotations
+
+import matplotlib
+matplotlib.use('Agg')
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from feature_selection.eda.continuous_eda import (
+    compute_decile_analysis,
+    compute_monotonicity_test,
+    compute_distribution_diagnostics,
+    create_continuous_eda_plots,
+)
+from feature_selection.eda.eda_dataclasses import (
+    DecileAnalysis, MonotonicityTest, DistributionDiagnostics, ContinuousEDAPlots,
+)
+
+
+def _series(n: int, seed: int = 0) -> tuple[pd.Series, pd.Series]:
+    np.random.seed(seed)
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    feature = pd.Series(np.linspace(0, 10, n), index=idx)
+    target = pd.Series(0.5 * np.linspace(0, 10, n) + np.random.randn(n) * 0.5, index=idx)
+    return feature, target
+
+
+def test_decile_analysis_known_values() -> None:
+    """15-bin analysis on 150-sample series: each bin has ~10 samples."""
+    n = 150
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_decile_analysis(feature, target, n_bins=15)
+    assert len(result.bin_stats.sample_count) == 15
+    assert result.bin_stats.sample_count.sum() == pytest.approx(n, abs=5)
+
+
+def test_decile_analysis_bin_edges_length() -> None:
+    """bin_edges has length n_bins + 1."""
+    feature, target = _series(200)
+    result = compute_decile_analysis(feature, target, n_bins=10)
+    assert len(result.bin_stats.bin_edges) == 11
+
+
+def test_monotonicity_test_monotonic_increasing() -> None:
+    """Strictly increasing bin means -> is_monotonic=True, positive tau."""
+    bin_means = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
+                          1.1, 1.2, 1.3, 1.4, 1.5])
+    result = compute_monotonicity_test(bin_means)
+    assert result.is_monotonic is True
+    assert result.kendall_tau > 0.0
+
+
+def test_monotonicity_test_flat() -> None:
+    """Flat bin means -> is_monotonic=False."""
+    bin_means = np.ones(15) * 0.5
+    result = compute_monotonicity_test(bin_means)
+    assert result.is_monotonic is False
+
+
+def test_distribution_diagnostics_known_skew() -> None:
+    """np.random.seed(42) normal -> is_normal=True for small sample."""
+    np.random.seed(42)
+    idx = pd.bdate_range("2020-01-01", periods=200)
+    feature = pd.Series(np.random.normal(0, 1, 200), index=idx)
+    result = compute_distribution_diagnostics(feature)
+    assert result.is_normal is True
+    assert abs(result.skewness) < 0.5
+
+
+def test_sharpe_zero_volatility_bin() -> None:
+    """Bin with constant returns must produce Sharpe=NaN, no crash."""
+    n = 150
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    target = pd.Series(np.ones(n) * 0.01, index=idx)
+    result = compute_decile_analysis(feature, target, n_bins=15)
+    assert np.all(np.isnan(result.bin_stats.sharpe))
+
+
+def test_n_bins_too_large_raises() -> None:
+    """n_bins > len(feature) / 10 -> ValueError."""
+    n = 50
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    with pytest.raises(ValueError, match="n_bins"):
+        compute_decile_analysis(feature, target, n_bins=10)
+
+
+def test_n_bins_2_minimum() -> None:
+    """n_bins=2 must work without error."""
+    n = 200
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_decile_analysis(feature, target, n_bins=2)
+    assert len(result.bin_stats.sample_count) == 2
+
+
+def test_continuous_eda_plots_smoke() -> None:
+    """All four Figure objects created without error."""
+    feature, target = _series(200)
+    da = compute_decile_analysis(feature, target, n_bins=15)
+    dd = compute_distribution_diagnostics(feature)
+    plots = create_continuous_eda_plots(feature, target, da, dd)
+    assert plots.decile_plot_fig is not None
+    assert plots.histogram_fig is not None
+    assert plots.qq_plot_fig is not None
+    assert plots.kde_fig is not None
