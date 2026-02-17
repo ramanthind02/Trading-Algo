@@ -1024,6 +1024,59 @@ class ParameterAnalyzer:
             show_plot=show_plot
         )
 
+    def compute_neighbor_smoothed_grid(
+        self,
+        param_results: pd.DataFrame,
+        param_cols: List[str],
+        objective_col: str = 'objective',
+    ) -> pd.DataFrame:
+        """Compute axis-aligned 1-step neighbor-smoothed objective column.
+
+        smoothed(P) = mean([obj(P)] + [obj(N) for N in 1-step_axis_neighbors(P)])
+
+        Args:
+            param_results: DataFrame with parameter columns and an objective column.
+            param_cols: Names of parameter dimension columns.
+            objective_col: Name of the objective metric column.
+
+        Returns:
+            Copy of param_results with added 'smoothed_objective' column.
+        """
+        result_df = param_results.copy()
+        param_value_sets = {
+            col: sorted(param_results[col].unique())
+            for col in param_cols
+        }
+
+        smoothed_values: List[float] = []
+        for _, row in param_results.iterrows():
+            values = [float(row[objective_col])]
+
+            for col in param_cols:
+                sorted_vals = param_value_sets[col]
+                current_val = row[col]
+                try:
+                    val_idx = sorted_vals.index(current_val)
+                except ValueError:
+                    continue
+
+                for neighbor_idx in (val_idx - 1, val_idx + 1):
+                    if 0 <= neighbor_idx < len(sorted_vals):
+                        mask = pd.Series(True, index=param_results.index)
+                        for c in param_cols:
+                            if c == col:
+                                mask &= param_results[c] == sorted_vals[neighbor_idx]
+                            else:
+                                mask &= param_results[c] == row[c]
+                        matching = param_results[mask]
+                        if not matching.empty:
+                            values.append(float(matching.iloc[0][objective_col]))
+
+            smoothed_values.append(float(np.mean(values)))
+
+        result_df['smoothed_objective'] = smoothed_values
+        return result_df
+
     def plot_2d_parameter_surface(
         self,
         df: pd.DataFrame,

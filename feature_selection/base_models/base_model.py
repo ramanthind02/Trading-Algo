@@ -336,6 +336,7 @@ class BinningModelBase(ABC):
 
         self.feature_column = feature_data.name
         self.normalization_data_ = normalization_data
+        self._training_feature_data = feature_data.copy()
 
         df = pd.DataFrame({"feature": feature_data, "target": target_data}).dropna()
         if len(df) < max(10, self.n_bins * 5):
@@ -529,3 +530,19 @@ class BinningModelBase(ABC):
         if len(selected_returns) == 0:
             return 0.0
         return float(selected_returns.mean())
+
+    def get_fitted_vector(self, strategy: str = "long") -> pd.Series:
+        """Return position-multiplier vector on the training data.
+
+        Args:
+            strategy: 'long', 'short', or 'long_short'.
+
+        Returns:
+            pd.Series of position multipliers aligned to the training index.
+
+        Raises:
+            ValueError: If the model has not been fitted yet.
+        """
+        if not self.is_fitted_:
+            raise ValueError("Model must be fitted before calling get_fitted_vector()")
+        return self.predict(self._training_feature_data, strategy=strategy)
