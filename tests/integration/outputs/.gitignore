@@ -1,8 +1,0 @@
-# Ignore all integration test outputs
-*
-
-# But keep the .gitignore file itself
-!.gitignore
-
-# And keep directory structure markers
-!**/.gitkeep

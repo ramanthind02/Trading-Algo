@@ -73,7 +73,7 @@ def _maybe_populate_cache(project_root: Path) -> None:
     assert result["failed"] == 0, f"Cache population failures: {result}"
 
 
-def _extract_features() -> tuple[pd.DataFrame, pd.DataFrame]:
+def _extract_rsi_features() -> tuple[pd.DataFrame, pd.DataFrame]:
     features_df, targets_df = extract_features_for_bias_node(
         bias_spec=BIAS_SPEC,
         ticker=ENSEMBLE_TICKERS,
@@ -91,7 +91,7 @@ def test_binning_full_pipeline_integration() -> None:
     """Comprehensive test of T005-T008 binning diagnostics pipeline.
 
     Tests full workflow:
-    1. Extract bias-node features from cache
+    1. Extract RSI features from cache
     2. Fit ContinuousBinningModel
     3. Generate comprehensive diagnostics report (T005-T008)
     4. Save plots and JSON report to outputs directory
@@ -99,16 +99,17 @@ def test_binning_full_pipeline_integration() -> None:
 
     Manual verification:
     - Check terminal output for readable summary
-    - Inspect plots in tests/integration/outputs/binning/<feature_column>/
+    - Inspect plots in tests/integration/outputs/binning/rsi_lookback_5/
     - Verify JSON report contains all metadata
     """
     project_root = _project_root()
     _maybe_populate_cache(project_root)
 
     # Extract features
-    features_df, targets_df = _extract_features()
-    assert not features_df.empty, "No feature columns extracted for the configured bias spec"
-    feature_col = str(features_df.columns[0])
+    features_df, targets_df = _extract_rsi_features()
+    feature_col = "rsi_signal_D_lookback_5"
+    assert feature_col in features_df.columns
+
     feature_series = features_df[feature_col].copy()
     feature_series.name = feature_col
     target_series = targets_df.loc[feature_series.index, "log_return"]
@@ -162,7 +163,9 @@ def test_binning_full_pipeline_integration() -> None:
     assert "panel" in report.diagnostic_plots
 
     # Save to outputs directory
-    output_dir = project_root / "tests" / "integration" / "outputs" / "binning"
+    output_dir = (
+        project_root / "tests" / "integration" / "outputs" / "binning" / "rsi_lookback_5"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     report_path = save_report(report, str(output_dir))
