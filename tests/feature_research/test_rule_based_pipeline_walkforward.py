@@ -1,0 +1,253 @@
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+
+import pandas as pd
+
+from feature_research.rule_based.config import RuleBasedResearchConfig
+from feature_research.rule_based.pipeline import run_rule_based_eda_pipeline
+from feature_research.walkforward.config import WalkforwardResearchConfig
+from utils.enums import Ticker, TimeFrame
+
+
+def _build_config(tmp_path: Path, *, walkforward_enabled: bool) -> RuleBasedResearchConfig:
+    walkforward = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        enabled=walkforward_enabled,
+        test_step=20,
+        num_steps=2,
+        top_k=2,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+        output_root=tmp_path / "shared_results",
+    )
+    return RuleBasedResearchConfig(
+        tickers=[Ticker.ES],
+        start=datetime(2020, 1, 1),
+        end=datetime(2020, 4, 29),
+        bias_spec={
+            "module_name": "rsi_signal",
+            "timeframes": [TimeFrame.D],
+            "params": {
+                "rsi_period": [2, 3],
+                "oversold": 25.0,
+                "overbought": 65.0,
+                "strategy_mode": "long",
+                "exit_policy": "threshold_or_bars",
+                "exit_bars": 5,
+            },
+        },
+        target_col="log_return",
+        strategy="long",
+        use_cache=True,
+        populate_cache=False,
+        reports_dir=tmp_path / "reports",
+        walkforward=walkforward,
+    )
+
+
+def _mock_eda_report() -> SimpleNamespace:
+    stats_by_level = {
+        -1: SimpleNamespace(sharpe=0.1),
+        0: SimpleNamespace(sharpe=0.0),
+        1: SimpleNamespace(sharpe=0.2),
+    }
+    return SimpleNamespace(
+        rule_stats=SimpleNamespace(per_level_stats=SimpleNamespace(stats_by_level=stats_by_level)),
+        diagnostics=SimpleNamespace(is_viable=True, red_flags=[], warnings=[]),
+    )
+
+
+def _series_for_combo(
+    params: dict[str, object],
+    *,
+    tz: str | None = None,
+) -> tuple[pd.Series, pd.Series, str]:
+    index = pd.date_range("2020-01-01", periods=120, freq="D", tz=tz)
+    period = int(cast(int, params["rsi_period"]))
+    feature = pd.Series([float(period)] * len(index), index=index, name=f"feature_{period}")
+    target = pd.Series([0.01] * len(index), index=index, name="target")
+    return feature, target, feature.name
+
+
+def test_walkforward_enabled_handles_tz_aware_feature_indices(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 2,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"], tz="UTC"),
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.run_eda_for_rule_based_feature",
+        lambda *_args, **_kwargs: _mock_eda_report(),
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.save_eda_report",
+        lambda report, output_dir, overwrite: output_dir,
+    )
+
+    run_rule_based_eda_pipeline(config=config, output_dir=tmp_path / "rule_based_reports")
+
+    walkforward_dir = (
+        config.walkforward.output_root / "rule_based" / config.bias_spec["module_name"] / "walkforward"
+    )
+    assert walkforward_dir.exists()
+
+
+def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -> None:
+    config = _build_config(tmp_path, walkforward_enabled=False)
+
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 2,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.run_eda_for_rule_based_feature",
+        lambda *_args, **_kwargs: _mock_eda_report(),
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.save_eda_report",
+        lambda report, output_dir, overwrite: output_dir,
+    )
+
+    calls = {"runner": 0, "stability": 0, "timeline": 0, "writer": 0}
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.run_walkforward_research",
+        lambda *_args, **_kwargs: calls.__setitem__("runner", calls["runner"] + 1),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.plot_selection_stability",
+        lambda *_args, **_kwargs: calls.__setitem__("stability", calls["stability"] + 1),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.plot_fold_timeline",
+        lambda *_args, **_kwargs: calls.__setitem__("timeline", calls["timeline"] + 1),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.write_walkforward_artifacts",
+        lambda *_args, **_kwargs: calls.__setitem__("writer", calls["writer"] + 1),
+        raising=False,
+    )
+
+    run_rule_based_eda_pipeline(config=config, output_dir=tmp_path / "rule_based_reports")
+
+    assert calls == {"runner": 0, "stability": 0, "timeline": 0, "writer": 0}
+
+
+def test_walkforward_enabled_writes_selected_feature_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config = _build_config(tmp_path, walkforward_enabled=True)
+    output_dir = tmp_path / "rule_based_reports"
+
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 2,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            },
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 3,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.run_eda_for_rule_based_feature",
+        lambda *_args, **_kwargs: _mock_eda_report(),
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.save_eda_report",
+        lambda report, output_dir, overwrite: output_dir,
+    )
+
+    run_rule_based_eda_pipeline(config=config, output_dir=output_dir)
+
+    walkforward_dir = (
+        config.walkforward.output_root / "rule_based" / config.bias_spec["module_name"] / "walkforward"
+    )
+    assert walkforward_dir.exists()
+    assert "rule_based/rsi_signal/walkforward" in walkforward_dir.as_posix()
+
+    selection_summary_csv = walkforward_dir / "selection_summary.csv"
+    assert selection_summary_csv.exists()
+    selection_summary_df = pd.read_csv(selection_summary_csv)
+    assert "selected_feature" in selection_summary_df.columns
