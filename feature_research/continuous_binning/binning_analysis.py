@@ -1,8 +1,9 @@
 """Continuous binning diagnostics pipeline for research runs."""
 from __future__ import annotations
 
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import matplotlib
 
@@ -27,7 +28,11 @@ from feature_selection.validators.binning import (
 
 def _extract_binning_params(config: "ResearchConfig") -> dict[str, Any]:
     raw = getattr(config, "binning_params", None)
-    return raw if isinstance(raw, dict) else {}
+    if isinstance(raw, dict):
+        return raw
+    if raw is not None and not isinstance(raw, type) and is_dataclass(raw):
+        return asdict(cast(Any, raw))
+    return {}
 
 
 def run_binning_analysis_pipeline(
