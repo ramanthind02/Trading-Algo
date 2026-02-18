@@ -272,51 +272,6 @@ Common methods:
 Raises:
 - `ValueError` when no valid data points remain after alignment/cleaning.
 
-### `ResearchConfig`
-Type: dataclass  
-Module: `feature_research/continuous_binning/config.py`
-
-Description: researcher-editable settings for continuous-binning analysis pipelines.
-
-Fields:
-- `tickers: List[Ticker]`
-- `start: datetime`
-- `end: datetime`
-- `bias_spec: Dict[str, Any]`
-- `target_col: str`
-- `strategy: str`
-- `binning_params: BinningAnalysisConfig`
-- `use_cache: bool`
-- `populate_cache: bool`
-- `reports_dir: Path`
-
-### `BinningAnalysisConfig`
-Type: dataclass  
-Module: `feature_research/continuous_binning/config.py`
-
-Description: parameter contract for binning-analysis selection and region filtering.
-
-Fields:
-- `n_bins: int`
-- `selection_metric: str`
-- `strategy: str`
-- `metric_threshold: float`
-- `t_threshold: float`
-- `min_region_width: int`
-- `max_regions: int`
-- `direction_filter: str`
-
-### `load_config`
-Type: function  
-Module: `feature_research/continuous_binning/config.py`
-
-Signature:
-```python
-load_config() -> ResearchConfig
-```
-
-Description: returns the default continuous-binning research configuration.
-
 ### `build_feature_metadata`
 Type: function  
 Module: `research/bias_node_helpers.py`
