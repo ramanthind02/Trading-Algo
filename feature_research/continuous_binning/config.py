@@ -21,6 +21,18 @@ _CB_DIR = _FEATURE_RESEARCH_DIR / "continuous_binning"
 
 
 @dataclass(frozen=True)
+class BinningAnalysisConfig:
+    n_bins: int
+    selection_metric: str
+    strategy: str
+    metric_threshold: float
+    t_threshold: float
+    min_region_width: int
+    max_regions: int
+    direction_filter: str
+
+
+@dataclass(frozen=True)
 class ResearchConfig:
     """All researcher-editable settings for continuous-binning EDA.
 
@@ -47,6 +59,8 @@ class ResearchConfig:
     strategy : str
         Passed to the EDA summary label only.
         Options: ``"long"``, ``"short"``, ``"long-short"``.
+    binning_params : BinningAnalysisConfig
+        Parameters used by the binning analysis pipeline.
     use_cache : bool
         Whether to use pre-computed caches for feature extraction.
     populate_cache : bool
@@ -62,6 +76,7 @@ class ResearchConfig:
     bias_spec: dict[str, Any]
     target_col: str
     strategy: str
+    binning_params: BinningAnalysisConfig
     use_cache: bool
     populate_cache: bool
     reports_dir: Path
@@ -95,6 +110,17 @@ def load_config() -> ResearchConfig:
     target_col = "log_return"
     strategy = "long-short"
 
+    binning_params = BinningAnalysisConfig(
+        n_bins=15,
+        selection_metric="sharpe",
+        strategy="long",
+        metric_threshold=0.3,
+        t_threshold=2.0,
+        min_region_width=3,
+        max_regions=1,
+        direction_filter="long",
+    )
+
     # Caching
     use_cache = True
     populate_cache = True
@@ -112,6 +138,7 @@ def load_config() -> ResearchConfig:
         bias_spec=bias_spec,
         target_col=target_col,
         strategy=strategy,
+        binning_params=binning_params,
         use_cache=use_cache,
         populate_cache=populate_cache,
         reports_dir=reports_dir,
