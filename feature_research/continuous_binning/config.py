@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from utils.enums import Ticker, TimeFrame
 
@@ -31,7 +32,7 @@ class ResearchConfig:
         In-sample period start (inclusive).
     end : datetime
         In-sample period end (inclusive).
-    bias_spec : dict
+    bias_spec : dict[str, Any]
         Bias-node specification.  ``params`` values may be lists for grid search.
         Example::
 
@@ -58,7 +59,7 @@ class ResearchConfig:
     tickers: list[Ticker]
     start: datetime
     end: datetime
-    bias_spec: dict
+    bias_spec: dict[str, Any]
     target_col: str
     strategy: str
     use_cache: bool
