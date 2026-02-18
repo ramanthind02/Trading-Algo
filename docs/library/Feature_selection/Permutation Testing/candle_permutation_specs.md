@@ -1,9 +1,11 @@
 # Candle-Based Permutation Test Specification
 
-**Version**: 1.0.0  
+**Version**: 1.1.0  
 **Date**: 2025-02-10  
 **Status**: Specification (Design)  
 **Scope**: Candle permutation algorithms for permutation testing. Implementation may live under `utils/permutation_test/` (e.g. new classes or refactors of `BarPermute`). No changes to the feature permutation engine or `FeatureValidator` API.
+
+> **Version 1.1.0 Updates:** Added OOS phase integration, candidate source policy, and candle override support.
 
 ---
 
@@ -16,8 +18,11 @@
 5. [Datetime and Bar Identity](#5-datetime-and-bar-identity)
 6. [API and Integration](#6-api-and-integration)
 7. [Limitations and Known Effects](#7-limitations-and-known-effects)
-8. [Implementation Scope](#8-implementation-scope)
-9. [Alignment with Timothy Masters](#9-alignment-with-timothy-masters)
+8. [OOS Phase Integration](#8-oos-phase-integration)
+9. [Candidate Source Policy](#9-candidate-source-policy)
+10. [Candle Override Support](#10-candle-override-support)
+11. [Implementation Scope](#11-implementation-scope)
+12. [Alignment with Timothy Masters](#12-alignment-with-timothy-masters)
 
 ---
 
@@ -272,7 +277,106 @@ Implementation may use a **session template** or config that maps (day-of-week, 
 
 ---
 
-## 8. Implementation Scope
+## 8. OOS Phase Integration
+
+The candle permutation suite integrates with the broader validation pipeline at the **OOS (Out-of-Sample) phase**.
+
+### 8.1 Role in Three-Phase Suite
+
+| Phase | Input | Purpose |
+|-------|-------|---------|
+| **Phase 1: Vector shuffle** | Pre-computed feature vectors | Quick screen; no candle access needed |
+| **Phase 2: Pipeline permutation** | Candles (original or permuted) | Full pipeline test; uses candle permutation |
+| **Phase 3: Walkforward stability** | Original candles only | Temporal stability; no permutation |
+| **OOS: Hold-out validation** | Held-out candle data | Final validation of locked ensemble |
+
+### 8.2 Candle Source for OOS
+
+- OOS data is **never permuted** — it serves as the true hold-out for final validation.
+- The permutation suite operates exclusively on **in-sample candles**.
+- When running pipeline permutation (Phase 2), the input candles are the **permuted in-sample** candles; the original in-sample candles are used for baseline comparison.
+
+---
+
+## 9. Candidate Source Policy
+
+When running candle-based permutation tests, the source of candidate candles must be explicitly defined to avoid data leakage.
+
+### 9.1 Source Options
+
+| Policy | Description | Use Case |
+|--------|-------------|----------|
+| **In-sample only** | Use only the in-sample candle dataset for permutation | Default for permutation testing |
+| **Full dataset** | Use all available candles (in-sample + OOS) for permutation, then split | When in-sample is insufficient for permutation replicates |
+| **Explicit OOS exclusion** | Use in-sample, but mark OOS region as forbidden for any permutation | Strict academic-style validation |
+
+### 9.2 Default Policy
+
+The default policy is **in-sample only**. This ensures that:
+1. The OOS data remains completely untouched during permutation testing
+2. The null distribution is built solely from in-sample data
+3. No information from OOS leaks into the validation process
+
+### 9.3 Implementation
+
+The API should accept a `candidate_source` parameter:
+```python
+enum CandleSourcePolicy:
+    IN_SAMPLE_ONLY = "in_sample_only"
+    FULL_DATASET = "full_dataset"
+    EXPLICIT_OOS_EXCLUSION = "explicit_oos_exclusion"
+```
+
+---
+
+## 10. Candle Override Support
+
+For testing robustness or sensitivity analysis, the candle permutation engine supports **candle override** — providing custom candle data instead of using the default OHLCV source.
+
+### 10.1 Override Modes
+
+| Mode | Description |
+|------|-------------|
+| **None (default)** | Use the project's standard candle data source |
+| **Custom DataFrame** | Provide a custom OHLCV DataFrame for permutation |
+| **Synthetic** | Generate synthetic candles with controlled properties (e.g., pure random walk, specified volatility) |
+
+### 10.2 Use Cases
+
+- **Sensitivity testing:** Run permutation on synthetic candles with known properties to verify the test's behavior
+- **Data augmentation:** Test feature robustness across different market regimes (synthetically generated)
+- **Debugging:** Isolate permutation behavior without relying on real market data
+
+### 10.3 API Contract
+
+```python
+def run_candle_permutation(
+    candles: Optional[pd.DataFrame] = None,
+    override_mode: CandleOverrideMode = CandleOverrideMode.NONE,
+    **kwargs
+) -> PermutationResult:
+    """
+    Run candle-based permutation test.
+    
+    Args:
+        candles: Custom OHLCV DataFrame (if override_mode is CUSTOM)
+        override_mode: Source of candles for permutation
+        **kwargs: Standard permutation parameters
+    
+    Returns:
+        PermutationResult with null distribution and p-value
+    """
+```
+
+### 10.4 Constraints
+
+- When using custom or synthetic candles, the **first open** and **last close** invariants still apply
+- The datetime column must be consistent with the candle order (see [Section 5](#5-datetime-and-bar-identity))
+- Override mode is intended for testing and debugging; production runs should use the default in-sample source
+
+---
+
+## 11. Implementation Scope
 
 - This document is **design only**. No implementation is required as part of this spec.
 - Implementation may introduce, for example:
@@ -281,7 +385,7 @@ Implementation may use a **session template** or config that maps (day-of-week, 
 - A single entry point with a **mode** (e.g. `BarPermutationMode.DAILY` vs `BarPermutationMode.INTRADAY`) is an alternative.
 - The existing `BarPermute` in `utils/permutation_test/permute_bars.py` is a **flat** bar permutation (single gap pool, no day structure). It may be retained for simple cases or refactored to delegate to the daily/intraday variants where appropriate.
 
-### 8.1 Unit Tests
+### 11.1 Unit Tests
 
 Implementation should include **robust unit tests** that verify:
 
@@ -291,7 +395,7 @@ Implementation should include **robust unit tests** that verify:
 - **Reproducibility**: With a fixed random seed, repeated permutation yields the same output.
 - **Edge cases**: Empty or single-bar input; basis bar / basis day unchanged; permute_start_idx (or equivalent) leaves the initial segment unpermuted.
 
-### 8.2 Visualizer
+### 11.2 Visualizer
 
 A **simple visualizer** should be provided to help verify that permutation is working correctly. It should allow comparing original vs permuted series (e.g. overlaid or side-by-side price plots over a chosen window), so that:
 
@@ -301,7 +405,7 @@ A **simple visualizer** should be provided to help verify that permutation is wo
 
 The visualizer can be a small script or notebook that takes OHLC + datetime, runs one or more permutations (with optional seed), and plots original and permuted series; it does not need to be part of the core library API.
 
-### 8.3 OOP Design and Performance
+### 11.3 OOP Design and Performance
 
 **Base class and timeframe-based dispatch**
 
@@ -326,7 +430,7 @@ Implementation may start with a pure NumPy version for correctness and tests, th
 
 ---
 
-## 9. Alignment with Timothy Masters
+## 12. Alignment with Timothy Masters
 
 This specification follows the algorithms described in Timothy Masters’ *Core Algorithms* chapter on permutation (see `docs/to-do/candle_permutation_chapter.md` for extracted text). The following alignment confirms that our logic matches the book; our additions are explicit extensions for 24/5 schedules.
 

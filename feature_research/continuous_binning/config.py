@@ -5,12 +5,13 @@ All other scripts import from here — change once, apply everywhere.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from feature_research.walkforward.config import WalkforwardResearchConfig
+from feature_selection.validation.config import PermutationModeStage2
+from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.enums import Ticker, TimeFrame
 
 # ---------------------------------------------------------------------------
@@ -22,15 +23,21 @@ _CB_DIR = _FEATURE_RESEARCH_DIR / "continuous_binning"
 
 
 @dataclass(frozen=True)
-class BinningAnalysisConfig:
-    n_bins: int
-    selection_metric: str
-    strategy: str
-    metric_threshold: float
-    t_threshold: float
-    min_region_width: int
-    max_regions: int
-    direction_filter: str
+class PermutationSuiteConfig:
+    """Settings for running the shared permutation test suite."""
+
+    enabled: bool = False
+    nreps: int = 100
+    alpha: float = 0.10
+    metric_threshold: float = 0.0
+    top_k: int = 3
+    min_folds_stable: int = 1
+    random_seed: int | None = 42
+    permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
+    fold_years: int = 2
+    objective_metric: ObjectiveMetricSpec = field(
+        default_factory=lambda: ObjectiveMetricSpec(builtin="sharpe")
+    )
 
 
 @dataclass(frozen=True)
@@ -60,8 +67,6 @@ class ResearchConfig:
     strategy : str
         Passed to the EDA summary label only.
         Options: ``"long"``, ``"short"``, ``"long-short"``.
-    binning_params : BinningAnalysisConfig
-        Parameters used by the binning analysis pipeline.
     use_cache : bool
         Whether to use pre-computed caches for feature extraction.
     populate_cache : bool
@@ -69,9 +74,6 @@ class ResearchConfig:
     reports_dir : Path
         Root output directory for EDA reports.
         Default: ``feature_research/continuous_binning/results/{module_name}/``
-    walkforward : WalkforwardResearchConfig
-        Shared walkforward research configuration used for optional fold-level
-        stability outputs under ``feature_research/shared_results``.
     """
 
     tickers: list[Ticker]
@@ -80,11 +82,10 @@ class ResearchConfig:
     bias_spec: dict[str, Any]
     target_col: str
     strategy: str
-    binning_params: BinningAnalysisConfig
     use_cache: bool
     populate_cache: bool
     reports_dir: Path
-    walkforward: WalkforwardResearchConfig
+    permutation_suite: PermutationSuiteConfig = field(default_factory=PermutationSuiteConfig)
 
 
 def load_config() -> ResearchConfig:
@@ -115,32 +116,17 @@ def load_config() -> ResearchConfig:
     target_col = "log_return"
     strategy = "long-short"
 
-    binning_params = BinningAnalysisConfig(
-        n_bins=15,
-        selection_metric="sharpe",
-        strategy="long",
-        metric_threshold=0.3,
-        t_threshold=2.0,
-        min_region_width=3,
-        max_regions=1,
-        direction_filter="long",
-    )
-
     # Caching
     use_cache = True
     populate_cache = True
+
+    permutation_suite = PermutationSuiteConfig(enabled=False)
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
 
     module_name = bias_spec["module_name"]
     reports_dir = _CB_DIR / "results" / module_name
-    walkforward = WalkforwardResearchConfig(
-        train_start=start,
-        train_end=end,
-        enabled=False,
-        output_root=Path("feature_research/shared_results"),
-    )
 
     return ResearchConfig(
         tickers=tickers,
@@ -149,9 +135,8 @@ def load_config() -> ResearchConfig:
         bias_spec=bias_spec,
         target_col=target_col,
         strategy=strategy,
-        binning_params=binning_params,
         use_cache=use_cache,
         populate_cache=populate_cache,
         reports_dir=reports_dir,
-        walkforward=walkforward,
+        permutation_suite=permutation_suite,
     )

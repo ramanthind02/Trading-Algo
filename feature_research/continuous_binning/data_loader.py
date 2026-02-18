@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from utils.cache_manager import CacheManager
 from utils.enums import TimeFrame
+from utils.helpers import load_data_multi_ticker
 
 
 def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -29,6 +30,35 @@ def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for combo in combos
     ]
+
+
+def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
+    """Load candles for the config universe and normalize to DatetimeIndex."""
+    timeframes = config.bias_spec.get("timeframes", [TimeFrame.D])
+    raw_timeframe = timeframes[0] if isinstance(timeframes, list) else timeframes
+    timeframe = TimeFrame[raw_timeframe] if isinstance(raw_timeframe, str) else raw_timeframe
+
+    candles_df = load_data_multi_ticker(
+        tickers=config.tickers,
+        timeframe=timeframe,
+        start=config.start,
+        end=config.end,
+        use_millisecond_offset=True,
+    )
+
+    normalized = candles_df.copy()
+    if "datetime" not in normalized.columns:
+        raise ValueError("Candles data must include a 'datetime' column.")
+
+    datetimes = pd.to_datetime(normalized["datetime"], utc=False)
+    if getattr(datetimes.dt, "tz", None) is not None:
+        datetimes = datetimes.dt.tz_localize(None)
+
+    normalized["datetime"] = datetimes
+    normalized = normalized.sort_values("datetime")
+    normalized = normalized.set_index("datetime", drop=False)
+    normalized.index = pd.DatetimeIndex(normalized.index, name="datetime_index")
+    return normalized
 
 
 def param_combo_label(combo: dict[str, Any]) -> str:
@@ -79,6 +109,7 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
 def load_features_for_combo(
     single_combo_spec: dict[str, Any],
     config: "ResearchConfig",
+    candles_override: pd.DataFrame | None = None,
 ) -> tuple[pd.Series, pd.Series, str] | None:
     """Extract feature + target Series for a single param combo across all config tickers.
 
@@ -86,22 +117,29 @@ def load_features_for_combo(
     -------
     (feature, target, feature_col) or None if extraction fails / returns empty data.
 
+    Parameters
+    ----------
+    candles_override : pd.DataFrame | None, default=None
+        Optional override candles passed through to
+        ``extract_features_for_bias_node`` for forward-return computation.
+        Expected schema: one row per ticker/timestamp with columns
+        ``datetime``, ``open``, ``high``, ``low``, ``close``, ``ticker``.
+        ``datetime`` values may be tz-naive or tz-aware; they are normalized
+        to UTC by the downstream extractor.
+
     The returned Series are aligned (same index, NaNs dropped) and concatenated
     across all tickers in ``config.tickers``.
     """
-    try:
-        features_df, targets_df = extract_features_for_bias_node(
-            bias_spec=single_combo_spec,
-            ticker=config.tickers,
-            start=config.start,
-            end=config.end,
-            use_millisecond_offset=True,
-            target_col=config.target_col,
-            use_cache=config.use_cache,
-        )
-    except Exception as exc:
-        print(f"[data_loader] Feature extraction failed for {single_combo_spec['params']}: {exc}")
-        return None
+    features_df, targets_df = extract_features_for_bias_node(
+        bias_spec=single_combo_spec,
+        ticker=config.tickers,
+        start=config.start,
+        end=config.end,
+        use_millisecond_offset=True,
+        target_col=config.target_col,
+        use_cache=config.use_cache,
+        candles_override=candles_override,
+    )
 
     if features_df is None or features_df.empty:
         print(f"[data_loader] Empty features for {single_combo_spec['params']}. Skipping.")
@@ -112,11 +150,18 @@ def load_features_for_combo(
         return None
     feature_col = feature_cols[0]
 
-    target_col_name = (
-        config.target_col
-        if config.target_col in targets_df.columns
-        else [c for c in targets_df.columns if c != "ticker"][0]
-    )
+    params = single_combo_spec.get("params", {})
+    if targets_df is None:
+        raise ValueError(f"Target extraction returned no dataframe for params={params}.")
+    if targets_df.empty:
+        raise ValueError(f"Target dataframe is empty for params={params}.")
+    if config.target_col not in targets_df.columns:
+        available_target_cols = [c for c in targets_df.columns if c != "ticker"]
+        raise ValueError(
+            f"Configured target_col '{config.target_col}' is missing for params={params}. "
+            f"Available target columns: {available_target_cols}."
+        )
+    target_col_name = config.target_col
 
     aligned = pd.DataFrame(
         {"feature": features_df[feature_col], "target": targets_df[target_col_name]}

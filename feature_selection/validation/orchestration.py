@@ -13,14 +13,19 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 
+from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.validation.config import PermutationTestConfig
+from feature_selection.validation.objective_metrics import resolve_objective_metric
 from feature_selection.validation.permutation_tests import (
+    run_oos_permutation_for_param,
     run_pipeline_permutation_continuous,
     run_pipeline_permutation_rule_based,
     run_vector_shuffle_test,
 )
 from feature_selection.validation.reports import (
+    ComboDecisionRecord,
     FunnelStatistics,
+    OutOfSamplePermutationReport,
     PermutationTestSuite,
     PipelinePermutationReport,
     VectorShuffleReport,
@@ -40,6 +45,7 @@ def _build_summary(
     stage3_report: WalkforwardStabilityReport,
     funnel_stats: FunnelStatistics,
     ensemble_candidates: List[str],
+    phase3_oos_reports: Dict[str, OutOfSamplePermutationReport],
 ) -> str:
     n_total = funnel_stats.total_params
     n1 = funnel_stats.stage1_pass
@@ -55,6 +61,7 @@ def _build_summary(
         f"Stage 1 (Vector Shuffle): {n_total} tested -> {n1} passed ({100*n1//max(n_total,1)}%)",
         f"Stage 2 (Pipeline Permutation): {n1} tested -> {n2} passed",
         f"Stage 3 (Walkforward Stability): {n_total} evaluated -> {n_stable} stable params",
+        f"Stage 3 (OOS Permutation): {len(phase3_oos_reports)} tested -> {sum(r.passed for r in phase3_oos_reports.values())} passed",
         "",
         f"Ensemble candidates: {ensemble_candidates}",
         f"Computational savings: {savings:.1f}%",
@@ -62,6 +69,48 @@ def _build_summary(
         f"Stability verdict: {stage3_report.stability_verdict}",
     ]
     return '\n'.join(lines)
+
+
+def _extract_fitted_feature(
+    candles_df: pd.DataFrame,
+    target: pd.Series,
+    extractor_func: Callable[[pd.DataFrame, Dict], pd.Series],
+    params: Dict,
+    feature_type: str,
+    binning_model_factory: Optional[Callable[[Dict], BinningModelBase]],
+) -> pd.Series:
+    feature = extractor_func(candles_df, params)
+    feature = feature.reindex(target.index).dropna()
+    aligned_target = target.reindex(feature.index)
+
+    if binning_model_factory is not None and feature_type == 'continuous':
+        model = binning_model_factory(params)
+        model.fit(feature, aligned_target)
+        return model.get_fitted_vector(strategy='long')
+
+    return feature
+
+
+def _build_failed_oos_report(
+    combo_name: str,
+    nreps: int,
+    alpha: float,
+) -> OutOfSamplePermutationReport:
+    return OutOfSamplePermutationReport(
+        param_combo=combo_name,
+        vector_report=VectorShuffleReport(
+            param_combo=combo_name,
+            original_metric=0.0,
+            null_distribution=np.zeros(nreps),
+            critical_value=0.0,
+            p_value=1.0,
+            passed=False,
+            alpha=alpha,
+            nreps=nreps,
+        ),
+        candle_report=None,
+        passed=False,
+    )
 
 
 def run_permutation_test_suite(
@@ -73,7 +122,7 @@ def run_permutation_test_suite(
     fold_structure: List[Tuple[pd.Timestamp, pd.Timestamp]],
     config: PermutationTestConfig,
     extractor_func: Callable[[pd.DataFrame, Dict], pd.Series],
-    binning_model_factory: Optional[Callable[[Dict], object]] = None,
+    binning_model_factory: Optional[Callable[[Dict], BinningModelBase]] = None,
     feature_type: str = 'continuous',
     feature_name: str = 'unknown',
 ) -> PermutationTestSuite:
@@ -250,12 +299,108 @@ def run_permutation_test_suite(
     # Ensemble candidates: passed Stage 2 AND in stable region
     ensemble_candidates = sorted(stage2_passers & stable_params)
 
+    # ---------- Phase 3: OOS permutation on selected candidates ----------
+    candidate_source = config.out_of_sample.candidate_source
+    oos_candidates = (
+        stage2_passers
+        if candidate_source == 'stage2_passers'
+        else stage2_passers & stable_params
+    )
+
+    phase3_oos_reports: Dict[str, OutOfSamplePermutationReport] = {}
+    oos_objective_func = resolve_objective_metric(config.out_of_sample.objective_metric)
+    params_by_combo = {_param_combo_name(params): params for params in param_grid}
+    for combo_name in sorted(oos_candidates):
+        params = params_by_combo.get(combo_name)
+        if params is None:
+            continue
+        try:
+            fitted_feature = _extract_fitted_feature(
+                candles_df=candles_df,
+                target=target,
+                extractor_func=extractor_func,
+                params=params,
+                feature_type=feature_type,
+                binning_model_factory=binning_model_factory,
+            )
+
+            if feature_type == 'continuous':
+                if binning_model_factory is None:
+                    raise ValueError('binning_model_factory required for continuous features')
+
+                def _extractor_for_combo(df: pd.DataFrame, _params=params) -> pd.Series:
+                    return extractor_func(df, _params)
+
+                report = run_oos_permutation_for_param(
+                    param_combo=combo_name,
+                    feature_type='continuous',
+                    fitted_feature=fitted_feature,
+                    candles_df=candles_df,
+                    target=target,
+                    objective_func=oos_objective_func,
+                    bias_node_extractor=_extractor_for_combo,
+                    binning_model=binning_model_factory(params),
+                    permutation_mode=config.permutation_mode_stage2,
+                    metric_threshold=config.metric_threshold,
+                    nreps=config.nreps,
+                    alpha=config.alpha,
+                    random_seed=config.random_seed,
+                )
+            else:
+                def _rule_extractor_for_combo(df: pd.DataFrame, _params=params) -> pd.Series:
+                    return extractor_func(df, _params)
+
+                report = run_oos_permutation_for_param(
+                    param_combo=combo_name,
+                    feature_type='rule_based',
+                    fitted_feature=fitted_feature,
+                    candles_df=candles_df,
+                    target=target,
+                    objective_func=oos_objective_func,
+                    rule_extractor=_rule_extractor_for_combo,
+                    permutation_mode='candle_shuffle',
+                    metric_threshold=config.metric_threshold,
+                    nreps=config.nreps,
+                    alpha=config.alpha,
+                    random_seed=config.random_seed,
+                )
+        except Exception:
+            report = _build_failed_oos_report(
+                combo_name=combo_name,
+                nreps=config.nreps,
+                alpha=config.alpha,
+            )
+
+        phase3_oos_reports[combo_name] = report
+
+    oos_passers = {combo for combo, report in phase3_oos_reports.items() if report.passed}
+    final_candidates = sorted(set(ensemble_candidates) & oos_passers)
+    final_candidate_set = set(final_candidates)
+
+    combo_decisions = {
+        combo_name: ComboDecisionRecord(
+            param_combo=combo_name,
+            stage1_passed=combo_name in stage1_passers,
+            stage2_passed=combo_name in stage2_passers,
+            walkforward_stable=combo_name in stable_params,
+            oos_passed=combo_name in oos_passers,
+            final_status=(
+                'candidate'
+                if combo_name in final_candidate_set
+                else 'needs_review'
+                if combo_name in stage2_passers
+                else 'rejected'
+            ),
+        )
+        for combo_name in (_param_combo_name(params) for params in param_grid)
+    }
+
     # Funnel statistics
     n_total = len(param_grid)
     n1 = len(stage1_passers)
     n2 = len(stage2_passers)
     n_stable = len(stable_params)
-    n_cand = len(ensemble_candidates)
+    n_cand = len(final_candidates)
 
     # Savings = Stage 2 evaluations saved by Stage 1 early stopping
     total_without = n_total * config.nreps * 2 + n_total * len(fold_structure)
@@ -273,7 +418,7 @@ def run_permutation_test_suite(
 
     summary = _build_summary(
         feature_name, param_grid, stage1_reports, stage2_reports,
-        stage3_report, funnel_stats, ensemble_candidates,
+        stage3_report, funnel_stats, final_candidates, phase3_oos_reports,
     )
 
     print(f"\n{summary}")
@@ -285,6 +430,8 @@ def run_permutation_test_suite(
         stage2_reports=stage2_reports,
         stage3_report=stage3_report,
         funnel_stats=funnel_stats,
-        ensemble_candidates=ensemble_candidates,
+        ensemble_candidates=final_candidates,
         summary=summary,
+        phase3_oos_reports=phase3_oos_reports,
+        combo_decisions=combo_decisions,
     )
