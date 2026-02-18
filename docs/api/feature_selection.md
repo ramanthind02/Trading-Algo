@@ -2,7 +2,7 @@
 
 > **Path:** `feature_selection/`  
 > **Status:** Draft  
-> **Last updated:** 2026-02-17
+> **Last updated:** 2026-02-18
 
 ## Purpose
 `feature_selection` provides the public runtime APIs for feature validation workflows: in-sample/out-of-sample selectors, walk-forward split utilities, and permutation/stability entrypoints that are reused by training, deployment, and utility modules.
@@ -149,6 +149,211 @@ Public symbols:
 Cross-package import surface:
 - Canonical exports are re-imported by `utils/walkforward.py` for backward compatibility.
 - `utils.walkforward.generate_walkforward_splits(...)` is deprecated; prefer `WalkForwardSplitter` directly.
+
+### Walk-forward research config and metrics
+Type: dataclass/function  
+Modules:
+- `feature_research/walkforward/config.py`
+- `feature_research/walkforward/metrics.py`
+- `feature_research/walkforward/runner.py`
+- `feature_research/walkforward/visualization.py`
+- `feature_research/walkforward/io.py`
+
+#### `WalkforwardResearchConfig`
+Type: class
+
+Signature:
+```python
+class WalkforwardResearchConfig:
+    train_start: datetime
+    train_end: datetime
+    enabled: bool
+    test_step: int
+    num_steps: int
+    top_k: int
+    objective_metric_name: str
+    min_fold_samples: int
+    output_root: Path
+```
+
+Description: frozen configuration contract for walk-forward feature-research runs, including fold geometry, objective metric selection, and output location.
+
+#### `resolve_objective_metric`
+Type: function
+
+Signature:
+```python
+def resolve_objective_metric(metric_name: str) -> Callable[[pd.Series], float]
+```
+
+Description: resolves a supported metric name to a deterministic scoring callable used during walk-forward fold evaluation.
+
+Supported metric names:
+- `"sharpe"`: `mean(returns) / std(returns, ddof=0)`
+- `"sortino"`: `mean(returns) / std(returns[returns < 0], ddof=0)`
+- `"mean_return"`: `mean(returns)`
+
+Degenerate-input behavior:
+- Returns `0.0` fallback when the computed metric would be undefined (`NaN`), including empty/all-`NaN` return series, zero-variance Sharpe denominator, and missing/zero downside deviation for Sortino.
+
+#### `FoldScoreRow`
+Type: dataclass
+
+Signature:
+```python
+@dataclass(frozen=True)
+class FoldScoreRow:
+    fold_id: int
+    train_start: pd.Timestamp
+    train_end: pd.Timestamp
+    test_start: pd.Timestamp
+    test_end: pd.Timestamp
+    param_label: str
+    raw_objective: float
+    smoothed_objective: float
+    rank: int
+```
+
+Description: fold-level scored parameter row contract for deterministic ranking outputs.
+
+#### `WalkforwardRunReport`
+Type: dataclass
+
+Signature:
+```python
+@dataclass(frozen=True)
+class WalkforwardRunReport:
+    folds_df: pd.DataFrame
+    fold_scores_df: pd.DataFrame
+    selection_summary_df: pd.DataFrame
+```
+
+Description: aggregate walkforward research output with fold boundaries, full per-fold scores, and selected-feature summaries.
+
+#### `run_walkforward_research`
+Type: function
+
+Signature:
+```python
+def run_walkforward_research(
+    candles_df: pd.DataFrame,
+    target: pd.Series,
+    feature_type: str,
+    module_name: str,
+    config: WalkforwardResearchConfig,
+    param_grid: list[dict[str, object]],
+    evaluate_param_combo: Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series],
+) -> WalkforwardRunReport
+```
+
+Description: evaluates all parameter combinations per walkforward fold, scores objective values on out-of-sample rows only, applies deterministic rank ordering (`smoothed_objective` desc, `raw_objective` desc, `param_label` asc), and emits fold/selection dataframes.
+
+Validation behavior:
+- Raises `ValueError` when `feature_type` or `module_name` is blank.
+- Raises `ValueError` when index contracts fail or parameter grid is empty.
+
+#### `plot_fold_timeline`
+Type: function
+
+Signature:
+```python
+def plot_fold_timeline(folds_df: pd.DataFrame) -> tuple[plt.Figure, pd.DataFrame]
+```
+
+Description: returns a timeline figure and normalized plotting frame with columns `fold_id`, `segment`, `start`, `end`.
+
+#### `plot_selection_stability`
+Type: function
+
+Signature:
+```python
+def plot_selection_stability(
+    selection_summary_df: pd.DataFrame,
+    top_k: int,
+) -> tuple[plt.Figure, pd.DataFrame]
+```
+
+Description: returns a selection-stability figure and deterministic summary frame with columns `fold_id`, `selected_feature`, `selected_rank`, `selected_smoothed_objective`.
+
+Malformed `top_k_features` behavior:
+- Invalid JSON or non-array JSON payloads are treated as unranked (`selected_rank = top_k + 1`) instead of raising parse errors.
+
+#### `WalkforwardArtifactPaths`
+Type: dataclass
+
+Signature:
+```python
+@dataclass(frozen=True)
+class WalkforwardArtifactPaths:
+    output_dir: Path
+    folds_csv: Path
+    fold_scores_csv: Path
+    selection_summary_csv: Path
+    report_json: Path
+    walkforward_stability_png: Path
+    fold_timeline_png: Path
+```
+
+Description: immutable output-path contract for persisted walkforward artifacts under the shared-results layout.
+
+#### `resolve_walkforward_output_dir`
+Type: function
+
+Signature:
+```python
+def resolve_walkforward_output_dir(
+    feature_type: str,
+    module_name: str,
+    root_dir: Path = Path("feature_research/shared_results"),
+) -> Path
+```
+
+Description: resolves deterministic output directory path as `feature_research/shared_results/{feature_type}/{module_name}/walkforward/` (or equivalent path rooted at `root_dir`).
+
+Validation behavior:
+- Raises `ValueError` when `feature_type` or `module_name` is blank.
+
+#### `write_walkforward_artifacts`
+Type: function
+
+Signature:
+```python
+def write_walkforward_artifacts(
+    report: WalkforwardRunReport,
+    walkforward_stability_figure: Figure,
+    fold_timeline_figure: Figure,
+    feature_type: str,
+    module_name: str,
+    root_dir: Path = Path("feature_research/shared_results"),
+) -> WalkforwardArtifactPaths
+```
+
+Description: writes walkforward report tables, deterministic metadata JSON, and figures to the resolved shared-results output directory and returns all artifact paths.
+
+Output-file contract (exact filenames):
+- `folds.csv`
+- `fold_scores.csv`
+- `selection_summary.csv`
+- `report.json`
+- `walkforward_stability.png`
+- `fold_timeline.png`
+
+Table schema contract (exact columns):
+- `folds.csv`: `fold_id`, `train_start`, `train_end`, `test_start`, `test_end`, `train_samples`, `test_samples`
+- `fold_scores.csv`: `fold_id`, `param_label`, `raw_objective`, `smoothed_objective`, `rank`, `selected_feature`
+- `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
+
+`report.json` minimum keys:
+- `feature_type`
+- `module_name`
+- `output_dir`
+- `artifact_files`
+- `row_counts`
+
+Serialization guarantees:
+- UTF-8 text output
+- sorted JSON keys
+- stable compact separators (`","` and `":"`)
 
 ### Validator-stage entrypoints
 Type: dataclass/functions/class  

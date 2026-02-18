@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from feature_research.walkforward.config import WalkforwardResearchConfig
 from utils.enums import Ticker, TimeFrame
 
 # ---------------------------------------------------------------------------
@@ -68,6 +69,9 @@ class ResearchConfig:
     reports_dir : Path
         Root output directory for EDA reports.
         Default: ``feature_research/continuous_binning/results/{module_name}/``
+    walkforward : WalkforwardResearchConfig
+        Shared walkforward research configuration used for optional fold-level
+        stability outputs under ``feature_research/shared_results``.
     """
 
     tickers: list[Ticker]
@@ -80,6 +84,7 @@ class ResearchConfig:
     use_cache: bool
     populate_cache: bool
     reports_dir: Path
+    walkforward: WalkforwardResearchConfig
 
 
 def load_config() -> ResearchConfig:
@@ -130,6 +135,12 @@ def load_config() -> ResearchConfig:
 
     module_name = bias_spec["module_name"]
     reports_dir = _CB_DIR / "results" / module_name
+    walkforward = WalkforwardResearchConfig(
+        train_start=start,
+        train_end=end,
+        enabled=False,
+        output_root=Path("feature_research/shared_results"),
+    )
 
     return ResearchConfig(
         tickers=tickers,
@@ -142,4 +153,5 @@ def load_config() -> ResearchConfig:
         use_cache=use_cache,
         populate_cache=populate_cache,
         reports_dir=reports_dir,
+        walkforward=walkforward,
     )
