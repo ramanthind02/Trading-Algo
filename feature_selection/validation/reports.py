@@ -41,6 +41,28 @@ class PipelinePermutationReport:
 
 
 @dataclass(frozen=True)
+class ComboDecisionRecord:
+    """Per-parameter decision record across in-sample, walkforward, and OOS."""
+
+    param_combo: str
+    stage1_passed: bool
+    stage2_passed: bool
+    walkforward_stable: bool
+    oos_passed: bool
+    final_status: Literal['candidate', 'rejected', 'needs_review']
+
+
+@dataclass(frozen=True)
+class OutOfSamplePermutationReport:
+    """Out-of-sample permutation result for one parameter combination."""
+
+    param_combo: str
+    vector_report: VectorShuffleReport
+    candle_report: Optional[PipelinePermutationReport]
+    passed: bool
+
+
+@dataclass(frozen=True)
 class FoldResult:
     """Result for a single walk-forward fold (T015)."""
 
@@ -88,6 +110,8 @@ class PermutationTestSuite:
     funnel_stats: FunnelStatistics
     ensemble_candidates: List[str]
     summary: str
+    phase3_oos_reports: Dict[str, OutOfSamplePermutationReport] = field(default_factory=dict)
+    combo_decisions: Dict[str, ComboDecisionRecord] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

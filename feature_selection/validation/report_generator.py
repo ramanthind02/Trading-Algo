@@ -6,6 +6,7 @@ Generates plots, markdown, and JSON exports from PermutationTestSuite results.
 from __future__ import annotations
 
 import json
+import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Literal, Union
@@ -17,6 +18,7 @@ import numpy as np
 
 from feature_selection.validation.reports import (
     FunnelStatistics,
+    OutOfSamplePermutationReport,
     PermutationTestSuite,
     PipelinePermutationReport,
     ReportBundle,
@@ -255,6 +257,16 @@ def _suite_to_json_dict(suite: PermutationTestSuite) -> dict:
             base['no_trade_permutations'] = r.no_trade_permutations
         return base
 
+    def _oos_report_to_dict(report: OutOfSamplePermutationReport) -> dict:
+        vector_report = report.vector_report
+        candle_report = report.candle_report
+        return {
+            'param_combo': report.param_combo,
+            'passed': report.passed,
+            'vector_report': _report_to_dict(vector_report),
+            'candle_report': _report_to_dict(candle_report) if candle_report is not None else None,
+        }
+
     stage3 = suite.stage3_report
     return {
         'feature_name': suite.feature_name,
@@ -279,6 +291,21 @@ def _suite_to_json_dict(suite: PermutationTestSuite) -> dict:
             'computational_savings_pct': suite.funnel_stats.computational_savings_pct,
         },
         'ensemble_candidates': suite.ensemble_candidates,
+        'phase3_oos_reports': {
+            param_combo: _oos_report_to_dict(report)
+            for param_combo, report in suite.phase3_oos_reports.items()
+        },
+        'combo_decisions': {
+            param_combo: {
+                'param_combo': decision.param_combo,
+                'stage1_passed': decision.stage1_passed,
+                'stage2_passed': decision.stage2_passed,
+                'walkforward_stable': decision.walkforward_stable,
+                'oos_passed': decision.oos_passed,
+                'final_status': decision.final_status,
+            }
+            for param_combo, decision in suite.combo_decisions.items()
+        },
     }
 
 
@@ -413,6 +440,46 @@ def generate_permutation_reports(
     stage3_dir.mkdir(exist_ok=True)
     stage3_plot = stage3_dir / 'walkforward_stability.png'
     plot_walkforward_stability(suite.stage3_report, stage3_plot)
+
+    # --- OOS null distribution plots ---
+    oos_vector_dir = output_dir / 'oos' / 'vector'
+    oos_vector_dir.mkdir(parents=True, exist_ok=True)
+    oos_candle_dir = output_dir / 'oos' / 'candle'
+    oos_candle_dir.mkdir(parents=True, exist_ok=True)
+    for param_combo, oos_report in suite.phase3_oos_reports.items():
+        vector_plot_path = oos_vector_dir / f'null_dist_{param_combo}.png'
+        plot_null_distribution(oos_report.vector_report, vector_plot_path)
+
+        if oos_report.candle_report is not None:
+            candle_plot_path = oos_candle_dir / f'null_dist_{param_combo}.png'
+            plot_null_distribution(oos_report.candle_report, candle_plot_path)
+
+    # --- Combo decision table CSV ---
+    combo_csv_path = output_dir / 'combo_decision_table.csv'
+    with combo_csv_path.open('w', newline='') as csv_file:
+        writer = csv.DictWriter(
+            csv_file,
+            fieldnames=[
+                'param_combo',
+                'stage1_passed',
+                'stage2_passed',
+                'walkforward_stable',
+                'oos_passed',
+                'final_status',
+            ],
+        )
+        writer.writeheader()
+        for param_combo, decision in sorted(suite.combo_decisions.items()):
+            writer.writerow(
+                {
+                    'param_combo': decision.param_combo or param_combo,
+                    'stage1_passed': decision.stage1_passed,
+                    'stage2_passed': decision.stage2_passed,
+                    'walkforward_stable': decision.walkforward_stable,
+                    'oos_passed': decision.oos_passed,
+                    'final_status': decision.final_status,
+                }
+            )
 
     # --- Funnel diagram ---
     funnel_dir = output_dir / 'funnel'

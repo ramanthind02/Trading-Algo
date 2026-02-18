@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import csv
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -16,8 +17,10 @@ from feature_selection.validation.report_generator import (
     plot_walkforward_stability,
 )
 from feature_selection.validation.reports import (
+    ComboDecisionRecord,
     FoldResult,
     FunnelStatistics,
+    OutOfSamplePermutationReport,
     PipelinePermutationReport,
     PermutationTestSuite,
     ReportBundle,
@@ -119,10 +122,66 @@ def _make_suite(is_stable: bool = True, borderline_p: float = 0.05) -> Permutati
     )
 
 
+def _make_oos_reports() -> dict[str, OutOfSamplePermutationReport]:
+    return {
+        'lookback_3': OutOfSamplePermutationReport(
+            param_combo='lookback_3',
+            vector_report=_make_vector_shuffle_report('lookback_3', passed=True, p_value=0.03),
+            candle_report=_make_pipeline_report('lookback_3', p_value=0.05),
+            passed=True,
+        ),
+        'lookback_5': OutOfSamplePermutationReport(
+            param_combo='lookback_5',
+            vector_report=_make_vector_shuffle_report('lookback_5', passed=False, p_value=0.18),
+            candle_report=None,
+            passed=False,
+        ),
+    }
+
+
+def _make_combo_decisions() -> dict[str, ComboDecisionRecord]:
+    return {
+        'lookback_3': ComboDecisionRecord(
+            param_combo='lookback_3',
+            stage1_passed=True,
+            stage2_passed=True,
+            walkforward_stable=True,
+            oos_passed=True,
+            final_status='candidate',
+        ),
+        'lookback_5': ComboDecisionRecord(
+            param_combo='lookback_5',
+            stage1_passed=True,
+            stage2_passed=False,
+            walkforward_stable=False,
+            oos_passed=False,
+            final_status='rejected',
+        ),
+    }
+
+
+def _make_extended_suite() -> PermutationTestSuite:
+    base = _make_suite()
+    return PermutationTestSuite(
+        feature_name=base.feature_name,
+        feature_type=base.feature_type,
+        stage1_reports=base.stage1_reports,
+        stage2_reports=base.stage2_reports,
+        stage3_report=base.stage3_report,
+        funnel_stats=base.funnel_stats,
+        ensemble_candidates=base.ensemble_candidates,
+        summary=base.summary,
+        phase3_oos_reports=_make_oos_reports(),
+        combo_decisions=_make_combo_decisions(),
+    )
+
+
 def test_report_bundle_fields() -> None:
     """ReportBundle contains all required fields."""
     with tempfile.TemporaryDirectory() as tmpdir:
         suite = _make_suite()
+        assert hasattr(suite, 'phase3_oos_reports')
+        assert hasattr(suite, 'combo_decisions')
         bundle = generate_permutation_reports(suite, Path(tmpdir))
         assert hasattr(bundle, 'suite_json')
         assert hasattr(bundle, 'suite_markdown')
@@ -173,6 +232,54 @@ def test_json_export_round_trips() -> None:
         assert data['funnel_stats']['total_params'] == 10
         assert data['funnel_stats']['computational_savings_pct'] == 15.0
         assert 'ensemble_candidates' in data
+
+
+def test_combo_decision_table_csv_written() -> None:
+    """Generator writes combo decision table to CSV artifact."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        suite = _make_extended_suite()
+        generate_permutation_reports(suite, Path(tmpdir))
+
+        csv_path = Path(tmpdir) / 'combo_decision_table.csv'
+        assert csv_path.exists()
+
+        rows = list(csv.DictReader(csv_path.read_text().splitlines()))
+        assert len(rows) == 2
+        assert rows[0]['param_combo'] == 'lookback_3'
+        assert rows[0]['final_status'] == 'candidate'
+        assert rows[1]['param_combo'] == 'lookback_5'
+        assert rows[1]['final_status'] == 'rejected'
+
+
+def test_oos_null_distribution_outputs_created() -> None:
+    """Generator writes OOS vector and optional candle null-distribution plots."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        suite = _make_extended_suite()
+        generate_permutation_reports(suite, Path(tmpdir))
+
+        vector_dir = Path(tmpdir) / 'oos' / 'vector'
+        candle_dir = Path(tmpdir) / 'oos' / 'candle'
+
+        assert (vector_dir / 'null_dist_lookback_3.png').exists()
+        assert (vector_dir / 'null_dist_lookback_5.png').exists()
+        assert (candle_dir / 'null_dist_lookback_3.png').exists()
+        assert not (candle_dir / 'null_dist_lookback_5.png').exists()
+
+
+def test_extended_fields_do_not_break_markdown_and_json_generation() -> None:
+    """Markdown/JSON generation keeps working with extended suite fields."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        suite = _make_extended_suite()
+        bundle = generate_permutation_reports(suite, Path(tmpdir))
+
+        markdown = bundle.suite_markdown.read_text()
+        assert 'Feature Overview' in markdown
+
+        json_data = json.loads(bundle.suite_json.read_text())
+        assert 'feature_name' in json_data
+        assert 'funnel_stats' in json_data
+        assert 'phase3_oos_reports' in json_data
+        assert 'combo_decisions' in json_data
 
 
 def test_null_distribution_plot_created() -> None:

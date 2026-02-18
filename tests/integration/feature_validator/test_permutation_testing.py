@@ -23,7 +23,7 @@ import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Literal, Optional, Set, Tuple
 
 import matplotlib
 matplotlib.use('Agg')
@@ -35,6 +35,7 @@ import pytest
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.validation.config import PermutationTestConfig
+from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from feature_selection.validation.orchestration import run_permutation_test_suite
 from feature_selection.validation.permutation_tests import (
     run_pipeline_permutation_continuous,
@@ -75,7 +76,7 @@ NREPS_FAST = 100  # fast for integration tests
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    return Path(__file__).resolve().parents[3]
 
 
 def _sharpe(returns: pd.Series) -> float:
@@ -160,20 +161,60 @@ def _load_candles(
     if not candle_dir.exists():
         pytest.skip(f'Missing candle directory: {candle_dir}')
 
-    # Try to find the parquet file for this ticker/timeframe
-    pattern = f'*{ticker.value}*{timeframe.value}*.parquet'
-    matches = list(candle_dir.glob(pattern))
-    if not matches:
-        pattern2 = f'*{ticker.name}*{timeframe.value}*.parquet'
-        matches = list(candle_dir.glob(pattern2))
-    if not matches:
-        matches = list(candle_dir.glob('*.parquet'))
+    # Deterministic and strict parquet selection for ticker/timeframe.
+    # Repository layout usually stores files under data/ohlc_data/{TICKER}/.
+    ticker_dir = candle_dir / ticker.value
+    search_roots = [ticker_dir, candle_dir] if ticker_dir.exists() else [candle_dir]
+    timeframe_tokens = [timeframe.name, str(timeframe.value)]
+    ticker_tokens = [ticker.name, ticker.value]
+    search_patterns = [
+        f'*{ticker_token}*{timeframe_token}*.parquet'
+        for ticker_token in ticker_tokens
+        for timeframe_token in timeframe_tokens
+    ] + [
+        f'*{timeframe_token}*{ticker_token}*.parquet'
+        for ticker_token in ticker_tokens
+        for timeframe_token in timeframe_tokens
+    ]
 
-    if not matches:
-        pytest.skip(f'No parquet files found in {candle_dir}')
+    seen_paths: set[Path] = set()
+    for root in search_roots:
+        for pattern in search_patterns:
+            seen_paths.update(root.rglob(pattern))
 
-    # Load first match and filter by ticker and date range if multi-ticker
-    df = pd.read_parquet(matches[0])
+    matches = sorted(seen_paths, key=lambda p: str(p))
+    if not matches:
+        pytest.skip(
+            f'No candle parquet matched ticker={ticker.value} timeframe={timeframe.value} under {candle_dir}',
+        )
+
+    preferred_names = [
+        f'{timeframe.name}_{ticker.name}.parquet',
+        f'{ticker.name}_{timeframe.name}.parquet',
+        f'{timeframe.name}_{ticker.value}.parquet',
+        f'{ticker.value}_{timeframe.name}.parquet',
+        f'{timeframe.value}_{ticker.value}.parquet',
+        f'{ticker.value}_{timeframe.value}.parquet',
+    ]
+    preferred_match = next(
+        (path for name in preferred_names for path in matches if path.name.lower() == name.lower()),
+        None,
+    )
+
+    selected_path: Path
+    if preferred_match is not None:
+        selected_path = preferred_match
+    elif len(matches) == 1:
+        selected_path = matches[0]
+    else:
+        preview = ', '.join(str(path.relative_to(candle_dir)) for path in matches[:5])
+        pytest.skip(
+            'Ambiguous candle parquet selection for '
+            f'ticker={ticker.value} timeframe={timeframe.value}; '
+            f'found {len(matches)} matches ({preview}).',
+        )
+
+    df = pd.read_parquet(selected_path)
 
     # Normalise to have DatetimeIndex
     if 'datetime' in df.columns and not isinstance(df.index, pd.DatetimeIndex):
@@ -272,6 +313,96 @@ def _visualize_candle_shuffle(
     fig.savefig(out_path, dpi=120, bbox_inches='tight')
     plt.close(fig)
     return out_path
+
+
+def _run_rule_based_permutation_suite(
+    bias_module: str = DEFAULT_BIAS_MODULE,
+    param_name: str = DEFAULT_PARAM_NAME,
+    ticker: Ticker = DEFAULT_TICKER,
+    timeframe: TimeFrame = DEFAULT_TIMEFRAME,
+    nreps: int = NREPS_FAST,
+    alpha: float = 0.10,
+    metric_threshold: float = 0.0,
+    oos_objective_metric: Optional[ObjectiveMetricSpec] = None,
+    extractor_mode: Literal['momentum_proxy', 'gate_stress_proxy'] = 'momentum_proxy',
+) -> tuple[PermutationTestSuite, list[dict], str]:
+    """Run full suite with real candles and a lightweight rule proxy extractor.
+
+    The extractor intentionally uses candle-derived returns as a fast integration
+    proxy for orchestration plumbing. It is not a bias-node extraction
+    integration test.
+
+    Returns:
+        (suite, param_grid, feature_col)
+    """
+    features_df, targets_df, feature_col = _load_features(
+        bias_module=bias_module,
+        param_name=param_name,
+        param_value=DEFAULT_PARAM_VALUE,
+        ticker=ticker,
+        timeframe=timeframe,
+    )
+
+    target = targets_df['log_return'].dropna().copy()
+    target.index = pd.to_datetime(target.index, utc=False)
+    target.index = target.index.tz_localize(None) if target.index.tz is not None else target.index
+    # Cache targets can carry millisecond offsets; strip sub-day precision so
+    # candle-derived proxy features align on bar timestamps.
+    target.index = target.index.floor('D')
+    target = target[~target.index.duplicated(keep='last')]
+
+    try:
+        candles = _load_candles(ticker, timeframe, DEFAULT_START, DEFAULT_END)
+    except Exception as e:
+        pytest.skip(f'Could not load candles for permutation suite test: {e}')
+
+    param_grid = [{param_name: v} for v in [3, 5, 10, 14]]
+
+    def extractor(df: pd.DataFrame, params: dict) -> pd.Series:
+        lb = params[param_name]
+        match extractor_mode:
+            case 'momentum_proxy':
+                return df['close'].pct_change(lb).fillna(0.0).rename(f'{param_name}_{lb}')
+            case 'gate_stress_proxy':
+                # Intentionally optimistic candle-derived proxy so in-sample
+                # Stage 2 passers are available for vector-gate integration.
+                signal = np.sign(df['close'].shift(-1) - df['close']).fillna(0.0)
+                return signal.rename(f'{param_name}_{lb}')
+
+    fold_structure = [
+        (pd.Timestamp('2020-01-01'), pd.Timestamp('2022-01-01')),
+        (pd.Timestamp('2022-01-01'), pd.Timestamp('2024-01-01')),
+    ]
+
+    config = PermutationTestConfig(
+        nreps=nreps,
+        alpha=alpha,
+        metric_threshold=metric_threshold,
+        top_k=3,
+        random_seed=42,
+        permutation_mode_stage2='feature_shuffle',
+        min_folds_stable=1,
+        objective_metric=oos_objective_metric,
+    )
+
+    suite = run_permutation_test_suite(
+        candles_df=candles,
+        feature_spec={'module_name': bias_module},
+        target=target,
+        param_grid=param_grid,
+        objective_func=_sharpe,
+        fold_structure=fold_structure,
+        config=config,
+        extractor_func=extractor,
+        feature_type='rule_based',
+        feature_name=feature_col,
+    )
+    return suite, param_grid, feature_col
+
+
+def _always_zero_objective_metric(_returns: pd.Series) -> float:
+    """Deterministic metric used to force OOS vector-gate failures in tests."""
+    return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -434,16 +565,16 @@ def test_pipeline_permutation_stage2(
 
     # --- Feature extractor for T014 ---
     def bias_node_extractor(df: pd.DataFrame) -> pd.Series:
-        """Extract RSI feature from candle DataFrame."""
-        # Use close pct_change as a proxy if real extractor unavailable
+        """Return fast candle-derived proxy feature for permutation plumbing.
+
+        This keeps the integration test focused on permutation orchestration and
+        alignment. It intentionally does not validate bias-node extraction.
+        """
         try:
-            # Try to use the real cache-based extraction
-            # For daily data, just use close returns as a simplified proxy
             ret = df['close'].pct_change(param_value).fillna(0.0)
             return ret.rename(feature_col)
         except Exception:
             return df['close'].pct_change().fillna(0.0).rename(feature_col)
-
     template_model = ContinuousBinningModel(n_bins=15)
 
     # --- Mode 1: Feature shuffle ---
@@ -593,6 +724,98 @@ def test_walkforward_stability_stage3(
 
 
 @pytest.mark.integration
+def test_permutation_suite_runs_in_sample_walkforward_oos(
+    bias_module: str = DEFAULT_BIAS_MODULE,
+    param_name: str = DEFAULT_PARAM_NAME,
+    ticker: Ticker = DEFAULT_TICKER,
+    timeframe: TimeFrame = DEFAULT_TIMEFRAME,
+) -> None:
+    """Integration test for full 3-phase suite: in-sample, walkforward, OOS."""
+    print('\n' + '=' * 60)
+    print('Integration Test: Full 3-Phase Permutation Suite Coverage')
+    print('=' * 60)
+
+    suite, param_grid, feature_col = _run_rule_based_permutation_suite(
+        bias_module=bias_module,
+        param_name=param_name,
+        ticker=ticker,
+        timeframe=timeframe,
+        nreps=40,
+        alpha=1.0,
+        metric_threshold=-1e9,
+    )
+
+    assert isinstance(suite, PermutationTestSuite)
+    assert len(suite.stage1_reports) == len(param_grid)
+    assert len(suite.stage2_reports) <= len(suite.stage1_reports)
+    assert len(suite.stage3_report.fold_results) > 0
+    assert isinstance(suite.phase3_oos_reports, dict)
+
+    if len(suite.phase3_oos_reports) == 0:
+        pytest.skip(
+            'Stage 2 produced zero passers for this dataset/config; OOS phase configured but had no candidates.',
+        )
+
+    assert set(suite.phase3_oos_reports).issubset(set(suite.stage2_reports))
+    assert len(suite.combo_decisions) == len(param_grid)
+
+    print(f'Feature: {feature_col}')
+    print(f'Stage 1 reports: {len(suite.stage1_reports)}')
+    print(f'Stage 2 reports: {len(suite.stage2_reports)}')
+    print(f'Walkforward folds: {len(suite.stage3_report.fold_results)}')
+    print(f'OOS reports: {len(suite.phase3_oos_reports)}')
+
+
+@pytest.mark.integration
+def test_permutation_suite_respects_vector_first_gate_in_oos(
+    bias_module: str = DEFAULT_BIAS_MODULE,
+    param_name: str = DEFAULT_PARAM_NAME,
+    ticker: Ticker = DEFAULT_TICKER,
+    timeframe: TimeFrame = DEFAULT_TIMEFRAME,
+) -> None:
+    """Integration test: OOS candle permutation runs only after vector pass.
+
+    Uses strict OOS ObjectiveMetricSpec to force vector failures while keeping
+    in-sample Stage 2 passers likely so the vector-first gate path is exercised.
+    """
+    print('\n' + '=' * 60)
+    print('Integration Test: OOS Vector-First Gate')
+    print('=' * 60)
+
+    suite, _, feature_col = _run_rule_based_permutation_suite(
+        bias_module=bias_module,
+        param_name=param_name,
+        ticker=ticker,
+        timeframe=timeframe,
+        nreps=60,
+        alpha=1.0,
+        metric_threshold=-1e9,
+        oos_objective_metric=ObjectiveMetricSpec(
+            builtin='always_zero',
+        ),
+        extractor_mode='gate_stress_proxy',
+    )
+
+    assert suite.phase3_oos_reports, 'Expected OOS candidates from permissive in-sample gating.'
+
+    vector_failures = [
+        report for report in suite.phase3_oos_reports.values()
+        if not report.vector_report.passed
+    ]
+    assert vector_failures, 'Expected vector failures from deterministic zero OOS objective metric.'
+
+    assert all(report.candle_report is None for report in vector_failures)
+    assert all(
+        (report.candle_report is None) == (not report.vector_report.passed)
+        for report in suite.phase3_oos_reports.values()
+    )
+
+    print(f'Feature: {feature_col}')
+    print(f'OOS reports: {len(suite.phase3_oos_reports)}')
+    print(f'Vector-failed reports: {len(vector_failures)}')
+
+
+@pytest.mark.integration
 def test_early_stopping_orchestration(
     bias_module: str = DEFAULT_BIAS_MODULE,
     param_name: str = DEFAULT_PARAM_NAME,
@@ -619,52 +842,17 @@ def test_early_stopping_orchestration(
     print('Integration Test: T016+T017 — Orchestration + Report Generation')
     print('=' * 60)
 
-    features_df, targets_df, feature_col = _load_features(
-        bias_module, param_name, param_value, ticker, timeframe,
-    )
-
-    target = targets_df['log_return'].dropna()
-
-    try:
-        candles = _load_candles(ticker, timeframe, DEFAULT_START, DEFAULT_END)
-    except Exception as e:
-        pytest.skip(f'Could not load candles for orchestration test: {e}')
-
-    param_grid = [{param_name: v} for v in [3, 5, 10, 14]]
-    print(f'Feature: {feature_col}')
-    print(f'Parameter grid: {[p[param_name] for p in param_grid]}')
-
-    def extractor(df: pd.DataFrame, params: dict) -> pd.Series:
-        lb = params[param_name]
-        return df['close'].pct_change(lb).fillna(0.0).rename(f'{param_name}_{lb}')
-
-    fold_structure = [
-        (pd.Timestamp('2020-01-01'), pd.Timestamp('2022-01-01')),
-        (pd.Timestamp('2022-01-01'), pd.Timestamp('2024-01-01')),
-    ]
-
-    config = PermutationTestConfig(
+    suite, param_grid, feature_col = _run_rule_based_permutation_suite(
+        bias_module=bias_module,
+        param_name=param_name,
+        ticker=ticker,
+        timeframe=timeframe,
         nreps=nreps,
         alpha=alpha,
-        top_k=3,
-        random_seed=42,
-        permutation_mode_stage2='feature_shuffle',  # fast for integration test
-        min_folds_stable=1,  # lax for integration test with 2 folds
     )
 
-    # Run the full suite
-    suite = run_permutation_test_suite(
-        candles_df=candles,
-        feature_spec={'module_name': bias_module},
-        target=target,
-        param_grid=param_grid,
-        objective_func=_sharpe,
-        fold_structure=fold_structure,
-        config=config,
-        extractor_func=extractor,
-        feature_type='rule_based',
-        feature_name=feature_col,
-    )
+    print(f'Feature: {feature_col}')
+    print(f'Parameter grid: {[p[param_name] for p in param_grid]}')
 
     # Assertions
     assert isinstance(suite, PermutationTestSuite)
@@ -674,6 +862,9 @@ def test_early_stopping_orchestration(
     assert suite.funnel_stats.computational_savings_pct >= 0.0
     assert isinstance(suite.ensemble_candidates, list)
     assert set(suite.ensemble_candidates).issubset(set(suite.stage2_reports.keys()))
+    assert isinstance(suite.phase3_oos_reports, dict)
+    assert set(suite.phase3_oos_reports).issubset(set(suite.stage2_reports.keys()))
+    assert len(suite.combo_decisions) == len(param_grid)
 
     # --- T017: Generate reports ---
     output_dir = Path(tempfile.mkdtemp(prefix='perm_report_'))
@@ -689,6 +880,23 @@ def test_early_stopping_orchestration(
     assert bundle.funnel_plot.exists()
     assert len(bundle.stage1_plots) == len(suite.stage1_reports)
     assert len(bundle.stage2_plots) == len(suite.stage2_reports)
+
+    oos_vector_dir = output_dir / 'oos' / 'vector'
+    oos_candle_dir = output_dir / 'oos' / 'candle'
+    combo_table_path = output_dir / 'combo_decision_table.csv'
+    assert oos_vector_dir.exists()
+    assert oos_candle_dir.exists()
+    assert combo_table_path.exists()
+
+    vector_plot_paths = list(oos_vector_dir.glob('null_dist_*.png'))
+    candle_plot_paths = list(oos_candle_dir.glob('null_dist_*.png'))
+    assert len(vector_plot_paths) == len(suite.phase3_oos_reports)
+    expected_candle_count = sum(
+        1
+        for report in suite.phase3_oos_reports.values()
+        if report.candle_report is not None
+    )
+    assert len(candle_plot_paths) == expected_candle_count
 
     # Terminal summary
     print(f'\n{"="*60}')

@@ -16,8 +16,14 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.rule_based.config import RuleBasedResearchConfig
-from feature_research.rule_based.pipeline import run_rule_based_eda_pipeline
+from feature_research.rule_based.config import (
+    PermutationSuiteConfig,
+    RuleBasedResearchConfig,
+)
+from feature_research.rule_based.pipeline import (
+    run_rule_based_eda_pipeline,
+    run_rule_based_permutation_pipeline,
+)
 from utils.enums import Ticker, TimeFrame
 
 
@@ -29,6 +35,17 @@ def _skip_if_no_data() -> None:
     candle_dir = _project_root() / "data" / "ohlc_data"
     if not candle_dir.exists():
         pytest.skip(f"Missing persisted candle directory: {candle_dir}")
+
+
+def _skip_if_missing_data_prereq(exc: Exception) -> None:
+    message = str(exc)
+    if isinstance(exc, FileNotFoundError):
+        pytest.skip(f"Missing persisted data prerequisite: {message}")
+    if isinstance(exc, ValueError) and (
+        "Unable to load feature/target data" in message
+        or "Feature extraction returned no data" in message
+    ):
+        pytest.skip(f"Missing data prerequisite for permutation suite: {message}")
 
 
 @pytest.mark.integration
@@ -142,3 +159,50 @@ def test_rule_based_eda_pipeline_multi_combo(
         assert len(results) == len(rsi_periods), (
             f"Expected {len(rsi_periods)} results, got {len(results)}"
         )
+
+
+@pytest.mark.integration
+def test_rule_based_pipeline_can_run_permutation_suite_mode(
+    tickers: list[Ticker] | None = None,
+    start: datetime = datetime(2020, 1, 1),
+    end: datetime = datetime(2023, 12, 31),
+    rsi_periods: list[int] | None = None,
+) -> None:
+    """Smoke test for rule-based permutation-suite pipeline entrypoint."""
+    _skip_if_no_data()
+    rsi_periods = rsi_periods or [2, 3]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = RuleBasedResearchConfig(
+            tickers=tickers or [Ticker.ES],
+            start=start,
+            end=end,
+            bias_spec={
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": rsi_periods,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            },
+            target_col="log_return",
+            strategy="long",
+            use_cache=True,
+            populate_cache=True,
+            reports_dir=Path(tmpdir),
+            permutation_suite=PermutationSuiteConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+        )
+
+        try:
+            suite = run_rule_based_permutation_pipeline(config, Path(tmpdir))
+        except Exception as exc:  # pragma: no cover - integration environment guard
+            _skip_if_missing_data_prereq(exc)
+            raise
+
+        assert suite.feature_type == "rule_based"
+        assert suite.funnel_stats.total_params == len(rsi_periods)
+        assert len(suite.stage1_reports) == len(rsi_periods)

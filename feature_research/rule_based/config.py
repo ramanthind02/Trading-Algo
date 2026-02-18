@@ -5,15 +5,35 @@ All other scripts import from here — change once, apply everywhere.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from feature_selection.validation.config import PermutationModeStage2
+from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.enums import Ticker, TimeFrame
 
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[1]
 _RB_DIR = _FEATURE_RESEARCH_DIR / "rule_based"
+
+
+@dataclass(frozen=True)
+class PermutationSuiteConfig:
+    """Settings for running the shared permutation test suite."""
+
+    enabled: bool = False
+    nreps: int = 100
+    alpha: float = 0.10
+    metric_threshold: float = 0.0
+    top_k: int = 3
+    min_folds_stable: int = 1
+    random_seed: int | None = 42
+    permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
+    fold_years: int = 2
+    objective_metric: ObjectiveMetricSpec = field(
+        default_factory=lambda: ObjectiveMetricSpec(builtin="sharpe")
+    )
 
 
 @dataclass(frozen=True)
@@ -66,6 +86,7 @@ class RuleBasedResearchConfig:
     use_cache: bool
     populate_cache: bool
     reports_dir: Path
+    permutation_suite: PermutationSuiteConfig = field(default_factory=PermutationSuiteConfig)
 
 
 def load_config() -> RuleBasedResearchConfig:
@@ -103,6 +124,8 @@ def load_config() -> RuleBasedResearchConfig:
 
     use_cache = True
     populate_cache = True
+
+    permutation_suite = PermutationSuiteConfig(enabled=False)
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -120,4 +143,5 @@ def load_config() -> RuleBasedResearchConfig:
         use_cache=use_cache,
         populate_cache=populate_cache,
         reports_dir=reports_dir,
+        permutation_suite=permutation_suite,
     )

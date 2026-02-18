@@ -1,5 +1,7 @@
 # In-Sample Permutation Testing (Spec)
 
+> **Note:** This document describes the three-phase permutation testing suite: (1) vector shuffle, (2) pipeline permutation, (3) walkforward stability. The suite uses vector-first gating — Stage 1 runs on pre-computed vectors only (fast), and only passing params proceed to Stage 2 (full pipeline). The objective metric is configured globally and used consistently across all phases.
+
 In-sample permutation tests check whether a feature's performance is better than chance. The user specifies a single **objective metric** (e.g. Sortino, Sharpe) used to evaluate performance in **all** tests. Tests are run in sequence: features that pass earlier stages are passed to later ones. A single feature has **multiple parameter combinations**; each param combo is tested independently, so some params may pass and others fail.
 
 Ensemble formation is **deferred to the end** of the pipeline. Stages 1–2 validate individual param combos. Stage 3 assesses temporal stability across walkforward folds. The researcher then manually forms an ensemble from the validated, stable set.
@@ -10,7 +12,7 @@ Ensemble formation is **deferred to the end** of the pipeline. Stages 1–2 vali
 
 | Input | Description |
 |-------|-------------|
-| **Objective metric** | The metric used to evaluate performance in every permutation test (e.g. Sortino ratio, Sharpe ratio). Same metric for null comparison and for ranking. |
+| **Objective metric** | The metric used to evaluate performance in every permutation test (e.g. Sortino ratio, Sharpe ratio). Same metric for null comparison and for ranking. Configured once at the suite level and propagated to all phases. |
 | **Significance level (α)** | Pass threshold: original must beat the **(1 − α)** quantile of the null. Default **α = 0.1** (i.e. 90th percentile; lax to reduce false negatives across multiple layers). Stricter option: α = 0.05. |
 | **Replicate count** | Number of permutation replicates (e.g. **500–1000**) to build the null distribution. |
 | **Continuous null (optional)** | For pipeline permutation on **continuous** features: **shuffle_feature** (quick screen for stage 1) or **shuffle_candles** (recommended for stage 2). Candle-based permutation uses a **stronger null** that destroys temporal structure (see §2a). |

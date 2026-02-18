@@ -95,10 +95,60 @@ def _ensure_utc_datetime_index(values: object) -> pd.DatetimeIndex:
     - Localize to UTC when tz-naive
     - Convert to UTC when timezone-aware
     """
-    datetime_index = pd.to_datetime(values)
+    datetime_values = pd.to_datetime(values)
+    if isinstance(datetime_values, pd.Series):
+        datetime_index = pd.DatetimeIndex(datetime_values.to_numpy())
+    else:
+        datetime_index = pd.DatetimeIndex(datetime_values)
     if datetime_index.tz is None:
         return datetime_index.tz_localize("UTC")
     return datetime_index.tz_convert("UTC")
+
+
+def _prepare_candles_override(
+    candles_override: pd.DataFrame,
+    tickers: List[Ticker],
+    use_millisecond_offset: bool,
+) -> pd.DataFrame:
+    """Validate and normalize override candles for forward-return computation."""
+    required_columns = {"datetime", "open", "high", "low", "close", "ticker"}
+    missing_columns = sorted(required_columns.difference(candles_override.columns))
+    if missing_columns:
+        raise ValueError(
+            "candles_override missing required columns: "
+            f"{missing_columns}. Expected columns include {sorted(required_columns)}"
+        )
+
+    normalized = candles_override.copy()
+    normalized["datetime"] = _ensure_utc_datetime_index(normalized["datetime"])
+    normalized["ticker"] = normalized["ticker"].apply(_normalize_ticker_str)
+
+    requested_tickers = [_normalize_ticker_str(ticker) for ticker in tickers]
+    requested_set = set(requested_tickers)
+    override_ticker_set = set(normalized["ticker"].unique())
+
+    missing_tickers = sorted(requested_set.difference(override_ticker_set))
+    if missing_tickers:
+        raise ValueError(
+            "candles_override missing ticker data for requested tickers: "
+            f"{missing_tickers}. Available tickers: {sorted(override_ticker_set)}"
+        )
+
+    unexpected_tickers = sorted(override_ticker_set.difference(requested_set))
+    if unexpected_tickers:
+        raise ValueError(
+            "candles_override contains unexpected tickers not requested: "
+            f"{unexpected_tickers}. Requested tickers: {sorted(requested_set)}"
+        )
+
+    if use_millisecond_offset and len(requested_tickers) > 1:
+        ticker_offset_map = {
+            ticker_name: pd.Timedelta(milliseconds=ticker_idx)
+            for ticker_idx, ticker_name in enumerate(requested_tickers)
+        }
+        normalized["datetime"] = normalized["datetime"] + normalized["ticker"].map(ticker_offset_map)
+
+    return normalized
 
 
 def _compute_targets(price_df: pd.DataFrame, atr_col: Optional[str] = None, ewsd_col: Optional[str] = None) -> pd.DataFrame:
@@ -713,7 +763,8 @@ def extract_features_with_forward_returns(
     timeframes: List[TimeFrame] = None,
     use_millisecond_offset: bool = True,
     target_col: str = 'log_return',
-    use_cache: bool = False
+    use_cache: bool = False,
+    candles_override: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features and compute intraday returns (shifted forward) automatically.
@@ -757,6 +808,13 @@ def extract_features_with_forward_returns(
         - 'log_return': log(close[t+1]/open[t+1]), shifted forward by 1 period
         - 'log_return_atr': log_return normalized by ATR (recommended for multi-ticker)
         - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
+    candles_override : pd.DataFrame | None, default=None
+        Optional candle dataframe override. When provided, this dataframe is used
+        for forward-return computation instead of loading candles internally.
+        Required columns: ``datetime``, ``open``, ``high``, ``low``, ``close``, ``ticker``.
+        ``datetime`` is normalized to UTC and, when ``use_millisecond_offset=True``
+        in multi-ticker mode, per-ticker millisecond offsets are applied using the
+        same ticker-order semantics as the feature extraction path.
         
     Returns
     -------
@@ -799,13 +857,21 @@ def extract_features_with_forward_returns(
         tickers = ticker
     
     # Load candles to compute forward returns
-    candles_df = helpers.load_data_multi_ticker(
-        tickers=tickers,
-        timeframe=timeframes[0],  # Use first timeframe
-        start=start,
-        end=end,
-        use_millisecond_offset=use_millisecond_offset
-    )
+    candles_df = candles_override
+    if candles_df is None:
+        candles_df = helpers.load_data_multi_ticker(
+            tickers=tickers,
+            timeframe=timeframes[0],  # Use first timeframe
+            start=start,
+            end=end,
+            use_millisecond_offset=use_millisecond_offset
+        )
+    else:
+        candles_df = _prepare_candles_override(
+            candles_override=candles_df,
+            tickers=tickers,
+            use_millisecond_offset=use_millisecond_offset,
+        )
     
     # STEP 1: Extract features - ALWAYS include ATR and EWSD for volatility scaling
     # Extract main module features
@@ -1043,6 +1109,18 @@ def extract_features_with_forward_returns(
             f"Alignment failed: features and targets have different lengths after merge. "
             f"Features: {len(features_df_aligned)}, Targets: {len(targets_aligned)}"
         )
+
+    if 'ticker' in features_df.columns and 'ticker' in features_df_aligned.columns:
+        expected_tickers = set(features_df['ticker'].unique())
+        aligned_tickers = set(features_df_aligned['ticker'].unique())
+        missing_aligned_tickers = sorted(expected_tickers.difference(aligned_tickers))
+        if missing_aligned_tickers:
+            raise ValueError(
+                "Tickers dropped during feature-target alignment. "
+                f"Missing tickers: {missing_aligned_tickers}. "
+                f"Expected tickers: {sorted(expected_tickers)}, "
+                f"aligned tickers: {sorted(aligned_tickers)}"
+            )
     
     # Ensure indices match exactly
     if not features_df_aligned.index.equals(targets_aligned.index):
@@ -1174,7 +1252,8 @@ def extract_features_for_bias_node(
     end: datetime = None,
     use_millisecond_offset: bool = True,
     target_col: str = 'log_return',
-    use_cache: bool = False
+    use_cache: bool = False,
+    candles_override: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     High-level convenience function for extracting features from a bias node spec.
@@ -1211,6 +1290,9 @@ def extract_features_for_bias_node(
         - 'log_return': log(close[t+1]/open[t+1]), shifted forward by 1 period
         - 'log_return_atr': log_return normalized by ATR (recommended for multi-ticker)
         - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
+    candles_override : pd.DataFrame | None, default=None
+        Optional candle dataframe override used by
+        ``extract_features_with_forward_returns``.
         
     Returns
     -------
@@ -1264,5 +1346,6 @@ def extract_features_for_bias_node(
         timeframes=timeframes,
         use_millisecond_offset=use_millisecond_offset,
         target_col=target_col,
-        use_cache=use_cache
+        use_cache=use_cache,
+        candles_override=candles_override,
     )

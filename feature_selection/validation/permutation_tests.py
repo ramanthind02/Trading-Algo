@@ -17,6 +17,7 @@ import pandas as pd
 
 from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.validation.reports import (
+    OutOfSamplePermutationReport,
     PipelinePermutationReport,
     VectorShuffleReport,
 )
@@ -396,4 +397,102 @@ def run_pipeline_permutation_rule_based(
         alpha=alpha,
         nreps=nreps,
         no_trade_permutations=no_trade_permutations,
+    )
+
+
+# ---------------------------------------------------------------------------
+# T014/T016 — Out-of-sample permutation runner with vector-first gate
+# ---------------------------------------------------------------------------
+
+def run_oos_permutation_for_param(
+    param_combo: str,
+    feature_type: Literal['continuous', 'rule_based'],
+    fitted_feature: pd.Series,
+    candles_df: pd.DataFrame,
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    *,
+    bias_node_extractor: Optional[Callable[[pd.DataFrame], pd.Series]] = None,
+    binning_model: Optional[BinningModelBase] = None,
+    rule_extractor: Optional[Callable[[pd.DataFrame], pd.Series]] = None,
+    permutation_mode: Literal['feature_shuffle', 'candle_shuffle'] = 'candle_shuffle',
+    metric_threshold: float = 0.0,
+    nreps: int = 1000,
+    alpha: float = 0.10,
+    random_seed: Optional[int] = None,
+) -> OutOfSamplePermutationReport:
+    """Run out-of-sample permutation for one parameter combo.
+
+    The vector shuffle gate is always run first. If it fails, stage-2 candle
+    permutation is skipped and ``candle_report`` is returned as ``None``.
+    """
+    if feature_type not in ('continuous', 'rule_based'):
+        raise ValueError(
+            f"Unknown feature_type: {feature_type!r}. "
+            "Use 'continuous' or 'rule_based'."
+        )
+
+    if feature_type == 'rule_based' and permutation_mode != 'candle_shuffle':
+        raise ValueError(
+            "rule_based feature_type only supports permutation_mode='candle_shuffle'."
+        )
+
+    vector_report = run_vector_shuffle_test(
+        fitted_feature=fitted_feature,
+        target=target,
+        objective_func=objective_func,
+        nreps=nreps,
+        alpha=alpha,
+        random_seed=random_seed,
+        param_combo=param_combo,
+    )
+
+    if not vector_report.passed:
+        return OutOfSamplePermutationReport(
+            param_combo=param_combo,
+            vector_report=vector_report,
+            candle_report=None,
+            passed=False,
+        )
+
+    candle_report: PipelinePermutationReport
+    match feature_type:
+        case 'continuous':
+            if bias_node_extractor is None or binning_model is None:
+                raise ValueError(
+                    'continuous feature_type requires bias_node_extractor and binning_model.',
+                )
+            candle_report = run_pipeline_permutation_continuous(
+                candles_df=candles_df,
+                bias_node_extractor=bias_node_extractor,
+                binning_model=binning_model,
+                target=target,
+                objective_func=objective_func,
+                permutation_mode=permutation_mode,
+                metric_threshold=metric_threshold,
+                nreps=nreps,
+                alpha=alpha,
+                random_seed=random_seed,
+                param_combo=param_combo,
+            )
+        case 'rule_based':
+            if rule_extractor is None:
+                raise ValueError('rule_based feature_type requires rule_extractor.')
+            candle_report = run_pipeline_permutation_rule_based(
+                candles_df=candles_df,
+                rule_extractor=rule_extractor,
+                target=target,
+                objective_func=objective_func,
+                metric_threshold=metric_threshold,
+                nreps=nreps,
+                alpha=alpha,
+                random_seed=random_seed,
+                param_combo=param_combo,
+            )
+
+    return OutOfSamplePermutationReport(
+        param_combo=param_combo,
+        vector_report=vector_report,
+        candle_report=candle_report,
+        passed=bool(vector_report.passed and candle_report.passed),
     )

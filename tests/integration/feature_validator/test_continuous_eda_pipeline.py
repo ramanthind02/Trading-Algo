@@ -17,8 +17,14 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.continuous_binning.config import ResearchConfig
-from feature_research.continuous_binning.pipeline import run_continuous_eda_pipeline
+from feature_research.continuous_binning.config import (
+    PermutationSuiteConfig,
+    ResearchConfig,
+)
+from feature_research.continuous_binning.pipeline import (
+    run_continuous_eda_pipeline,
+    run_continuous_permutation_pipeline,
+)
 from utils.enums import Ticker, TimeFrame
 
 
@@ -30,6 +36,17 @@ def _skip_if_no_data() -> None:
     candle_dir = _project_root() / "data" / "ohlc_data"
     if not candle_dir.exists():
         pytest.skip(f"Missing persisted candle directory: {candle_dir}")
+
+
+def _skip_if_missing_data_prereq(exc: Exception) -> None:
+    message = str(exc)
+    if isinstance(exc, FileNotFoundError):
+        pytest.skip(f"Missing persisted data prerequisite: {message}")
+    if isinstance(exc, ValueError) and (
+        "Unable to load feature/target data" in message
+        or "Feature extraction returned no data" in message
+    ):
+        pytest.skip(f"Missing data prerequisite for permutation suite: {message}")
 
 
 @pytest.mark.integration
@@ -136,3 +153,43 @@ def test_continuous_eda_pipeline_multi_combo(
         )
         for lb in lookbacks:
             assert f"lookback_{lb}" in results
+
+
+@pytest.mark.integration
+def test_continuous_pipeline_can_run_permutation_suite_mode(
+    tickers: list[Ticker] | None = None,
+    start: datetime = datetime(2020, 1, 1),
+    end: datetime = datetime(2023, 12, 31),
+    lookbacks: list[int] | None = None,
+) -> None:
+    """Smoke test for continuous permutation-suite pipeline entrypoint."""
+    _skip_if_no_data()
+    lookbacks = lookbacks or [3, 5]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = ResearchConfig(
+            tickers=tickers or [Ticker.ES],
+            start=start,
+            end=end,
+            bias_spec={
+                "module_name": "rsi",
+                "timeframes": [TimeFrame.D],
+                "params": {"lookback": lookbacks},
+            },
+            target_col="log_return",
+            strategy="long-short",
+            use_cache=True,
+            populate_cache=True,
+            reports_dir=Path(tmpdir),
+            permutation_suite=PermutationSuiteConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+        )
+
+        try:
+            suite = run_continuous_permutation_pipeline(config, Path(tmpdir))
+        except Exception as exc:  # pragma: no cover - integration environment guard
+            _skip_if_missing_data_prereq(exc)
+            raise
+
+        assert suite.feature_type == "continuous"
+        assert suite.funnel_stats.total_params == len(lookbacks)
+        assert len(suite.stage1_reports) == len(lookbacks)
