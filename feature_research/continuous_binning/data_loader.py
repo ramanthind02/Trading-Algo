@@ -54,7 +54,7 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
     if not config.populate_cache:
         return
 
-    project_root = Path(__file__).resolve().parents[3]
+    project_root = Path(__file__).resolve().parents[2]
     candle_dir = project_root / "data" / "ohlc_data"
     if not candle_dir.exists():
         print(
