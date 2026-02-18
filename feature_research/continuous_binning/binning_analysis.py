@@ -4,10 +4,9 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+import sys
 
 import matplotlib
-
-matplotlib.use("Agg")  # non-interactive backend (safe for scripts and tests)
 
 if TYPE_CHECKING:
     from feature_research.continuous_binning.config import ResearchConfig
@@ -66,6 +65,9 @@ def run_binning_analysis_pipeline(
 
     if dry_run:
         return {}
+
+    if "matplotlib.pyplot" not in sys.modules:
+        matplotlib.use("Agg")  # non-interactive backend (safe for scripts and tests)
 
     populate_cache_if_needed(config)
 
