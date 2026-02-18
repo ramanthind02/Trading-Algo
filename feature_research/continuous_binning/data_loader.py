@@ -125,4 +125,9 @@ def load_features_for_combo(
     if aligned.empty:
         return None
 
-    return aligned["feature"], aligned["target"], feature_col
+    feature_series = aligned["feature"].copy()
+    feature_series.name = feature_col
+    target_series = aligned["target"].copy()
+    target_series.name = target_col_name
+
+    return feature_series, target_series, feature_col

@@ -272,6 +272,9 @@ Common methods:
 Raises:
 - `ValueError` when no valid data points remain after alignment/cleaning.
 
+### EDA/Research entrypoints
+- `feature_research/continuous_binning/run_binning_analysis.py`: CLI entrypoint that orchestrates continuous binning analysis runs and emits research artifacts.
+
 ### `build_feature_metadata`
 Type: function  
 Module: `research/bias_node_helpers.py`
