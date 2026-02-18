@@ -86,8 +86,8 @@ def load_features_for_combo(
     -------
     (feature, target, feature_col) or None if extraction fails / returns empty data.
 
-    The returned Series are aligned (same index, NaNs dropped) and concatenated
-    across all tickers in ``config.tickers``.
+    The returned Series are aligned (same index, NaNs dropped).
+    Multi-ticker aggregation is handled internally by ``extract_features_for_bias_node``.
     """
     try:
         features_df, targets_df = extract_features_for_bias_node(
