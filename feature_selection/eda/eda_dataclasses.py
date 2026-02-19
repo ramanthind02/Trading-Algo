@@ -45,10 +45,27 @@ class CorrelationAnalysis:
 
 
 @dataclass(frozen=True)
+class ICDecay:
+    """Spearman IC at multiple forward-return horizons."""
+    horizons: list[int]               # e.g. [1, 5, 10, 21]
+    ic_by_horizon: dict[int, float]   # horizon → IC value
+
+
+@dataclass(frozen=True)
+class FeatureACF:
+    """Autocorrelation and partial autocorrelation of the feature."""
+    lags: np.ndarray        # shape (max_acf_lag,), values 1..max_acf_lag
+    acf_values: np.ndarray  # shape (max_acf_lag,)
+    pacf_values: np.ndarray # shape (max_acf_lag,)
+
+
+@dataclass(frozen=True)
 class CommonEDAPlots:
     """Matplotlib Figure objects for common EDA."""
     time_series_fig: Figure      # feature over time (single subplot)
     rolling_corr_fig: Figure     # rolling correlation over time
+    ic_decay_fig: Figure         # IC at each forward-return horizon
+    acf_fig: Figure              # ACF and PACF correlograms
 
 
 @dataclass(frozen=True)
@@ -58,6 +75,8 @@ class CommonEDAStats:
     target_stats: DescriptiveStats
     temporal_stability: TemporalStability
     correlation_analysis: CorrelationAnalysis
+    ic_decay: ICDecay
+    feature_acf: FeatureACF
 
 
 # ─── T002: Continuous Feature EDA ────────────────────────────────────────────
@@ -81,6 +100,13 @@ class DecileAnalysis:
 
 
 @dataclass(frozen=True)
+class QuintileSpread:
+    """Mean return per quintile and Q5-Q1 spread."""
+    quintile_means: np.ndarray  # shape (5,), Q1 to Q5
+    spread: float               # quintile_means[4] - quintile_means[0]
+
+
+@dataclass(frozen=True)
 class DistributionDiagnostics:
     """Normality diagnostics for feature distribution."""
     skewness: float
@@ -95,6 +121,7 @@ class ContinuousEDAPlots:
     """Matplotlib Figures for continuous feature EDA."""
     decile_plot_fig: Figure       # 3 subplots: mean return, Sharpe, t-stat
     histogram_fig: Figure         # histogram + quantile overlay lines
+    quintile_spread_fig: Figure   # mean return per quintile with spread
 
 
 @dataclass(frozen=True)
@@ -102,6 +129,7 @@ class ContinuousEDAStats:
     """Aggregated continuous feature EDA statistics."""
     decile_analysis: DecileAnalysis
     distribution_diagnostics: DistributionDiagnostics
+    quintile_spread: QuintileSpread
 
 
 # ─── T003: Rule-Based Feature EDA ────────────────────────────────────────────
@@ -176,6 +204,8 @@ class EDAConfig:
     max_lag: int = 5
     bootstrap_iterations: int = 1000
     random_seed: int = 42
+    ic_horizons: tuple[int, ...] = (1, 5, 10, 21)
+    max_acf_lag: int = 20
 
 
 @dataclass(frozen=True)
