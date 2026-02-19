@@ -168,14 +168,14 @@ def run_continuous_eda_pipeline(
             reference_index = _normalize_datetime_index(target.index)
 
         pearson = report.common_stats.correlation_analysis.pearson
-        tau = report.continuous_stats.monotonicity_test.kendall_tau
+        spread = report.continuous_stats.quintile_spread.spread
         trend = report.continuous_stats.decile_analysis.overall_trend
         viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
         warnings_count = len(report.diagnostics.warnings)
 
         print(
             f"  [{label}] n={len(feature):,}  pearson={pearson:+.3f}  "
-            f"tau={tau:+.3f}  trend={trend}  {viable}  warnings={warnings_count}"
+            f"spread={spread:+.3f}  trend={trend}  {viable}  warnings={warnings_count}"
         )
 
     if config.walkforward.enabled and reference_index is not None and successful_param_grid:
@@ -293,7 +293,12 @@ def run_continuous_permutation_pipeline(
         fold_structure=fold_structure,
         config=permutation_config,
         extractor_func=extractor_func,
-        binning_model_factory=lambda _params: ContinuousBinningModel(n_bins=15),
+        binning_model_factory=lambda _params: ContinuousBinningModel(
+            bin_counts=config.binning_params.bin_counts,
+            use_coverage_bonus=config.binning_params.use_coverage_bonus,
+            coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
+            max_coverage_bonus=config.binning_params.max_coverage_bonus,
+        ),
         feature_type="continuous",
         feature_name=feature_col,
     )

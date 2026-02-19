@@ -176,6 +176,13 @@ def load_config() -> ResearchConfig:
     populate_cache = True
 
     permutation_suite = PermutationSuiteConfig(enabled=False)
+
+    binning_params = BinningAnalysisConfig(
+        bin_counts=[10, 8, 5, 3],
+        strategy="long_short",
+        t_threshold=2.0,
+        use_coverage_bonus=False,
+    )
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -194,4 +201,5 @@ def load_config() -> ResearchConfig:
         populate_cache=populate_cache,
         reports_dir=reports_dir,
         permutation_suite=permutation_suite,
+        binning_params=binning_params,
     )
