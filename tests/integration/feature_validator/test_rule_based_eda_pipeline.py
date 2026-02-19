@@ -106,6 +106,8 @@ def test_rule_based_eda_pipeline_smoke(
             "time_series_fig.png",
             "rolling_corr_fig.png",
             "level_plot_fig.png",
+            "ic_decay_fig.png",
+            "acf_fig.png",
         ]
         for plot_file in expected_plots:
             assert (plots_dir / plot_file).exists(), f"Missing plot: {plot_file}"

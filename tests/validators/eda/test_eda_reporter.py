@@ -25,8 +25,11 @@ from feature_selection.eda.eda_dataclasses import (
     DistributionDiagnostics,
     EDAConfig,
     EDAMetadata,
+    FeatureACF,
+    ICDecay,
     LevelStats,
     PerLevelStats,
+    QuintileSpread,
     RuleBasedEDAReport,
     RuleBasedEDAStats,
     TemporalStability,
@@ -93,6 +96,15 @@ def _common_stats(
             structural_breaks=structural_breaks or [],
         ),
         correlation_analysis=CorrelationAnalysis(pearson=0.4, spearman=0.35, lagged_correlations={1: 0.2}),
+        ic_decay=ICDecay(
+            horizons=[1, 5, 10, 21],
+            ic_by_horizon={1: 0.2, 5: 0.15, 10: 0.1, 21: 0.05},
+        ),
+        feature_acf=FeatureACF(
+            lags=np.arange(1, 21, dtype=float),
+            acf_values=np.linspace(0.5, 0.0, 20),
+            pacf_values=np.linspace(0.4, 0.0, 20),
+        ),
     )
 
 
@@ -116,6 +128,10 @@ def _continuous_feature_stats() -> ContinuousEDAStats:
             normality_test_stat=0.98,
             normality_p_value=0.2,
             is_normal=True,
+        ),
+        quintile_spread=QuintileSpread(
+            quintile_means=np.array([-0.02, -0.01, 0.0, 0.01, 0.02]),
+            spread=0.04,
         ),
     )
 
