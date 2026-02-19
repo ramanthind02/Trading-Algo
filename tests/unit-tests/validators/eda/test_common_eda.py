@@ -18,6 +18,7 @@ from feature_selection.eda.common_eda import (
     compute_correlation_analysis,
     create_common_eda_plots,
     compute_ic_decay,
+    compute_feature_acf,
 )
 from feature_selection.eda.eda_dataclasses import (
     DescriptiveStats, TemporalStability, CorrelationAnalysis, CommonEDAPlots, ICDecay,
@@ -107,11 +108,17 @@ def test_correlation_analysis_has_all_lags() -> None:
 def test_common_eda_plots_smoke() -> None:
     n = 60
     idx = _daily_index(n)
+    np.random.seed(0)
     feature = pd.Series(np.random.randn(n), index=idx)
     rolling_corr = pd.Series(np.random.randn(n), index=idx)
-    plots = create_common_eda_plots(feature, idx, rolling_corr)
+    target = pd.Series(np.random.randn(n), index=idx)
+    ic_d = compute_ic_decay(feature, target, horizons=[1, 5, 10, 21])
+    f_acf = compute_feature_acf(feature, max_lag=20)
+    plots = create_common_eda_plots(feature, idx, rolling_corr, ic_d, f_acf)
     assert plots.time_series_fig is not None
     assert plots.rolling_corr_fig is not None
+    assert plots.ic_decay_fig is not None
+    assert plots.acf_fig is not None
 
 
 def test_ic_decay_horizons_present() -> None:

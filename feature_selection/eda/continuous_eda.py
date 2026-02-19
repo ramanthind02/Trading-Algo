@@ -146,8 +146,9 @@ def create_continuous_eda_plots(
     feature: pd.Series,
     target: pd.Series,
     decile_analysis: DecileAnalysis,
+    quintile_spread: QuintileSpread,
 ) -> ContinuousEDAPlots:
-    """Create the two standard continuous EDA figures: decile plot and histogram."""
+    """Create the three standard continuous EDA figures: decile plot, histogram, quintile spread."""
     bs = decile_analysis.bin_stats
     bins = np.arange(len(bs.mean_return))
 
@@ -174,7 +175,20 @@ def create_continuous_eda_plots(
     fig_h.tight_layout()
     plt.close(fig_h)
 
+    # 3. Quintile spread figure
+    fig_qs, ax = plt.subplots(figsize=(8, 4))
+    quintile_labels = ["Q1", "Q2", "Q3", "Q4", "Q5"]
+    colors = ["#d73027" if v < 0 else "#1a9850" for v in quintile_spread.quintile_means]
+    ax.bar(quintile_labels, np.nan_to_num(quintile_spread.quintile_means), color=colors)
+    ax.axhline(0, color="black", linewidth=0.5)
+    ax.set_title(f"Mean return by quintile  |  spread = {quintile_spread.spread:.4f}")
+    ax.set_xlabel("Quintile")
+    ax.set_ylabel("Mean return")
+    fig_qs.tight_layout()
+    plt.close(fig_qs)
+
     return ContinuousEDAPlots(
         decile_plot_fig=fig_d,
         histogram_fig=fig_h,
+        quintile_spread_fig=fig_qs,
     )

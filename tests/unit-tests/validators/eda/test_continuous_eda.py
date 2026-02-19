@@ -88,12 +88,14 @@ def test_n_bins_2_minimum() -> None:
 
 
 def test_continuous_eda_plots_smoke() -> None:
-    """Both Figure objects created without error."""
-    feature, target = _series(200)
+    """All three Figure objects created without error."""
+    feature, target = _series(500)
     da = compute_decile_analysis(feature, target, n_bins=15)
-    plots = create_continuous_eda_plots(feature, target, da)
+    qs = compute_quintile_spread(feature, target)
+    plots = create_continuous_eda_plots(feature, target, da, qs)
     assert plots.decile_plot_fig is not None
     assert plots.histogram_fig is not None
+    assert plots.quintile_spread_fig is not None
 
 
 from feature_selection.eda.continuous_eda import compute_quintile_spread

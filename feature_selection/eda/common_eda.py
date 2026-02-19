@@ -157,8 +157,10 @@ def create_common_eda_plots(
     feature: pd.Series,
     timestamps: pd.DatetimeIndex,
     rolling_corr: pd.Series,
+    ic_decay: ICDecay,
+    feature_acf: FeatureACF,
 ) -> CommonEDAPlots:
-    """Create the two standard common EDA figures."""
+    """Create the four standard common EDA figures."""
     # 1. Time-series plot (single subplot)
     fig_ts, ax1 = plt.subplots(1, 1, figsize=(12, 4))
     ax1.plot(timestamps, feature.values, linewidth=0.8, color="steelblue")
@@ -176,7 +178,44 @@ def create_common_eda_plots(
     fig_rc.tight_layout()
     plt.close(fig_rc)
 
+    # 3. IC decay figure
+    fig_ic, ax = plt.subplots(figsize=(10, 4))
+    horizons = ic_decay.horizons
+    ic_vals = [ic_decay.ic_by_horizon[h] for h in horizons]
+    ax.bar([str(h) for h in horizons], ic_vals, color="steelblue")
+    ax.axhline(0, color="black", linewidth=0.5, linestyle="--")
+    ax.set_title("IC decay by forward-return horizon")
+    ax.set_xlabel("Horizon (bars)")
+    ax.set_ylabel("Spearman IC")
+    fig_ic.tight_layout()
+    plt.close(fig_ic)
+
+    # 4. ACF/PACF figure
+    n_clean = feature.dropna().shape[0]
+    conf_band = 1.96 / np.sqrt(n_clean)
+    fig_acf, (ax_acf, ax_pacf) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+
+    ax_acf.bar(feature_acf.lags, feature_acf.acf_values, color="steelblue", width=0.6)
+    ax_acf.axhline(conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_acf.axhline(-conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_acf.axhline(0, color="black", linewidth=0.5)
+    ax_acf.set_title("Autocorrelation Function (ACF)")
+    ax_acf.set_ylabel("ACF")
+
+    ax_pacf.bar(feature_acf.lags, feature_acf.pacf_values, color="darkorange", width=0.6)
+    ax_pacf.axhline(conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_pacf.axhline(-conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_pacf.axhline(0, color="black", linewidth=0.5)
+    ax_pacf.set_title("Partial Autocorrelation Function (PACF)")
+    ax_pacf.set_ylabel("PACF")
+    ax_pacf.set_xlabel("Lag")
+
+    fig_acf.tight_layout()
+    plt.close(fig_acf)
+
     return CommonEDAPlots(
         time_series_fig=fig_ts,
         rolling_corr_fig=fig_rc,
+        ic_decay_fig=fig_ic,
+        acf_fig=fig_acf,
     )
