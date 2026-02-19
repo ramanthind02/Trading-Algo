@@ -41,6 +41,7 @@ Examples:
         ticker=[Ticker.ES, Ticker.NQ, Ticker.YM]
     )
 """
+from __future__ import annotations
 
 from datetime import datetime
 from itertools import product

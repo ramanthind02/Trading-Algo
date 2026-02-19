@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_selection.validation.config import PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.enums import Ticker, TimeFrame
@@ -87,6 +88,13 @@ class RuleBasedResearchConfig:
     populate_cache: bool
     reports_dir: Path
     permutation_suite: PermutationSuiteConfig = field(default_factory=PermutationSuiteConfig)
+    walkforward: WalkforwardResearchConfig = field(
+        default_factory=lambda: WalkforwardResearchConfig(
+            train_start=datetime(2020, 1, 1),
+            train_end=datetime(2024, 12, 31),
+            enabled=False,
+        )
+    )
 
 
 def load_config() -> RuleBasedResearchConfig:
@@ -133,6 +141,13 @@ def load_config() -> RuleBasedResearchConfig:
     module_name = bias_spec["module_name"]
     reports_dir = _RB_DIR / "results" / module_name
 
+    walkforward = WalkforwardResearchConfig(
+        train_start=start,
+        train_end=end,
+        enabled=False,
+        output_root=reports_dir,
+    )
+
     return RuleBasedResearchConfig(
         tickers=tickers,
         start=start,
@@ -144,4 +159,5 @@ def load_config() -> RuleBasedResearchConfig:
         populate_cache=populate_cache,
         reports_dir=reports_dir,
         permutation_suite=permutation_suite,
+        walkforward=walkforward,
     )

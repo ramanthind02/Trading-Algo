@@ -456,39 +456,40 @@ def run_oos_permutation_for_param(
         )
 
     candle_report: PipelinePermutationReport
-    match feature_type:
-        case 'continuous':
-            if bias_node_extractor is None or binning_model is None:
-                raise ValueError(
-                    'continuous feature_type requires bias_node_extractor and binning_model.',
-                )
-            candle_report = run_pipeline_permutation_continuous(
-                candles_df=candles_df,
-                bias_node_extractor=bias_node_extractor,
-                binning_model=binning_model,
-                target=target,
-                objective_func=objective_func,
-                permutation_mode=permutation_mode,
-                metric_threshold=metric_threshold,
-                nreps=nreps,
-                alpha=alpha,
-                random_seed=random_seed,
-                param_combo=param_combo,
+    if feature_type == 'continuous':
+        if bias_node_extractor is None or binning_model is None:
+            raise ValueError(
+                'continuous feature_type requires bias_node_extractor and binning_model.',
             )
-        case 'rule_based':
-            if rule_extractor is None:
-                raise ValueError('rule_based feature_type requires rule_extractor.')
-            candle_report = run_pipeline_permutation_rule_based(
-                candles_df=candles_df,
-                rule_extractor=rule_extractor,
-                target=target,
-                objective_func=objective_func,
-                metric_threshold=metric_threshold,
-                nreps=nreps,
-                alpha=alpha,
-                random_seed=random_seed,
-                param_combo=param_combo,
-            )
+        candle_report = run_pipeline_permutation_continuous(
+            candles_df=candles_df,
+            bias_node_extractor=bias_node_extractor,
+            binning_model=binning_model,
+            target=target,
+            objective_func=objective_func,
+            permutation_mode=permutation_mode,
+            metric_threshold=metric_threshold,
+            nreps=nreps,
+            alpha=alpha,
+            random_seed=random_seed,
+            param_combo=param_combo,
+        )
+    elif feature_type == 'rule_based':
+        if rule_extractor is None:
+            raise ValueError('rule_based feature_type requires rule_extractor.')
+        candle_report = run_pipeline_permutation_rule_based(
+            candles_df=candles_df,
+            rule_extractor=rule_extractor,
+            target=target,
+            objective_func=objective_func,
+            metric_threshold=metric_threshold,
+            nreps=nreps,
+            alpha=alpha,
+            random_seed=random_seed,
+            param_combo=param_combo,
+        )
+    else:
+        raise ValueError(f'Unknown feature_type: {feature_type!r}')
 
     return OutOfSamplePermutationReport(
         param_combo=param_combo,
