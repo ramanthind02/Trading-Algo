@@ -13,6 +13,7 @@ from feature_selection.eda.eda_dataclasses import (
     DecileAnalysis,
     DecileBinStats,
     DistributionDiagnostics,
+    QuintileSpread,
 )
 
 _VOL_THRESHOLD = 1e-10  # volatility below this is treated as zero
@@ -118,6 +119,27 @@ def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnost
         normality_p_value=float(p_value),
         is_normal=bool(p_value > 0.05),
     )
+
+
+def compute_quintile_spread(
+    feature: pd.Series,
+    target: pd.Series,
+) -> QuintileSpread:
+    """Bin feature into 5 quantiles and compute per-quintile mean return.
+
+    spread = mean_return(Q5) - mean_return(Q1).
+    """
+    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
+    aligned = aligned.copy()
+    aligned["quintile"] = pd.qcut(aligned["f"], q=5, labels=False, duplicates="drop")
+    quintile_means = (
+        aligned.groupby("quintile")["t"]
+        .mean()
+        .reindex(range(5))
+        .to_numpy(dtype=float)
+    )
+    spread = float(quintile_means[4] - quintile_means[0])
+    return QuintileSpread(quintile_means=quintile_means, spread=spread)
 
 
 def create_continuous_eda_plots(

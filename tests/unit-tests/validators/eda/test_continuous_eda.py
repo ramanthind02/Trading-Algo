@@ -94,3 +94,40 @@ def test_continuous_eda_plots_smoke() -> None:
     plots = create_continuous_eda_plots(feature, target, da)
     assert plots.decile_plot_fig is not None
     assert plots.histogram_fig is not None
+
+
+from feature_selection.eda.continuous_eda import compute_quintile_spread
+from feature_selection.eda.eda_dataclasses import QuintileSpread
+
+
+def test_quintile_spread_shape() -> None:
+    """quintile_means has exactly 5 values."""
+    n = 500
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    np.random.seed(3)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_quintile_spread(feature, target)
+    assert len(result.quintile_means) == 5
+
+
+def test_quintile_spread_positive_for_trending_feature() -> None:
+    """Feature perfectly correlated with target -> Q5 > Q1 -> spread > 0."""
+    n = 500
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    np.random.seed(42)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    target = pd.Series(np.linspace(0, 1, n) + np.random.randn(n) * 0.01, index=idx)
+    result = compute_quintile_spread(feature, target)
+    assert result.spread > 0.0
+
+
+def test_quintile_spread_formula() -> None:
+    """spread == quintile_means[4] - quintile_means[0]."""
+    n = 500
+    idx = pd.bdate_range("2020-01-01", periods=n)
+    np.random.seed(0)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_quintile_spread(feature, target)
+    assert result.spread == pytest.approx(result.quintile_means[4] - result.quintile_means[0])
