@@ -44,7 +44,6 @@ class CorrelationAnalysis:
     """Feature-target correlation at various lags."""
     pearson: float
     spearman: float
-    kendall: float
     lagged_correlations: dict[int, float]    # lag → correlation (lags 1..max_lag)
 
 
@@ -53,7 +52,6 @@ class CommonEDAPlots:
     """Matplotlib Figure objects for common EDA."""
     time_series_fig: Figure      # feature + target over time (2 subplots)
     rolling_corr_fig: Figure     # rolling correlation over time
-    rolling_obj_fig: Figure      # rolling objective metric over time
 
 
 @dataclass(frozen=True)
@@ -63,7 +61,6 @@ class CommonEDAStats:
     target_stats: DescriptiveStats
     temporal_stability: TemporalStability
     correlation_analysis: CorrelationAnalysis
-    rolling_objective: pd.Series     # DatetimeIndex → float
 
 
 # ─── T002: Continuous Feature EDA ────────────────────────────────────────────
@@ -87,14 +84,6 @@ class DecileAnalysis:
 
 
 @dataclass(frozen=True)
-class MonotonicityTest:
-    """Kendall's tau monotonicity test over bin means."""
-    kendall_tau: float
-    p_value: float
-    is_monotonic: bool            # |tau| > 0.5 and p < 0.05
-
-
-@dataclass(frozen=True)
 class DistributionDiagnostics:
     """Normality diagnostics for feature distribution."""
     skewness: float
@@ -109,15 +98,12 @@ class ContinuousEDAPlots:
     """Matplotlib Figures for continuous feature EDA."""
     decile_plot_fig: Figure       # 3 subplots: mean return, Sharpe, t-stat
     histogram_fig: Figure         # histogram + quantile overlay lines
-    qq_plot_fig: Figure           # Q-Q plot vs normal
-    kde_fig: Figure               # KDE of feature distribution
 
 
 @dataclass(frozen=True)
 class ContinuousEDAStats:
     """Aggregated continuous feature EDA statistics."""
     decile_analysis: DecileAnalysis
-    monotonicity_test: MonotonicityTest
     distribution_diagnostics: DistributionDiagnostics
 
 
@@ -158,17 +144,9 @@ class BootstrapCIResults:
 
 
 @dataclass(frozen=True)
-class TransitionMatrix:
-    """Level-to-level transition counts and probabilities."""
-    transition_counts: np.ndarray    # shape (3, 3) for levels [-1, 0, 1]
-    transition_probs: np.ndarray     # row-normalised; each row sums to 1.0
-
-
-@dataclass(frozen=True)
 class RuleBasedEDAPlots:
     """Matplotlib Figures for rule-based feature EDA."""
     level_plot_fig: Figure            # bar chart per level with bootstrap CI error bars
-    transition_heatmap_fig: Figure    # heatmap of transition probabilities
 
 
 @dataclass(frozen=True)
@@ -176,7 +154,6 @@ class RuleBasedEDAStats:
     """Aggregated rule-based EDA statistics."""
     per_level_stats: PerLevelStats
     bootstrap_ci_results: BootstrapCIResults
-    transition_matrix: TransitionMatrix
 
 
 # ─── T004: EDA Report Generation ─────────────────────────────────────────────

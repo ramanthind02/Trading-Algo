@@ -2,10 +2,10 @@
 from .eda_dataclasses import (
     DescriptiveStats, TemporalStability, CorrelationAnalysis,
     CommonEDAPlots, CommonEDAStats,
-    DecileBinStats, DecileAnalysis, MonotonicityTest,
+    DecileBinStats, DecileAnalysis,
     DistributionDiagnostics, ContinuousEDAPlots, ContinuousEDAStats,
     LevelStats, PerLevelStats, BootstrapCI, BootstrapCIResults,
-    TransitionMatrix, RuleBasedEDAPlots, RuleBasedEDAStats,
+    RuleBasedEDAPlots, RuleBasedEDAStats,
     EDAMetadata, EDAConfig, DiagnosticFlags,
     ContinuousEDAReport, RuleBasedEDAReport,
 )
@@ -13,10 +13,10 @@ from .eda_dataclasses import (
 __all__ = [
     "DescriptiveStats", "TemporalStability", "CorrelationAnalysis",
     "CommonEDAPlots", "CommonEDAStats",
-    "DecileBinStats", "DecileAnalysis", "MonotonicityTest",
+    "DecileBinStats", "DecileAnalysis",
     "DistributionDiagnostics", "ContinuousEDAPlots", "ContinuousEDAStats",
     "LevelStats", "PerLevelStats", "BootstrapCI", "BootstrapCIResults",
-    "TransitionMatrix", "RuleBasedEDAPlots", "RuleBasedEDAStats",
+    "RuleBasedEDAPlots", "RuleBasedEDAStats",
     "EDAMetadata", "EDAConfig", "DiagnosticFlags",
     "ContinuousEDAReport", "RuleBasedEDAReport",
 ]
