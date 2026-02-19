@@ -16,12 +16,15 @@ import pandas as pd
 from feature_selection.eda.common_eda import (
     compute_correlation_analysis,
     compute_descriptive_stats,
+    compute_feature_acf,
+    compute_ic_decay,
     compute_temporal_stability,
     create_common_eda_plots,
 )
 from feature_selection.eda.continuous_eda import (
     compute_decile_analysis,
     compute_distribution_diagnostics,
+    compute_quintile_spread,
     create_continuous_eda_plots,
 )
 from feature_selection.eda.eda_dataclasses import (
@@ -40,8 +43,11 @@ from feature_selection.eda.eda_dataclasses import (
     DistributionDiagnostics,
     EDAConfig,
     EDAMetadata,
+    FeatureACF,
+    ICDecay,
     LevelStats,
     PerLevelStats,
+    QuintileSpread,
     RuleBasedEDAPlots,
     RuleBasedEDAReport,
     RuleBasedEDAStats,
@@ -72,14 +78,17 @@ def run_eda_for_continuous_feature(
 
     decile_analysis = compute_decile_analysis(feature=feature, target=target, n_bins=config.n_bins)
     distribution_diagnostics = compute_distribution_diagnostics(feature)
+    quintile_spread = compute_quintile_spread(feature=feature, target=target)
     continuous_stats = ContinuousEDAStats(
         decile_analysis=decile_analysis,
         distribution_diagnostics=distribution_diagnostics,
+        quintile_spread=quintile_spread,
     )
     continuous_plots = create_continuous_eda_plots(
         feature=feature,
         target=target,
         decile_analysis=decile_analysis,
+        quintile_spread=quintile_spread,
     )
     diagnostics = compute_diagnostic_flags(common_stats=common_stats, feature_stats=continuous_stats)
 
@@ -281,16 +290,26 @@ def _build_common_stats_and_plots(
         target=target,
         max_lag=config.max_lag,
     )
+    ic_decay = compute_ic_decay(
+        feature=feature,
+        target=target,
+        horizons=list(config.ic_horizons),
+    )
+    feature_acf = compute_feature_acf(feature=feature, max_lag=config.max_acf_lag)
     common_stats = CommonEDAStats(
         feature_stats=feature_stats,
         target_stats=target_stats,
         temporal_stability=temporal_stability,
         correlation_analysis=correlation_analysis,
+        ic_decay=ic_decay,
+        feature_acf=feature_acf,
     )
     common_plots = create_common_eda_plots(
         feature=feature,
         timestamps=timestamps,
         rolling_corr=temporal_stability.rolling_correlation,
+        ic_decay=ic_decay,
+        feature_acf=feature_acf,
     )
     return common_stats, common_plots
 
@@ -357,6 +376,8 @@ def _descriptive_stats_from_json(payload: dict[str, Any]) -> DescriptiveStats:
 def _common_stats_from_json(payload: dict[str, Any]) -> CommonEDAStats:
     temporal_payload = payload["temporal_stability"]
     corr_payload = payload["correlation_analysis"]
+    ic_decay_payload = payload["ic_decay"]
+    feature_acf_payload = payload["feature_acf"]
     return CommonEDAStats(
         feature_stats=_descriptive_stats_from_json(payload["feature_stats"]),
         target_stats=_descriptive_stats_from_json(payload["target_stats"]),
@@ -372,6 +393,15 @@ def _common_stats_from_json(payload: dict[str, Any]) -> CommonEDAStats:
                 for lag, value in corr_payload["lagged_correlations"].items()
             },
         ),
+        ic_decay=ICDecay(
+            horizons=list(ic_decay_payload["horizons"]),
+            ic_by_horizon={int(h): float(v) for h, v in ic_decay_payload["ic_by_horizon"].items()},
+        ),
+        feature_acf=FeatureACF(
+            lags=np.array(feature_acf_payload["lags"], dtype=float),
+            acf_values=np.array(feature_acf_payload["acf_values"], dtype=float),
+            pacf_values=np.array(feature_acf_payload["pacf_values"], dtype=float),
+        ),
     )
 
 
@@ -380,6 +410,7 @@ def _continuous_stats_from_json(payload: dict[str, Any]) -> ContinuousEDAStats:
     bins_payload = decile_payload["bin_stats"]
     diagnostics_payload = payload["distribution_diagnostics"]
 
+    qs_payload = payload["quintile_spread"]
     return ContinuousEDAStats(
         decile_analysis=DecileAnalysis(
             bin_stats=DecileBinStats(
@@ -398,6 +429,10 @@ def _continuous_stats_from_json(payload: dict[str, Any]) -> ContinuousEDAStats:
             normality_test_stat=float(diagnostics_payload["normality_test_stat"]),
             normality_p_value=float(diagnostics_payload["normality_p_value"]),
             is_normal=bool(diagnostics_payload["is_normal"]),
+        ),
+        quintile_spread=QuintileSpread(
+            quintile_means=np.array(qs_payload["quintile_means"], dtype=float),
+            spread=float(qs_payload["spread"]),
         ),
     )
 
@@ -452,6 +487,8 @@ def _common_plots_from_dir(plots_dir: Path) -> CommonEDAPlots:
     return CommonEDAPlots(
         time_series_fig=_figure_from_png(plots_dir / "time_series_fig.png"),
         rolling_corr_fig=_figure_from_png(plots_dir / "rolling_corr_fig.png"),
+        ic_decay_fig=_figure_from_png(plots_dir / "ic_decay_fig.png"),
+        acf_fig=_figure_from_png(plots_dir / "acf_fig.png"),
     )
 
 
@@ -459,6 +496,7 @@ def _continuous_plots_from_dir(plots_dir: Path) -> ContinuousEDAPlots:
     return ContinuousEDAPlots(
         decile_plot_fig=_figure_from_png(plots_dir / "decile_plot_fig.png"),
         histogram_fig=_figure_from_png(plots_dir / "histogram_fig.png"),
+        quintile_spread_fig=_figure_from_png(plots_dir / "quintile_spread_fig.png"),
     )
 
 
