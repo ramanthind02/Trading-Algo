@@ -125,7 +125,7 @@ def create_continuous_eda_plots(
     target: pd.Series,
     decile_analysis: DecileAnalysis,
 ) -> ContinuousEDAPlots:
-    """Create the four standard continuous EDA figures."""
+    """Create the two standard continuous EDA figures: decile plot and histogram."""
     bs = decile_analysis.bin_stats
     bins = np.arange(len(bs.mean_return))
 
