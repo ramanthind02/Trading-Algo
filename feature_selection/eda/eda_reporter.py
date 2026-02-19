@@ -16,14 +16,12 @@ import pandas as pd
 from feature_selection.eda.common_eda import (
     compute_correlation_analysis,
     compute_descriptive_stats,
-    compute_rolling_objective,
     compute_temporal_stability,
     create_common_eda_plots,
 )
 from feature_selection.eda.continuous_eda import (
     compute_decile_analysis,
     compute_distribution_diagnostics,
-    compute_monotonicity_test,
     create_continuous_eda_plots,
 )
 from feature_selection.eda.eda_dataclasses import (
@@ -43,18 +41,15 @@ from feature_selection.eda.eda_dataclasses import (
     EDAConfig,
     EDAMetadata,
     LevelStats,
-    MonotonicityTest,
     PerLevelStats,
     RuleBasedEDAPlots,
     RuleBasedEDAReport,
     RuleBasedEDAStats,
     TemporalStability,
-    TransitionMatrix,
 )
 from feature_selection.eda.rule_based_eda import (
     compute_bootstrap_ci,
     compute_per_level_stats,
-    compute_transition_matrix,
     create_rule_based_eda_plots,
 )
 from utils.enums import Ticker, TimeFrame
@@ -76,18 +71,15 @@ def run_eda_for_continuous_feature(
     )
 
     decile_analysis = compute_decile_analysis(feature=feature, target=target, n_bins=config.n_bins)
-    monotonicity_test = compute_monotonicity_test(decile_analysis.bin_stats.mean_return)
     distribution_diagnostics = compute_distribution_diagnostics(feature)
     continuous_stats = ContinuousEDAStats(
         decile_analysis=decile_analysis,
-        monotonicity_test=monotonicity_test,
         distribution_diagnostics=distribution_diagnostics,
     )
     continuous_plots = create_continuous_eda_plots(
         feature=feature,
         target=target,
         decile_analysis=decile_analysis,
-        dist_diagnostics=distribution_diagnostics,
     )
     diagnostics = compute_diagnostic_flags(common_stats=common_stats, feature_stats=continuous_stats)
 
@@ -127,11 +119,9 @@ def run_eda_for_rule_based_feature(
         n_iterations=config.bootstrap_iterations,
         seed=config.random_seed,
     )
-    transition_matrix = compute_transition_matrix(feature=feature)
     rule_stats = RuleBasedEDAStats(
         per_level_stats=per_level_stats,
         bootstrap_ci_results=bootstrap_ci,
-        transition_matrix=transition_matrix,
     )
     rule_plots = create_rule_based_eda_plots(
         per_level_stats=per_level_stats,
@@ -170,9 +160,6 @@ def compute_diagnostic_flags(
         red_flags.append("Extreme skewness (|skew| > 5)")
     if feature_desc.sample_size > 0 and feature_desc.nan_count == feature_desc.sample_size:
         red_flags.append("All NaN feature")
-
-    if isinstance(feature_stats, ContinuousEDAStats) and abs(feature_stats.monotonicity_test.kendall_tau) < 0.3:
-        warnings.append("Weak monotonic signal (|kendall_tau| < 0.3)")
 
     return DiagnosticFlags(warnings=warnings, red_flags=red_flags, is_viable=len(red_flags) == 0)
 
@@ -294,25 +281,16 @@ def _build_common_stats_and_plots(
         target=target,
         max_lag=config.max_lag,
     )
-    rolling_objective = compute_rolling_objective(
-        signals=feature,
-        returns=target,
-        objective_fn=config.objective_fn,
-        window=config.rolling_window,
-    )
     common_stats = CommonEDAStats(
         feature_stats=feature_stats,
         target_stats=target_stats,
         temporal_stability=temporal_stability,
         correlation_analysis=correlation_analysis,
-        rolling_objective=rolling_objective,
     )
     common_plots = create_common_eda_plots(
         feature=feature,
-        target=target,
         timestamps=timestamps,
         rolling_corr=temporal_stability.rolling_correlation,
-        rolling_obj=rolling_objective,
     )
     return common_stats, common_plots
 
@@ -389,20 +367,17 @@ def _common_stats_from_json(payload: dict[str, Any]) -> CommonEDAStats:
         correlation_analysis=CorrelationAnalysis(
             pearson=float(corr_payload["pearson"]),
             spearman=float(corr_payload["spearman"]),
-            kendall=float(corr_payload["kendall"]),
             lagged_correlations={
                 int(lag): float(value)
                 for lag, value in corr_payload["lagged_correlations"].items()
             },
         ),
-        rolling_objective=_series_from_json(payload["rolling_objective"]),
     )
 
 
 def _continuous_stats_from_json(payload: dict[str, Any]) -> ContinuousEDAStats:
     decile_payload = payload["decile_analysis"]
     bins_payload = decile_payload["bin_stats"]
-    monotonicity_payload = payload["monotonicity_test"]
     diagnostics_payload = payload["distribution_diagnostics"]
 
     return ContinuousEDAStats(
@@ -417,11 +392,6 @@ def _continuous_stats_from_json(payload: dict[str, Any]) -> ContinuousEDAStats:
             ),
             overall_trend=str(decile_payload["overall_trend"]),
         ),
-        monotonicity_test=MonotonicityTest(
-            kendall_tau=float(monotonicity_payload["kendall_tau"]),
-            p_value=float(monotonicity_payload["p_value"]),
-            is_monotonic=bool(monotonicity_payload["is_monotonic"]),
-        ),
         distribution_diagnostics=DistributionDiagnostics(
             skewness=float(diagnostics_payload["skewness"]),
             kurtosis=float(diagnostics_payload["kurtosis"]),
@@ -435,7 +405,6 @@ def _continuous_stats_from_json(payload: dict[str, Any]) -> ContinuousEDAStats:
 def _rule_stats_from_json(payload: dict[str, Any]) -> RuleBasedEDAStats:
     per_level_payload = payload["per_level_stats"]["stats_by_level"]
     bootstrap_payload = payload["bootstrap_ci_results"]["ci_by_level"]
-    transition_payload = payload["transition_matrix"]
 
     return RuleBasedEDAStats(
         per_level_stats=PerLevelStats(
@@ -464,10 +433,6 @@ def _rule_stats_from_json(payload: dict[str, Any]) -> RuleBasedEDAStats:
                 for level, ci_payload in bootstrap_payload.items()
             }
         ),
-        transition_matrix=TransitionMatrix(
-            transition_counts=np.array(transition_payload["transition_counts"], dtype=int),
-            transition_probs=np.array(transition_payload["transition_probs"], dtype=float),
-        ),
     )
 
 
@@ -487,7 +452,6 @@ def _common_plots_from_dir(plots_dir: Path) -> CommonEDAPlots:
     return CommonEDAPlots(
         time_series_fig=_figure_from_png(plots_dir / "time_series_fig.png"),
         rolling_corr_fig=_figure_from_png(plots_dir / "rolling_corr_fig.png"),
-        rolling_obj_fig=_figure_from_png(plots_dir / "rolling_obj_fig.png"),
     )
 
 
@@ -495,13 +459,10 @@ def _continuous_plots_from_dir(plots_dir: Path) -> ContinuousEDAPlots:
     return ContinuousEDAPlots(
         decile_plot_fig=_figure_from_png(plots_dir / "decile_plot_fig.png"),
         histogram_fig=_figure_from_png(plots_dir / "histogram_fig.png"),
-        qq_plot_fig=_figure_from_png(plots_dir / "qq_plot_fig.png"),
-        kde_fig=_figure_from_png(plots_dir / "kde_fig.png"),
     )
 
 
 def _rule_plots_from_dir(plots_dir: Path) -> RuleBasedEDAPlots:
     return RuleBasedEDAPlots(
         level_plot_fig=_figure_from_png(plots_dir / "level_plot_fig.png"),
-        transition_heatmap_fig=_figure_from_png(plots_dir / "transition_heatmap_fig.png"),
     )
