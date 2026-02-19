@@ -15,5 +15,8 @@ def test_fit_builds_v2_state_without_legacy_best_bins() -> None:
     assert model.is_fitted_ is True
     assert isinstance(model.bin_stats_, dict)
     assert hasattr(model, "position_multipliers_by_strategy_")
+    assert hasattr(model, "selected_bins_")
+    assert "long" in model.selected_bins_
+    assert "short" in model.selected_bins_
     assert not hasattr(model, "best_long_bin_")
     assert not hasattr(model, "best_short_bin_")

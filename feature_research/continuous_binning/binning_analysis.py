@@ -72,12 +72,15 @@ def run_binning_analysis_pipeline(
     populate_cache_if_needed(config)
 
     params = _extract_binning_params(config)
-    n_bins = int(params.get("n_bins", 15))
+    bin_counts = params.get("bin_counts", [10, 8, 5, 3])
     selection_metric = str(params.get("selection_metric", "sharpe"))
     strategy = str(params.get("strategy", "long"))
     metric_threshold = float(params.get("metric_threshold", 0.0))
     t_threshold = float(params.get("t_threshold", 2.0))
     min_region_width = int(params.get("min_region_width", 2))
+    use_coverage_bonus = params.get("use_coverage_bonus", False)
+    coverage_bonus_per_10pct = float(params.get("coverage_bonus_per_10pct", 0.02))
+    max_coverage_bonus = float(params.get("max_coverage_bonus", 0.2))
     max_regions = int(params.get("max_regions", 1))
     direction_filter = str(params.get("direction_filter", "both"))
 
@@ -97,12 +100,15 @@ def run_binning_analysis_pipeline(
             feature.name = feature_col
 
         model = ContinuousBinningModel(
-            n_bins=n_bins,
+            bin_counts=bin_counts,
             selection_metric=selection_metric,
             strategy=strategy,
             metric_threshold=metric_threshold,
             t_threshold=t_threshold,
             min_region_width=min_region_width,
+            use_coverage_bonus=use_coverage_bonus,
+            coverage_bonus_per_10pct=coverage_bonus_per_10pct,
+            max_coverage_bonus=max_coverage_bonus,
             shrinkage_k=float(params.get("shrinkage_k", 20.0)),
             long_clip_min=float(params.get("long_clip_min", 0.5)),
             long_clip_max=float(params.get("long_clip_max", 2.0)),

@@ -41,6 +41,58 @@ class PermutationSuiteConfig:
 
 
 @dataclass(frozen=True)
+class BinningAnalysisConfig:
+    """Settings for continuous binning model parameters.
+
+    Attributes
+    ----------
+    bin_counts : list[int]
+        List of bin counts to test in grid search.
+    selection_metric : str
+        Metric used for bin selection ('sharpe', 'mean', 't_stat', 'sortino').
+    strategy : str
+        Trading strategy ('long', 'short', 'long_short').
+    metric_threshold : float
+        Minimum metric value to consider a bin active.
+    t_threshold : float
+        Minimum |t-stat| for significance.
+    min_region_width : int
+        Legacy parameter (ignored by new grid search approach).
+    use_coverage_bonus : bool
+        Whether to add coverage bonus to Sharpe ratio.
+    coverage_bonus_per_10pct : float
+        Bonus added per 10% coverage above 10% floor.
+    max_coverage_bonus : float
+        Maximum coverage bonus cap.
+    shrinkage_k : float
+        James-Stein shrinkage constant.
+    long_clip_min : float
+        Minimum long position multiplier.
+    long_clip_max : float
+        Maximum long position multiplier.
+    short_clip_min : float
+        Minimum short position multiplier.
+    short_clip_max : float
+        Maximum short position multiplier.
+    """
+
+    bin_counts: list[int] = field(default_factory=lambda: [10, 8, 5, 3])
+    selection_metric: str = "sharpe"
+    strategy: str = "long"
+    metric_threshold: float = 0.0
+    t_threshold: float = 2.0
+    min_region_width: int = 2  # Legacy, ignored by new approach
+    use_coverage_bonus: bool = False
+    coverage_bonus_per_10pct: float = 0.02
+    max_coverage_bonus: float = 0.2
+    shrinkage_k: float = 20.0
+    long_clip_min: float = 0.5
+    long_clip_max: float = 2.0
+    short_clip_min: float = 0.5
+    short_clip_max: float = 2.0
+
+
+@dataclass(frozen=True)
 class ResearchConfig:
     """All researcher-editable settings for continuous-binning EDA.
 
@@ -74,6 +126,8 @@ class ResearchConfig:
     reports_dir : Path
         Root output directory for EDA reports.
         Default: ``feature_research/continuous_binning/results/{module_name}/``
+    binning_params : BinningAnalysisConfig
+        Binning model hyperparameters (bin_counts, thresholds, coverage bonus).
     """
 
     tickers: list[Ticker]
@@ -86,6 +140,7 @@ class ResearchConfig:
     populate_cache: bool
     reports_dir: Path
     permutation_suite: PermutationSuiteConfig = field(default_factory=PermutationSuiteConfig)
+    binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)
 
 
 def load_config() -> ResearchConfig:
