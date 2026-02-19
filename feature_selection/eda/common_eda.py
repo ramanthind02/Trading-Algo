@@ -1,8 +1,6 @@
 """Common EDA infrastructure for both continuous and rule-based features (T001)."""
 from __future__ import annotations
 
-from typing import Callable
-
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -87,7 +85,7 @@ def compute_correlation_analysis(
     target: pd.Series,
     max_lag: int = 5,
 ) -> CorrelationAnalysis:
-    """Compute Pearson, Spearman, Kendall, and lagged correlations.
+    """Compute Pearson, Spearman, and lagged correlations.
 
     Lags 1..max_lag are stored in lagged_correlations dict.
     """
@@ -96,7 +94,6 @@ def compute_correlation_analysis(
 
     pearson = float(f.corr(t, method="pearson"))
     spearman = float(f.corr(t, method="spearman"))
-    kendall = float(f.corr(t, method="kendall"))
 
     lagged: dict[int, float] = {
         lag: float(f.corr(t.shift(-lag), method="pearson"))
@@ -106,45 +103,21 @@ def compute_correlation_analysis(
     return CorrelationAnalysis(
         pearson=pearson,
         spearman=spearman,
-        kendall=kendall,
         lagged_correlations=lagged,
     )
 
 
-def compute_rolling_objective(
-    signals: pd.Series,
-    returns: pd.Series,
-    objective_fn: Callable[[pd.Series, pd.Series], float],
-    window: int = 252,
-) -> pd.Series:
-    """Compute rolling objective metric using a user-supplied function.
-
-    First (window-1) values are NaN (no partial windows).
-    """
-    result_values = [
-        float("nan") if i < window - 1
-        else float(objective_fn(signals.iloc[i - window + 1: i + 1], returns.iloc[i - window + 1: i + 1]))
-        for i in range(len(returns))
-    ]
-    return pd.Series(result_values, index=returns.index)
-
-
 def create_common_eda_plots(
     feature: pd.Series,
-    target: pd.Series,
     timestamps: pd.DatetimeIndex,
     rolling_corr: pd.Series,
-    rolling_obj: pd.Series,
 ) -> CommonEDAPlots:
-    """Create the three standard common EDA figures."""
-    # 1. Time-series plot (2 subplots)
-    fig_ts, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    """Create the two standard common EDA figures."""
+    # 1. Time-series plot (single subplot)
+    fig_ts, ax1 = plt.subplots(1, 1, figsize=(12, 4))
     ax1.plot(timestamps, feature.values, linewidth=0.8, color="steelblue")
     ax1.set_title("Feature over time")
     ax1.set_ylabel("Feature value")
-    ax2.plot(timestamps, target.values, linewidth=0.8, color="darkorange")
-    ax2.set_title("Target (returns) over time")
-    ax2.set_ylabel("Return")
     fig_ts.tight_layout()
     plt.close(fig_ts)
 
@@ -157,17 +130,7 @@ def create_common_eda_plots(
     fig_rc.tight_layout()
     plt.close(fig_rc)
 
-    # 3. Rolling objective plot
-    fig_ro, ax = plt.subplots(figsize=(12, 3))
-    ax.plot(rolling_obj.index, rolling_obj.values, linewidth=0.8, color="green")
-    ax.axhline(0, color="black", linewidth=0.5, linestyle="--")
-    ax.set_title("Rolling objective metric")
-    ax.set_ylabel("Metric value")
-    fig_ro.tight_layout()
-    plt.close(fig_ro)
-
     return CommonEDAPlots(
         time_series_fig=fig_ts,
         rolling_corr_fig=fig_rc,
-        rolling_obj_fig=fig_ro,
     )
