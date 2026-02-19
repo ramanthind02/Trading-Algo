@@ -11,6 +11,7 @@ from feature_selection.eda.eda_dataclasses import (
     CorrelationAnalysis,
     CommonEDAPlots,
     DescriptiveStats,
+    ICDecay,
     TemporalStability,
 )
 
@@ -104,6 +105,28 @@ def compute_correlation_analysis(
         spearman=spearman,
         lagged_correlations=lagged,
     )
+
+
+def compute_ic_decay(
+    feature: pd.Series,
+    target: pd.Series,
+    horizons: list[int],
+) -> ICDecay:
+    """Compute Spearman IC between feature and forward returns at each horizon.
+
+    For each h in horizons: IC(h) = spearman_corr(feature[t], target[t+h]).
+    Returns NaN for horizons with fewer than 10 aligned observations.
+    """
+    ic_by_horizon: dict[int, float] = {}
+    for h in horizons:
+        forward_target = target.shift(-h)
+        aligned = pd.DataFrame({"f": feature, "t": forward_target}).dropna()
+        if len(aligned) < 10:
+            ic_by_horizon[h] = float("nan")
+        else:
+            ic_by_horizon[h] = float(aligned["f"].corr(aligned["t"], method="spearman"))
+
+    return ICDecay(horizons=horizons, ic_by_horizon=ic_by_horizon)
 
 
 def create_common_eda_plots(

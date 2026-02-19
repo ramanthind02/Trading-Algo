@@ -17,9 +17,10 @@ from feature_selection.eda.common_eda import (
     compute_temporal_stability,
     compute_correlation_analysis,
     create_common_eda_plots,
+    compute_ic_decay,
 )
 from feature_selection.eda.eda_dataclasses import (
-    DescriptiveStats, TemporalStability, CorrelationAnalysis, CommonEDAPlots,
+    DescriptiveStats, TemporalStability, CorrelationAnalysis, CommonEDAPlots, ICDecay,
 )
 
 
@@ -111,3 +112,38 @@ def test_common_eda_plots_smoke() -> None:
     plots = create_common_eda_plots(feature, idx, rolling_corr)
     assert plots.time_series_fig is not None
     assert plots.rolling_corr_fig is not None
+
+
+def test_ic_decay_horizons_present() -> None:
+    """Result contains exactly the requested horizons."""
+    n = 300
+    idx = _daily_index(n)
+    np.random.seed(0)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_ic_decay(feature, target, horizons=[1, 5, 10, 21])
+    assert set(result.ic_by_horizon.keys()) == {1, 5, 10, 21}
+    assert result.horizons == [1, 5, 10, 21]
+
+
+def test_ic_decay_perfect_lag1_signal() -> None:
+    """Feature that perfectly predicts 1-bar returns has IC(1) near 1.0."""
+    n = 300
+    idx = _daily_index(n)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    # target is feature shifted forward by 1 bar
+    target = feature.shift(-1).fillna(0)
+    result = compute_ic_decay(feature, target, horizons=[1, 5])
+    assert result.ic_by_horizon[1] > 0.9
+
+
+def test_ic_decay_values_bounded() -> None:
+    """All IC values must lie in [-1, 1]."""
+    n = 200
+    idx = _daily_index(n)
+    np.random.seed(7)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_ic_decay(feature, target, horizons=[1, 5, 10, 21])
+    for h, ic in result.ic_by_horizon.items():
+        assert -1.0 <= ic <= 1.0, f"IC at horizon {h} out of bounds: {ic}"
