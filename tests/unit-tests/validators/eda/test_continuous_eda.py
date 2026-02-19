@@ -13,12 +13,11 @@ import pytest
 
 from feature_selection.eda.continuous_eda import (
     compute_decile_analysis,
-    compute_monotonicity_test,
     compute_distribution_diagnostics,
     create_continuous_eda_plots,
 )
 from feature_selection.eda.eda_dataclasses import (
-    DecileAnalysis, MonotonicityTest, DistributionDiagnostics, ContinuousEDAPlots,
+    DecileAnalysis, DistributionDiagnostics, ContinuousEDAPlots,
 )
 
 
@@ -46,22 +45,6 @@ def test_decile_analysis_bin_edges_length() -> None:
     feature, target = _series(200)
     result = compute_decile_analysis(feature, target, n_bins=10)
     assert len(result.bin_stats.bin_edges) == 11
-
-
-def test_monotonicity_test_monotonic_increasing() -> None:
-    """Strictly increasing bin means -> is_monotonic=True, positive tau."""
-    bin_means = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
-                          1.1, 1.2, 1.3, 1.4, 1.5])
-    result = compute_monotonicity_test(bin_means)
-    assert result.is_monotonic is True
-    assert result.kendall_tau > 0.0
-
-
-def test_monotonicity_test_flat() -> None:
-    """Flat bin means -> is_monotonic=False."""
-    bin_means = np.ones(15) * 0.5
-    result = compute_monotonicity_test(bin_means)
-    assert result.is_monotonic is False
 
 
 def test_distribution_diagnostics_known_skew() -> None:
@@ -105,12 +88,9 @@ def test_n_bins_2_minimum() -> None:
 
 
 def test_continuous_eda_plots_smoke() -> None:
-    """All four Figure objects created without error."""
+    """Both Figure objects created without error."""
     feature, target = _series(200)
     da = compute_decile_analysis(feature, target, n_bins=15)
-    dd = compute_distribution_diagnostics(feature)
-    plots = create_continuous_eda_plots(feature, target, da, dd)
+    plots = create_continuous_eda_plots(feature, target, da)
     assert plots.decile_plot_fig is not None
     assert plots.histogram_fig is not None
-    assert plots.qq_plot_fig is not None
-    assert plots.kde_fig is not None

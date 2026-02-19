@@ -16,7 +16,6 @@ from feature_selection.eda.common_eda import (
     compute_descriptive_stats,
     compute_temporal_stability,
     compute_correlation_analysis,
-    compute_rolling_objective,
     create_common_eda_plots,
 )
 from feature_selection.eda.eda_dataclasses import (
@@ -104,27 +103,11 @@ def test_correlation_analysis_has_all_lags() -> None:
     assert set(result.lagged_correlations.keys()) == {1, 2, 3, 4, 5}
 
 
-def test_rolling_objective_sharpe_manual() -> None:
-    returns = pd.Series([0.1, 0.2, 0.3, 0.4, 0.5])
-    signals = pd.Series([1.0, 1.0, 1.0, 1.0, 1.0])
-
-    def sharpe_fn(s: pd.Series, r: pd.Series) -> float:
-        return r.mean() / r.std() if r.std() > 0 else 0.0
-
-    result = compute_rolling_objective(signals, returns, sharpe_fn, window=3)
-    assert result.iloc[:2].isna().all()
-    expected = np.mean([0.1, 0.2, 0.3]) / np.std([0.1, 0.2, 0.3], ddof=1)
-    assert result.iloc[2] == pytest.approx(expected, rel=1e-6)
-
-
 def test_common_eda_plots_smoke() -> None:
     n = 60
     idx = _daily_index(n)
     feature = pd.Series(np.random.randn(n), index=idx)
-    target = pd.Series(np.random.randn(n), index=idx)
     rolling_corr = pd.Series(np.random.randn(n), index=idx)
-    rolling_obj = pd.Series(np.random.randn(n), index=idx)
-    plots = create_common_eda_plots(feature, target, idx, rolling_corr, rolling_obj)
+    plots = create_common_eda_plots(feature, idx, rolling_corr)
     assert plots.time_series_fig is not None
     assert plots.rolling_corr_fig is not None
-    assert plots.rolling_obj_fig is not None

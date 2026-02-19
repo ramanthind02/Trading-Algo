@@ -14,11 +14,10 @@ import pytest
 from feature_selection.eda.rule_based_eda import (
     compute_per_level_stats,
     compute_bootstrap_ci,
-    compute_transition_matrix,
     create_rule_based_eda_plots,
 )
 from feature_selection.eda.eda_dataclasses import (
-    PerLevelStats, BootstrapCIResults, TransitionMatrix, RuleBasedEDAPlots,
+    PerLevelStats, BootstrapCIResults, RuleBasedEDAPlots,
 )
 
 
@@ -99,25 +98,8 @@ def test_bootstrap_ci_level1_positive_mean() -> None:
     assert result.ci_by_level[1].ci_lower > 0.0
 
 
-def test_transition_matrix_rows_sum_to_one() -> None:
-    """Each row of transition_probs sums to 1.0."""
-    idx = pd.bdate_range("2020-01-01", periods=30)
-    feature = pd.Series([0, 0, 1, 1, 1, -1, -1, 0, 1, 0] * 3, index=idx, dtype=float)
-    result = compute_transition_matrix(feature)
-    row_sums = result.transition_probs.sum(axis=1)
-    assert np.allclose(row_sums, 1.0, atol=1e-9)
-
-
-def test_transition_matrix_known_counts() -> None:
-    """Signal sequence [-1, 0, 1, 0, -1] -> known 4 transitions."""
-    idx = pd.bdate_range("2020-01-01", periods=5)
-    feature = pd.Series([-1.0, 0.0, 1.0, 0.0, -1.0], index=idx)
-    result = compute_transition_matrix(feature)
-    assert result.transition_counts.sum() == 4
-
-
 def test_rule_based_plots_smoke() -> None:
-    """Both Figure objects created without error."""
+    """level_plot_fig Figure object created without error."""
     feature, target = _make_levels()
     per_level = compute_per_level_stats(feature, target)
     aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
@@ -128,4 +110,3 @@ def test_rule_based_plots_smoke() -> None:
     bootstrap = compute_bootstrap_ci(returns_by_level, n_iterations=100, confidence=0.95, seed=42)
     plots = create_rule_based_eda_plots(per_level, bootstrap)
     assert plots.level_plot_fig is not None
-    assert plots.transition_heatmap_fig is not None
