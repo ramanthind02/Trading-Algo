@@ -1,11 +1,8 @@
 """Frozen dataclasses for the Feature Validator EDA pipeline (T001–T004)."""
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
