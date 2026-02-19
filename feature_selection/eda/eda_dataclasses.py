@@ -47,7 +47,7 @@ class CorrelationAnalysis:
 @dataclass(frozen=True)
 class CommonEDAPlots:
     """Matplotlib Figure objects for common EDA."""
-    time_series_fig: Figure      # feature + target over time (2 subplots)
+    time_series_fig: Figure      # feature over time (single subplot)
     rolling_corr_fig: Figure     # rolling correlation over time
 
 
