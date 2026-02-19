@@ -92,6 +92,8 @@ For each of the C(k, n_test) paths, run the IS stability procedure:
 3. Apply pre-committed selection rule → set of selected params for this path
 4. Record which params were selected
 
+**Note on full param grid:** The CPCV Stage 3 procedure fits ALL param combos (including those that failed Stages 1+2 IS permutation tests) on each CPCV path's IS groups. This is required for neighbor smoothing to work correctly — the smoothed metric for any param depends on its neighbors' performance, and those neighbors must all be present. Pre-filtering the grid to Stage 2 passers would distort neighborhood structure and make stability_ratio unreliable. This is consistent with the canonical design principle in [pipeline_overview.md](../pipeline_overview.md) Section 7: "All param combos in the grid enter the walkforward regardless of their IS permutation pass/fail status."
+
 **Aggregate:** For each param combo p, compute:
 ```
 selection_frequency(p) = (number of paths in which p is selected) / C(k, n_test)
@@ -130,22 +132,28 @@ PBO is computed as follows (López de Prado, Chapter 14):
 1. Run CPCV with C(k, n_test) paths.
    Each path i produces: IS_sharpe_i, OOS_sharpe_i
 
-2. For each path i, rank the IS Sharpe relative to all other paths:
-   rank_IS_i = rank of IS_sharpe_i among all {IS_sharpe_j}
+2. Identify the "best IS" path:
+   i* = argmax IS_sharpe_i   (path that looks best in-sample)
 
-3. OOS Sharpe for the "best IS" path (path with highest IS Sharpe):
-   Let i* = argmax IS_sharpe_i
-   OOS_i* = OOS Sharpe of path i*
+3. Compute the normalized OOS rank of i*:
+   rank_i* = rank of OOS_sharpe_i* among all {OOS_sharpe_j}  (1 = lowest OOS)
+   P_n     = rank_i* / (C(k, n_test) + 1)                   (normalized to (0,1))
 
-4. If OOS_i* < median(all OOS Sharpes):
-   This path counts as "overfit" — the path that looked best IS performs below median OOS.
+4. Compute the logit of P_n:
+   ω_n = log(P_n / (1 - P_n))
 
-5. PBO = fraction of all CPCV configurations (k, n_test choices) where this happens.
-   High PBO (> 0.5) → the selection process is likely selecting noise.
-   Low PBO (< 0.1) → the best-IS result generalizes well.
+5. If ω_n < 0: the IS-best strategy ranks below the median OOS → backtest is overfit.
+   If ω_n > 0: the IS-best strategy ranks above the median OOS → generalizes well.
 ```
 
-In practice, a simpler interpretation: run CPCV, plot IS Sharpe vs OOS Sharpe across all paths. If the correlation is positive and strong, the IS screening process generalizes. If the correlation is weak or negative, IS performance is not predictive of OOS performance — selection bias is likely.
+**Interpretation of ω_n:**
+- ω_n < 0 (P_n < 0.5): the strategy that scored best in-sample ranks below the median OOS — selection bias is present
+- ω_n ≈ 0: IS performance is no better predictor of OOS rank than chance
+- ω_n > 0 (P_n > 0.5): IS performance predicts OOS rank — the selection process generalizes
+
+This gives a **continuous, single-run measure** from one CPCV configuration. No need to run multiple (k, n_test) configurations to get a meaningful PBO value.
+
+In practice, a simpler diagnostic: plot IS Sharpe vs OOS Sharpe across all C(k, n_test) paths. If the correlation is positive and strong, IS performance generalizes. If the correlation is weak or negative, IS performance is not predictive of OOS performance — selection bias is likely.
 
 ### Recommended Configuration for Phase 3 Supplement
 
