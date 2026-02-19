@@ -13,7 +13,6 @@ from feature_selection.eda.eda_dataclasses import (
     DecileAnalysis,
     DecileBinStats,
     DistributionDiagnostics,
-    MonotonicityTest,
 )
 
 _VOL_THRESHOLD = 1e-10  # volatility below this is treated as zero
@@ -96,20 +95,6 @@ def compute_decile_analysis(
     return DecileAnalysis(bin_stats=bin_stats, overall_trend=trend)
 
 
-def compute_monotonicity_test(bin_means: np.ndarray) -> MonotonicityTest:
-    """Kendall's tau monotonicity test over bin mean returns.
-
-    is_monotonic is True iff |tau| > 0.5 and p < 0.05.
-    """
-    idx = np.arange(len(bin_means))
-    tau, p_value = stats.kendalltau(idx, bin_means)
-    return MonotonicityTest(
-        kendall_tau=float(tau),
-        p_value=float(p_value),
-        is_monotonic=bool(abs(tau) > 0.5 and p_value < 0.05),
-    )
-
-
 def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnostics:
     """Compute normality diagnostics for a feature series.
 
@@ -139,7 +124,6 @@ def create_continuous_eda_plots(
     feature: pd.Series,
     target: pd.Series,
     decile_analysis: DecileAnalysis,
-    dist_diagnostics: DistributionDiagnostics,
 ) -> ContinuousEDAPlots:
     """Create the four standard continuous EDA figures."""
     bs = decile_analysis.bin_stats
@@ -168,25 +152,7 @@ def create_continuous_eda_plots(
     fig_h.tight_layout()
     plt.close(fig_h)
 
-    # 3. Q-Q plot
-    fig_qq, ax = plt.subplots(figsize=(6, 6))
-    stats.probplot(clean, dist="norm", plot=ax)
-    ax.set_title("Q-Q plot vs Normal")
-    fig_qq.tight_layout()
-    plt.close(fig_qq)
-
-    # 4. KDE plot
-    fig_kde, ax = plt.subplots(figsize=(10, 4))
-    kde = stats.gaussian_kde(clean)
-    x_range = np.linspace(clean.min(), clean.max(), 300)
-    ax.plot(x_range, kde(x_range), color="purple", linewidth=1.5)
-    ax.set_title("Kernel density estimate")
-    fig_kde.tight_layout()
-    plt.close(fig_kde)
-
     return ContinuousEDAPlots(
         decile_plot_fig=fig_d,
         histogram_fig=fig_h,
-        qq_plot_fig=fig_qq,
-        kde_fig=fig_kde,
     )
