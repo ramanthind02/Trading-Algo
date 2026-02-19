@@ -117,7 +117,7 @@ K-fold permutation testing multiplies Stage 1 compute by k. With K=5 and N=200 p
 
 ### Current State
 
-Stage 3 evaluates ALL param combos on non-overlapping IS sub-folds independently. The current implementation uses contiguous non-overlapping blocks without explicit purging at boundaries. This introduces potential leakage at block boundaries for autocorrelated features.
+Stage 3 evaluates ALL param combos on non-overlapping IS sub-folds, where each fold is fit and evaluated on its own data — there is no held-out test set within each fold. The current implementation uses contiguous non-overlapping blocks without trimming at boundaries.
 
 ### Formalized K-Fold IS Stability
 
@@ -126,16 +126,17 @@ Replace raw non-overlapping block evaluation with proper purged k-fold:
 ```
 IS period split into K non-overlapping folds (K=5 or K=8)
 For each fold k:
-  - Compute raw metric and neighbor-smoothed metric for all params
-  - Apply purging + embargo at the fold boundary
-  - Record which params are in the top-K (select_k params per fold)
+  - Trim edge observations at each fold boundary by the label horizon
+    (forward-return labels at the boundary overlap with adjacent folds)
+  - Compute raw metric and neighbor-smoothed metric for all params on fold k's data
+  - Record which params are in the top-K for this fold
 
 Stability assessment:
   - How many folds does param p appear in the selected set?
   - If count ≥ min_folds_stable (default 3), param p is "IS-stable"
 ```
 
-**Purging at Stage 3 boundaries matters** because neighbor-smoothed metrics depend on the training data's autocorrelation structure. If training data for fold k leaks into fold k+1's "OOS" evaluation through un-purged boundary observations, the stability estimate will be optimistic.
+**Edge trimming at Stage 3 boundaries matters** because forward-return labels computed at fold boundaries overlap temporally with the adjacent fold's data. An observation at the end of fold k with a 20-day forward return label "sees" data that belongs to fold k+1. Including these boundary observations in fold k's metric computation introduces a mild cross-fold dependency. Trimming the last `label_horizon` observations from each fold's tail (and the first `label_horizon` from each fold's head if concerned about the leading edge) removes this dependency. This is distinct from the classical train/test purging described in Application 1 — here each fold is evaluated on its own data, not split into training and test sets.
 
 ### Fold Count Recommendations
 
@@ -176,7 +177,7 @@ Stage 3 requires each fold to have enough data for reliable neighbor-smoothed me
 | Document | Relationship |
 |---|---|
 | [pipeline_overview.md](../pipeline_overview.md) | Master pipeline spec; see Phases 2 and 3 |
-| [in-sample_pt.md](../Permutation%20Testing/in-sample_pt.md) | Stage 1+2+3 specifications; k-fold integrates here |
+| [in-sample_pt.md](../Permutation Testing/in-sample_pt.md) | Stage 1+2+3 specifications; k-fold integrates here |
 | [cpcv.md](cpcv.md) | Combinatorial Purged CV — alternative for Stage 3 with more paths |
 | [param_selection_rule.md](../Parameter%20Sensitivity/param_selection_rule.md) | Pre-committed selection rule used inside CV folds |
 | [grid_search_parameter_stability.md](../Parameter%20Sensitivity/grid_search_parameter_stability.md) | Neighbor smoothing theory |
