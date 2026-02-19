@@ -4,6 +4,7 @@ from __future__ import annotations
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from scipy import stats
 
@@ -11,6 +12,7 @@ from feature_selection.eda.eda_dataclasses import (
     CorrelationAnalysis,
     CommonEDAPlots,
     DescriptiveStats,
+    FeatureACF,
     ICDecay,
     TemporalStability,
 )
@@ -127,6 +129,28 @@ def compute_ic_decay(
             ic_by_horizon[h] = float(aligned["f"].corr(aligned["t"], method="spearman"))
 
     return ICDecay(horizons=horizons, ic_by_horizon=ic_by_horizon)
+
+
+def compute_feature_acf(
+    feature: pd.Series,
+    max_lag: int = 20,
+) -> FeatureACF:
+    """Compute ACF and PACF of the feature series up to max_lag lags.
+
+    Uses statsmodels FFT-based ACF and OLS-based PACF.
+    Returns lags 1..max_lag (lag-0 autocorrelation of 1.0 is excluded).
+    """
+    from statsmodels.tsa.stattools import acf, pacf
+
+    clean = feature.dropna().to_numpy(dtype=float)
+    acf_full = acf(clean, nlags=max_lag, fft=True)   # shape (max_lag+1,)
+    pacf_full = pacf(clean, nlags=max_lag)             # shape (max_lag+1,)
+
+    return FeatureACF(
+        lags=np.arange(1, max_lag + 1),
+        acf_values=acf_full[1:],   # drop lag-0
+        pacf_values=pacf_full[1:],
+    )
 
 
 def create_common_eda_plots(

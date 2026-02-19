@@ -147,3 +147,42 @@ def test_ic_decay_values_bounded() -> None:
     result = compute_ic_decay(feature, target, horizons=[1, 5, 10, 21])
     for h, ic in result.ic_by_horizon.items():
         assert -1.0 <= ic <= 1.0, f"IC at horizon {h} out of bounds: {ic}"
+
+
+from feature_selection.eda.common_eda import compute_feature_acf
+from feature_selection.eda.eda_dataclasses import FeatureACF
+
+
+def test_feature_acf_shapes() -> None:
+    """lags, acf_values, pacf_values all have length max_lag."""
+    n = 200
+    idx = _daily_index(n)
+    np.random.seed(1)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    result = compute_feature_acf(feature, max_lag=20)
+    assert len(result.lags) == 20
+    assert len(result.acf_values) == 20
+    assert len(result.pacf_values) == 20
+
+
+def test_feature_acf_lags_values() -> None:
+    """lags array is [1, 2, ..., max_lag]."""
+    n = 100
+    idx = _daily_index(n)
+    np.random.seed(2)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    result = compute_feature_acf(feature, max_lag=5)
+    assert list(result.lags) == [1, 2, 3, 4, 5]
+
+
+def test_feature_acf_persistent_series() -> None:
+    """AR(1) series with phi=0.9 -> ACF lag-1 > 0.7."""
+    n = 500
+    idx = _daily_index(n)
+    np.random.seed(0)
+    values = np.zeros(n)
+    for i in range(1, n):
+        values[i] = 0.9 * values[i - 1] + np.random.randn() * 0.1
+    feature = pd.Series(values, index=idx)
+    result = compute_feature_acf(feature, max_lag=5)
+    assert result.acf_values[0] > 0.7
