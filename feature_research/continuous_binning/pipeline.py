@@ -203,6 +203,18 @@ def run_continuous_eda_pipeline(
             feature_type="continuous",
             module_name=str(config.bias_spec["module_name"]),
             root_dir=config.walkforward.output_root,
+            research_context={
+                "tickers": [ticker.name for ticker in config.tickers],
+                "period_start": str(config.start.date()),
+                "period_end": str(config.end.date()),
+                "target_col": config.target_col,
+                "strategy": config.strategy,
+                "binning_bin_counts": config.binning_params.bin_counts,
+                "walkforward_test_step": config.walkforward.test_step,
+                "walkforward_num_steps": config.walkforward.num_steps,
+                "walkforward_top_k": config.walkforward.top_k,
+                "walkforward_use_enhanced_selection": config.walkforward.use_enhanced_selection,
+            },
         )
         plt.close(stability_figure)
         plt.close(timeline_figure)
@@ -298,6 +310,16 @@ def run_continuous_walkforward_pipeline(
         param_grid=successful_param_grid,
         evaluate_param_combo=_build_walkforward_evaluator(combo_returns),
     )
+    if walkforward_report.folds_df.empty:
+        first_ts = pd.Timestamp(reference_index.min())
+        last_ts = pd.Timestamp(reference_index.max())
+        raise ValueError(
+            "No walkforward folds were generated. "
+            f"Data window={first_ts.date()}..{last_ts.date()}, "
+            f"walkforward train_start={config.walkforward.train_start.date()}, "
+            f"train_end={config.walkforward.train_end.date()}, "
+            f"test_step={config.walkforward.test_step}, num_steps={config.walkforward.num_steps}."
+        )
     stability_figure, _ = plot_selection_stability(
         selection_summary_df=walkforward_report.selection_summary_df,
         top_k=config.walkforward.top_k,
@@ -310,6 +332,18 @@ def run_continuous_walkforward_pipeline(
         feature_type="continuous",
         module_name=str(config.bias_spec["module_name"]),
         root_dir=config.walkforward.output_root,
+        research_context={
+            "tickers": [ticker.name for ticker in config.tickers],
+            "period_start": str(config.start.date()),
+            "period_end": str(config.end.date()),
+            "target_col": config.target_col,
+            "strategy": config.strategy,
+            "binning_bin_counts": config.binning_params.bin_counts,
+            "walkforward_test_step": config.walkforward.test_step,
+            "walkforward_num_steps": config.walkforward.num_steps,
+            "walkforward_top_k": config.walkforward.top_k,
+            "walkforward_use_enhanced_selection": config.walkforward.use_enhanced_selection,
+        },
     )
     plt.close(stability_figure)
     plt.close(timeline_figure)

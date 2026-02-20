@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -349,3 +350,50 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_combos_load(
 
     with pytest.raises(ValueError, match="No param combos loaded successfully"):
         run_rule_based_walkforward_pipeline(config, tmp_path / "wf_out")
+
+
+def test_run_rule_based_walkforward_pipeline_raises_if_no_folds(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    import pytest
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+    empty_fold_config = dataclasses.replace(
+        config,
+        walkforward=dataclasses.replace(
+            config.walkforward,
+            train_start=datetime(2025, 1, 1),
+            train_end=datetime(2025, 2, 1),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 2,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+
+    with pytest.raises(ValueError, match="No walkforward folds were generated"):
+        run_rule_based_walkforward_pipeline(empty_fold_config, tmp_path / "wf_out")

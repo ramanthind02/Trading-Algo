@@ -127,9 +127,13 @@ def test_write_walkforward_artifacts_writes_required_files_and_columns(tmp_path:
     assert paths.folds_csv.exists()
     assert paths.fold_scores_csv.exists()
     assert paths.selection_summary_csv.exists()
+    assert paths.selected_params_detailed_csv.exists()
+    assert paths.oos_metrics_csv.exists()
     assert paths.report_json.exists()
     assert paths.walkforward_stability_png.exists()
     assert paths.fold_timeline_png.exists()
+    assert paths.summary_md.exists()
+    assert paths.summary_html.exists()
 
     folds_df = pd.read_csv(paths.folds_csv)
     assert folds_df.columns.tolist() == [
@@ -161,6 +165,12 @@ def test_write_walkforward_artifacts_writes_required_files_and_columns(tmp_path:
         "top_k_features",
     ]
 
+    detailed_df = pd.read_csv(paths.selected_params_detailed_csv)
+    assert "param_x" in detailed_df.columns
+
+    oos_metrics_df = pd.read_csv(paths.oos_metrics_csv)
+    assert oos_metrics_df.columns.tolist() == ["metric", "value"]
+
 
 def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: Path) -> None:
     report = _build_report()
@@ -182,6 +192,10 @@ def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: 
         first_folds_csv = first_paths.folds_csv.read_text(encoding="utf-8")
         first_fold_scores_csv = first_paths.fold_scores_csv.read_text(encoding="utf-8")
         first_summary_csv = first_paths.selection_summary_csv.read_text(encoding="utf-8")
+        first_selected_params_csv = first_paths.selected_params_detailed_csv.read_text(encoding="utf-8")
+        first_oos_metrics_csv = first_paths.oos_metrics_csv.read_text(encoding="utf-8")
+        first_summary_md = first_paths.summary_md.read_text(encoding="utf-8")
+        first_summary_html = first_paths.summary_html.read_text(encoding="utf-8")
 
         second_paths = write_walkforward_artifacts(
             report=report,
@@ -201,6 +215,10 @@ def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: 
     assert first_folds_csv == second_paths.folds_csv.read_text(encoding="utf-8")
     assert first_fold_scores_csv == second_paths.fold_scores_csv.read_text(encoding="utf-8")
     assert first_summary_csv == second_paths.selection_summary_csv.read_text(encoding="utf-8")
+    assert first_selected_params_csv == second_paths.selected_params_detailed_csv.read_text(encoding="utf-8")
+    assert first_oos_metrics_csv == second_paths.oos_metrics_csv.read_text(encoding="utf-8")
+    assert first_summary_md == second_paths.summary_md.read_text(encoding="utf-8")
+    assert first_summary_html == second_paths.summary_html.read_text(encoding="utf-8")
 
 
 def test_write_walkforward_artifacts_normalizes_metadata_identifiers_to_match_output_path(

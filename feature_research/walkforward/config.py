@@ -13,9 +13,9 @@ class WalkforwardResearchConfig:
     train_end: datetime
     enabled: bool = False
     test_step: int = 252
-    num_steps: int = 10
+    num_steps: int = 8
     top_k: int = 3
-    objective_metric_name: str = "sharpe"
+    objective_metric_name: str = "sortino"
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
     use_enhanced_selection: bool = False

@@ -6,7 +6,7 @@ All other scripts import from here — change once, apply everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +35,7 @@ class PermutationSuiteConfig:
     min_folds_stable: int = 1
     random_seed: int | None = 42
     permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
-    fold_years: int = 2
+    fold_years: int = 1
     objective_metric: ObjectiveMetricSpec = field(
         default_factory=lambda: ObjectiveMetricSpec(builtin="sharpe")
     )
@@ -197,6 +197,20 @@ def load_config() -> ResearchConfig:
 
     module_name = bias_spec["module_name"]
     reports_dir = _CB_DIR / "results" / module_name
+    walkforward_test_step = 252
+    walkforward_num_steps = 8
+    walkforward_train_end = end - timedelta(days=walkforward_test_step * walkforward_num_steps)
+    if walkforward_train_end <= start:
+        walkforward_train_end = end - timedelta(days=walkforward_test_step)
+
+    walkforward = WalkforwardResearchConfig(
+        train_start=start,
+        train_end=walkforward_train_end,
+        enabled=False,
+        test_step=walkforward_test_step,
+        num_steps=walkforward_num_steps,
+        output_root=Path("feature_research/shared_results"),
+    )
 
     return ResearchConfig(
         tickers=tickers,
@@ -210,4 +224,5 @@ def load_config() -> ResearchConfig:
         reports_dir=reports_dir,
         permutation_suite=permutation_suite,
         binning_params=binning_params,
+        walkforward=walkforward,
     )
