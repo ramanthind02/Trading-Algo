@@ -10,6 +10,7 @@ import pandas as pd
 from feature_research.rule_based.config import RuleBasedResearchConfig
 from feature_research.rule_based.pipeline import run_rule_based_eda_pipeline
 from feature_research.walkforward.config import WalkforwardResearchConfig
+from feature_research.walkforward.runner import WalkforwardRunReport
 from utils.enums import Ticker, TimeFrame
 
 
@@ -251,3 +252,100 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
     assert selection_summary_csv.exists()
     selection_summary_df = pd.read_csv(selection_summary_csv)
     assert "selected_feature" in selection_summary_df.columns
+
+
+def test_run_rule_based_walkforward_pipeline_returns_report_and_writes_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.rule_based.pipeline import run_rule_based_walkforward_pipeline
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 2,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            },
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 3,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+
+    report = run_rule_based_walkforward_pipeline(config, tmp_path / "wf_out")
+
+    assert isinstance(report, WalkforwardRunReport)
+    walkforward_dir = (
+        config.walkforward.output_root / "rule_based" / config.bias_spec["module_name"] / "walkforward"
+    )
+    assert walkforward_dir.exists()
+    assert (walkforward_dir / "selection_summary.csv").exists()
+    assert (walkforward_dir / "fold_scores.csv").exists()
+    assert (walkforward_dir / "folds.csv").exists()
+
+
+def test_run_rule_based_walkforward_pipeline_raises_if_no_combos_load(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    import pytest
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi_signal",
+                "timeframes": [TimeFrame.D],
+                "params": {
+                    "rsi_period": 2,
+                    "oversold": 25.0,
+                    "overbought": 65.0,
+                    "strategy_mode": "long",
+                    "exit_policy": "threshold_or_bars",
+                    "exit_bars": 5,
+                },
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.rule_based.pipeline.load_features_for_combo",
+        lambda single_spec, _config: None,
+    )
+
+    with pytest.raises(ValueError, match="No param combos loaded successfully"):
+        run_rule_based_walkforward_pipeline(config, tmp_path / "wf_out")
