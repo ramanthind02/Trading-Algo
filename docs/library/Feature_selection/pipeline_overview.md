@@ -534,7 +534,7 @@ After graduation, and only after graduation, the researcher may evaluate the fea
 
 Two cross-validation schemes are used as diagnostics within this pipeline. Neither replaces the sequential expanding walk-forward (Phase 3), which remains the primary live-trading simulation. Both are applied within the IS period (2000–2023).
 
-All CV applications use **purging and embargoing** at every fold boundary. Purge length = max label horizon + max feature lookback. Embargo length = max label horizon + 1 bar. This prevents information leakage from autocorrelated features and overlapping return labels.
+CV applications in Stages 1+2 use **purging and embargoing** at every fold boundary (Purge length = max label horizon + max feature lookback; Embargo length = max label horizon + 1 bar) to prevent information leakage where a training set and test set are separated by a boundary. Stage 3 IS stability uses **boundary trimming** instead — each fold is evaluated on its own data with no internal train/test split, so trimming the edge observations by the label horizon is sufficient to remove cross-fold autocorrelation contamination.
 
 ### K-Fold CV (Non-Shuffled)
 
