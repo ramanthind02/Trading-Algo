@@ -108,7 +108,8 @@ The pipeline has five sequential phases organized into two tiers.
 │  │                                                               │      │
 │  │  Phase 3: Walkforward Validation                              │      │
 │  │  ┌────────────────────────────────────────────────────────┐   │      │
-│  │  │ 8 expanding folds, initial train 2000–2015,            │   │      │
+│  │  │ 8 walkforward folds (window_mode configurable),         │   │      │
+│  │  │ initial train 2000–2015,                                │   │      │
 │  │  │ test 2015–2016, step 1 year                            │   │      │
 │  │  │ Per fold: fit ALL params → selection rule → ensemble   │   │      │
 │  │  │ → evaluate OOS; track neighborhood consistency         │   │      │
@@ -131,7 +132,7 @@ The pipeline has five sequential phases organized into two tiers.
 │  │  │ All three gates passed → feature graduates             │   │      │
 │  │  │ Researcher reviews diagnostics, confirms deployment    │   │      │
 │  │  │ Production: same pre-committed selection rule,         │   │      │
-│  │  │ expanding training window, automatic refit/reselect    │   │      │
+│  │  │ configured window mode, automatic refit/reselect       │   │      │
 │  │  └────────────────────────────────────────────────────────┘   │      │
 │  └───────────────────────────────────────────────────────────────┘      │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -344,24 +345,40 @@ IS screening does not catch:
 
 ### Fold Structure
 
-The walkforward uses an expanding training window:
+The walkforward window type is controlled by config:
+
+```
+window_mode: expanding | rolling
+initial_train_start: 2000
+initial_train_end: 2015
+test_step: 1 year
+num_folds: 8
+rolling_train_length_years: optional (required when window_mode=rolling)
+```
+
+Example: expanding mode
 
 ```
 Fold 1:  Train: 2000–2015  |  Test: 2015–2016
 Fold 2:  Train: 2000–2016  |  Test: 2016–2017
-Fold 3:  Train: 2000–2017  |  Test: 2017–2018
-Fold 4:  Train: 2000–2018  |  Test: 2018–2019
-Fold 5:  Train: 2000–2019  |  Test: 2019–2020
-Fold 6:  Train: 2000–2020  |  Test: 2020–2021
-Fold 7:  Train: 2000–2021  |  Test: 2021–2022
+...
 Fold 8:  Train: 2000–2022  |  Test: 2022–2023
-
-Total OOS coverage: 2015–2023 (8 years, each year evaluated exactly once)
 ```
+
+Example: rolling mode (`rolling_train_length_years = 15`)
+
+```
+Fold 1:  Train: 2000–2015  |  Test: 2015–2016
+Fold 2:  Train: 2001–2016  |  Test: 2016–2017
+...
+Fold 8:  Train: 2007–2022  |  Test: 2022–2023
+```
+
+Total OOS coverage remains 2015–2023 (8 years, each year evaluated exactly once).
 
 **Training window requirement:** The initial training window must cover multiple distinct market regimes. For daily data, a minimum of 15 years (2000–2015) is required. This ensures that the selection rule has seen enough variation in market conditions to be meaningfully calibrated.
 
-**Why expanding windows?** Expanding windows use all available historical data for each fold. This gives the selection rule more information in later folds, which mirrors what production does (it also accumulates data over time). Rolling windows would discard early data, wasting information and creating artificial regime breaks.
+**Why configurable windows?** Expanding windows maximize history and are often more statistically stable. Rolling windows enforce recency and can adapt faster under regime change. The researcher can run both modes during experimentation and select `window_mode` via config for validation and production.
 
 ### Per-Fold Workflow
 
@@ -394,7 +411,7 @@ After all 8 folds are evaluated, the selected param neighborhoods are compared a
 
 **Stable (good):** The selected param neighborhood is consistent across ≥ 3 out of 8 folds. The same region of param space (e.g., lookbacks 5–10 for RSI) is selected repeatedly. This means the feature's optimal region is not shifting arbitrarily; the selection rule is latching onto a genuine structural property.
 
-**Drifting (acceptable):** The selected neighborhood moves gradually in param space as the training window expands. For example, in early folds the selection clusters around lookback-5; in later folds it shifts to lookback-10. Gradual drift can indicate that the feature's optimal timescale is evolving with market structure. This is acceptable if the drift is monotone and slow. Recency weighting can be used to account for drift in production.
+**Drifting (acceptable):** The selected neighborhood moves gradually in param space as the training window advances. For example, in early folds the selection clusters around lookback-5; in later folds it shifts to lookback-10. Gradual drift can indicate that the feature's optimal timescale is evolving with market structure. This is acceptable if the drift is monotone and slow. Recency weighting can be used to account for drift in production.
 
 **Unstable (bad):** The selected neighborhood jumps randomly across folds with no consistent pattern. In some folds lookback-2 is selected; in others lookback-20; in others nothing qualifies. This indicates the feature has no stable signal; the selection rule is picking up noise that happens to be significant in each training window by chance.
 
@@ -514,7 +531,7 @@ In production, the exact same pre-committed selection rule is applied:
 
 ```
 On a scheduled basis (e.g., daily or weekly):
-  1. Take expanding training window (all available historical data).
+  1. Take configured training window (`window_mode = expanding|rolling`).
   2. Fit ALL param combos on training data.
   3. Apply pre-committed selection rule → select qualifying params.
   4. Compute ensemble signal = mean(signal(p) for p in selected).
@@ -532,7 +549,7 @@ After graduation, and only after graduation, the researcher may evaluate the fea
 
 ## 11. Cross-Validation Methods
 
-Two cross-validation schemes are used as diagnostics within this pipeline. Neither replaces the sequential expanding walk-forward (Phase 3), which remains the primary live-trading simulation. Both are applied within the IS period (2000–2023).
+Two cross-validation schemes are used as diagnostics within this pipeline. Neither replaces the sequential walk-forward (Phase 3), which remains the primary live-trading simulation. Both are applied within the IS period (2000–2023).
 
 CV applications in Stages 1+2 use **purging and embargoing** at every fold boundary (Purge length = max label horizon + max feature lookback; Embargo length = max label horizon + 1 bar) to prevent information leakage where a training set and test set are separated by a boundary. Stage 3 IS stability uses **boundary trimming** instead — each fold is evaluated on its own data with no internal train/test split, so trimming the edge observations by the label horizon is sufficient to remove cross-fold autocorrelation contamination.
 
@@ -634,7 +651,7 @@ The following documents describe specific components of this pipeline in detail.
 |---|---|---|
 | `feature_validator.md` | Phases 1 & 2 | IS EDA implementation, IS permutation screening setup, output formats, parameter configuration |
 | `Permutation Testing/in-sample_pt.md` | Phase 2 | Stage 1 (vector shuffle) and Stage 2 (pipeline/candle shuffle) permutation test specifications, null distribution construction, significance thresholds |
-| `Walkforward/walkforward.md` | Phases 3 & 4 | Walkforward fold structure, expanding window logic, per-fold workflow implementation, walkforward permutation test implementation |
+| `Walkforward/walkforward.md` | Phases 3 & 4 | Walkforward fold structure, window policy (`expanding`/`rolling`), per-fold workflow implementation, walkforward permutation test implementation |
 | `Parameter Sensitivity/grid_search_parameter_stability.md` | All phases | Neighbor smoothing theory, stability_ratio computation, param grid heatmap generation |
 | `Parameter Sensitivity/param_selection_rule.md` | Phases 3, 4, 5 | Pre-committed selection rule full specification, K_min behavior, ensemble formation, production refit schedule |
 | `Cross_Validation/kfold_cv.md` | Phase 2 | K-fold CV specification: fold-by-fold permutation diagnostics, IS stability formalization, purging and boundary trimming requirements |
