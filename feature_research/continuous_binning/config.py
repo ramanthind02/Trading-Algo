@@ -186,7 +186,7 @@ def load_config() -> ResearchConfig:
     permutation_suite = PermutationSuiteConfig(enabled=False)
 
     binning_params = BinningAnalysisConfig(
-        bin_counts=[10, 8, 5, 3],
+        bin_counts=[10,9, 8, 7, 6, 5, 4, 3],
         strategy="long_short",
         t_threshold=2.0,
         use_coverage_bonus=False,
