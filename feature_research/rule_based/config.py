@@ -107,11 +107,13 @@ def load_config() -> RuleBasedResearchConfig:
     # EDIT BELOW
     # ==========================================================================
     tickers = [
-        Ticker.ES,  # E-Mini S&P 500
-        Ticker.NQ,  # E-Mini Nasdaq-100
+        Ticker.ES,   # E-Mini S&P 500
+        Ticker.NQ,   # E-Mini Nasdaq-100
+        Ticker.YM,   # E-Mini Dow Jones
+        Ticker.RTY,  # E-Mini Russell 2000
     ]
 
-    start = datetime(2020, 1, 1)
+    start = datetime(2000, 1, 1)
     end = datetime(2024, 12, 31)
 
     bias_spec = {
@@ -119,8 +121,8 @@ def load_config() -> RuleBasedResearchConfig:
         "timeframes": [TimeFrame.D],
         "params": {
             "rsi_period": [2, 3, 5, 7],
-            "oversold": 25.0,
-            "overbought": 65.0,
+            "oversold": list(range(5, 26, 5)),
+            "overbought": list(range(95, 64, -5)),
             "strategy_mode": "long",
             "exit_policy": "threshold_or_bars",
             "exit_bars": 5,
