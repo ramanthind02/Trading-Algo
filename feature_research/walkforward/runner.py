@@ -94,6 +94,7 @@ def _build_fold_scores(
     evaluate_param_combo: Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series],
     objective_metric: Callable[[pd.Series], float],
     top_k: int,
+    config: WalkforwardResearchConfig,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     train_mask = cast(pd.Series, fold_row["_train_mask"])
     test_mask = cast(pd.Series, fold_row["_test_mask"])
@@ -170,7 +171,39 @@ def _build_fold_scores(
         ]
     )
 
-    top_k_features = ranked_df["param_label"].head(top_k).tolist()
+    if config.use_enhanced_selection:
+        from feature_research.walkforward.top_k_selection import run_enhanced_selection
+
+        train_candles = candles_df.loc[train_mask]
+        train_target = target.loc[train_mask]
+        enhanced_result = run_enhanced_selection(
+            training_data=train_candles,
+            training_target=train_target,
+            param_grid=param_grid,
+            evaluate_param_combo=evaluate_param_combo,
+            smoothed_objectives={
+                str(row.param_label): float(row.smoothed_objective)
+                for row in smoothed_df.itertuples(index=False)
+            },
+            objective_metric=objective_metric,
+            config=config,
+        )
+        top_k_features = enhanced_result.selected_labels
+        fold_scores_df = fold_scores_df.assign(
+            trade_frequency=fold_scores_df["param_label"].map(enhanced_result.trade_frequencies),
+            robustness_score=fold_scores_df["param_label"].map(enhanced_result.robustness_scores),
+            quality_score=fold_scores_df["param_label"].map(enhanced_result.quality_scores),
+            selected_by_diversity=fold_scores_df["param_label"].isin(enhanced_result.selected_labels),
+        )
+    else:
+        top_k_features = ranked_df["param_label"].head(top_k).tolist()
+        fold_scores_df = fold_scores_df.assign(
+            trade_frequency=float("nan"),
+            robustness_score=float("nan"),
+            quality_score=float("nan"),
+            selected_by_diversity=False,
+        )
+
     summary_row = {
         "fold_id": int(cast(int, fold_row["fold_id"])),
         "selected_feature": selected_feature,
@@ -242,6 +275,7 @@ def run_walkforward_research(
             evaluate_param_combo=evaluate_param_combo,
             objective_metric=objective_metric,
             top_k=config.top_k,
+            config=config,
         )
         fold_score_parts.append(fold_scores_df)
         selection_rows.append(summary_row)
@@ -257,6 +291,10 @@ def run_walkforward_research(
                 "smoothed_objective",
                 "rank",
                 "selected_feature",
+                "trade_frequency",
+                "robustness_score",
+                "quality_score",
+                "selected_by_diversity",
             ]
         )
     )

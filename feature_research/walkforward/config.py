@@ -18,6 +18,12 @@ class WalkforwardResearchConfig:
     objective_metric_name: str = "sharpe"
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
+    use_enhanced_selection: bool = False
+    trade_freq_min: float = 0.05
+    n_robustness_blocks: int = 5
+    diversity_weight: float = 0.40
+    weight_stability: float = 0.50
+    weight_robustness: float = 0.50
 
     def __post_init__(self) -> None:
         if self.train_end <= self.train_start:
@@ -40,3 +46,11 @@ class WalkforwardResearchConfig:
         normalized_output_root = str(self.output_root).strip()
         if normalized_output_root in {"", "."}:
             raise ValueError("output_root must be a non-empty Path")
+        if not (0.0 <= self.trade_freq_min <= 1.0):
+            raise ValueError("trade_freq_min must be in [0, 1]")
+        if self.n_robustness_blocks < 3:
+            raise ValueError("n_robustness_blocks must be >= 3")
+        if not (0.0 <= self.diversity_weight <= 1.0):
+            raise ValueError("diversity_weight must be in [0, 1]")
+        if self.weight_stability < 0.0 or self.weight_robustness < 0.0:
+            raise ValueError("weight_stability and weight_robustness must be >= 0")

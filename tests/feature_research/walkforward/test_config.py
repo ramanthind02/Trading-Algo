@@ -59,3 +59,44 @@ def test_validation_bounds(kwargs: dict[str, object], expected_message: str) -> 
     }
     with pytest.raises(ValueError, match=expected_message):
         WalkforwardResearchConfig(**all_kwargs)
+
+
+def test_config_enhanced_selection_defaults() -> None:
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2015, 1, 1),
+    )
+
+    assert config.use_enhanced_selection is False
+    assert config.trade_freq_min == pytest.approx(0.05)
+    assert config.n_robustness_blocks == 5
+    assert config.diversity_weight == pytest.approx(0.40)
+    assert config.weight_stability == pytest.approx(0.50)
+    assert config.weight_robustness == pytest.approx(0.50)
+
+
+def test_config_rejects_invalid_trade_freq_min() -> None:
+    with pytest.raises(ValueError, match="trade_freq_min"):
+        WalkforwardResearchConfig(
+            train_start=datetime(2000, 1, 1),
+            train_end=datetime(2015, 1, 1),
+            trade_freq_min=1.5,
+        )
+
+
+def test_config_rejects_too_few_robustness_blocks() -> None:
+    with pytest.raises(ValueError, match="n_robustness_blocks"):
+        WalkforwardResearchConfig(
+            train_start=datetime(2000, 1, 1),
+            train_end=datetime(2015, 1, 1),
+            n_robustness_blocks=2,
+        )
+
+
+def test_config_rejects_invalid_diversity_weight() -> None:
+    with pytest.raises(ValueError, match="diversity_weight"):
+        WalkforwardResearchConfig(
+            train_start=datetime(2000, 1, 1),
+            train_end=datetime(2015, 1, 1),
+            diversity_weight=1.5,
+        )

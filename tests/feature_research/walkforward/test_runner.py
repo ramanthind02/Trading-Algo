@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 from pathlib import Path
 import sys
 from typing import Callable, cast
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -12,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.runner import run_walkforward_research
+from feature_research.walkforward.top_k_selection import EnhancedSelectionResult
 
 
 def _build_inputs() -> tuple[pd.DataFrame, pd.Series]:
@@ -368,3 +371,102 @@ def test_run_walkforward_research_scores_only_out_of_sample_segment_when_series_
     )
 
     assert report.selection_summary_df.loc[0, "selected_raw_objective"] == pytest.approx(5.0)
+
+
+def _make_enhanced_inputs(n: int = 600) -> tuple[pd.DataFrame, pd.Series]:
+    index = pd.date_range("2000-01-01", periods=n, freq="B")
+    candles_df = pd.DataFrame({"close": np.full(n, 100.0)}, index=index)
+    target = pd.Series(np.random.default_rng(42).normal(0.0, 0.01, n), index=index)
+    return candles_df, target
+
+
+def _enhanced_dummy_evaluate(
+    _candles: pd.DataFrame,
+    target: pd.Series,
+    params: dict[str, object],
+) -> pd.Series:
+    lookback = cast(int, params.get("lookback", 5))
+    series = np.random.default_rng(lookback).choice(
+        [-0.01, 0.0, 0.01],
+        size=len(target),
+        p=[0.3, 0.2, 0.5],
+    )
+    return pd.Series(series, index=target.index)
+
+
+def test_enhanced_selection_produces_expected_columns() -> None:
+    candles_df, target = _make_enhanced_inputs(2500)
+    param_grid: list[dict[str, object]] = [{"lookback": value} for value in range(3, 10)]
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2004, 1, 1),
+        num_steps=3,
+        top_k=3,
+        use_enhanced_selection=True,
+    )
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="rsi",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=_enhanced_dummy_evaluate,
+    )
+
+    assert "top_k_features" in report.selection_summary_df.columns
+    assert "trade_frequency" in report.fold_scores_df.columns
+    assert "robustness_score" in report.fold_scores_df.columns
+    assert "quality_score" in report.fold_scores_df.columns
+    assert "selected_by_diversity" in report.fold_scores_df.columns
+
+
+def test_enhanced_selection_uses_diversity_selected_labels_for_top_k(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candles_df, target = _make_enhanced_inputs(1000)
+    param_grid: list[dict[str, object]] = [
+        {"lookback": 3},
+        {"lookback": 4},
+        {"lookback": 5},
+    ]
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2002, 1, 1),
+        num_steps=1,
+        top_k=2,
+        use_enhanced_selection=True,
+    )
+
+    def fake_run_enhanced_selection(**_kwargs: object) -> EnhancedSelectionResult:
+        return EnhancedSelectionResult(
+            selected_labels=["lookback=4", "lookback=5"],
+            trade_frequencies={"lookback=3": 0.7, "lookback=4": 0.8, "lookback=5": 0.6},
+            robustness_scores={"lookback=4": 0.2, "lookback=5": 0.1},
+            quality_scores={"lookback=4": 0.9, "lookback=5": 0.8},
+            corr_matrix=pd.DataFrame(),
+        )
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.top_k_selection.run_enhanced_selection",
+        fake_run_enhanced_selection,
+    )
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="rsi",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=_enhanced_dummy_evaluate,
+    )
+
+    top_k_features = json.loads(report.selection_summary_df.loc[0, "top_k_features"])
+    assert top_k_features == ["lookback=4", "lookback=5"]
+
+    selected_flags = report.fold_scores_df.set_index("param_label")["selected_by_diversity"]
+    assert bool(selected_flags.loc["lookback=4"])
+    assert bool(selected_flags.loc["lookback=5"])
+    assert not bool(selected_flags.loc["lookback=3"])
