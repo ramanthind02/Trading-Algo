@@ -367,6 +367,7 @@ def generate_parameter_sensitivity_report(
     metric_col: str,
     stability_threshold: float = 0.8,
     top_k: int = 3,
+    plot_3d_mode: str = "heatmap_slices",
 ) -> ParameterSensitivityReport:
     """
     Orchestrate T009 → T010 → T011 to produce a ParameterSensitivityReport.
@@ -383,6 +384,9 @@ def generate_parameter_sensitivity_report(
         Minimum stability ratio for stable region membership.
     top_k : int, default 3
         Number of top recommended parameter combinations.
+    plot_3d_mode : str, default "heatmap_slices"
+        3D plot style when ``len(param_names) >= 3``.
+        Supported: ``"heatmap_slices"``, ``"surface_slices"``.
 
     Returns
     -------
@@ -427,10 +431,20 @@ def generate_parameter_sensitivity_report(
             show_plot=False,
         )
     else:
+        if plot_3d_mode == "heatmap_slices":
+            plot_type = "heatmap"
+        elif plot_3d_mode == "surface_slices":
+            plot_type = "surface"
+        else:
+            raise ValueError(
+                f"Invalid plot_3d_mode: {plot_3d_mode}. "
+                "Expected one of: ['heatmap_slices', 'surface_slices']."
+            )
         plot_3d = plot_3d_slices(
             df=smoothed_df,
             param_names=param_names,
             metric=metric_col,
+            plot_type=plot_type,
             show_plot=False,
         )
 

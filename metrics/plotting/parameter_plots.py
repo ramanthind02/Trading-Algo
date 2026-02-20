@@ -1186,14 +1186,16 @@ def plot_3d_slices(
     df: pd.DataFrame,
     param_names: List[str],
     metric: str = "sortino",
+    plot_type: str = "heatmap",
     title: Optional[str] = None,
     show_plot: bool = True,
 ) -> go.Figure:
     """
     3D+ parameter sensitivity via 2D slices with dropdown + slider.
 
-    For each choice of a fixed parameter, show a heatmap of the smoothed
-    metric across the remaining two parameters.  A dropdown selects which
+    For each choice of a fixed parameter, show a 2D slice (heatmap/contour)
+    or a true 3D surface of the smoothed metric across the remaining two
+    parameters. A dropdown selects which
     parameter to fix; a slider steps through its values.
 
     Parameters
@@ -1205,6 +1207,9 @@ def plot_3d_slices(
         Human-readable names for each dimension.
     metric : str
         Raw metric column name.
+    plot_type : str
+        Slice visualization type: ``"heatmap"`` (default), ``"surface"``,
+        or ``"contour"``.
     title : str, optional
     show_plot : bool
 
@@ -1215,6 +1220,8 @@ def plot_3d_slices(
     n_params = len(param_names)
     if n_params < 3:
         raise ValueError(f"plot_3d_slices requires >= 3 params, got {n_params}")
+    if plot_type not in {"heatmap", "surface", "contour"}:
+        raise ValueError(f"Invalid plot_type: {plot_type}")
 
     param_cols = [f"param{k}_value" for k in range(1, n_params + 1)]
     smoothed_col = f"smoothed_{metric}"
@@ -1243,7 +1250,12 @@ def plot_3d_slices(
                 subset = subset.groupby(free_cols, as_index=False)[obj_col].mean()
 
             if subset.empty or subset[free_cols[0]].nunique() < 2 or subset[free_cols[1]].nunique() < 2:
-                traces.append(go.Heatmap(z=[[0]], x=["0"], y=["0"], visible=False, showscale=False))
+                if plot_type == "surface":
+                    traces.append(go.Surface(z=[[0]], x=[0], y=[0], visible=False, showscale=False))
+                elif plot_type == "contour":
+                    traces.append(go.Contour(z=[[0]], x=["0"], y=["0"], visible=False, showscale=False))
+                else:
+                    traces.append(go.Heatmap(z=[[0]], x=["0"], y=["0"], visible=False, showscale=False))
                 trace_idx += 1
                 continue
 
@@ -1251,22 +1263,57 @@ def plot_3d_slices(
                 index=free_cols[0], columns=free_cols[1], values=obj_col,
             ).sort_index(axis=0).sort_index(axis=1)
 
-            trace = go.Heatmap(
-                z=pivot.values,
-                x=[str(v) for v in pivot.columns],
-                y=[str(v) for v in pivot.index],
-                colorscale="Viridis",
-                visible=False,
-                showscale=True,
-                colorbar=dict(title=metric.capitalize()),
-                hovertemplate=(
-                    f"<b>{free_names[0]}</b>: %{{y}}<br>"
-                    f"<b>{free_names[1]}</b>: %{{x}}<br>"
-                    f"<b>{metric}</b>: %{{z:.4f}}<br>"
-                    f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
-                    "<extra></extra>"
-                ),
-            )
+            if plot_type == "surface":
+                trace = go.Surface(
+                    z=pivot.values,
+                    x=pivot.columns.values,
+                    y=pivot.index.values,
+                    colorscale="Viridis",
+                    visible=False,
+                    showscale=True,
+                    colorbar=dict(title=metric.capitalize()),
+                    hovertemplate=(
+                        f"<b>{free_names[0]}</b>: %{{y}}<br>"
+                        f"<b>{free_names[1]}</b>: %{{x}}<br>"
+                        f"<b>{metric}</b>: %{{z:.4f}}<br>"
+                        f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
+                        "<extra></extra>"
+                    ),
+                )
+            elif plot_type == "contour":
+                trace = go.Contour(
+                    z=pivot.values,
+                    x=[str(v) for v in pivot.columns],
+                    y=[str(v) for v in pivot.index],
+                    colorscale="Viridis",
+                    visible=False,
+                    showscale=True,
+                    colorbar=dict(title=metric.capitalize()),
+                    hovertemplate=(
+                        f"<b>{free_names[0]}</b>: %{{y}}<br>"
+                        f"<b>{free_names[1]}</b>: %{{x}}<br>"
+                        f"<b>{metric}</b>: %{{z:.4f}}<br>"
+                        f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
+                        "<extra></extra>"
+                    ),
+                )
+            else:
+                trace = go.Heatmap(
+                    z=pivot.values,
+                    x=[str(v) for v in pivot.columns],
+                    y=[str(v) for v in pivot.index],
+                    colorscale="Viridis",
+                    visible=False,
+                    showscale=True,
+                    colorbar=dict(title=metric.capitalize()),
+                    hovertemplate=(
+                        f"<b>{free_names[0]}</b>: %{{y}}<br>"
+                        f"<b>{free_names[1]}</b>: %{{x}}<br>"
+                        f"<b>{metric}</b>: %{{z:.4f}}<br>"
+                        f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
+                        "<extra></extra>"
+                    ),
+                )
             traces.append(trace)
             trace_idx += 1
 
@@ -1306,16 +1353,24 @@ def plot_3d_slices(
         if group["start"] < group["end"]:
             vis[group["start"]] = True
 
+        if plot_type == "surface":
+            axis_update = {
+                "scene.xaxis.title": group["free_names"][1],
+                "scene.yaxis.title": group["free_names"][0],
+                "scene.zaxis.title": metric.capitalize(),
+            }
+        else:
+            axis_update = {
+                "xaxis_title": group["free_names"][1],
+                "yaxis_title": group["free_names"][0],
+            }
+
         dropdown_buttons.append(dict(
             label=f"Fix {param_names[fixed_idx]}",
             method="update",
             args=[
                 {"visible": vis},
-                {
-                    "xaxis_title": group["free_names"][1],
-                    "yaxis_title": group["free_names"][0],
-                    "sliders": _build_slider_for_group(fixed_idx),
-                },
+                {**axis_update, "sliders": _build_slider_for_group(fixed_idx)},
             ],
         ))
 
@@ -1332,8 +1387,6 @@ def plot_3d_slices(
     layout_kwargs: dict = dict(
         title=title,
         title_x=0.5,
-        xaxis_title=default_group["free_names"][1],
-        yaxis_title=default_group["free_names"][0],
         template="plotly_white",
         margin=dict(l=60, r=60, t=120, b=100),
         updatemenus=[dict(
@@ -1345,6 +1398,21 @@ def plot_3d_slices(
             active=0,
         )],
     )
+    if plot_type == "surface":
+        layout_kwargs["scene"] = dict(
+            xaxis_title=default_group["free_names"][1],
+            yaxis_title=default_group["free_names"][0],
+            zaxis_title=metric.capitalize(),
+            aspectmode="auto",
+            camera=dict(
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=1.5, y=1.5, z=0.8),
+            ),
+        )
+    else:
+        layout_kwargs["xaxis_title"] = default_group["free_names"][1]
+        layout_kwargs["yaxis_title"] = default_group["free_names"][0]
 
     if slider_steps:
         layout_kwargs["sliders"] = [dict(

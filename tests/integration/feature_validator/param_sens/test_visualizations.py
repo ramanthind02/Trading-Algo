@@ -267,6 +267,23 @@ class Test3DSlices(unittest.TestCase):
         for trace in fig.data:
             self.assertIsInstance(trace, go.Heatmap)
 
+    def test_surface_mode_traces_are_surface(self):
+        fig = plot_3d_slices(
+            _make_3d_df(), ["a", "b", "c"], "sortino",
+            plot_type="surface",
+            show_plot=False,
+        )
+        for trace in fig.data:
+            self.assertIsInstance(trace, go.Surface)
+
+    def test_invalid_plot_type_raises(self):
+        with self.assertRaises(ValueError):
+            plot_3d_slices(
+                _make_3d_df(), ["a", "b", "c"], "sortino",
+                plot_type="not_a_plot",
+                show_plot=False,
+            )
+
     def test_raises_for_less_than_3_params(self):
         with self.assertRaises(ValueError):
             plot_3d_slices(
