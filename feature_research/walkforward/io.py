@@ -9,6 +9,22 @@ from matplotlib.figure import Figure
 from feature_research.walkforward.runner import WalkforwardRunReport
 
 
+_FOLD_SCORE_BASE_COLS = [
+    "fold_id",
+    "param_label",
+    "raw_objective",
+    "smoothed_objective",
+    "rank",
+    "selected_feature",
+]
+_FOLD_SCORE_ENHANCED_COLS = [
+    "trade_frequency",
+    "robustness_score",
+    "quality_score",
+    "selected_by_diversity",
+]
+
+
 @dataclass(frozen=True)
 class WalkforwardArtifactPaths:
     output_dir: Path
@@ -74,16 +90,12 @@ def write_walkforward_artifacts(
             "test_samples",
         ]
     ].to_csv(paths.folds_csv, index=False, lineterminator="\n")
-    report.fold_scores_df[
-        [
-            "fold_id",
-            "param_label",
-            "raw_objective",
-            "smoothed_objective",
-            "rank",
-            "selected_feature",
-        ]
-    ].to_csv(paths.fold_scores_csv, index=False, lineterminator="\n")
+    fold_score_cols = _FOLD_SCORE_BASE_COLS + [
+        col for col in _FOLD_SCORE_ENHANCED_COLS if col in report.fold_scores_df.columns
+    ]
+    report.fold_scores_df[fold_score_cols].to_csv(
+        paths.fold_scores_csv, index=False, lineterminator="\n"
+    )
     report.selection_summary_df[
         [
             "fold_id",

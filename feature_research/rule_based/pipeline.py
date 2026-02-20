@@ -18,6 +18,7 @@ matplotlib.use("Agg")  # non-interactive backend (safe for scripts and tests)
 
 if TYPE_CHECKING:
     from feature_research.rule_based.config import RuleBasedResearchConfig
+    from feature_research.walkforward.runner import WalkforwardRunReport
     from feature_selection.validation.reports import PermutationTestSuite
 
 from feature_selection.validation.config import PermutationTestConfig
@@ -210,6 +211,116 @@ def run_rule_based_eda_pipeline(
 
     print(f"\nDone. {len(results)}/{len(expanded)} combos succeeded -> {output_dir}\n")
     return results
+
+
+def run_rule_based_walkforward_pipeline(
+    config: "RuleBasedResearchConfig",
+    output_dir: Path,
+) -> "WalkforwardRunReport":
+    """Run walkforward research only (no EDA) for rule-based features.
+
+    Loads feature data for all param combos, builds the return-series evaluator,
+    runs walkforward research with optional enhanced selection, and writes artifacts
+    to ``config.walkforward.output_root``.
+
+    Parameters
+    ----------
+    config : RuleBasedResearchConfig
+        Research settings. Set ``config.walkforward.use_enhanced_selection = True``
+        to activate the three-objective enhanced selection algorithm.
+    output_dir : Path
+        Created if it does not exist. Not used for artifact output - artifacts
+        are written to ``config.walkforward.output_root`` via
+        ``write_walkforward_artifacts``.
+
+    Returns
+    -------
+    WalkforwardRunReport
+        Folds, fold scores (with enhanced columns if enabled), and selection summary.
+
+    Raises
+    ------
+    ValueError
+        If no param combos load successfully.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    populate_cache_if_needed(config)
+
+    expanded = expand_bias_specs(config.bias_spec)
+
+    print(f"\n{'='*64}")
+    print(f"Rule-Based Walkforward Pipeline: {config.bias_spec['module_name'].upper()}")
+    print(f"Tickers : {[t.name for t in config.tickers]}")
+    print(f"Period  : {config.start.date()} -> {config.end.date()}")
+    print(f"Combos  : {len(expanded)}")
+    print(
+        f"Enhanced selection: {getattr(config.walkforward, 'use_enhanced_selection', False)}"
+    )
+    print(f"{'='*64}\n")
+
+    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
+    successful_param_grid: list[dict[str, object]] = []
+    reference_index: pd.DatetimeIndex | None = None
+
+    for single_spec in expanded:
+        combo = single_spec["params"]
+        label = param_combo_label(combo)
+
+        data = load_features_for_combo(single_spec, config)
+        if data is None:
+            print(f"  [{label}] SKIP -- no data")
+            continue
+
+        feature, target, _ = data
+        paired = pd.DataFrame({"feature": feature, "target": target}).dropna()
+        if paired.empty:
+            print(f"  [{label}] SKIP -- aligned feature/target empty")
+            continue
+
+        feature = paired["feature"]
+        target = paired["target"]
+        combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
+        successful_param_grid.append(dict(combo))
+        if reference_index is None:
+            reference_index = _normalize_datetime_index(target.index)
+        print(f"  [{label}] loaded n={len(feature):,}")
+
+    if not successful_param_grid or reference_index is None:
+        raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
+
+    reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+    reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
+
+    walkforward_report = run_walkforward_research(
+        candles_df=reference_candles,
+        target=reference_target,
+        feature_type="rule_based",
+        module_name=str(config.bias_spec["module_name"]),
+        config=config.walkforward,
+        param_grid=successful_param_grid,
+        evaluate_param_combo=_build_walkforward_evaluator(combo_returns),
+    )
+    stability_figure, _ = plot_selection_stability(
+        selection_summary_df=walkforward_report.selection_summary_df,
+        top_k=config.walkforward.top_k,
+    )
+    timeline_figure, _ = plot_fold_timeline(folds_df=walkforward_report.folds_df)
+    write_walkforward_artifacts(
+        report=walkforward_report,
+        walkforward_stability_figure=stability_figure,
+        fold_timeline_figure=timeline_figure,
+        feature_type="rule_based",
+        module_name=str(config.bias_spec["module_name"]),
+        root_dir=config.walkforward.output_root,
+    )
+    plt.close(stability_figure)
+    plt.close(timeline_figure)
+
+    print(
+        f"\nDone. {len(successful_param_grid)}/{len(expanded)} combos "
+        f"-> walkforward artifacts written to {config.walkforward.output_root}\n"
+    )
+    return walkforward_report
 
 
 def _build_fold_structure(

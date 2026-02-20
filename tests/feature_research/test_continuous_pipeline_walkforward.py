@@ -49,6 +49,7 @@ def _mock_eda_report() -> SimpleNamespace:
     return SimpleNamespace(
         common_stats=SimpleNamespace(correlation_analysis=SimpleNamespace(pearson=0.1)),
         continuous_stats=SimpleNamespace(
+            quintile_spread=SimpleNamespace(spread=0.3),
             monotonicity_test=SimpleNamespace(kendall_tau=0.2),
             decile_analysis=SimpleNamespace(overall_trend="up"),
         ),
@@ -269,3 +270,67 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
     assert selection_summary_csv.exists()
     selection_summary_df = pd.read_csv(selection_summary_csv)
     assert "selected_feature" in selection_summary_df.columns
+
+
+def test_run_continuous_walkforward_pipeline_returns_report_and_writes_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {"module_name": "rsi", "timeframes": [TimeFrame.D], "params": {"lookback": 2}},
+            {"module_name": "rsi", "timeframes": [TimeFrame.D], "params": {"lookback": 3}},
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+
+    report = run_continuous_walkforward_pipeline(config, tmp_path / "wf_out")
+
+    assert isinstance(report, WalkforwardRunReport)
+    walkforward_dir = (
+        config.walkforward.output_root / "continuous" / config.bias_spec["module_name"] / "walkforward"
+    )
+    assert walkforward_dir.exists()
+    assert (walkforward_dir / "selection_summary.csv").exists()
+    assert (walkforward_dir / "fold_scores.csv").exists()
+    assert (walkforward_dir / "folds.csv").exists()
+
+
+def test_run_continuous_walkforward_pipeline_raises_if_no_combos_load(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+    import pytest
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {"module_name": "rsi", "timeframes": [TimeFrame.D], "params": {"lookback": 2}},
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_features_for_combo",
+        lambda single_spec, _config: None,
+    )
+
+    with pytest.raises(ValueError, match="No param combos loaded successfully"):
+        run_continuous_walkforward_pipeline(config, tmp_path / "wf_out")
