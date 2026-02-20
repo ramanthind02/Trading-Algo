@@ -925,11 +925,16 @@ def plot_2d_stability_heatmap(
     param2: str,
     metric: str = "sortino",
     stable_regions: Optional[List["StableRegion"]] = None,
+    base_layers: Optional[List[str]] = None,
+    default_layer: str = "smoothed",
+    show_stability_contours: bool = False,
+    show_region_markers: bool = True,
+    enable_controls: bool = True,
     title: Optional[str] = None,
     show_plot: bool = True,
 ) -> go.Figure:
     """
-    2D heatmap of smoothed objective with stable region contour overlay.
+    2D heatmap explorer with selectable base layers and optional overlays.
 
     Parameters
     ----------
@@ -944,6 +949,18 @@ def plot_2d_stability_heatmap(
         Raw metric column name.
     stable_regions : list of StableRegion, optional
         Regions whose boundaries are highlighted.
+    base_layers : list of str, optional
+        Base layer keys to include in the metric dropdown. Supported aliases:
+        ``raw``, ``smoothed``, ``stability_ratio``, ``n_neighbors``, ``delta``.
+        Any item that matches a DataFrame column is also supported.
+    default_layer : str, default ``"smoothed"``
+        Layer key shown on initial render.
+    show_stability_contours : bool, default ``False``
+        Initial visibility for stability contour overlay.
+    show_region_markers : bool, default ``True``
+        Initial visibility for stable-region marker overlay.
+    enable_controls : bool, default ``True``
+        Whether to add interactive dropdown/buttons for layer and overlays.
     title : str, optional
     show_plot : bool
 
@@ -952,33 +969,92 @@ def plot_2d_stability_heatmap(
     go.Figure
     """
     smoothed_col = f"smoothed_{metric}"
-    obj_col = smoothed_col if smoothed_col in df.columns else metric
+    layer_alias_to_col = {
+        "raw": metric,
+        "smoothed": smoothed_col if smoothed_col in df.columns else metric,
+        "stability_ratio": "stability_ratio",
+        "n_neighbors": "n_neighbors",
+    }
 
-    pivot_obj = df.pivot_table(
-        index="param1_value", columns="param2_value", values=obj_col,
-    ).sort_index(axis=0).sort_index(axis=1)
+    if smoothed_col in df.columns and metric in df.columns:
+        delta_col = f"delta_{metric}"
+        working_df = df.copy()
+        working_df[delta_col] = working_df[metric] - working_df[smoothed_col]
+        layer_alias_to_col["delta"] = delta_col
+    else:
+        working_df = df
+
+    if base_layers is None:
+        base_layers = ["smoothed", "raw", "stability_ratio", "n_neighbors", "delta"]
+
+    resolved_layers: List[tuple[str, str]] = []
+    for layer_key in base_layers:
+        if layer_key in layer_alias_to_col and layer_alias_to_col[layer_key] in working_df.columns:
+            resolved_layers.append((layer_key, layer_alias_to_col[layer_key]))
+        elif layer_key in working_df.columns:
+            resolved_layers.append((layer_key, layer_key))
+
+    if not resolved_layers:
+        raise ValueError("No valid base layers available for 2D heatmap plotting.")
+
+    if default_layer not in [k for k, _ in resolved_layers]:
+        default_layer = resolved_layers[0][0]
 
     fig = go.Figure()
+    base_trace_indices: dict[str, int] = {}
 
-    # Main heatmap (smoothed objective, Viridis)
-    fig.add_trace(go.Heatmap(
-        z=pivot_obj.values,
-        x=[str(v) for v in pivot_obj.columns],
-        y=[str(v) for v in pivot_obj.index],
-        colorscale="Viridis",
-        colorbar=dict(title=f"{metric.capitalize()}<br>(smoothed)", x=1.0),
-        name="Smoothed Objective",
-        hovertemplate=(
-            f"<b>{param1}</b>: %{{y}}<br>"
-            f"<b>{param2}</b>: %{{x}}<br>"
-            f"<b>{metric} (smoothed)</b>: %{{z:.4f}}<br>"
-            "<extra></extra>"
-        ),
-    ))
+    def _layer_colorscale(layer_key: str) -> str:
+        if layer_key == "stability_ratio":
+            return "RdYlGn"
+        if layer_key == "delta":
+            return "RdBu"
+        if layer_key == "n_neighbors":
+            return "Cividis"
+        return "Viridis"
 
-    # Stability ratio contour overlay (RdYlGn)
-    if "stability_ratio" in df.columns:
-        pivot_sr = df.pivot_table(
+    def _layer_title(layer_key: str) -> str:
+        if layer_key == "raw":
+            return f"{metric.capitalize()}<br>(raw)"
+        if layer_key == "smoothed":
+            return f"{metric.capitalize()}<br>(smoothed)"
+        if layer_key == "stability_ratio":
+            return "Stability<br>Ratio"
+        if layer_key == "n_neighbors":
+            return "Neighbor<br>Count"
+        if layer_key == "delta":
+            return f"{metric.capitalize()}<br>(raw-smoothed)"
+        return layer_key
+
+    # Base heatmap layers (one visible at a time)
+    for layer_key, layer_col in resolved_layers:
+        pivot = working_df.pivot_table(
+            index="param1_value", columns="param2_value", values=layer_col,
+        ).sort_index(axis=0).sort_index(axis=1)
+
+        trace = go.Heatmap(
+            z=pivot.values,
+            x=[str(v) for v in pivot.columns],
+            y=[str(v) for v in pivot.index],
+            colorscale=_layer_colorscale(layer_key),
+            colorbar=dict(title=_layer_title(layer_key), x=1.0),
+            name=f"Layer: {layer_key}",
+            visible=(layer_key == default_layer),
+            hovertemplate=(
+                f"<b>{param1}</b>: %{{y}}<br>"
+                f"<b>{param2}</b>: %{{x}}<br>"
+                f"<b>{layer_key}</b>: %{{z:.4f}}<br>"
+                "<extra></extra>"
+            ),
+        )
+        fig.add_trace(trace)
+        base_trace_indices[layer_key] = len(fig.data) - 1
+
+    contour_idx: Optional[int] = None
+    region_indices: List[int] = []
+
+    # Stability ratio contour overlay (optional visibility)
+    if "stability_ratio" in working_df.columns:
+        pivot_sr = working_df.pivot_table(
             index="param1_value", columns="param2_value", values="stability_ratio",
         ).sort_index(axis=0).sort_index(axis=1)
 
@@ -987,11 +1063,11 @@ def plot_2d_stability_heatmap(
             x=[str(v) for v in pivot_sr.columns],
             y=[str(v) for v in pivot_sr.index],
             colorscale="RdYlGn",
-            opacity=0.35,
-            showscale=True,
-            colorbar=dict(title="Stability<br>Ratio", x=1.12),
-            contours=dict(showlabels=True, labelfont=dict(size=10, color="black")),
-            name="Stability Ratio",
+            opacity=0.30,
+            showscale=False,
+            contours=dict(showlabels=False),
+            name="Overlay: stability contours",
+            visible=show_stability_contours,
             hovertemplate=(
                 f"<b>{param1}</b>: %{{y}}<br>"
                 f"<b>{param2}</b>: %{{x}}<br>"
@@ -999,8 +1075,9 @@ def plot_2d_stability_heatmap(
                 "<extra></extra>"
             ),
         ))
+        contour_idx = len(fig.data) - 1
 
-    # Highlight stable region boundaries
+    # Stable region markers overlay
     if stable_regions:
         for region in stable_regions:
             xs = [str(combo[1]) for combo in region.param_combinations]
@@ -1009,12 +1086,13 @@ def plot_2d_stability_heatmap(
                 x=xs, y=ys,
                 mode="markers",
                 marker=dict(
-                    size=14,
+                    size=12,
                     color="rgba(0,0,0,0)",
                     line=dict(color="lime", width=2),
                     symbol="square",
                 ),
-                name=f"Stable Region (n={region.n_combinations})",
+                name=f"Overlay: stable region (n={region.n_combinations})",
+                visible=show_region_markers,
                 hovertemplate=(
                     f"<b>Stable Region</b><br>"
                     f"<b>Mean Obj</b>: {region.mean_objective:.4f}<br>"
@@ -1022,6 +1100,71 @@ def plot_2d_stability_heatmap(
                     "<extra></extra>"
                 ),
             ))
+            region_indices.append(len(fig.data) - 1)
+
+    if enable_controls:
+        total = len(fig.data)
+
+        def _visibility(selected_layer: str, contour_on: bool, regions_on: bool) -> List[bool]:
+            vis = [False] * total
+            vis[base_trace_indices[selected_layer]] = True
+            if contour_idx is not None:
+                vis[contour_idx] = contour_on
+            if region_indices:
+                for idx in region_indices:
+                    vis[idx] = regions_on
+            return vis
+
+        layer_buttons = []
+        for layer_key, _ in resolved_layers:
+            layer_buttons.append(dict(
+                label=layer_key,
+                method="update",
+                args=[{"visible": _visibility(layer_key, show_stability_contours, show_region_markers)}],
+            ))
+
+        overlay_modes = [
+            ("none", False, False),
+            ("regions", False, True),
+            ("contours", True, False),
+            ("both", True, True),
+        ]
+        overlay_buttons = [
+            dict(
+                label=label,
+                method="update",
+                args=[{"visible": _visibility(default_layer, contour_on, regions_on)}],
+            )
+            for label, contour_on, regions_on in overlay_modes
+        ]
+
+        fig.update_layout(
+            updatemenus=[
+                dict(
+                    type="dropdown",
+                    direction="down",
+                    x=0.0,
+                    xanchor="left",
+                    y=1.18,
+                    yanchor="top",
+                    active=[k for k, _ in resolved_layers].index(default_layer),
+                    buttons=layer_buttons,
+                ),
+                dict(
+                    type="buttons",
+                    direction="right",
+                    x=0.36,
+                    xanchor="left",
+                    y=1.18,
+                    yanchor="top",
+                    active=3 if (show_stability_contours and show_region_markers)
+                    else 2 if show_stability_contours
+                    else 1 if show_region_markers
+                    else 0,
+                    buttons=overlay_buttons,
+                ),
+            ]
+        )
 
     if title is None:
         title = f"2D Stability Heatmap: {param1} vs {param2} ({metric.capitalize()})"
@@ -1205,4 +1348,3 @@ def plot_3d_slices(
     if show_plot:
         fig.show()
     return fig
-

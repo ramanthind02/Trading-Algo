@@ -164,6 +164,57 @@ class Test2DStabilityHeatmap(unittest.TestCase):
         trace_types = [type(t).__name__ for t in fig.data]
         self.assertIn("Scatter", trace_types)
 
+    def test_has_layer_selector_menu(self):
+        fig = plot_2d_stability_heatmap(
+            _make_2d_df(), "fast", "slow", "sortino", show_plot=False,
+        )
+        menus = fig.layout.updatemenus
+        self.assertIsNotNone(menus)
+        self.assertGreaterEqual(len(menus), 1)
+        labels = [btn.label for btn in menus[0].buttons]
+        joined = " ".join(labels).lower()
+        self.assertIn("smoothed", joined)
+        self.assertIn("raw", joined)
+        self.assertIn("stability", joined)
+
+    def test_has_overlay_mode_menu(self):
+        fig = plot_2d_stability_heatmap(
+            _make_2d_df(), "fast", "slow", "sortino", show_plot=False,
+        )
+        menus = fig.layout.updatemenus
+        self.assertIsNotNone(menus)
+        self.assertGreaterEqual(len(menus), 2)
+        overlay_labels = [btn.label for btn in menus[1].buttons]
+        self.assertEqual(len(overlay_labels), 4)
+
+    def test_default_layer_raw_is_visible(self):
+        fig = plot_2d_stability_heatmap(
+            _make_2d_df(), "fast", "slow", "sortino",
+            default_layer="raw",
+            show_plot=False,
+        )
+        layer_names = [trace.name for trace in fig.data if isinstance(trace, go.Heatmap)]
+        visible_map = {
+            trace.name: trace.visible
+            for trace in fig.data
+            if isinstance(trace, go.Heatmap)
+        }
+        self.assertTrue(any("raw" in name.lower() for name in layer_names))
+        raw_name = next(name for name in layer_names if "raw" in name.lower())
+        self.assertTrue(visible_map[raw_name] in (True, None))
+
+    def test_supports_custom_dataframe_metric_layer(self):
+        df = _make_2d_df().copy()
+        df["custom_alpha"] = df["sortino"] * 2.0
+        fig = plot_2d_stability_heatmap(
+            df, "fast", "slow", "sortino",
+            base_layers=["custom_alpha"],
+            default_layer="custom_alpha",
+            show_plot=False,
+        )
+        heatmap_names = [trace.name for trace in fig.data if isinstance(trace, go.Heatmap)]
+        self.assertTrue(any("custom_alpha" in name.lower() for name in heatmap_names))
+
 
 class Test3DSlices(unittest.TestCase):
     """Test plot_3d_slices."""

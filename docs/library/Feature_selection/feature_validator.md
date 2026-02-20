@@ -244,9 +244,18 @@ stability_ratio = smoothed_objective / raw_objective
 - Shaded regions: stability ratio > 0.8
 
 **2D parameter grids:**
-- Heatmap: raw objective surface
-- Contour plot: smoothed objective surface
-- Overlay: highlight stable regions (stability ratio > 0.8)
+- Single interactive plot with layer selector:
+  - `smoothed` objective (default)
+  - `raw` objective
+  - `stability_ratio`
+  - `n_neighbors`
+  - `delta` (`raw - smoothed`)
+- Overlay mode buttons:
+  - none
+  - stable-region markers
+  - stability contours
+  - both markers and contours
+- Layer selector also supports additional numeric DataFrame columns for custom research metrics
 
 **3D+ parameter grids:**
 - 2D slices (fix one parameter, plot others)
@@ -254,7 +263,8 @@ stability_ratio = smoothed_objective / raw_objective
 
 **Interactive features:**
 - Hover: show exact values, stability ratio, neighbors
-- Click: select parameter combo to see detailed stats
+- Dropdown: switch base metric layer without leaving the figure
+- Overlay buttons: declutter or add stability context on demand
 - Zoom: inspect specific parameter regions
 
 **Implementation:** Use existing `eda/parameter_analysis.py` (`ParameterAnalyzer` class) and `metrics/plotting/parameter_plots.py`.
