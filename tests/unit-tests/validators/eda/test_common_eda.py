@@ -16,11 +16,12 @@ from feature_selection.eda.common_eda import (
     compute_descriptive_stats,
     compute_temporal_stability,
     compute_correlation_analysis,
-    compute_rolling_objective,
     create_common_eda_plots,
+    compute_ic_decay,
+    compute_feature_acf,
 )
 from feature_selection.eda.eda_dataclasses import (
-    DescriptiveStats, TemporalStability, CorrelationAnalysis, CommonEDAPlots,
+    DescriptiveStats, TemporalStability, CorrelationAnalysis, CommonEDAPlots, ICDecay,
 )
 
 
@@ -104,27 +105,91 @@ def test_correlation_analysis_has_all_lags() -> None:
     assert set(result.lagged_correlations.keys()) == {1, 2, 3, 4, 5}
 
 
-def test_rolling_objective_sharpe_manual() -> None:
-    returns = pd.Series([0.1, 0.2, 0.3, 0.4, 0.5])
-    signals = pd.Series([1.0, 1.0, 1.0, 1.0, 1.0])
-
-    def sharpe_fn(s: pd.Series, r: pd.Series) -> float:
-        return r.mean() / r.std() if r.std() > 0 else 0.0
-
-    result = compute_rolling_objective(signals, returns, sharpe_fn, window=3)
-    assert result.iloc[:2].isna().all()
-    expected = np.mean([0.1, 0.2, 0.3]) / np.std([0.1, 0.2, 0.3], ddof=1)
-    assert result.iloc[2] == pytest.approx(expected, rel=1e-6)
-
-
 def test_common_eda_plots_smoke() -> None:
     n = 60
     idx = _daily_index(n)
+    np.random.seed(0)
     feature = pd.Series(np.random.randn(n), index=idx)
-    target = pd.Series(np.random.randn(n), index=idx)
     rolling_corr = pd.Series(np.random.randn(n), index=idx)
-    rolling_obj = pd.Series(np.random.randn(n), index=idx)
-    plots = create_common_eda_plots(feature, target, idx, rolling_corr, rolling_obj)
+    target = pd.Series(np.random.randn(n), index=idx)
+    ic_d = compute_ic_decay(feature, target, horizons=[1, 5, 10, 21])
+    f_acf = compute_feature_acf(feature, max_lag=20)
+    plots = create_common_eda_plots(feature, idx, rolling_corr, ic_d, f_acf)
     assert plots.time_series_fig is not None
     assert plots.rolling_corr_fig is not None
-    assert plots.rolling_obj_fig is not None
+    assert plots.ic_decay_fig is not None
+    assert plots.acf_fig is not None
+
+
+def test_ic_decay_horizons_present() -> None:
+    """Result contains exactly the requested horizons."""
+    n = 300
+    idx = _daily_index(n)
+    np.random.seed(0)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_ic_decay(feature, target, horizons=[1, 5, 10, 21])
+    assert set(result.ic_by_horizon.keys()) == {1, 5, 10, 21}
+    assert result.horizons == [1, 5, 10, 21]
+
+
+def test_ic_decay_perfect_lag1_signal() -> None:
+    """Feature that perfectly predicts 1-bar returns has IC(1) near 1.0."""
+    n = 300
+    idx = _daily_index(n)
+    feature = pd.Series(np.linspace(0, 1, n), index=idx)
+    # target is feature shifted forward by 1 bar
+    target = feature.shift(-1).fillna(0)
+    result = compute_ic_decay(feature, target, horizons=[1, 5])
+    assert result.ic_by_horizon[1] > 0.9
+
+
+def test_ic_decay_values_bounded() -> None:
+    """All IC values must lie in [-1, 1]."""
+    n = 200
+    idx = _daily_index(n)
+    np.random.seed(7)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    target = pd.Series(np.random.randn(n), index=idx)
+    result = compute_ic_decay(feature, target, horizons=[1, 5, 10, 21])
+    for h, ic in result.ic_by_horizon.items():
+        assert -1.0 <= ic <= 1.0, f"IC at horizon {h} out of bounds: {ic}"
+
+
+from feature_selection.eda.common_eda import compute_feature_acf
+from feature_selection.eda.eda_dataclasses import FeatureACF
+
+
+def test_feature_acf_shapes() -> None:
+    """lags, acf_values, pacf_values all have length max_lag."""
+    n = 200
+    idx = _daily_index(n)
+    np.random.seed(1)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    result = compute_feature_acf(feature, max_lag=20)
+    assert len(result.lags) == 20
+    assert len(result.acf_values) == 20
+    assert len(result.pacf_values) == 20
+
+
+def test_feature_acf_lags_values() -> None:
+    """lags array is [1, 2, ..., max_lag]."""
+    n = 100
+    idx = _daily_index(n)
+    np.random.seed(2)
+    feature = pd.Series(np.random.randn(n), index=idx)
+    result = compute_feature_acf(feature, max_lag=5)
+    assert list(result.lags) == [1, 2, 3, 4, 5]
+
+
+def test_feature_acf_persistent_series() -> None:
+    """AR(1) series with phi=0.9 -> ACF lag-1 > 0.7."""
+    n = 500
+    idx = _daily_index(n)
+    np.random.seed(0)
+    values = np.zeros(n)
+    for i in range(1, n):
+        values[i] = 0.9 * values[i - 1] + np.random.randn() * 0.1
+    feature = pd.Series(values, index=idx)
+    result = compute_feature_acf(feature, max_lag=5)
+    assert result.acf_values[0] > 0.7

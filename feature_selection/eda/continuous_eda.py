@@ -13,7 +13,7 @@ from feature_selection.eda.eda_dataclasses import (
     DecileAnalysis,
     DecileBinStats,
     DistributionDiagnostics,
-    MonotonicityTest,
+    QuintileSpread,
 )
 
 _VOL_THRESHOLD = 1e-10  # volatility below this is treated as zero
@@ -96,20 +96,6 @@ def compute_decile_analysis(
     return DecileAnalysis(bin_stats=bin_stats, overall_trend=trend)
 
 
-def compute_monotonicity_test(bin_means: np.ndarray) -> MonotonicityTest:
-    """Kendall's tau monotonicity test over bin mean returns.
-
-    is_monotonic is True iff |tau| > 0.5 and p < 0.05.
-    """
-    idx = np.arange(len(bin_means))
-    tau, p_value = stats.kendalltau(idx, bin_means)
-    return MonotonicityTest(
-        kendall_tau=float(tau),
-        p_value=float(p_value),
-        is_monotonic=bool(abs(tau) > 0.5 and p_value < 0.05),
-    )
-
-
 def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnostics:
     """Compute normality diagnostics for a feature series.
 
@@ -135,13 +121,34 @@ def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnost
     )
 
 
+def compute_quintile_spread(
+    feature: pd.Series,
+    target: pd.Series,
+) -> QuintileSpread:
+    """Bin feature into 5 quantiles and compute per-quintile mean return.
+
+    spread = mean_return(Q5) - mean_return(Q1).
+    """
+    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
+    aligned = aligned.copy()
+    aligned["quintile"] = pd.qcut(aligned["f"], q=5, labels=False, duplicates="drop")
+    quintile_means = (
+        aligned.groupby("quintile")["t"]
+        .mean()
+        .reindex(range(5))
+        .to_numpy(dtype=float)
+    )
+    spread = float(quintile_means[4] - quintile_means[0])
+    return QuintileSpread(quintile_means=quintile_means, spread=spread)
+
+
 def create_continuous_eda_plots(
     feature: pd.Series,
     target: pd.Series,
     decile_analysis: DecileAnalysis,
-    dist_diagnostics: DistributionDiagnostics,
+    quintile_spread: QuintileSpread,
 ) -> ContinuousEDAPlots:
-    """Create the four standard continuous EDA figures."""
+    """Create the three standard continuous EDA figures: decile plot, histogram, quintile spread."""
     bs = decile_analysis.bin_stats
     bins = np.arange(len(bs.mean_return))
 
@@ -168,25 +175,20 @@ def create_continuous_eda_plots(
     fig_h.tight_layout()
     plt.close(fig_h)
 
-    # 3. Q-Q plot
-    fig_qq, ax = plt.subplots(figsize=(6, 6))
-    stats.probplot(clean, dist="norm", plot=ax)
-    ax.set_title("Q-Q plot vs Normal")
-    fig_qq.tight_layout()
-    plt.close(fig_qq)
-
-    # 4. KDE plot
-    fig_kde, ax = plt.subplots(figsize=(10, 4))
-    kde = stats.gaussian_kde(clean)
-    x_range = np.linspace(clean.min(), clean.max(), 300)
-    ax.plot(x_range, kde(x_range), color="purple", linewidth=1.5)
-    ax.set_title("Kernel density estimate")
-    fig_kde.tight_layout()
-    plt.close(fig_kde)
+    # 3. Quintile spread figure
+    fig_qs, ax = plt.subplots(figsize=(8, 4))
+    quintile_labels = ["Q1", "Q2", "Q3", "Q4", "Q5"]
+    colors = ["#d73027" if v < 0 else "#1a9850" for v in quintile_spread.quintile_means]
+    ax.bar(quintile_labels, np.nan_to_num(quintile_spread.quintile_means), color=colors)
+    ax.axhline(0, color="black", linewidth=0.5)
+    ax.set_title(f"Mean return by quintile  |  spread = {quintile_spread.spread:.4f}")
+    ax.set_xlabel("Quintile")
+    ax.set_ylabel("Mean return")
+    fig_qs.tight_layout()
+    plt.close(fig_qs)
 
     return ContinuousEDAPlots(
         decile_plot_fig=fig_d,
         histogram_fig=fig_h,
-        qq_plot_fig=fig_qq,
-        kde_fig=fig_kde,
+        quintile_spread_fig=fig_qs,
     )

@@ -1,11 +1,8 @@
 """Frozen dataclasses for the Feature Validator EDA pipeline (T001–T004)."""
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
@@ -44,16 +41,31 @@ class CorrelationAnalysis:
     """Feature-target correlation at various lags."""
     pearson: float
     spearman: float
-    kendall: float
     lagged_correlations: dict[int, float]    # lag → correlation (lags 1..max_lag)
+
+
+@dataclass(frozen=True)
+class ICDecay:
+    """Spearman IC at multiple forward-return horizons."""
+    horizons: list[int]               # e.g. [1, 5, 10, 21]
+    ic_by_horizon: dict[int, float]   # horizon → IC value
+
+
+@dataclass(frozen=True)
+class FeatureACF:
+    """Autocorrelation and partial autocorrelation of the feature."""
+    lags: np.ndarray        # shape (max_acf_lag,), values 1..max_acf_lag
+    acf_values: np.ndarray  # shape (max_acf_lag,)
+    pacf_values: np.ndarray # shape (max_acf_lag,)
 
 
 @dataclass(frozen=True)
 class CommonEDAPlots:
     """Matplotlib Figure objects for common EDA."""
-    time_series_fig: Figure      # feature + target over time (2 subplots)
+    time_series_fig: Figure      # feature over time (single subplot)
     rolling_corr_fig: Figure     # rolling correlation over time
-    rolling_obj_fig: Figure      # rolling objective metric over time
+    ic_decay_fig: Figure         # IC at each forward-return horizon
+    acf_fig: Figure              # ACF and PACF correlograms
 
 
 @dataclass(frozen=True)
@@ -63,7 +75,8 @@ class CommonEDAStats:
     target_stats: DescriptiveStats
     temporal_stability: TemporalStability
     correlation_analysis: CorrelationAnalysis
-    rolling_objective: pd.Series     # DatetimeIndex → float
+    ic_decay: ICDecay
+    feature_acf: FeatureACF
 
 
 # ─── T002: Continuous Feature EDA ────────────────────────────────────────────
@@ -87,11 +100,10 @@ class DecileAnalysis:
 
 
 @dataclass(frozen=True)
-class MonotonicityTest:
-    """Kendall's tau monotonicity test over bin means."""
-    kendall_tau: float
-    p_value: float
-    is_monotonic: bool            # |tau| > 0.5 and p < 0.05
+class QuintileSpread:
+    """Mean return per quintile and Q5-Q1 spread."""
+    quintile_means: np.ndarray  # shape (5,), Q1 to Q5
+    spread: float               # quintile_means[4] - quintile_means[0]
 
 
 @dataclass(frozen=True)
@@ -109,16 +121,15 @@ class ContinuousEDAPlots:
     """Matplotlib Figures for continuous feature EDA."""
     decile_plot_fig: Figure       # 3 subplots: mean return, Sharpe, t-stat
     histogram_fig: Figure         # histogram + quantile overlay lines
-    qq_plot_fig: Figure           # Q-Q plot vs normal
-    kde_fig: Figure               # KDE of feature distribution
+    quintile_spread_fig: Figure   # mean return per quintile with spread
 
 
 @dataclass(frozen=True)
 class ContinuousEDAStats:
     """Aggregated continuous feature EDA statistics."""
     decile_analysis: DecileAnalysis
-    monotonicity_test: MonotonicityTest
     distribution_diagnostics: DistributionDiagnostics
+    quintile_spread: QuintileSpread
 
 
 # ─── T003: Rule-Based Feature EDA ────────────────────────────────────────────
@@ -158,17 +169,9 @@ class BootstrapCIResults:
 
 
 @dataclass(frozen=True)
-class TransitionMatrix:
-    """Level-to-level transition counts and probabilities."""
-    transition_counts: np.ndarray    # shape (3, 3) for levels [-1, 0, 1]
-    transition_probs: np.ndarray     # row-normalised; each row sums to 1.0
-
-
-@dataclass(frozen=True)
 class RuleBasedEDAPlots:
     """Matplotlib Figures for rule-based feature EDA."""
     level_plot_fig: Figure            # bar chart per level with bootstrap CI error bars
-    transition_heatmap_fig: Figure    # heatmap of transition probabilities
 
 
 @dataclass(frozen=True)
@@ -176,7 +179,6 @@ class RuleBasedEDAStats:
     """Aggregated rule-based EDA statistics."""
     per_level_stats: PerLevelStats
     bootstrap_ci_results: BootstrapCIResults
-    transition_matrix: TransitionMatrix
 
 
 # ─── T004: EDA Report Generation ─────────────────────────────────────────────
@@ -202,6 +204,8 @@ class EDAConfig:
     max_lag: int = 5
     bootstrap_iterations: int = 1000
     random_seed: int = 42
+    ic_horizons: tuple[int, ...] = (1, 5, 10, 21)
+    max_acf_lag: int = 20
 
 
 @dataclass(frozen=True)

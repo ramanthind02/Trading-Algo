@@ -164,6 +164,57 @@ class Test2DStabilityHeatmap(unittest.TestCase):
         trace_types = [type(t).__name__ for t in fig.data]
         self.assertIn("Scatter", trace_types)
 
+    def test_has_layer_selector_menu(self):
+        fig = plot_2d_stability_heatmap(
+            _make_2d_df(), "fast", "slow", "sortino", show_plot=False,
+        )
+        menus = fig.layout.updatemenus
+        self.assertIsNotNone(menus)
+        self.assertGreaterEqual(len(menus), 1)
+        labels = [btn.label for btn in menus[0].buttons]
+        joined = " ".join(labels).lower()
+        self.assertIn("smoothed", joined)
+        self.assertIn("raw", joined)
+        self.assertIn("stability", joined)
+
+    def test_has_overlay_mode_menu(self):
+        fig = plot_2d_stability_heatmap(
+            _make_2d_df(), "fast", "slow", "sortino", show_plot=False,
+        )
+        menus = fig.layout.updatemenus
+        self.assertIsNotNone(menus)
+        self.assertGreaterEqual(len(menus), 2)
+        overlay_labels = [btn.label for btn in menus[1].buttons]
+        self.assertEqual(len(overlay_labels), 4)
+
+    def test_default_layer_raw_is_visible(self):
+        fig = plot_2d_stability_heatmap(
+            _make_2d_df(), "fast", "slow", "sortino",
+            default_layer="raw",
+            show_plot=False,
+        )
+        layer_names = [trace.name for trace in fig.data if isinstance(trace, go.Heatmap)]
+        visible_map = {
+            trace.name: trace.visible
+            for trace in fig.data
+            if isinstance(trace, go.Heatmap)
+        }
+        self.assertTrue(any("raw" in name.lower() for name in layer_names))
+        raw_name = next(name for name in layer_names if "raw" in name.lower())
+        self.assertTrue(visible_map[raw_name] in (True, None))
+
+    def test_supports_custom_dataframe_metric_layer(self):
+        df = _make_2d_df().copy()
+        df["custom_alpha"] = df["sortino"] * 2.0
+        fig = plot_2d_stability_heatmap(
+            df, "fast", "slow", "sortino",
+            base_layers=["custom_alpha"],
+            default_layer="custom_alpha",
+            show_plot=False,
+        )
+        heatmap_names = [trace.name for trace in fig.data if isinstance(trace, go.Heatmap)]
+        self.assertTrue(any("custom_alpha" in name.lower() for name in heatmap_names))
+
 
 class Test3DSlices(unittest.TestCase):
     """Test plot_3d_slices."""
@@ -192,12 +243,46 @@ class Test3DSlices(unittest.TestCase):
         self.assertIsNotNone(sliders)
         self.assertGreater(len(sliders), 0)
 
+    def test_dropdown_updates_slider_for_selected_fixed_param(self):
+        fig = plot_3d_slices(
+            _make_3d_df(), ["a", "b", "c"], "sortino", show_plot=False,
+        )
+        menus = fig.layout.updatemenus
+        self.assertGreater(len(menus), 0)
+        # Selecting "Fix b" should update slider currentvalue prefix to "b="
+        fix_b_button = menus[0].buttons[1]
+        self.assertEqual(fix_b_button.label, "Fix b")
+        self.assertEqual(len(fix_b_button.args), 2)
+        layout_update = fix_b_button.args[1]
+        self.assertIn("sliders", layout_update)
+        self.assertEqual(
+            layout_update["sliders"][0]["currentvalue"]["prefix"],
+            "b=",
+        )
+
     def test_traces_are_heatmaps(self):
         fig = plot_3d_slices(
             _make_3d_df(), ["a", "b", "c"], "sortino", show_plot=False,
         )
         for trace in fig.data:
             self.assertIsInstance(trace, go.Heatmap)
+
+    def test_surface_mode_traces_are_surface(self):
+        fig = plot_3d_slices(
+            _make_3d_df(), ["a", "b", "c"], "sortino",
+            plot_type="surface",
+            show_plot=False,
+        )
+        for trace in fig.data:
+            self.assertIsInstance(trace, go.Surface)
+
+    def test_invalid_plot_type_raises(self):
+        with self.assertRaises(ValueError):
+            plot_3d_slices(
+                _make_3d_df(), ["a", "b", "c"], "sortino",
+                plot_type="not_a_plot",
+                show_plot=False,
+            )
 
     def test_raises_for_less_than_3_params(self):
         with self.assertRaises(ValueError):

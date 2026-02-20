@@ -1,8 +1,35 @@
 # In-Sample Permutation Testing (Spec)
 
+> **Status:** Library specification
+> **Role in pipeline:** Phase 2 — IS Permutation Screening (coarse filter). See [pipeline_overview.md](../pipeline_overview.md) for the full two-tier validation pipeline.
+> **Last updated:** 2026-02-19
+
+> **Note:** This document describes the in-sample permutation testing suite: (1) vector shuffle, (2) pipeline permutation, (3) IS walkforward stability. The suite uses vector-first gating — Stage 1 runs on pre-computed vectors only (fast), and only passing params proceed to Stage 2 (full pipeline). The objective metric is configured globally and used consistently across all phases. Cross-validation methods (k-fold, CPCV) are used as diagnostics within Stages 1+2 and Stage 3 — see [Cross_Validation/kfold_cv.md](../Cross_Validation/kfold_cv.md) and [Cross_Validation/cpcv.md](../Cross_Validation/cpcv.md).
+
+## Role in the Full Pipeline
+
+This in-sample permutation testing suite is **Phase 2** of the two-tier feature validation pipeline — a **coarse computational filter** that runs on the full in-sample period (e.g. 2000–2023). Its job is:
+
+> *"Does this feature class have any stable, exploitable signal? If yes, graduate it to the definitive walkforward test. If no, discard it cheaply."*
+
+**Critical design constraints:**
+
+1. **Feature-level graduation, not param-level.** The Stage 1+2 pass/fail verdict per param combo is *diagnostic only*. The feature-level verdict — "did ANY param pass?" — is the binary gate that determines whether the feature proceeds to the OOS walkforward. **All param combos enter the walkforward regardless of their IS permutation result**, because:
+   - All params are needed for accurate neighbor smoothing in each walkforward training fold
+   - Pre-filtering the grid before walkforward corrupts the stability computation
+   - IS per-param pass/fail is informational context for the researcher, not an execution gate
+
+2. **Full IS period maximises statistical power.** Using the full in-sample period (not just the first training fold) gives more data → better discrimination between genuine signal and noise. The concern about "peeking ahead" is mitigated: permutation tests compare the feature against shuffled versions of itself, not against a hold-out set.
+
+3. **Coarse filter only.** Features that fail here would almost certainly fail the definitive OOS walkforward anyway. The purpose is to save the compute cost of running the full walkforward on obvious noise. The walkforward (Phase 3) remains the definitive robustness test.
+
+4. **No per-fold IS permutation testing in the walkforward.** Within each walkforward training fold, use neighbor smoothing + metric threshold for param filtering (cheap, captures the same concern). Full IS permutation testing runs once here, not repeated inside the walkforward.
+
+---
+
 In-sample permutation tests check whether a feature's performance is better than chance. The user specifies a single **objective metric** (e.g. Sortino, Sharpe) used to evaluate performance in **all** tests. Tests are run in sequence: features that pass earlier stages are passed to later ones. A single feature has **multiple parameter combinations**; each param combo is tested independently, so some params may pass and others fail.
 
-Ensemble formation is **deferred to the end** of the pipeline. Stages 1–2 validate individual param combos. Stage 3 assesses temporal stability across walkforward folds. The researcher then manually forms an ensemble from the validated, stable set.
+Ensemble formation is **deferred to the end** of the pipeline. Stages 1–2 validate individual param combos. Stage 3 assesses IS temporal stability across non-overlapping folds. The researcher then reviews and the feature is graduated to the OOS walkforward (Phase 3 of the full pipeline).
 
 ---
 
@@ -10,7 +37,7 @@ Ensemble formation is **deferred to the end** of the pipeline. Stages 1–2 vali
 
 | Input | Description |
 |-------|-------------|
-| **Objective metric** | The metric used to evaluate performance in every permutation test (e.g. Sortino ratio, Sharpe ratio). Same metric for null comparison and for ranking. |
+| **Objective metric** | The metric used to evaluate performance in every permutation test (e.g. Sortino ratio, Sharpe ratio). Same metric for null comparison and for ranking. Configured once at the suite level and propagated to all phases. |
 | **Significance level (α)** | Pass threshold: original must beat the **(1 − α)** quantile of the null. Default **α = 0.1** (i.e. 90th percentile; lax to reduce false negatives across multiple layers). Stricter option: α = 0.05. |
 | **Replicate count** | Number of permutation replicates (e.g. **500–1000**) to build the null distribution. |
 | **Continuous null (optional)** | For pipeline permutation on **continuous** features: **shuffle_feature** (quick screen for stage 1) or **shuffle_candles** (recommended for stage 2). Candle-based permutation uses a **stronger null** that destroys temporal structure (see §2a). |
@@ -245,14 +272,14 @@ The ensemble from §4 is **fixed**. Deploy on the **hold-out test set** (most re
    - **Rule-based:** **Shuffle bars** → feed to all param-combo rule models → evaluate.
    Per param combo; only passing params proceed to Stage 3. **Early stopping:** params that failed Stage 1 are excluded.
 
-4. **Walkforward stability analysis (§3):** Evaluate ALL params on each walkforward fold independently (including those that failed §1–§2 for neighbor smoothing). Compute smoothed neighbor metric per fold. Select top K per fold. Compare selections across folds. Output: stability report.
+4. **IS walkforward stability analysis (§3):** Evaluate ALL params on each non-overlapping IS fold independently (including those that failed §1–§2 for neighbor smoothing). Compute smoothed neighbor metric per fold. Select top K per fold. Compare selections across folds. Output: IS stability report. Two CV schemes can be applied here for richer diagnostics: **k-fold with boundary trimming** formalizes the fold structure with correct edge-observation handling; **CPCV** generates C(k, n_test) paths to estimate param selection frequency over many IS/OOS splits (more robust than a small number of sequential folds). See [kfold_cv.md](../Cross_Validation/kfold_cv.md) and [cpcv.md](../Cross_Validation/cpcv.md). **Note:** This is an IS diagnostic within Phase 2. The full OOS walkforward (Phase 3 of the pipeline) is the separate, definitive robustness test — see [pipeline_overview.md](../pipeline_overview.md).
 
-5. **Researcher ensemble formation (§4):** Researcher reviews permutation test results (§1–§2) + stability report (§3). Manually selects ensemble from params that **passed permutation tests AND show temporal stability**. Defines ensemble members and locks them.
+5. **Researcher review (§4):** Researcher reviews permutation test results (§1–§2) + IS stability report (§3). Feature-level verdict: did any param show signal AND does the stable region make sense? If yes, graduate the feature to the OOS walkforward. **All param combos enter the walkforward**, not just IS passers.
 
-6. **Lock for OOS (§5):** Ensemble is fixed. Deploy on hold-out test set. No re-tuning.
+6. **OOS Walkforward + Permutation Test (Phase 3+4, separate):** The definitive test. See [pipeline_overview.md](../pipeline_overview.md) and [walkforward.md](../Walkforward/walkforward.md).
 
-**Pipeline (with early stopping):**
-- Stage 1 (all params) → Stage 2 (only Stage 1 passers) → Stage 3 (all params for smoothing) → researcher selects from (Stage 1 + 2 passers that are also stable in Stage 3) → lock for OOS.
+**IS Permutation pipeline (with early stopping):**
+- Stage 1 (all params) → Stage 2 (only Stage 1 passers) → Stage 3 IS stability (all params for smoothing) → feature-level graduation decision → all params enter OOS walkforward.
 
 ---
 
@@ -294,3 +321,5 @@ The ensemble from §4 is **fixed**. Deploy on the **hold-out test set** (most re
 ### Neighbor smoothing as diagnostic tool
 
 The **smoothed neighbor metric** (used in §3) is the same concept as [Grid-Aware Neighbor Averaging](../../../to-do/grid_neighbor_smoothing_specs.md). In this pipeline, it serves as a **diagnostic tool** for the researcher — it highlights stable regions of parameter space and helps distinguish genuine signal (broad good region) from noise (isolated spikes). It is NOT used for automated ensemble selection.
+
+When k-fold or CPCV is used in §3, the neighbor-smoothed metric is computed independently within each fold's data. The **selection frequency** across folds (or CPCV paths) provides a second-order stability signal: a param that appears in the stable region in 8 of 10 CPCV paths is more convincingly stable than one that appears in 3 of 5 sequential folds, even if both meet the `min_folds_stable` threshold. See [cpcv.md](../Cross_Validation/cpcv.md) for selection frequency computation.

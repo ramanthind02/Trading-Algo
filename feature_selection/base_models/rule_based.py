@@ -23,7 +23,20 @@ class RuleBasedModel(BinningModelBase):
         long_clip_max: float = 2.0,
         short_clip_min: float = 0.5,
         short_clip_max: float = 2.0,
+        bin_counts: list[int] | None = None,  # Ignored (always 3 bins)
+        use_coverage_bonus: bool = False,  # Ignored
+        coverage_bonus_per_10pct: float = 0.02,  # Ignored
+        max_coverage_bonus: float = 0.2,  # Ignored
     ) -> None:
+        """Initialize rule-based model.
+
+        Note: bin_counts and coverage bonus parameters are accepted for API
+        consistency but ignored. RuleBasedModel always uses 3 bins {-1, 0, 1}.
+        """
+        # Store for API consistency, but override in parent
+        self.bin_counts = [3]
+        self.use_coverage_bonus = False
+
         super().__init__(
             n_bins=3,
             selection_metric=selection_metric,

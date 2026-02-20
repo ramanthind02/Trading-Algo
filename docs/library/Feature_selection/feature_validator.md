@@ -1,26 +1,44 @@
-# Feature Validator — Unified Validation Framework
+# Feature Validator — IS EDA and Screening Specification
 
-> **Status:** Library specification (single source of truth)
-> **Purpose:** Systematic validation pipeline for continuous and rule-based features with EDA, binning diagnostics, parameter sensitivity, and permutation testing.
-> **Last updated:** 2026-02-13
+> **Status:** Library specification
+> **Scope:** Phases 1 & 2 of the full validation pipeline — IS EDA and IS Permutation Screening
+> **Master pipeline reference:** See [pipeline_overview.md](pipeline_overview.md) for the complete two-tier pipeline
+> **Last updated:** 2026-02-19
+
+---
+
+## Where This Fits in the Pipeline
+
+The Feature Validator covers **Phases 1 and 2** of the full validation pipeline:
+
+| Phase | Name | Role |
+|-------|------|------|
+| **1** | IS EDA | Informational — understand feature behaviour, parameter landscape |
+| **2** | IS Permutation Screening | Coarse filter — does this feature class have *any* signal? |
+| 3 | OOS Walkforward Validation | Definitive robustness test — see [walkforward.md](Walkforward/walkforward.md) |
+| 4 | Walkforward Permutation Test | Statistical gate on OOS performance |
+| 5 | Graduation & Production | Feature deployed with pre-committed param selection rule |
+
+**Key principle:** This framework graduates **features** (e.g. RSI, EWMAC), not individual parameter combinations. The IS permutation test answers *"does RSI have any signal?"* — the walkforward answers *"which RSI params are consistently good over time?"* See [pipeline_overview.md](pipeline_overview.md) for full rationale.
 
 ---
 
 ## Motivation
 
-Feature validation in systematic trading requires rigorous statistical testing to prevent overfitting and ensure robustness. The Feature Validator provides a unified framework that guides researchers through four critical validation phases:
+Feature validation in systematic trading requires rigorous statistical testing to prevent overfitting and ensure robustness. The Feature Validator provides a unified framework that guides researchers through the initial two validation phases before the definitive walkforward test:
 
 1. **Exploratory Data Analysis (EDA)** — Understand feature distributions, temporal stability, and basic diagnostics
 2. **Binning Model Fitting** — For continuous features, validate that binning successfully identifies tradeable regions
 3. **Parameter Sensitivity Analysis** — Identify stable parameter regions using grid-aware smoothing and visual inspection
-4. **Permutation Testing** — Statistically validate that features exhibit genuine predictive power, not random chance
+4. **IS Permutation Testing** — Statistically validate that the feature class exhibits genuine predictive power before committing to expensive walkforward evaluation
 
 **Key design principles:**
 
 - **Separation of concerns**: Continuous and rule-based features follow distinct pipelines where their characteristics differ
-- **Researcher-in-the-loop**: Provide rich diagnostics and visualizations; researcher makes final decisions
+- **Researcher-in-the-loop**: Provide rich diagnostics and visualizations; researcher makes the graduation decision
 - **Pre-specified thresholds**: Metrics and thresholds must be set *before* seeing data to prevent data snooping
 - **Composable reports**: Each phase generates structured reports that can be inspected independently or combined
+- **Feature-level graduation**: IS permutation results are diagnostic per param combo, but the feature graduates or fails as a whole; all param combos enter the walkforward regardless of IS pass/fail
 
 ---
 
@@ -226,9 +244,18 @@ stability_ratio = smoothed_objective / raw_objective
 - Shaded regions: stability ratio > 0.8
 
 **2D parameter grids:**
-- Heatmap: raw objective surface
-- Contour plot: smoothed objective surface
-- Overlay: highlight stable regions (stability ratio > 0.8)
+- Single interactive plot with layer selector:
+  - `smoothed` objective (default)
+  - `raw` objective
+  - `stability_ratio`
+  - `n_neighbors`
+  - `delta` (`raw - smoothed`)
+- Overlay mode buttons:
+  - none
+  - stable-region markers
+  - stability contours
+  - both markers and contours
+- Layer selector also supports additional numeric DataFrame columns for custom research metrics
 
 **3D+ parameter grids:**
 - 2D slices (fix one parameter, plot others)
@@ -236,7 +263,8 @@ stability_ratio = smoothed_objective / raw_objective
 
 **Interactive features:**
 - Hover: show exact values, stability ratio, neighbors
-- Click: select parameter combo to see detailed stats
+- Dropdown: switch base metric layer without leaving the figure
+- Overlay buttons: declutter or add stability context on demand
 - Zoom: inspect specific parameter regions
 
 **Implementation:** Use existing `eda/parameter_analysis.py` (`ParameterAnalyzer` class) and `metrics/plotting/parameter_plots.py`.

@@ -272,6 +272,9 @@ Common methods:
 Raises:
 - `ValueError` when no valid data points remain after alignment/cleaning.
 
+### EDA/Research entrypoints
+- `feature_research/continuous_binning/run_binning_analysis.py`: CLI entrypoint that orchestrates continuous binning analysis runs and emits research artifacts.
+
 ### `build_feature_metadata`
 Type: function  
 Module: `research/bias_node_helpers.py`
@@ -363,6 +366,42 @@ Description: generates QuantStats HTML tearsheet from extracted features, fitted
 Notes / Constraints:
 - Requires a fitted-or-fit-able `binning_model`; for rule-based nodes, caller should pass the exact model used in testing.
 - Uses equal-weight baseline for multi-ticker comparisons.
+
+### `run_rule_based_eda_pipeline`
+Type: function  
+Module: `feature_research/rule_based/pipeline.py`
+
+Signature:
+```python
+run_rule_based_eda_pipeline(
+    config: RuleBasedResearchConfig,
+    output_dir: Path,
+) -> dict[str, Path]
+```
+Description: runs rule-based EDA per parameter combo and, when `config.walkforward.enabled=True`, also runs the shared walkforward research runner/visualization/artifact IO pipeline.
+
+Walkforward output contract (`feature_type="rule_based"`):
+- Root directory: `feature_research/shared_results/rule_based/{module_name}/walkforward/` (or `config.walkforward.output_root / "rule_based" / module_name / "walkforward"`).
+- Files: `folds.csv`, `fold_scores.csv`, `selection_summary.csv`, `report.json`, `walkforward_stability.png`, `fold_timeline.png`.
+- `selection_summary.csv` includes `selected_feature` for each fold.
+
+### `run_continuous_eda_pipeline`
+Type: function  
+Module: `feature_research/continuous_binning/pipeline.py`
+
+Signature:
+```python
+run_continuous_eda_pipeline(
+    config: ResearchConfig,
+    output_dir: Path,
+) -> dict[str, Path]
+```
+Description: runs continuous-feature EDA per parameter combo and, when `config.walkforward.enabled=True`, also runs the shared walkforward research runner/visualization/artifact IO pipeline.
+
+Walkforward output contract (`feature_type="continuous"`):
+- Root directory: `feature_research/shared_results/continuous/{module_name}/walkforward/` (or `config.walkforward.output_root / "continuous" / module_name / "walkforward"`).
+- Files: `folds.csv`, `fold_scores.csv`, `selection_summary.csv`, `report.json`, `walkforward_stability.png`, `fold_timeline.png`.
+- `selection_summary.csv` includes `selected_feature` for each fold.
 
 ## Examples
 ```python

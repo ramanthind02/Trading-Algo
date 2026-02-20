@@ -925,11 +925,16 @@ def plot_2d_stability_heatmap(
     param2: str,
     metric: str = "sortino",
     stable_regions: Optional[List["StableRegion"]] = None,
+    base_layers: Optional[List[str]] = None,
+    default_layer: str = "smoothed",
+    show_stability_contours: bool = False,
+    show_region_markers: bool = True,
+    enable_controls: bool = True,
     title: Optional[str] = None,
     show_plot: bool = True,
 ) -> go.Figure:
     """
-    2D heatmap of smoothed objective with stable region contour overlay.
+    2D heatmap explorer with selectable base layers and optional overlays.
 
     Parameters
     ----------
@@ -944,6 +949,18 @@ def plot_2d_stability_heatmap(
         Raw metric column name.
     stable_regions : list of StableRegion, optional
         Regions whose boundaries are highlighted.
+    base_layers : list of str, optional
+        Base layer keys to include in the metric dropdown. Supported aliases:
+        ``raw``, ``smoothed``, ``stability_ratio``, ``n_neighbors``, ``delta``.
+        Any item that matches a DataFrame column is also supported.
+    default_layer : str, default ``"smoothed"``
+        Layer key shown on initial render.
+    show_stability_contours : bool, default ``False``
+        Initial visibility for stability contour overlay.
+    show_region_markers : bool, default ``True``
+        Initial visibility for stable-region marker overlay.
+    enable_controls : bool, default ``True``
+        Whether to add interactive dropdown/buttons for layer and overlays.
     title : str, optional
     show_plot : bool
 
@@ -952,33 +969,92 @@ def plot_2d_stability_heatmap(
     go.Figure
     """
     smoothed_col = f"smoothed_{metric}"
-    obj_col = smoothed_col if smoothed_col in df.columns else metric
+    layer_alias_to_col = {
+        "raw": metric,
+        "smoothed": smoothed_col if smoothed_col in df.columns else metric,
+        "stability_ratio": "stability_ratio",
+        "n_neighbors": "n_neighbors",
+    }
 
-    pivot_obj = df.pivot_table(
-        index="param1_value", columns="param2_value", values=obj_col,
-    ).sort_index(axis=0).sort_index(axis=1)
+    if smoothed_col in df.columns and metric in df.columns:
+        delta_col = f"delta_{metric}"
+        working_df = df.copy()
+        working_df[delta_col] = working_df[metric] - working_df[smoothed_col]
+        layer_alias_to_col["delta"] = delta_col
+    else:
+        working_df = df
+
+    if base_layers is None:
+        base_layers = ["smoothed", "raw", "stability_ratio", "n_neighbors", "delta"]
+
+    resolved_layers: List[tuple[str, str]] = []
+    for layer_key in base_layers:
+        if layer_key in layer_alias_to_col and layer_alias_to_col[layer_key] in working_df.columns:
+            resolved_layers.append((layer_key, layer_alias_to_col[layer_key]))
+        elif layer_key in working_df.columns:
+            resolved_layers.append((layer_key, layer_key))
+
+    if not resolved_layers:
+        raise ValueError("No valid base layers available for 2D heatmap plotting.")
+
+    if default_layer not in [k for k, _ in resolved_layers]:
+        default_layer = resolved_layers[0][0]
 
     fig = go.Figure()
+    base_trace_indices: dict[str, int] = {}
 
-    # Main heatmap (smoothed objective, Viridis)
-    fig.add_trace(go.Heatmap(
-        z=pivot_obj.values,
-        x=[str(v) for v in pivot_obj.columns],
-        y=[str(v) for v in pivot_obj.index],
-        colorscale="Viridis",
-        colorbar=dict(title=f"{metric.capitalize()}<br>(smoothed)", x=1.0),
-        name="Smoothed Objective",
-        hovertemplate=(
-            f"<b>{param1}</b>: %{{y}}<br>"
-            f"<b>{param2}</b>: %{{x}}<br>"
-            f"<b>{metric} (smoothed)</b>: %{{z:.4f}}<br>"
-            "<extra></extra>"
-        ),
-    ))
+    def _layer_colorscale(layer_key: str) -> str:
+        if layer_key == "stability_ratio":
+            return "RdYlGn"
+        if layer_key == "delta":
+            return "RdBu"
+        if layer_key == "n_neighbors":
+            return "Cividis"
+        return "Viridis"
 
-    # Stability ratio contour overlay (RdYlGn)
-    if "stability_ratio" in df.columns:
-        pivot_sr = df.pivot_table(
+    def _layer_title(layer_key: str) -> str:
+        if layer_key == "raw":
+            return f"{metric.capitalize()}<br>(raw)"
+        if layer_key == "smoothed":
+            return f"{metric.capitalize()}<br>(smoothed)"
+        if layer_key == "stability_ratio":
+            return "Stability<br>Ratio"
+        if layer_key == "n_neighbors":
+            return "Neighbor<br>Count"
+        if layer_key == "delta":
+            return f"{metric.capitalize()}<br>(raw-smoothed)"
+        return layer_key
+
+    # Base heatmap layers (one visible at a time)
+    for layer_key, layer_col in resolved_layers:
+        pivot = working_df.pivot_table(
+            index="param1_value", columns="param2_value", values=layer_col,
+        ).sort_index(axis=0).sort_index(axis=1)
+
+        trace = go.Heatmap(
+            z=pivot.values,
+            x=[str(v) for v in pivot.columns],
+            y=[str(v) for v in pivot.index],
+            colorscale=_layer_colorscale(layer_key),
+            colorbar=dict(title=_layer_title(layer_key), x=1.0),
+            name=f"Layer: {layer_key}",
+            visible=(layer_key == default_layer),
+            hovertemplate=(
+                f"<b>{param1}</b>: %{{y}}<br>"
+                f"<b>{param2}</b>: %{{x}}<br>"
+                f"<b>{layer_key}</b>: %{{z:.4f}}<br>"
+                "<extra></extra>"
+            ),
+        )
+        fig.add_trace(trace)
+        base_trace_indices[layer_key] = len(fig.data) - 1
+
+    contour_idx: Optional[int] = None
+    region_indices: List[int] = []
+
+    # Stability ratio contour overlay (optional visibility)
+    if "stability_ratio" in working_df.columns:
+        pivot_sr = working_df.pivot_table(
             index="param1_value", columns="param2_value", values="stability_ratio",
         ).sort_index(axis=0).sort_index(axis=1)
 
@@ -987,11 +1063,11 @@ def plot_2d_stability_heatmap(
             x=[str(v) for v in pivot_sr.columns],
             y=[str(v) for v in pivot_sr.index],
             colorscale="RdYlGn",
-            opacity=0.35,
-            showscale=True,
-            colorbar=dict(title="Stability<br>Ratio", x=1.12),
-            contours=dict(showlabels=True, labelfont=dict(size=10, color="black")),
-            name="Stability Ratio",
+            opacity=0.30,
+            showscale=False,
+            contours=dict(showlabels=False),
+            name="Overlay: stability contours",
+            visible=show_stability_contours,
             hovertemplate=(
                 f"<b>{param1}</b>: %{{y}}<br>"
                 f"<b>{param2}</b>: %{{x}}<br>"
@@ -999,8 +1075,9 @@ def plot_2d_stability_heatmap(
                 "<extra></extra>"
             ),
         ))
+        contour_idx = len(fig.data) - 1
 
-    # Highlight stable region boundaries
+    # Stable region markers overlay
     if stable_regions:
         for region in stable_regions:
             xs = [str(combo[1]) for combo in region.param_combinations]
@@ -1009,12 +1086,13 @@ def plot_2d_stability_heatmap(
                 x=xs, y=ys,
                 mode="markers",
                 marker=dict(
-                    size=14,
+                    size=12,
                     color="rgba(0,0,0,0)",
                     line=dict(color="lime", width=2),
                     symbol="square",
                 ),
-                name=f"Stable Region (n={region.n_combinations})",
+                name=f"Overlay: stable region (n={region.n_combinations})",
+                visible=show_region_markers,
                 hovertemplate=(
                     f"<b>Stable Region</b><br>"
                     f"<b>Mean Obj</b>: {region.mean_objective:.4f}<br>"
@@ -1022,6 +1100,71 @@ def plot_2d_stability_heatmap(
                     "<extra></extra>"
                 ),
             ))
+            region_indices.append(len(fig.data) - 1)
+
+    if enable_controls:
+        total = len(fig.data)
+
+        def _visibility(selected_layer: str, contour_on: bool, regions_on: bool) -> List[bool]:
+            vis = [False] * total
+            vis[base_trace_indices[selected_layer]] = True
+            if contour_idx is not None:
+                vis[contour_idx] = contour_on
+            if region_indices:
+                for idx in region_indices:
+                    vis[idx] = regions_on
+            return vis
+
+        layer_buttons = []
+        for layer_key, _ in resolved_layers:
+            layer_buttons.append(dict(
+                label=layer_key,
+                method="update",
+                args=[{"visible": _visibility(layer_key, show_stability_contours, show_region_markers)}],
+            ))
+
+        overlay_modes = [
+            ("none", False, False),
+            ("regions", False, True),
+            ("contours", True, False),
+            ("both", True, True),
+        ]
+        overlay_buttons = [
+            dict(
+                label=label,
+                method="update",
+                args=[{"visible": _visibility(default_layer, contour_on, regions_on)}],
+            )
+            for label, contour_on, regions_on in overlay_modes
+        ]
+
+        fig.update_layout(
+            updatemenus=[
+                dict(
+                    type="dropdown",
+                    direction="down",
+                    x=0.0,
+                    xanchor="left",
+                    y=1.18,
+                    yanchor="top",
+                    active=[k for k, _ in resolved_layers].index(default_layer),
+                    buttons=layer_buttons,
+                ),
+                dict(
+                    type="buttons",
+                    direction="right",
+                    x=0.36,
+                    xanchor="left",
+                    y=1.18,
+                    yanchor="top",
+                    active=3 if (show_stability_contours and show_region_markers)
+                    else 2 if show_stability_contours
+                    else 1 if show_region_markers
+                    else 0,
+                    buttons=overlay_buttons,
+                ),
+            ]
+        )
 
     if title is None:
         title = f"2D Stability Heatmap: {param1} vs {param2} ({metric.capitalize()})"
@@ -1043,14 +1186,16 @@ def plot_3d_slices(
     df: pd.DataFrame,
     param_names: List[str],
     metric: str = "sortino",
+    plot_type: str = "heatmap",
     title: Optional[str] = None,
     show_plot: bool = True,
 ) -> go.Figure:
     """
     3D+ parameter sensitivity via 2D slices with dropdown + slider.
 
-    For each choice of a fixed parameter, show a heatmap of the smoothed
-    metric across the remaining two parameters.  A dropdown selects which
+    For each choice of a fixed parameter, show a 2D slice (heatmap/contour)
+    or a true 3D surface of the smoothed metric across the remaining two
+    parameters. A dropdown selects which
     parameter to fix; a slider steps through its values.
 
     Parameters
@@ -1062,6 +1207,9 @@ def plot_3d_slices(
         Human-readable names for each dimension.
     metric : str
         Raw metric column name.
+    plot_type : str
+        Slice visualization type: ``"heatmap"`` (default), ``"surface"``,
+        or ``"contour"``.
     title : str, optional
     show_plot : bool
 
@@ -1072,6 +1220,8 @@ def plot_3d_slices(
     n_params = len(param_names)
     if n_params < 3:
         raise ValueError(f"plot_3d_slices requires >= 3 params, got {n_params}")
+    if plot_type not in {"heatmap", "surface", "contour"}:
+        raise ValueError(f"Invalid plot_type: {plot_type}")
 
     param_cols = [f"param{k}_value" for k in range(1, n_params + 1)]
     smoothed_col = f"smoothed_{metric}"
@@ -1100,7 +1250,12 @@ def plot_3d_slices(
                 subset = subset.groupby(free_cols, as_index=False)[obj_col].mean()
 
             if subset.empty or subset[free_cols[0]].nunique() < 2 or subset[free_cols[1]].nunique() < 2:
-                traces.append(go.Heatmap(z=[[0]], x=["0"], y=["0"], visible=False, showscale=False))
+                if plot_type == "surface":
+                    traces.append(go.Surface(z=[[0]], x=[0], y=[0], visible=False, showscale=False))
+                elif plot_type == "contour":
+                    traces.append(go.Contour(z=[[0]], x=["0"], y=["0"], visible=False, showscale=False))
+                else:
+                    traces.append(go.Heatmap(z=[[0]], x=["0"], y=["0"], visible=False, showscale=False))
                 trace_idx += 1
                 continue
 
@@ -1108,22 +1263,57 @@ def plot_3d_slices(
                 index=free_cols[0], columns=free_cols[1], values=obj_col,
             ).sort_index(axis=0).sort_index(axis=1)
 
-            trace = go.Heatmap(
-                z=pivot.values,
-                x=[str(v) for v in pivot.columns],
-                y=[str(v) for v in pivot.index],
-                colorscale="Viridis",
-                visible=False,
-                showscale=True,
-                colorbar=dict(title=metric.capitalize()),
-                hovertemplate=(
-                    f"<b>{free_names[0]}</b>: %{{y}}<br>"
-                    f"<b>{free_names[1]}</b>: %{{x}}<br>"
-                    f"<b>{metric}</b>: %{{z:.4f}}<br>"
-                    f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
-                    "<extra></extra>"
-                ),
-            )
+            if plot_type == "surface":
+                trace = go.Surface(
+                    z=pivot.values,
+                    x=pivot.columns.values,
+                    y=pivot.index.values,
+                    colorscale="Viridis",
+                    visible=False,
+                    showscale=True,
+                    colorbar=dict(title=metric.capitalize()),
+                    hovertemplate=(
+                        f"<b>{free_names[0]}</b>: %{{y}}<br>"
+                        f"<b>{free_names[1]}</b>: %{{x}}<br>"
+                        f"<b>{metric}</b>: %{{z:.4f}}<br>"
+                        f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
+                        "<extra></extra>"
+                    ),
+                )
+            elif plot_type == "contour":
+                trace = go.Contour(
+                    z=pivot.values,
+                    x=[str(v) for v in pivot.columns],
+                    y=[str(v) for v in pivot.index],
+                    colorscale="Viridis",
+                    visible=False,
+                    showscale=True,
+                    colorbar=dict(title=metric.capitalize()),
+                    hovertemplate=(
+                        f"<b>{free_names[0]}</b>: %{{y}}<br>"
+                        f"<b>{free_names[1]}</b>: %{{x}}<br>"
+                        f"<b>{metric}</b>: %{{z:.4f}}<br>"
+                        f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
+                        "<extra></extra>"
+                    ),
+                )
+            else:
+                trace = go.Heatmap(
+                    z=pivot.values,
+                    x=[str(v) for v in pivot.columns],
+                    y=[str(v) for v in pivot.index],
+                    colorscale="Viridis",
+                    visible=False,
+                    showscale=True,
+                    colorbar=dict(title=metric.capitalize()),
+                    hovertemplate=(
+                        f"<b>{free_names[0]}</b>: %{{y}}<br>"
+                        f"<b>{free_names[1]}</b>: %{{x}}<br>"
+                        f"<b>{metric}</b>: %{{z:.4f}}<br>"
+                        f"<b>{param_names[fixed_idx]}</b>={fixed_val}<br>"
+                        "<extra></extra>"
+                    ),
+                )
             traces.append(trace)
             trace_idx += 1
 
@@ -1139,35 +1329,54 @@ def plot_3d_slices(
     total_traces = len(traces)
 
     # Dropdown buttons
+    def _build_slider_for_group(fixed_idx: int) -> List[dict]:
+        group = slider_groups[fixed_idx]
+        steps: List[dict] = []
+        for i, val in enumerate(group["values"]):
+            vis = [False] * total_traces
+            vis[group["start"] + i] = True
+            steps.append(dict(
+                method="update",
+                args=[{"visible": vis}],
+                label=str(val),
+            ))
+        return [dict(
+            active=0,
+            currentvalue=dict(prefix=f"{param_names[fixed_idx]}="),
+            pad=dict(t=60),
+            steps=steps,
+        )]
+
     for fixed_idx in range(n_params):
         group = slider_groups[fixed_idx]
         vis = [False] * total_traces
         if group["start"] < group["end"]:
             vis[group["start"]] = True
 
+        if plot_type == "surface":
+            axis_update = {
+                "scene.xaxis.title": group["free_names"][1],
+                "scene.yaxis.title": group["free_names"][0],
+                "scene.zaxis.title": metric.capitalize(),
+            }
+        else:
+            axis_update = {
+                "xaxis_title": group["free_names"][1],
+                "yaxis_title": group["free_names"][0],
+            }
+
         dropdown_buttons.append(dict(
             label=f"Fix {param_names[fixed_idx]}",
             method="update",
             args=[
                 {"visible": vis},
-                {
-                    "xaxis_title": group["free_names"][1],
-                    "yaxis_title": group["free_names"][0],
-                },
+                {**axis_update, "sliders": _build_slider_for_group(fixed_idx)},
             ],
         ))
 
     # Slider for default group (fixed_idx=0)
     default_group = slider_groups[0]
-    slider_steps = []
-    for i, val in enumerate(default_group["values"]):
-        vis = [False] * total_traces
-        vis[default_group["start"] + i] = True
-        slider_steps.append(dict(
-            method="update",
-            args=[{"visible": vis}],
-            label=str(val),
-        ))
+    slider_steps = _build_slider_for_group(0)[0]["steps"]
 
     if default_group["start"] < default_group["end"]:
         fig.data[default_group["start"]].visible = True
@@ -1178,8 +1387,6 @@ def plot_3d_slices(
     layout_kwargs: dict = dict(
         title=title,
         title_x=0.5,
-        xaxis_title=default_group["free_names"][1],
-        yaxis_title=default_group["free_names"][0],
         template="plotly_white",
         margin=dict(l=60, r=60, t=120, b=100),
         updatemenus=[dict(
@@ -1191,6 +1398,21 @@ def plot_3d_slices(
             active=0,
         )],
     )
+    if plot_type == "surface":
+        layout_kwargs["scene"] = dict(
+            xaxis_title=default_group["free_names"][1],
+            yaxis_title=default_group["free_names"][0],
+            zaxis_title=metric.capitalize(),
+            aspectmode="auto",
+            camera=dict(
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=1.5, y=1.5, z=0.8),
+            ),
+        )
+    else:
+        layout_kwargs["xaxis_title"] = default_group["free_names"][1]
+        layout_kwargs["yaxis_title"] = default_group["free_names"][0]
 
     if slider_steps:
         layout_kwargs["sliders"] = [dict(
@@ -1205,4 +1427,3 @@ def plot_3d_slices(
     if show_plot:
         fig.show()
     return fig
-

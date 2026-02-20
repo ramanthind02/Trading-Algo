@@ -25,13 +25,14 @@ from feature_selection.eda.eda_dataclasses import (
     DistributionDiagnostics,
     EDAConfig,
     EDAMetadata,
+    FeatureACF,
+    ICDecay,
     LevelStats,
-    MonotonicityTest,
     PerLevelStats,
+    QuintileSpread,
     RuleBasedEDAReport,
     RuleBasedEDAStats,
     TemporalStability,
-    TransitionMatrix,
 )
 from feature_selection.eda.eda_reporter import (
     _param_combo_hash,
@@ -60,7 +61,6 @@ def _common_stats(
     sample_size: int = 300,
     std: float = 1.0,
     skew: float = 0.0,
-    kendall: float = 0.7,
     structural_breaks: list[pd.Timestamp] | None = None,
 ) -> CommonEDAStats:
     idx = pd.bdate_range("2020-01-01", periods=sample_size)
@@ -95,12 +95,20 @@ def _common_stats(
             rolling_correlation=pd.Series(np.zeros(sample_size), index=idx),
             structural_breaks=structural_breaks or [],
         ),
-        correlation_analysis=CorrelationAnalysis(pearson=0.4, spearman=0.35, kendall=kendall, lagged_correlations={1: 0.2}),
-        rolling_objective=pd.Series(np.zeros(sample_size), index=idx),
+        correlation_analysis=CorrelationAnalysis(pearson=0.4, spearman=0.35, lagged_correlations={1: 0.2}),
+        ic_decay=ICDecay(
+            horizons=[1, 5, 10, 21],
+            ic_by_horizon={1: 0.2, 5: 0.15, 10: 0.1, 21: 0.05},
+        ),
+        feature_acf=FeatureACF(
+            lags=np.arange(1, 21, dtype=float),
+            acf_values=np.linspace(0.5, 0.0, 20),
+            pacf_values=np.linspace(0.4, 0.0, 20),
+        ),
     )
 
 
-def _continuous_feature_stats(*, kendall_tau: float = 0.7) -> ContinuousEDAStats:
+def _continuous_feature_stats() -> ContinuousEDAStats:
     n_bins = 5
     return ContinuousEDAStats(
         decile_analysis=DecileAnalysis(
@@ -114,13 +122,16 @@ def _continuous_feature_stats(*, kendall_tau: float = 0.7) -> ContinuousEDAStats
             ),
             overall_trend="monotonic_increasing",
         ),
-        monotonicity_test=MonotonicityTest(kendall_tau=kendall_tau, p_value=0.01, is_monotonic=True),
         distribution_diagnostics=DistributionDiagnostics(
             skewness=0.1,
             kurtosis=0.0,
             normality_test_stat=0.98,
             normality_p_value=0.2,
             is_normal=True,
+        ),
+        quintile_spread=QuintileSpread(
+            quintile_means=np.array([-0.02, -0.01, 0.0, 0.01, 0.02]),
+            spread=0.04,
         ),
     )
 
@@ -140,14 +151,9 @@ def _rule_feature_stats() -> RuleBasedEDAStats:
             1: BootstrapCI(level=1, mean_return=0.01, ci_lower=0.0, ci_upper=0.02, bootstrap_distribution=np.array([0.01])),
         }
     )
-    transition = TransitionMatrix(
-        transition_counts=np.array([[10, 2, 1], [2, 10, 2], [1, 2, 10]]),
-        transition_probs=np.array([[0.77, 0.15, 0.08], [0.14, 0.72, 0.14], [0.08, 0.15, 0.77]]),
-    )
     return RuleBasedEDAStats(
         per_level_stats=per_level,
         bootstrap_ci_results=bootstrap,
-        transition_matrix=transition,
     )
 
 
@@ -190,13 +196,8 @@ def test_unstable_rolling_correlation_warning() -> None:
     assert any("rolling correlation" in warning.lower() for warning in flags.warnings)
 
 
-def test_weak_monotonicity_warning() -> None:
-    flags = compute_diagnostic_flags(_common_stats(), _continuous_feature_stats(kendall_tau=0.1))
-    assert any("monotonic" in warning.lower() for warning in flags.warnings)
-
-
 def test_clean_data_viable() -> None:
-    flags = compute_diagnostic_flags(_common_stats(), _continuous_feature_stats(kendall_tau=0.7))
+    flags = compute_diagnostic_flags(_common_stats(), _continuous_feature_stats())
     assert flags.red_flags == []
     assert flags.is_viable is True
 

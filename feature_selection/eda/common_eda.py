@@ -1,8 +1,6 @@
 """Common EDA infrastructure for both continuous and rule-based features (T001)."""
 from __future__ import annotations
 
-from typing import Callable
-
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -14,6 +12,8 @@ from feature_selection.eda.eda_dataclasses import (
     CorrelationAnalysis,
     CommonEDAPlots,
     DescriptiveStats,
+    FeatureACF,
+    ICDecay,
     TemporalStability,
 )
 
@@ -87,7 +87,7 @@ def compute_correlation_analysis(
     target: pd.Series,
     max_lag: int = 5,
 ) -> CorrelationAnalysis:
-    """Compute Pearson, Spearman, Kendall, and lagged correlations.
+    """Compute Pearson, Spearman, and lagged correlations.
 
     Lags 1..max_lag are stored in lagged_correlations dict.
     """
@@ -96,7 +96,6 @@ def compute_correlation_analysis(
 
     pearson = float(f.corr(t, method="pearson"))
     spearman = float(f.corr(t, method="spearman"))
-    kendall = float(f.corr(t, method="kendall"))
 
     lagged: dict[int, float] = {
         lag: float(f.corr(t.shift(-lag), method="pearson"))
@@ -106,45 +105,67 @@ def compute_correlation_analysis(
     return CorrelationAnalysis(
         pearson=pearson,
         spearman=spearman,
-        kendall=kendall,
         lagged_correlations=lagged,
     )
 
 
-def compute_rolling_objective(
-    signals: pd.Series,
-    returns: pd.Series,
-    objective_fn: Callable[[pd.Series, pd.Series], float],
-    window: int = 252,
-) -> pd.Series:
-    """Compute rolling objective metric using a user-supplied function.
+def compute_ic_decay(
+    feature: pd.Series,
+    target: pd.Series,
+    horizons: list[int],
+) -> ICDecay:
+    """Compute Spearman IC between feature and forward returns at each horizon.
 
-    First (window-1) values are NaN (no partial windows).
+    For each h in horizons: IC(h) = spearman_corr(feature[t], target[t+h]).
+    Returns NaN for horizons with fewer than 10 aligned observations.
     """
-    result_values = [
-        float("nan") if i < window - 1
-        else float(objective_fn(signals.iloc[i - window + 1: i + 1], returns.iloc[i - window + 1: i + 1]))
-        for i in range(len(returns))
-    ]
-    return pd.Series(result_values, index=returns.index)
+    ic_by_horizon: dict[int, float] = {}
+    for h in horizons:
+        forward_target = target.shift(-h)
+        aligned = pd.DataFrame({"f": feature, "t": forward_target}).dropna()
+        if len(aligned) < 10:
+            ic_by_horizon[h] = float("nan")
+        else:
+            ic_by_horizon[h] = float(aligned["f"].corr(aligned["t"], method="spearman"))
+
+    return ICDecay(horizons=horizons, ic_by_horizon=ic_by_horizon)
+
+
+def compute_feature_acf(
+    feature: pd.Series,
+    max_lag: int = 20,
+) -> FeatureACF:
+    """Compute ACF and PACF of the feature series up to max_lag lags.
+
+    Uses statsmodels FFT-based ACF and OLS-based PACF.
+    Returns lags 1..max_lag (lag-0 autocorrelation of 1.0 is excluded).
+    """
+    from statsmodels.tsa.stattools import acf, pacf
+
+    clean = feature.dropna().to_numpy(dtype=float)
+    acf_full = acf(clean, nlags=max_lag, fft=True)   # shape (max_lag+1,)
+    pacf_full = pacf(clean, nlags=max_lag)             # shape (max_lag+1,)
+
+    return FeatureACF(
+        lags=np.arange(1, max_lag + 1),
+        acf_values=acf_full[1:],   # drop lag-0
+        pacf_values=pacf_full[1:],
+    )
 
 
 def create_common_eda_plots(
     feature: pd.Series,
-    target: pd.Series,
     timestamps: pd.DatetimeIndex,
     rolling_corr: pd.Series,
-    rolling_obj: pd.Series,
+    ic_decay: ICDecay,
+    feature_acf: FeatureACF,
 ) -> CommonEDAPlots:
-    """Create the three standard common EDA figures."""
-    # 1. Time-series plot (2 subplots)
-    fig_ts, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    """Create the four standard common EDA figures."""
+    # 1. Time-series plot (single subplot)
+    fig_ts, ax1 = plt.subplots(1, 1, figsize=(12, 4))
     ax1.plot(timestamps, feature.values, linewidth=0.8, color="steelblue")
     ax1.set_title("Feature over time")
     ax1.set_ylabel("Feature value")
-    ax2.plot(timestamps, target.values, linewidth=0.8, color="darkorange")
-    ax2.set_title("Target (returns) over time")
-    ax2.set_ylabel("Return")
     fig_ts.tight_layout()
     plt.close(fig_ts)
 
@@ -157,17 +178,44 @@ def create_common_eda_plots(
     fig_rc.tight_layout()
     plt.close(fig_rc)
 
-    # 3. Rolling objective plot
-    fig_ro, ax = plt.subplots(figsize=(12, 3))
-    ax.plot(rolling_obj.index, rolling_obj.values, linewidth=0.8, color="green")
+    # 3. IC decay figure
+    fig_ic, ax = plt.subplots(figsize=(10, 4))
+    horizons = ic_decay.horizons
+    ic_vals = [ic_decay.ic_by_horizon[h] for h in horizons]
+    ax.bar([str(h) for h in horizons], ic_vals, color="steelblue")
     ax.axhline(0, color="black", linewidth=0.5, linestyle="--")
-    ax.set_title("Rolling objective metric")
-    ax.set_ylabel("Metric value")
-    fig_ro.tight_layout()
-    plt.close(fig_ro)
+    ax.set_title("IC decay by forward-return horizon")
+    ax.set_xlabel("Horizon (bars)")
+    ax.set_ylabel("Spearman IC")
+    fig_ic.tight_layout()
+    plt.close(fig_ic)
+
+    # 4. ACF/PACF figure
+    n_clean = feature.dropna().shape[0]
+    conf_band = 1.96 / np.sqrt(n_clean)
+    fig_acf, (ax_acf, ax_pacf) = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+
+    ax_acf.bar(feature_acf.lags, feature_acf.acf_values, color="steelblue", width=0.6)
+    ax_acf.axhline(conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_acf.axhline(-conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_acf.axhline(0, color="black", linewidth=0.5)
+    ax_acf.set_title("Autocorrelation Function (ACF)")
+    ax_acf.set_ylabel("ACF")
+
+    ax_pacf.bar(feature_acf.lags, feature_acf.pacf_values, color="darkorange", width=0.6)
+    ax_pacf.axhline(conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_pacf.axhline(-conf_band, color="red", linestyle="--", linewidth=0.8)
+    ax_pacf.axhline(0, color="black", linewidth=0.5)
+    ax_pacf.set_title("Partial Autocorrelation Function (PACF)")
+    ax_pacf.set_ylabel("PACF")
+    ax_pacf.set_xlabel("Lag")
+
+    fig_acf.tight_layout()
+    plt.close(fig_acf)
 
     return CommonEDAPlots(
         time_series_fig=fig_ts,
         rolling_corr_fig=fig_rc,
-        rolling_obj_fig=fig_ro,
+        ic_decay_fig=fig_ic,
+        acf_fig=fig_acf,
     )

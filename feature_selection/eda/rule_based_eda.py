@@ -1,4 +1,4 @@
-"""Rule-based feature EDA (T003): per-level stats, bootstrap CI, transitions, plots."""
+"""Rule-based feature EDA (T003): per-level stats, bootstrap CI, plots."""
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
@@ -11,7 +11,6 @@ from feature_selection.eda.eda_dataclasses import (
     LevelStats,
     PerLevelStats,
     RuleBasedEDAPlots,
-    TransitionMatrix,
 )
 
 _VOL_THRESHOLD = 1e-10
@@ -133,40 +132,11 @@ def _bootstrap_for_level(
     )
 
 
-def compute_transition_matrix(
-    feature: pd.Series,
-    levels: list[int] = [-1, 0, 1],
-) -> TransitionMatrix:
-    """Compute level-to-level transition counts and row-normalized probabilities."""
-    clean = feature.dropna()
-    _validate_feature_levels(clean, levels)
-
-    level_to_idx = {level: idx for idx, level in enumerate(levels)}
-    n_levels = len(levels)
-    counts = np.zeros((n_levels, n_levels), dtype=int)
-
-    values = clean.to_numpy(dtype=float)
-    for prev_value, next_value in zip(values[:-1], values[1:]):
-        prev_level = int(prev_value)
-        next_level = int(next_value)
-        counts[level_to_idx[prev_level], level_to_idx[next_level]] += 1
-
-    row_sums = counts.sum(axis=1, keepdims=True)
-    identity_rows = np.eye(n_levels, dtype=float)
-    probs = np.vstack(
-        [
-            row.astype(float) / row_sum.item() if row_sum.item() > 0 else identity_rows[idx]
-            for idx, (row, row_sum) in enumerate(zip(counts, row_sums))
-        ]
-    )
-    return TransitionMatrix(transition_counts=counts, transition_probs=probs)
-
-
 def create_rule_based_eda_plots(
     per_level_stats: PerLevelStats,
     bootstrap_ci: BootstrapCIResults,
 ) -> RuleBasedEDAPlots:
-    """Create level bar plot and a transition heatmap placeholder figure."""
+    """Create the level bar plot showing mean return with bootstrap CI by discrete level."""
     levels = sorted(per_level_stats.stats_by_level.keys())
     means = [per_level_stats.stats_by_level[level].mean_return for level in levels]
 
@@ -194,21 +164,8 @@ def create_rule_based_eda_plots(
     fig_level.tight_layout()
     plt.close(fig_level)
 
-    fig_heatmap, ax = plt.subplots(figsize=(5, 4))
-    placeholder = np.eye(len(levels), dtype=float)
-    image = ax.imshow(placeholder, cmap="Blues", vmin=0.0, vmax=1.0)
-    ax.set_title("Transition probabilities (placeholder)")
-    ax.set_xticks(range(len(levels)))
-    ax.set_yticks(range(len(levels)))
-    ax.set_xticklabels(levels)
-    ax.set_yticklabels(levels)
-    fig_heatmap.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
-    fig_heatmap.tight_layout()
-    plt.close(fig_heatmap)
-
     return RuleBasedEDAPlots(
         level_plot_fig=fig_level,
-        transition_heatmap_fig=fig_heatmap,
     )
 
 

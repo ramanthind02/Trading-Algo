@@ -217,5 +217,36 @@ class TestReportDeterminism(unittest.TestCase):
         self.assertAlmostEqual(r1.pct_stable_combinations, r2.pct_stable_combinations)
 
 
+class Test3DReportGeneration(unittest.TestCase):
+    """Test 3D report routing modes."""
+
+    def setUp(self):
+        rows = []
+        for p1 in [1, 2, 3]:
+            for p2 in [10, 20, 30]:
+                for p3 in [100, 200, 300]:
+                    rows.append({
+                        "param1_value": p1,
+                        "param2_value": p2,
+                        "param3_value": p3,
+                        "sortino": float(p1 + p2 / 10 + p3 / 100),
+                    })
+        self.df = pd.DataFrame(rows)
+
+    def test_plot_3d_surface_mode(self):
+        report = generate_parameter_sensitivity_report(
+            self.df, ["a", "b", "c"], "sortino", plot_3d_mode="surface_slices",
+        )
+        self.assertIsNotNone(report.plot_3d)
+        self.assertIsInstance(report.plot_3d, go.Figure)
+        self.assertTrue(all(isinstance(t, go.Surface) for t in report.plot_3d.data))
+
+    def test_invalid_plot_3d_mode_raises(self):
+        with self.assertRaises(ValueError):
+            generate_parameter_sensitivity_report(
+                self.df, ["a", "b", "c"], "sortino", plot_3d_mode="bad_mode",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
