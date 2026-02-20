@@ -243,6 +243,23 @@ class Test3DSlices(unittest.TestCase):
         self.assertIsNotNone(sliders)
         self.assertGreater(len(sliders), 0)
 
+    def test_dropdown_updates_slider_for_selected_fixed_param(self):
+        fig = plot_3d_slices(
+            _make_3d_df(), ["a", "b", "c"], "sortino", show_plot=False,
+        )
+        menus = fig.layout.updatemenus
+        self.assertGreater(len(menus), 0)
+        # Selecting "Fix b" should update slider currentvalue prefix to "b="
+        fix_b_button = menus[0].buttons[1]
+        self.assertEqual(fix_b_button.label, "Fix b")
+        self.assertEqual(len(fix_b_button.args), 2)
+        layout_update = fix_b_button.args[1]
+        self.assertIn("sliders", layout_update)
+        self.assertEqual(
+            layout_update["sliders"][0]["currentvalue"]["prefix"],
+            "b=",
+        )
+
     def test_traces_are_heatmaps(self):
         fig = plot_3d_slices(
             _make_3d_df(), ["a", "b", "c"], "sortino", show_plot=False,

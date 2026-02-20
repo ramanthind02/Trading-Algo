@@ -1282,6 +1282,24 @@ def plot_3d_slices(
     total_traces = len(traces)
 
     # Dropdown buttons
+    def _build_slider_for_group(fixed_idx: int) -> List[dict]:
+        group = slider_groups[fixed_idx]
+        steps: List[dict] = []
+        for i, val in enumerate(group["values"]):
+            vis = [False] * total_traces
+            vis[group["start"] + i] = True
+            steps.append(dict(
+                method="update",
+                args=[{"visible": vis}],
+                label=str(val),
+            ))
+        return [dict(
+            active=0,
+            currentvalue=dict(prefix=f"{param_names[fixed_idx]}="),
+            pad=dict(t=60),
+            steps=steps,
+        )]
+
     for fixed_idx in range(n_params):
         group = slider_groups[fixed_idx]
         vis = [False] * total_traces
@@ -1296,21 +1314,14 @@ def plot_3d_slices(
                 {
                     "xaxis_title": group["free_names"][1],
                     "yaxis_title": group["free_names"][0],
+                    "sliders": _build_slider_for_group(fixed_idx),
                 },
             ],
         ))
 
     # Slider for default group (fixed_idx=0)
     default_group = slider_groups[0]
-    slider_steps = []
-    for i, val in enumerate(default_group["values"]):
-        vis = [False] * total_traces
-        vis[default_group["start"] + i] = True
-        slider_steps.append(dict(
-            method="update",
-            args=[{"visible": vis}],
-            label=str(val),
-        ))
+    slider_steps = _build_slider_for_group(0)[0]["steps"]
 
     if default_group["start"] < default_group["end"]:
         fig.data[default_group["start"]].visible = True
