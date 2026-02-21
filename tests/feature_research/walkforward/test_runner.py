@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from feature_research.walkforward.config import WalkforwardResearchConfig
-from feature_research.walkforward.runner import run_walkforward_research
+from feature_research.walkforward.runner import run_walkforward_research, run_portfolio_simulation
 from feature_research.walkforward.top_k_selection import EnhancedSelectionResult
 
 
@@ -249,6 +249,124 @@ def test_run_walkforward_research_enforces_no_lookahead_fold_boundaries() -> Non
         for _ in param_grid
     ]
     assert seen_boundaries == expected_boundaries
+
+
+def test_run_walkforward_research_passes_fold_train_end_to_evaluator() -> None:
+    candles_df, target = _build_inputs()
+
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        test_step=20,
+        num_steps=2,
+        top_k=1,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+    )
+    param_grid: list[dict[str, object]] = [{"x": 1}, {"x": 2}]
+    observed_train_ends: list[pd.Timestamp] = []
+    observed_fold_maxes: list[pd.Timestamp] = []
+
+    def evaluate_param_combo(
+        fold_candles: pd.DataFrame,
+        _fold_target: pd.Series,
+        _params: dict[str, object],
+        *,
+        train_end: pd.Timestamp,
+    ) -> pd.Series:
+        observed_train_ends.append(pd.Timestamp(train_end))
+        observed_fold_maxes.append(pd.Timestamp(fold_candles.index.max()))
+        return pd.Series(1.0, index=fold_candles.index)
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluate_param_combo,
+    )
+
+    expected_train_ends = [
+        pd.Timestamp(row.train_end)
+        for row in report.folds_df.itertuples(index=False)
+        for _ in param_grid
+    ]
+    assert observed_train_ends == expected_train_ends
+    assert all(train_end < fold_max for train_end, fold_max in zip(observed_train_ends, observed_fold_maxes))
+
+
+def test_run_walkforward_research_enhanced_selection_forwards_train_end_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candles_df, target = _build_inputs()
+
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        test_step=20,
+        num_steps=1,
+        top_k=1,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+        use_enhanced_selection=True,
+    )
+    param_grid: list[dict[str, object]] = [{"x": 1}]
+    enhanced_train_ends: list[pd.Timestamp] = []
+    enhanced_fold_maxes: list[pd.Timestamp] = []
+    enhanced_call_indices: list[int] = []
+
+    def evaluate_param_combo(
+        fold_candles: pd.DataFrame,
+        _fold_target: pd.Series,
+        _params: dict[str, object],
+        *,
+        train_end: pd.Timestamp,
+    ) -> pd.Series:
+        enhanced_train_ends.append(pd.Timestamp(train_end))
+        enhanced_fold_maxes.append(pd.Timestamp(fold_candles.index.max()))
+        return pd.Series(1.0, index=fold_candles.index)
+
+    def fake_run_enhanced_selection(
+        training_data: pd.DataFrame,
+        training_target: pd.Series,
+        param_grid: list[dict[str, object]],
+        evaluate_param_combo: Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series],
+        smoothed_objectives: dict[str, float],
+        config: WalkforwardResearchConfig,
+    ) -> EnhancedSelectionResult:
+        _ = smoothed_objectives
+        _ = config
+        call_index = len(enhanced_fold_maxes)
+        _ = evaluate_param_combo(training_data, training_target, param_grid[0])
+        enhanced_call_indices.append(call_index)
+        return EnhancedSelectionResult(
+            selected_labels=["x=1"],
+            trade_frequencies={"x=1": 1.0},
+        )
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.top_k_selection.run_enhanced_selection",
+        fake_run_enhanced_selection,
+    )
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluate_param_combo,
+    )
+
+    expected_train_end = pd.Timestamp(report.folds_df.loc[0, "train_end"])
+    assert expected_train_end in enhanced_train_ends
+    assert enhanced_call_indices
+    assert all(
+        enhanced_fold_maxes[index] <= expected_train_end for index in enhanced_call_indices
+    )
 
 
 @pytest.mark.parametrize(
@@ -546,3 +664,91 @@ def test_run_walkforward_research_objective_uses_active_returns_only() -> None:
     )
 
     assert report.selection_summary_df.loc[0, "selected_feature"] == "x=1"
+
+
+def test_run_walkforward_research_adds_empty_portfolio_results_without_research_config() -> None:
+    candles_df, target = _build_inputs()
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        test_step=20,
+        num_steps=1,
+        top_k=1,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+    )
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config,
+        param_grid=[{"x": 1}],
+        evaluate_param_combo=lambda _candles, _target, _params: pd.Series(0.01, index=candles_df.index),
+    )
+
+    assert "oos_portfolio_sharpe" in report.portfolio_results_df.columns
+    assert report.portfolio_results_df.empty
+
+
+def test_run_portfolio_simulation_records_error_without_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    index = pd.date_range("2020-01-01", periods=40, freq="D")
+    candles_df = pd.DataFrame(
+        {
+            "datetime": index,
+            "open": np.arange(40) + 100.0,
+            "high": np.arange(40) + 101.0,
+            "low": np.arange(40) + 99.0,
+            "close": np.arange(40) + 100.5,
+            "ticker": ["ES"] * 40,
+        },
+        index=index,
+    )
+    target = pd.Series(np.linspace(-0.01, 0.01, 40), index=index)
+    fold_rows = [
+        {
+            "fold_id": 0,
+            "_train_mask": pd.Series([True] * 20 + [False] * 20, index=index),
+            "_test_mask": pd.Series([False] * 20 + [True] * 20, index=index),
+        }
+    ]
+    selection_summary_df = pd.DataFrame(
+        [
+            {
+                "fold_id": 0,
+                "selected_feature": "lookback=5",
+                "selected_raw_objective": 0.1,
+                "selected_smoothed_objective": 0.1,
+                "top_k_features": '["lookback=5|bin_count=4"]',
+            }
+        ]
+    )
+
+    def _boom(**_kwargs: object) -> object:
+        raise RuntimeError("sim failed")
+
+    monkeypatch.setattr("feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio", _boom)
+
+    research_config = type(
+        "ResearchCfg",
+        (),
+        {
+            "tickers": [],
+            "binning_params": object(),
+            "walkforward": type("WF", (), {"objective_metric_name": "sharpe"})(),
+            "bias_spec": {"module_name": "rsi", "timeframes": ["D"]},
+        },
+    )()
+
+    result = run_portfolio_simulation(
+        candles_df=candles_df,
+        target=target,
+        fold_rows=fold_rows,
+        selection_summary_df=selection_summary_df,
+        research_config=research_config,
+    )
+
+    assert result.loc[0, "fold_id"] == 0
+    assert pd.isna(result.loc[0, "oos_portfolio_sharpe"])
+    assert result.loc[0, "error"] == "sim failed"

@@ -54,6 +54,9 @@ def _build_report() -> WalkforwardRunReport:
         folds_df=folds_df,
         fold_scores_df=fold_scores_df,
         selection_summary_df=selection_summary_df,
+        portfolio_results_df=pd.DataFrame(
+            columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
+        ),
     )
 
 
@@ -96,6 +99,9 @@ def _build_enhanced_report() -> WalkforwardRunReport:
         folds_df=folds_df,
         fold_scores_df=fold_scores_df,
         selection_summary_df=selection_summary_df,
+        portfolio_results_df=pd.DataFrame(
+            columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
+        ),
     )
 
 
@@ -386,3 +392,43 @@ def test_write_walkforward_artifacts_selected_params_detailed_uses_selected_in_t
 
     selected_params = pd.read_csv(paths.selected_params_detailed_csv)
     assert set(selected_params["param_label"]) == {"x=2", "x=3"}
+
+
+def test_write_walkforward_artifacts_includes_portfolio_simulation_section(
+    tmp_path: Path,
+) -> None:
+    report = _build_report()
+    report = WalkforwardRunReport(
+        folds_df=report.folds_df,
+        fold_scores_df=report.fold_scores_df,
+        selection_summary_df=report.selection_summary_df,
+        portfolio_results_df=pd.DataFrame(
+            [
+                {
+                    "fold_id": 0,
+                    "oos_portfolio_sharpe": 0.42,
+                    "n_params_selected": 2,
+                    "error": "",
+                }
+            ]
+        ),
+    )
+    stability_figure = _build_figure()
+    timeline_figure = _build_figure()
+    try:
+        paths = write_walkforward_artifacts(
+            report=report,
+            walkforward_stability_figure=stability_figure,
+            fold_timeline_figure=timeline_figure,
+            feature_type="continuous",
+            module_name="rsi",
+            root_dir=tmp_path,
+        )
+    finally:
+        plt.close(stability_figure)
+        plt.close(timeline_figure)
+
+    summary_md = paths.summary_md.read_text(encoding="utf-8")
+    assert "Portfolio Simulation (Stage 2)" in summary_md
+    oos_metrics_df = pd.read_csv(paths.oos_metrics_csv)
+    assert "mean_oos_portfolio_sharpe" in set(oos_metrics_df["metric"])

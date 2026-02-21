@@ -136,6 +136,17 @@ def _build_oos_metrics(report: WalkforwardRunReport) -> pd.DataFrame:
         ("most_selected_feature", most_selected_feature),
         ("most_selected_feature_count", most_selected_count),
     ]
+    if (
+        not report.portfolio_results_df.empty
+        and "oos_portfolio_sharpe" in report.portfolio_results_df.columns
+    ):
+        valid_portfolio_sharpes = report.portfolio_results_df["oos_portfolio_sharpe"].dropna().astype(float)
+        metrics.append(
+            (
+                "mean_oos_portfolio_sharpe",
+                float(valid_portfolio_sharpes.mean()) if not valid_portfolio_sharpes.empty else float("nan"),
+            )
+        )
     return pd.DataFrame(metrics, columns=["metric", "value"])
 
 
@@ -163,6 +174,18 @@ def _write_summary_markdown(
     oos_metrics_df: pd.DataFrame,
     selected_params_df: pd.DataFrame,
 ) -> None:
+    portfolio_rows = report.portfolio_results_df.copy()
+    portfolio_section = []
+    if not portfolio_rows.empty and "oos_portfolio_sharpe" in portfolio_rows.columns:
+        valid_sharpes = portfolio_rows["oos_portfolio_sharpe"].dropna().astype(float)
+        mean_portfolio_sharpe = float(valid_sharpes.mean()) if not valid_sharpes.empty else float("nan")
+        portfolio_section = [
+            "",
+            "## Portfolio Simulation (Stage 2)",
+            f"- Mean OOS Portfolio Sharpe: {mean_portfolio_sharpe:.6f}",
+            _frame_to_markdown_table(portfolio_rows, max_rows=50),
+        ]
+
     lines = [
         f"# Walkforward Summary: {feature_type}/{module_name}",
         "",
@@ -179,6 +202,7 @@ def _write_summary_markdown(
         "",
         "## Fold Timeline (Tabular)",
         _frame_to_markdown_table(report.folds_df, max_rows=50),
+        *portfolio_section,
         "",
         "## Notes",
         "- Use `oos_metrics.csv` for aggregate metrics.",
@@ -196,6 +220,16 @@ def _write_summary_html(
     oos_metrics_df: pd.DataFrame,
     selected_params_df: pd.DataFrame,
 ) -> None:
+    portfolio_html_section = ""
+    if not report.portfolio_results_df.empty and "oos_portfolio_sharpe" in report.portfolio_results_df.columns:
+        valid_sharpes = report.portfolio_results_df["oos_portfolio_sharpe"].dropna().astype(float)
+        mean_portfolio_sharpe = float(valid_sharpes.mean()) if not valid_sharpes.empty else float("nan")
+        portfolio_html_section = (
+            "<h2>Portfolio Simulation (Stage 2)</h2>"
+            f"<p>Mean OOS Portfolio Sharpe: {mean_portfolio_sharpe:.6f}</p>"
+            + report.portfolio_results_df.to_html(index=False, escape=True)
+        )
+
     html = "".join(
         [
             "<!doctype html><html><head><meta charset='utf-8'><title>",
@@ -220,6 +254,7 @@ def _write_summary_html(
             selected_params_df.to_html(index=False, escape=True),
             "<h2>Fold Timeline (Tabular)</h2>",
             report.folds_df.to_html(index=False, escape=True),
+            portfolio_html_section,
             "</body></html>",
         ]
     )
@@ -333,6 +368,7 @@ def write_walkforward_artifacts(
             "folds": int(len(report.folds_df)),
             "fold_scores": int(len(report.fold_scores_df)),
             "selection_summary": int(len(report.selection_summary_df)),
+            "portfolio_results": int(len(report.portfolio_results_df)),
             "selected_params_detailed": int(len(selected_params_df)),
             "oos_metrics": int(len(oos_metrics_df)),
         },

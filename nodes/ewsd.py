@@ -58,7 +58,7 @@ class EWSDNode(BiasNode):
         ticker: Ticker, 
         tf: TimeFrame,
         lambda_short: float = 0.06061,  # 32-day span
-        long_run_window: int = 252,      # 1 year for long-run estimate
+        long_run_window: int = 2520,     # 10 years for long-run estimate
         blend_short_weight: float = 0.7,
         blend_long_weight: float = 0.3
     ):
@@ -75,8 +75,8 @@ class EWSDNode(BiasNode):
             EWMA smoothing parameter for short-run estimate.
             0.06061 corresponds to a 32-day span, Carver's preferred value.
             Span = 2/(lambda) - 1, so lambda = 2/(span+1)
-        long_run_window : int, default=252
-            Lookback window for long-run historical volatility (1 year)
+        long_run_window : int, default=2520
+            Lookback window for long-run historical volatility (10 years)
         blend_short_weight : float, default=0.7
             Weight for short-run estimate in blend
         blend_long_weight : float, default=0.3
@@ -95,8 +95,8 @@ class EWSDNode(BiasNode):
         self.prev_variance_sq: Optional[float] = None
         self.returns_history = deque(maxlen=long_run_window)
         
-        # Initial estimates (will be updated as data comes in)
-        self.sigma_long: float = 0.01  # Initial 1% daily volatility estimate
+        # Initial estimates (only used before any meaningful return history)
+        self.sigma_long: float = 0.01  # 1% daily prior, replaced as soon as returns arrive
         self.initial_variance_sq: float = self.sigma_long ** 2
         
         # Define output columns
@@ -152,14 +152,16 @@ class EWSDNode(BiasNode):
             # 3. Calculate short-run standard deviation
             sigma_short = np.sqrt(current_variance_sq)
             
-            # 4. Update long-run standard deviation (Cython when available)
-            if len(self.returns_history) >= 20:  # Need minimum data
+            # 4. Update long-run standard deviation (expanding window, Cython when available)
+            n_obs = len(self.returns_history)
+            if n_obs >= 2:
                 arr = np.array(self.returns_history, dtype=np.float64)
-                n_ret = len(arr)
                 if CYTHON_NODES_AVAILABLE and compute_stddev_sample_fast is not None:
-                    self.sigma_long = compute_stddev_sample_fast(arr, n_ret)
+                    self.sigma_long = compute_stddev_sample_fast(arr, n_obs)
                 else:
-                    self.sigma_long = np.std(self.returns_history, ddof=1)
+                    self.sigma_long = float(np.std(arr, ddof=1))
+            elif n_obs == 1:
+                self.sigma_long = abs(float(self.returns_history[0]))
             
             # 5. Blend short-run and long-run estimates
             # Carver's preferred blend: 70% short-run + 30% long-run
@@ -173,7 +175,7 @@ class EWSDNode(BiasNode):
             self.prev_close = candle.close
         
         # 6. Annualize the result
-        # Multiply by 16 (sqrt(256)) to annualize daily volatility
+        # Annualize with Carver's rounded factor: 16 ~= sqrt(252)
         ewsd_annual_pct = ewsd_daily_pct * 16
         
         # Convert to percentage (multiply by 100)

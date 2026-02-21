@@ -70,6 +70,23 @@ def _series_for_combo(
     return feature, target, feature.name
 
 
+def _mock_candles_for_config() -> pd.DataFrame:
+    index = pd.date_range("2020-01-01", periods=120, freq="D")
+    return pd.DataFrame(
+        {
+            "datetime": index,
+            "open": [100.0] * len(index),
+            "high": [101.0] * len(index),
+            "low": [99.0] * len(index),
+            "close": [100.5] * len(index),
+            "volume": [1000.0] * len(index),
+            "ticker": ["ES"] * len(index),
+            "timeframe": [TimeFrame.D] * len(index),
+        },
+        index=index,
+    )
+
+
 def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -> None:
     config = _build_config(tmp_path, walkforward_enabled=False)
 
@@ -98,6 +115,10 @@ def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(
         "feature_research.continuous_binning.pipeline.save_eda_report",
         lambda report, output_dir, overwrite: output_dir,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
     )
 
     calls = {"runner": 0, "stability": 0, "timeline": 0, "writer": 0}
@@ -175,6 +196,8 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
         config: WalkforwardResearchConfig,
         param_grid: list[dict[str, object]],
         evaluate_param_combo,
+        research_config=None,
+        portfolio_candles_df: pd.DataFrame | None = None,
     ) -> WalkforwardRunReport:
         captured_inputs["candles_df"] = candles_df
         captured_inputs["target"] = target
@@ -183,6 +206,8 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
         captured_inputs["param_grid"] = param_grid
         captured_inputs["config"] = config
         captured_inputs["evaluate_param_combo"] = evaluate_param_combo
+        captured_inputs["research_config"] = research_config
+        captured_inputs["portfolio_candles_df"] = portfolio_candles_df
 
         return WalkforwardRunReport(
             folds_df=pd.DataFrame(
@@ -220,6 +245,9 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
                         "top_k_features": "[\"lookback=2\",\"lookback=3\"]",
                     }
                 ]
+            ),
+            portfolio_results_df=pd.DataFrame(
+                columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
             ),
         )
 
@@ -305,6 +333,10 @@ def test_walkforward_evaluator_uses_bin_count_specific_returns(
         "feature_research.continuous_binning.pipeline.save_eda_report",
         lambda report, output_dir, overwrite: output_dir,
     )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
+    )
 
     class _FakeBinningModel:
         def __init__(self, n_bins: int, **_kwargs: object) -> None:
@@ -334,6 +366,8 @@ def test_walkforward_evaluator_uses_bin_count_specific_returns(
         config: WalkforwardResearchConfig,
         param_grid: list[dict[str, object]],
         evaluate_param_combo,
+        research_config=None,
+        portfolio_candles_df: pd.DataFrame | None = None,
     ) -> WalkforwardRunReport:
         _ = feature_type
         _ = module_name
@@ -342,6 +376,8 @@ def test_walkforward_evaluator_uses_bin_count_specific_returns(
         captured_eval["target"] = target
         captured_eval["param_grid"] = param_grid
         captured_eval["evaluate"] = evaluate_param_combo
+        captured_eval["research_config"] = research_config
+        captured_eval["portfolio_candles_df"] = portfolio_candles_df
 
         return WalkforwardRunReport(
             folds_df=pd.DataFrame(
@@ -379,6 +415,9 @@ def test_walkforward_evaluator_uses_bin_count_specific_returns(
                         "top_k_features": "[\"bin_count=4|lookback=2\"]",
                     }
                 ]
+            ),
+            portfolio_results_df=pd.DataFrame(
+                columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
             ),
         )
 
@@ -444,6 +483,10 @@ def test_run_continuous_walkforward_pipeline_returns_report_and_writes_artifacts
         "feature_research.continuous_binning.pipeline.load_features_for_combo",
         lambda single_spec, _config: _series_for_combo(single_spec["params"]),
     )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
+    )
 
     report = run_continuous_walkforward_pipeline(config, tmp_path / "wf_out")
 
@@ -480,6 +523,10 @@ def test_run_continuous_walkforward_pipeline_raises_if_no_combos_load(
         "feature_research.continuous_binning.pipeline.load_features_for_combo",
         lambda single_spec, _config: None,
     )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
+    )
 
     with pytest.raises(ValueError, match="No param combos loaded successfully"):
         run_continuous_walkforward_pipeline(config, tmp_path / "wf_out")
@@ -515,6 +562,10 @@ def test_run_continuous_walkforward_pipeline_raises_if_no_folds(
     monkeypatch.setattr(
         "feature_research.continuous_binning.pipeline.load_features_for_combo",
         lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
     )
 
     with pytest.raises(ValueError, match="No walkforward folds were generated"):

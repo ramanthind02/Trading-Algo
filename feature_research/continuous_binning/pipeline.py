@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -64,16 +64,50 @@ def _normalize_series_datetime_index(series: pd.Series) -> pd.Series:
 
 
 def _build_walkforward_evaluator(
-    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series],
-) -> Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series]:
+    combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame],
+    config: "ResearchConfig",
+) -> Callable[..., pd.Series]:
     def evaluate_param_combo(
         fold_candles: pd.DataFrame,
         _fold_target: pd.Series,
         params: dict[str, object],
+        *,
+        train_end: pd.Timestamp | None = None,
     ) -> pd.Series:
-        returns = combo_returns[_combo_key(params)]
-        fold_returns = returns.reindex(fold_candles.index).dropna()
-        return fold_returns if not fold_returns.empty else pd.Series(dtype=float)
+        combo_data = combo_feature_target[_combo_key(params)]
+        fold_data = combo_data.reindex(_normalize_datetime_index(fold_candles.index)).dropna()
+        if fold_data.empty:
+            return pd.Series(dtype=float)
+
+        train_cutoff = pd.Timestamp(train_end) if train_end is not None else pd.Timestamp(fold_data.index.max())
+        train_data = fold_data.loc[fold_data.index <= train_cutoff]
+        if train_data.empty:
+            return pd.Series(dtype=float)
+
+        bin_count = int(cast(int, params.get("bin_count", config.binning_params.bin_counts[0])))
+        model = ContinuousBinningModel(
+            n_bins=bin_count,
+            bin_counts=[bin_count],
+            selection_metric=config.binning_params.selection_metric,
+            strategy=config.binning_params.strategy,
+            metric_threshold=config.binning_params.metric_threshold,
+            t_threshold=config.binning_params.t_threshold,
+            min_region_width=config.binning_params.min_region_width,
+            shrinkage_k=config.binning_params.shrinkage_k,
+            long_clip_min=config.binning_params.long_clip_min,
+            long_clip_max=config.binning_params.long_clip_max,
+            short_clip_min=config.binning_params.short_clip_min,
+            short_clip_max=config.binning_params.short_clip_max,
+            use_coverage_bonus=config.binning_params.use_coverage_bonus,
+            coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
+            max_coverage_bonus=config.binning_params.max_coverage_bonus,
+        )
+        try:
+            model.fit(train_data["feature"], train_data["target"])
+        except ValueError:
+            return pd.Series(dtype=float)
+        signal = model.predict(fold_data["feature"], strategy=config.binning_params.strategy)
+        return _normalize_series_datetime_index(signal.mul(fold_data["target"]))
 
     return evaluate_param_combo
 
@@ -151,9 +185,10 @@ def run_continuous_eda_pipeline(
     tf = _normalize_timeframe(config.bias_spec)
 
     results: dict[str, Path] = {}
-    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
+    combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
     successful_param_grid: list[dict[str, object]] = []
     reference_index: pd.DatetimeIndex | None = None
+    reference_target_series: pd.Series | None = None
 
     print(f"\n{'='*64}")
     print(f"Continuous EDA Pipeline: {config.bias_spec['module_name'].upper()}")
@@ -206,17 +241,22 @@ def run_continuous_eda_pipeline(
             params=dict(combo),
             bin_counts=config.binning_params.bin_counts,
         )
+        normalized_feature = _normalize_series_datetime_index(feature)
+        normalized_target = _normalize_series_datetime_index(target)
         for combo_params in expanded_combo_params:
-            combo_bin_count = int(combo_params.get("bin_count", config.binning_params.bin_counts[0]))
-            combo_returns[_combo_key(combo_params)] = _build_bin_count_specific_returns(
-                feature=feature,
-                target=target,
-                bin_count=combo_bin_count,
-                config=config,
+            combo_bin_count = int(
+                cast(int, combo_params.get("bin_count", config.binning_params.bin_counts[0]))
+            )
+            combo_feature_target[_combo_key(combo_params)] = pd.DataFrame(
+                {
+                    "feature": normalized_feature,
+                    "target": normalized_target,
+                }
             )
             successful_param_grid.append(combo_params)
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)
+            reference_target_series = normalized_target.reindex(reference_index)
 
         pearson = report.common_stats.correlation_analysis.pearson
         spread = report.continuous_stats.quintile_spread.spread
@@ -230,8 +270,12 @@ def run_continuous_eda_pipeline(
         )
 
     if config.walkforward.enabled and reference_index is not None and successful_param_grid:
-        reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+        if reference_target_series is None:
+            reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+        else:
+            reference_target = reference_target_series.fillna(0.0).rename("walkforward_target")
         reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
+        portfolio_candles = load_candles_for_config(config)
         walkforward_report = run_walkforward_research(
             candles_df=reference_candles,
             target=reference_target,
@@ -239,7 +283,9 @@ def run_continuous_eda_pipeline(
             module_name=str(config.bias_spec["module_name"]),
             config=config.walkforward,
             param_grid=successful_param_grid,
-            evaluate_param_combo=_build_walkforward_evaluator(combo_returns),
+            evaluate_param_combo=_build_walkforward_evaluator(combo_feature_target, config),
+            research_config=config,
+            portfolio_candles_df=portfolio_candles,
         )
         stability_figure, _ = plot_selection_stability(
             selection_summary_df=walkforward_report.selection_summary_df,
@@ -318,9 +364,10 @@ def run_continuous_walkforward_pipeline(
     )
     print(f"{'='*64}\n")
 
-    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
+    combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
     successful_param_grid: list[dict[str, object]] = []
     reference_index: pd.DatetimeIndex | None = None
+    reference_target_series: pd.Series | None = None
 
     for single_spec in expanded:
         combo = single_spec["params"]
@@ -343,24 +390,33 @@ def run_continuous_walkforward_pipeline(
             params=dict(combo),
             bin_counts=config.binning_params.bin_counts,
         )
+        normalized_feature = _normalize_series_datetime_index(feature)
+        normalized_target = _normalize_series_datetime_index(target)
         for combo_params in expanded_combo_params:
-            combo_bin_count = int(combo_params.get("bin_count", config.binning_params.bin_counts[0]))
-            combo_returns[_combo_key(combo_params)] = _build_bin_count_specific_returns(
-                feature=feature,
-                target=target,
-                bin_count=combo_bin_count,
-                config=config,
+            combo_bin_count = int(
+                cast(int, combo_params.get("bin_count", config.binning_params.bin_counts[0]))
+            )
+            combo_feature_target[_combo_key(combo_params)] = pd.DataFrame(
+                {
+                    "feature": normalized_feature,
+                    "target": normalized_target,
+                }
             )
             successful_param_grid.append(combo_params)
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)
+            reference_target_series = normalized_target.reindex(reference_index)
         print(f"  [{label}] loaded n={len(feature):,}")
 
     if not successful_param_grid or reference_index is None:
         raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
 
-    reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+    if reference_target_series is None:
+        reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+    else:
+        reference_target = reference_target_series.fillna(0.0).rename("walkforward_target")
     reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
+    portfolio_candles = load_candles_for_config(config)
 
     walkforward_report = run_walkforward_research(
         candles_df=reference_candles,
@@ -369,7 +425,9 @@ def run_continuous_walkforward_pipeline(
         module_name=str(config.bias_spec["module_name"]),
         config=config.walkforward,
         param_grid=successful_param_grid,
-        evaluate_param_combo=_build_walkforward_evaluator(combo_returns),
+        evaluate_param_combo=_build_walkforward_evaluator(combo_feature_target, config),
+        research_config=config,
+        portfolio_candles_df=portfolio_candles,
     )
     if walkforward_report.folds_df.empty:
         first_ts = pd.Timestamp(reference_index.min())

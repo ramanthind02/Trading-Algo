@@ -244,7 +244,7 @@ class EWSDNode(BiasNode):
         ticker: Ticker,
         tf: TimeFrame,
         lambda_short: float = 0.06061,
-        long_run_window: int = 252,
+        long_run_window: int = 2520,
         blend_short_weight: float = 0.7,
         blend_long_weight: float = 0.3,
     )
@@ -253,6 +253,7 @@ class EWSDNode(BiasNode):
 Observable behavior:
 - Outputs `[ewsd_daily_pct, ewsd_annual_pct]` as percentages.
 - First candle uses initial daily volatility estimate (`1%`).
+- Long-run volatility is computed with an expanding window (sample stdev after two returns; first return seeds with `abs(return)`).
 - Blends short EWMA volatility and long-run sample stdev (Carver-style 70/30).
 - Annualization uses factor `16` (`sqrt(256)`).
 

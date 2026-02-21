@@ -21,6 +21,7 @@ from utils.enums import Ticker, TimeFrame
 # ---------------------------------------------------------------------------
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[1]
 _CB_DIR = _FEATURE_RESEARCH_DIR / "continuous_binning"
+RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,15 @@ class ResearchConfig:
         )
     )
 
+    def __post_init__(self) -> None:
+        if self.target_col in RAW_TARGET_COLS and len(self.tickers) > 1:
+            raise ValueError(
+                f"target_col='{self.target_col}' uses raw (unnormalized) returns with "
+                f"multiple tickers ({len(self.tickers)} configured). "
+                "Raw returns cannot be compared across tickers with different volatility. "
+                "Use 'log_return_ewsd' or 'log_return_atr' for multi-ticker research."
+            )
+
 
 def load_config() -> ResearchConfig:
     """Return the default research configuration.
@@ -176,7 +186,7 @@ def load_config() -> ResearchConfig:
         "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10]},
     }
 
-    target_col = "log_return"
+    target_col = "log_return_atr"
     strategy = "long-short"
 
     # Caching

@@ -79,6 +79,19 @@ class ContinuousBinningModel(BinningModelBase):
     ) -> None:
         """Fit model with grid search over bin counts.
 
+        Parameters
+        ----------
+        feature_data : pd.Series
+            Input feature values used to form quantile bins.
+        target_data : pd.Series
+            Prediction target aligned to ``feature_data``. When fitting on
+            concatenated data from multiple tickers, this target must be
+            volatility-normalized (for example ``log_return_ewsd`` or
+            ``log_return_atr``). Raw return targets across tickers with
+            different volatility will bias quantile bin selection.
+        normalization_data : pd.Series | None
+            Optional normalization series consumed by shared base behaviors.
+
         Tests each bin count in self.bin_counts, selects best bin per direction
         based on t-statistic, and stores the winning configuration.
         """

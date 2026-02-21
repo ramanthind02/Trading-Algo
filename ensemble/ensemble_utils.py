@@ -16,11 +16,18 @@ import pandas as pd
 import utils.helpers as helpers
 from feature_selection.base_models import (
     BaseModel,
-    DecisionTreeBinningModel,
     ContinuousBinningModel,
     RuleBasedModel,
-    TwoBinBinningModel,
 )
+try:
+    from feature_selection.base_models import DecisionTreeBinningModel
+except ImportError:  # pragma: no cover - optional model
+    DecisionTreeBinningModel = None
+
+try:
+    from feature_selection.base_models import TwoBinBinningModel
+except ImportError:  # pragma: no cover - optional model
+    TwoBinBinningModel = None
 from utils.enums import Ticker, TimeFrame
 
 
@@ -411,10 +418,14 @@ def create_base_model_from_config(
     if model_type == 'continuous_binning':
         binning_model = ContinuousBinningModel(**constructor_params)
     elif model_type == 'decision_tree_binning':
+        if DecisionTreeBinningModel is None:
+            raise ValueError("decision_tree_binning is not available in this repository build")
         tree_params = constructor_params.copy()
         tree_params.pop('normalize_by', None)
         binning_model = DecisionTreeBinningModel(**tree_params)
     elif model_type == 'two_bin_binning':
+        if TwoBinBinningModel is None:
+            raise ValueError("two_bin_binning is not available in this repository build")
         # TwoBinBinningModel doesn't accept n_bins (it's hardcoded to 2)
         two_bin_params = constructor_params.copy()
         two_bin_params.pop('n_bins', None)

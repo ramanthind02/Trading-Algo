@@ -212,6 +212,7 @@ class FoldScoreRow:
     test_end: pd.Timestamp
     param_label: str
     raw_objective: float
+    oos_objective: float
     smoothed_objective: float
     rank: int
 ```
@@ -228,6 +229,7 @@ class WalkforwardRunReport:
     folds_df: pd.DataFrame
     fold_scores_df: pd.DataFrame
     selection_summary_df: pd.DataFrame
+    portfolio_results_df: pd.DataFrame
 ```
 
 Description: aggregate walkforward research output with fold boundaries, full per-fold scores, and selected-feature summaries.
@@ -244,11 +246,13 @@ def run_walkforward_research(
     module_name: str,
     config: WalkforwardResearchConfig,
     param_grid: list[dict[str, object]],
-    evaluate_param_combo: Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series],
+    evaluate_param_combo: Callable[..., pd.Series],
+    research_config: Any | None = None,
+    portfolio_candles_df: pd.DataFrame | None = None,
 ) -> WalkforwardRunReport
 ```
 
-Description: evaluates all parameter combinations per walkforward fold, ranks selections from in-sample (train-window) objectives, applies deterministic rank ordering (`smoothed_objective` desc, `raw_objective` desc, `param_label` asc), and emits fold/selection dataframes with separate out-of-sample objective tracking (`oos_objective`).
+Description: evaluates all parameter combinations per walkforward fold, ranks selections from in-sample (train-window) objectives, applies deterministic rank ordering (`smoothed_objective` desc, `raw_objective` desc, `param_label` asc), and emits fold/selection dataframes with separate out-of-sample objective tracking (`oos_objective`). When `research_config` is provided, a second portfolio simulation stage runs per fold using the production `Portfolio` stack and stores results in `portfolio_results_df`.
 
 Validation behavior:
 - Raises `ValueError` when `feature_type` or `module_name` is blank.
@@ -353,6 +357,7 @@ Table schema contract (exact columns):
 - `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `oos_objective`, `smoothed_objective`, `rank`, `selected_feature`
 - `fold_scores.csv` enhanced (when `use_enhanced_selection=True`): add `trade_frequency`, `selected_in_top_k`
 - `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
+- `portfolio_results_df` columns: `fold_id`, `oos_portfolio_sharpe`, `n_params_selected`, `error`
 - `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_in_top_k=True` when present, otherwise `selected_feature=True`
 
 `report.json` minimum keys:
