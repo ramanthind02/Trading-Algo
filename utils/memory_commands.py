@@ -24,8 +24,11 @@ def handle_remember(text: str, service: MemoryService | None = None) -> str:
         return "Usage: /remember <text to store>"
     if service is None:
         service = MemoryService()
-    service.store(text, metadata={"source": "manual"})
-    return f"Stored: {text[:50]}..." if len(text) > 50 else f"Stored: {text}"
+    try:
+        service.store(text, metadata={"source": "manual"})
+        return f"Stored: {text[:50]}..." if len(text) > 50 else f"Stored: {text}"
+    except Exception as e:
+        return f"Error storing memory: {e}"
 
 
 def handle_recall(query: str, service: MemoryService | None = None) -> str:
@@ -33,29 +36,38 @@ def handle_recall(query: str, service: MemoryService | None = None) -> str:
         return "Usage: /recall <query>"
     if service is None:
         service = MemoryService()
-    results = service.retrieve(query, k=5)
-    if not results:
-        return "No relevant memory found."
-    
-    output = f"Found {len(results)} relevant memories:\n\n"
-    for i, r in enumerate(results, 1):
-        output += f"{i}. {r['text'][:200]}"
-        if len(r['text']) > 200:
-            output += "..."
-        output += f"\n   (distance: {r['distance']:.3f})" if r['distance'] else ""
-        output += "\n\n"
-    return output
+    try:
+        results = service.retrieve(query, k=5)
+        if not results:
+            return "No relevant memory found."
+        
+        output = f"Found {len(results)} relevant memories:\n\n"
+        for i, r in enumerate(results, 1):
+            output += f"{i}. {r['text'][:200]}"
+            if len(r['text']) > 200:
+                output += "..."
+            output += f"\n   (distance: {r['distance']:.3f})" if r['distance'] else ""
+            output += "\n\n"
+        return output
+    except Exception as e:
+        return f"Error retrieving memory: {e}"
 
 
 def handle_mem_stats(service: MemoryService | None = None) -> str:
     if service is None:
         service = MemoryService()
-    stats = service.stats()
-    return f"Memory Stats:\n  Documents: {stats['count']}\n  Storage: {stats['persist_directory']}"
+    try:
+        stats = service.stats()
+        return f"Memory Stats:\n  Documents: {stats['count']}\n  Storage: {stats['persist_directory']}"
+    except Exception as e:
+        return f"Error getting stats: {e}"
 
 
 def handle_mem_clear(service: MemoryService | None = None) -> str:
     if service is None:
         service = MemoryService()
-    service.clear()
-    return "Memory cleared."
+    try:
+        service.clear()
+        return "Memory cleared."
+    except Exception as e:
+        return f"Error clearing memory: {e}"
