@@ -372,6 +372,16 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
     # Validate constructor_params is a dict
     if not isinstance(config['constructor_params'], dict):
         raise ValueError(f"{prefix}constructor_params must be a dictionary")
+    
+    # Validate members (multi-member schema requirement)
+    if 'members' not in config:
+        raise ValueError(f"{prefix}Multi-member schema requires 'members' array")
+    
+    if not isinstance(config['members'], list):
+        raise ValueError(f"{prefix}Multi-member schema requires 'members' to be a list")
+    
+    if len(config['members']) == 0:
+        raise ValueError(f"{prefix}Multi-member schema requires non-empty 'members' array")
 
 
 def create_base_model_from_config(

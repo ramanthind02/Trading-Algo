@@ -4,12 +4,14 @@ from dataclasses import dataclass
 from datetime import timedelta
 import inspect
 import json
-from typing import Any, Callable, cast
+from typing import Any, Callable, Mapping, Protocol, Sequence, cast
 
 import pandas as pd
 
+from ensemble.weight_layer import WeightLayerConfig
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.metrics import resolve_objective_metric
+from utils.enums import Ticker
 from utils.grid_smoothing import add_smoothed_objective
 
 
@@ -33,6 +35,17 @@ class WalkforwardRunReport:
     fold_scores_df: pd.DataFrame
     selection_summary_df: pd.DataFrame
     portfolio_results_df: pd.DataFrame
+
+
+class _WalkforwardConfigLike(Protocol):
+    objective_metric_name: str
+
+
+class _ResearchConfigLike(Protocol):
+    bias_spec: Mapping[str, object]
+    walkforward: _WalkforwardConfigLike
+    binning_params: object
+    tickers: list[Ticker]
 
 
 def _empty_portfolio_results_df() -> pd.DataFrame:
@@ -63,22 +76,51 @@ def _parse_top_k_param_labels(top_k_features: str) -> list[dict[str, object]]:
         if not isinstance(label, str) or not label:
             continue
         parts = [part for part in label.split("|") if "=" in part]
-        parsed.append(
-            {
-                key.strip(): _coerce_param_value(value.strip())
-                for key, value in (part.split("=", 1) for part in parts)
-                if key.strip()
-            }
-        )
+        parsed_label = {
+            key.strip(): _coerce_param_value(value.strip())
+            for key, value in (part.split("=", 1) for part in parts)
+            if key.strip()
+        }
+        if parsed_label:
+            parsed.append(parsed_label)
     return parsed
+
+
+def _resolve_weight_layer_config(wf_cfg: object | None) -> WeightLayerConfig | None:
+    if wf_cfg is None:
+        return None
+
+    configured = getattr(wf_cfg, "weight_layer_config", None)
+    raw_algorithm = getattr(wf_cfg, "weight_layer_algorithm", None)
+    algorithm = getattr(raw_algorithm, "value", raw_algorithm)
+    algorithm_name = str(algorithm) if isinstance(algorithm, str) else None
+
+    if configured is None:
+        return WeightLayerConfig(weighting_method=algorithm_name) if algorithm_name else None
+    if not isinstance(configured, WeightLayerConfig):
+        return None
+    if algorithm_name is None or configured.weighting_method == algorithm_name:
+        return configured
+
+    return WeightLayerConfig(
+        weighting_method=algorithm_name,
+        group_method=configured.group_method,
+        rho_cut=configured.rho_cut,
+        within_group_weights=configured.within_group_weights,
+        linkage=configured.linkage,
+        shrinkage=configured.shrinkage,
+        fdm_max=configured.fdm_max,
+        fdm_correlation_source=configured.fdm_correlation_source,
+        weight_stability_threshold=configured.weight_stability_threshold,
+    )
 
 
 def run_portfolio_simulation(
     candles_df: pd.DataFrame,
     target: pd.Series,
-    fold_rows: list[dict[str, object]],
+    fold_rows: Sequence[Mapping[str, object]],
     selection_summary_df: pd.DataFrame,
-    research_config: Any,
+    research_config: object,
 ) -> pd.DataFrame:
     from feature_research.walkforward.portfolio_evaluator import (
         ensure_portfolio_candle_columns,
@@ -92,8 +134,13 @@ def run_portfolio_simulation(
     if getattr(all_datetimes, "tz", None) is not None:
         all_datetimes = all_datetimes.tz_localize(None)
 
-    trading_timeframe = research_config.bias_spec.get("timeframes", [None])[0]
-    objective_metric_name = research_config.walkforward.objective_metric_name
+    typed_research_config = cast(_ResearchConfigLike, research_config)
+    trading_timeframes = cast(
+        Sequence[object],
+        typed_research_config.bias_spec.get("timeframes", [None]),
+    )
+    trading_timeframe = trading_timeframes[0] if trading_timeframes else None
+    objective_metric_name = typed_research_config.walkforward.objective_metric_name
     rows: list[dict[str, object]] = []
 
     for fold_row in fold_rows:
@@ -139,16 +186,16 @@ def run_portfolio_simulation(
 
         try:
             wf_cfg = getattr(research_config, "walkforward", None)
-            weight_layer_config = getattr(wf_cfg, "weight_layer_config", None)
+            weight_layer_config = _resolve_weight_layer_config(wf_cfg)
             result = evaluate_fold_portfolio(
                 train_candles=train_candles,
                 test_candles=test_candles,
                 selected_params=selected_params,
                 target_series=target,
-                binning_config=research_config.binning_params,
-                tickers=research_config.tickers,
+                binning_config=typed_research_config.binning_params,
+                tickers=typed_research_config.tickers,
                 trading_timeframe=trading_timeframe,
-                module_name=str(research_config.bias_spec.get("module_name", "rsi")),
+                module_name=str(typed_research_config.bias_spec.get("module_name", "rsi")),
                 objective_metric_name=objective_metric_name,
                 weight_layer_config=weight_layer_config,
             )
@@ -246,17 +293,18 @@ def _build_fold_scores(
     train_index = candles_df.index[train_mask]
     test_index = candles_df.index[test_mask]
 
+    evaluator_signature = inspect.signature(evaluate_param_combo)
+    accepts_train_end = "train_end" in evaluator_signature.parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in evaluator_signature.parameters.values()
+    )
+
     def _call_evaluator(
         fold_data: pd.DataFrame,
         fold_targets: pd.Series,
         params: dict[str, object],
         train_end: pd.Timestamp,
     ) -> pd.Series:
-        signature = inspect.signature(evaluate_param_combo)
-        accepts_train_end = "train_end" in signature.parameters or any(
-            parameter.kind == inspect.Parameter.VAR_KEYWORD
-            for parameter in signature.parameters.values()
-        )
         if accepts_train_end:
             return evaluate_param_combo(
                 fold_data,
@@ -413,9 +461,11 @@ def _build_fold_scores(
                 precomputed_trade_frequencies=trade_frequencies,
             )
             top_k_features = enhanced_result.selected_labels
+            selected_in_top_k = fold_scores_df["param_label"].isin(enhanced_result.selected_labels)
             fold_scores_df = fold_scores_df.assign(
+                selected_feature=selected_in_top_k,
                 trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
-                selected_in_top_k=fold_scores_df["param_label"].isin(enhanced_result.selected_labels),
+                selected_in_top_k=selected_in_top_k,
             )
         else:  # stable_region
             from feature_research.walkforward.stable_region_selection import (
@@ -442,24 +492,31 @@ def _build_fold_scores(
                 if col in detail.columns else float("nan")
             )
             fold_scores_df = fold_scores_df.assign(
+                selected_feature=fold_scores_df["param_label"].isin(stable_result.selected_labels),
                 trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
                 selected_in_top_k=fold_scores_df["param_label"].isin(stable_result.selected_labels),
                 above_floor=_map("above_floor"),
                 region_id=_map("region_id"),
                 region_size=_map("region_size"),
             )
+        selected_summary_feature: str | float = float("nan")
+        selected_summary_raw = float("nan")
+        selected_summary_smoothed = float("nan")
     else:
         top_k_features = ranked_df["param_label"].head(top_k).tolist()
         fold_scores_df = fold_scores_df.assign(
             trade_frequency=float("nan"),
             selected_in_top_k=False,
         )
+        selected_summary_feature = selected_feature
+        selected_summary_raw = selected_row.raw_objective
+        selected_summary_smoothed = selected_row.smoothed_objective
 
     summary_row = {
         "fold_id": int(cast(int, fold_row["fold_id"])),
-        "selected_feature": selected_feature,
-        "selected_raw_objective": selected_row.raw_objective,
-        "selected_smoothed_objective": selected_row.smoothed_objective,
+        "selected_feature": selected_summary_feature,
+        "selected_raw_objective": selected_summary_raw,
+        "selected_smoothed_objective": selected_summary_smoothed,
         "top_k_features": json.dumps(top_k_features, separators=(",", ":"), ensure_ascii=True),
     }
     return fold_scores_df, summary_row
@@ -473,7 +530,7 @@ def run_walkforward_research(
     config: WalkforwardResearchConfig,
     param_grid: list[dict[str, object]],
     evaluate_param_combo: Callable[..., pd.Series],
-    research_config: Any | None = None,
+    research_config: object | None = None,
     portfolio_candles_df: pd.DataFrame | None = None,
 ) -> WalkforwardRunReport:
     if not isinstance(feature_type, str) or not feature_type.strip():

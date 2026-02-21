@@ -16,6 +16,8 @@ This replaces the previous fixed top-K ranking approach, which had two weaknesse
 
 The new approach is self-normalising (thresholds are relative to the landscape), finds however many stable regions exist, and produces natural structural diversity when multiple valid regions are present.
 
+Selection is selection-only: no forecast averaging is performed at the selection stage.
+
 ---
 
 ## Conceptual Foundation
@@ -40,16 +42,17 @@ The algorithm is parameter-free in the sense that no absolute performance cutoff
 
 ### Step 1: Hard Filters
 
-Apply hard constraints before any ranking. Remove any param combo that fails either:
+Apply hard constraints before any ranking.
 
-```
-trade_frequency < trade_freq_min
-```
+At the walkforward runner boundary, `trade_freq_min` is enforced as an upstream prefilter/input contract. The stable-region selector receives only params that already pass that trade-frequency gate.
+
+Inside the stable-region selector, the hard filter is:
+
 ```
 bin_count < bin_count_min   (continuous features only)
 ```
 
-`bin_count_min` prevents degenerate low-activity signals that produce near-zero outputs and achieve spurious decorrelation with real signals. Both constraints are checked before performance ranking.
+`bin_count_min` prevents degenerate low-activity signals that produce near-zero outputs and achieve spurious decorrelation with real signals.
 
 ### Step 2: Relative Floor Computation
 
@@ -139,12 +142,13 @@ All qualifying components have size 1 → no position taken this fold.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
+| `selection_method` | `top_k` | Selection algorithm identifier. `top_k` is default; `enhanced` and `stable_region` are available alternatives. |
 | `floor_method` | `adaptive` | `adaptive` (sigma-based) or `relative` (fixed δ) |
 | `delta` | `0.20` | Relative tolerance when `floor_method=relative` |
 | `adaptive_sigma_multiplier` | `1.0` | σ multiplier when `floor_method=adaptive` |
 | `k_per_region` | `3` | Max params selected per stable region |
 | `k_max` | `6` | Hard cap on total selected params across all regions |
-| `trade_freq_min` | feature-specific | Min trade frequency to pass hard filter |
+| `trade_freq_min` | feature-specific | Upstream walkforward prefilter (`WalkforwardResearchConfig`), applied before stable-region selection input |
 | `bin_count_min` | `5` | Min bin count for continuous features (blocks degenerate signals) |
 | `min_region_size` | `2` | Minimum connected component size to be treated as a valid region |
 
@@ -174,11 +178,13 @@ The `selected_params_detailed.csv` report includes all params with the fields ab
 
 This algorithm is the implementation of the pre-committed param selection rule described in [pipeline_overview.md §5](../pipeline_overview.md#5-pre-committed-param-selection-rule). It operates identically inside each walkforward training fold and in production. Because the selection is driven by relative thresholds, the rule behaves consistently across regimes without requiring threshold recalibration.
 
-The ensemble signal is:
+This stage outputs a selected parameter set only:
 
 ```
-signal = mean(signal(p) for p in selected)
+selected_params = {p_1, ..., p_k}
 ```
+
+Any forecast combination of selected members is performed downstream by the WeightLayer.
 
 If `|selected| < 2`, no position is taken.
 
@@ -192,7 +198,7 @@ If `|selected| < 2`, no position is taken.
 | Feature-agnostic | No — thresholds needed tuning | Yes — self-normalising |
 | Multi-region detection | No | Yes |
 | Structural diversity | Forced via correlation penalty (caused degenerate low-activity params) | Emerges from landscape structure |
-| Degenerate signal protection | Trade-freq filter only | Trade-freq + bin_count hard filter |
+| Degenerate signal protection | Trade-freq filter only | Upstream trade-freq prefilter + bin_count hard filter |
 | Isolated peak handling | Implicit via stability_ratio | Explicit via min_region_size ≥ 2 |
 
 ---
