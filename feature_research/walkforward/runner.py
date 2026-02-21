@@ -138,6 +138,8 @@ def run_portfolio_simulation(
         test_candles = ensure_portfolio_candle_columns(test_candles, trading_timeframe)
 
         try:
+            wf_cfg = getattr(research_config, "walkforward", None)
+            weight_layer_config = getattr(wf_cfg, "weight_layer_config", None)
             result = evaluate_fold_portfolio(
                 train_candles=train_candles,
                 test_candles=test_candles,
@@ -148,6 +150,7 @@ def run_portfolio_simulation(
                 trading_timeframe=trading_timeframe,
                 module_name=str(research_config.bias_spec.get("module_name", "rsi")),
                 objective_metric_name=objective_metric_name,
+                weight_layer_config=weight_layer_config,
             )
             rows.append(
                 {
@@ -352,8 +355,13 @@ def _build_fold_scores(
         ]
     )
 
-    if config.use_enhanced_selection:
-        from feature_research.walkforward.top_k_selection import run_enhanced_selection
+    effective_selection_method = config._effective_selection_method()
+
+    if effective_selection_method in ("enhanced", "stable_region"):
+        from feature_research.walkforward.top_k_selection import (
+            compute_all_trade_frequencies,
+            run_enhanced_selection,
+        )
 
         train_candles = candles_df.loc[train_mask]
         train_target = target.loc[train_mask]
@@ -371,22 +379,75 @@ def _build_fold_scores(
                 train_end=fold_train_end,
             )
 
-        enhanced_result = run_enhanced_selection(
+        # Shared trade-frequency computation (avoids double evaluation)
+        trade_frequencies = compute_all_trade_frequencies(
             training_data=train_candles,
             training_target=train_target,
             param_grid=param_grid,
             evaluate_param_combo=evaluate_training_param_combo,
-            smoothed_objectives={
-                str(row.param_label): float(row.smoothed_objective)
-                for row in smoothed_df.itertuples(index=False)
-            },
-            config=config,
         )
-        top_k_features = enhanced_result.selected_labels
-        fold_scores_df = fold_scores_df.assign(
-            trade_frequency=fold_scores_df["param_label"].map(enhanced_result.trade_frequencies),
-            selected_in_top_k=fold_scores_df["param_label"].isin(enhanced_result.selected_labels),
-        )
+        # Apply trade_freq_min hard filter for stable region input
+        trade_frequencies_filtered = {
+            label: freq
+            for label, freq in trade_frequencies.items()
+            if freq >= config.trade_freq_min
+        }
+
+        smoothed_obj_map = {
+            str(row.param_label): float(row.smoothed_objective)
+            for row in smoothed_df.itertuples(index=False)
+        }
+        raw_obj_map = {
+            str(row.param_label): float(row.raw_objective)
+            for row in raw_df.itertuples(index=False)
+        }
+
+        if effective_selection_method == "enhanced":
+            enhanced_result = run_enhanced_selection(
+                training_data=train_candles,
+                training_target=train_target,
+                param_grid=param_grid,
+                evaluate_param_combo=evaluate_training_param_combo,
+                smoothed_objectives=smoothed_obj_map,
+                config=config,
+                precomputed_trade_frequencies=trade_frequencies,
+            )
+            top_k_features = enhanced_result.selected_labels
+            fold_scores_df = fold_scores_df.assign(
+                trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
+                selected_in_top_k=fold_scores_df["param_label"].isin(enhanced_result.selected_labels),
+            )
+        else:  # stable_region
+            from feature_research.walkforward.stable_region_selection import (
+                StableRegionConfig,
+                run_stable_region_selection,
+            )
+            stable_cfg: StableRegionConfig = (
+                config.stable_region
+                if isinstance(config.stable_region, StableRegionConfig)
+                else StableRegionConfig()
+            )
+            stable_result = run_stable_region_selection(
+                smoothed_objectives=smoothed_obj_map,
+                raw_objectives=raw_obj_map,
+                trade_frequencies=trade_frequencies_filtered,
+                param_grid=param_grid,
+                config=stable_cfg,
+            )
+            top_k_features = stable_result.selected_labels
+            # Merge per-param detail into fold_scores_df
+            detail = stable_result.per_param_detail.set_index("param_label")
+            _map = lambda col: (  # noqa: E731
+                fold_scores_df["param_label"].map(detail[col].to_dict())
+                if col in detail.columns else float("nan")
+            )
+            fold_scores_df = fold_scores_df.assign(
+                trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
+                selected_in_top_k=fold_scores_df["param_label"].isin(stable_result.selected_labels),
+                above_floor=_map("above_floor"),
+                region_id=_map("region_id"),
+                region_size=_map("region_size"),
+            )
     else:
         top_k_features = ranked_df["param_label"].head(top_k).tolist()
         fold_scores_df = fold_scores_df.assign(

@@ -21,12 +21,73 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass as _dataclass
 from typing import Dict, List, Optional, Protocol
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# WeightLayerConfig — pre-committed configuration for method selection
+# ---------------------------------------------------------------------------
+
+@_dataclass(frozen=True)
+class WeightLayerConfig:
+    """Pre-committed configuration for weight layer method selection.
+
+    Attributes
+    ----------
+    weighting_method : str
+        One of: ``"equal_flat"``, ``"equal_grouped"``,
+        ``"inv_downside_vol_grouped"``, ``"downside_hrp_grouped"``,
+        ``"downside_hrp_flat"``, ``"inverse_correlation"`` (backward-compat).
+    group_method : str
+        ``"feature_family"`` (extract module prefix from model name) or
+        ``"correlation_clustering"`` (hierarchical clustering with rho_cut).
+    rho_cut : float
+        Correlation cutoff for ``correlation_clustering`` (default 0.70).
+    within_group_weights : str
+        ``"equal"`` — only supported option currently.
+    linkage : str
+        Linkage method for Ward-HRP clustering: ``"ward"``, ``"complete"``, ``"single"``.
+    shrinkage : str
+        ``"ledoit_wolf"`` or ``"none"`` for downside semi-covariance estimation.
+    fdm_max : float
+        Cap on FDM (default 2.0, per spec).
+    fdm_correlation_source : str
+        ``"downside"`` — use downside correlation matrix for FDM computation.
+        ``"full_period"`` — use full-period correlation (for equal-weight methods).
+    weight_stability_threshold : float
+        Diagnostic: warn if any group weight shifts more than this across folds.
+    """
+    weighting_method: str = "inverse_correlation"
+    group_method: str = "feature_family"
+    rho_cut: float = 0.70
+    within_group_weights: str = "equal"
+    linkage: str = "ward"
+    shrinkage: str = "ledoit_wolf"
+    fdm_max: float = 2.0
+    fdm_correlation_source: str = "downside"
+    weight_stability_threshold: float = 0.20
+
+    def __post_init__(self) -> None:
+        valid_methods = {
+            "equal_flat", "equal_grouped", "inv_downside_vol_grouped",
+            "downside_hrp_grouped", "downside_hrp_flat", "inverse_correlation",
+        }
+        if self.weighting_method not in valid_methods:
+            raise ValueError(
+                f"weighting_method must be one of {sorted(valid_methods)}, "
+                f"got '{self.weighting_method}'"
+            )
+        if self.group_method not in ("feature_family", "correlation_clustering"):
+            raise ValueError(
+                f"group_method must be 'feature_family' or 'correlation_clustering', "
+                f"got '{self.group_method}'"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +306,7 @@ class BaseWeightLayer(ABC):
         self,
         ticker_signals: pd.DataFrame,
         ticker_forecast_vectors: List[pd.DataFrame],
+        ticker_returns: Optional[pd.Series] = None,
     ) -> pd.Series:
         """
         Compute model weights for a single ticker.
@@ -257,6 +319,9 @@ class BaseWeightLayer(ABC):
         ticker_forecast_vectors : list[pd.DataFrame]
             Forecast vectors filtered to this ticker.
             Each DataFrame has columns: ['ticker', 'model_name', 'forecast', 'signal']
+        ticker_returns : pd.Series, optional
+            Aligned return series for this ticker (date index, float values).
+            Required by downside-risk methods; ignored by correlation-based methods.
 
         Returns
         -------
@@ -271,6 +336,7 @@ class BaseWeightLayer(ABC):
         self,
         forecast_vectors: List[pd.DataFrame],
         signals: pd.DataFrame,
+        returns: Optional[pd.Series] = None,
     ) -> BaseWeightLayer:
         """
         Fit weights and FDM from training data, separately for each ticker.
@@ -283,6 +349,10 @@ class BaseWeightLayer(ABC):
         signals : pd.DataFrame
             Binary signals from all base models.
             Columns: model names, rows: samples (datetime index)
+        returns : pd.Series, optional
+            Instrument return series (date index, float values).  Passed through
+            to ``_fit_ticker_weights`` for downside-risk weighting methods.
+            Ignored by correlation-based methods.
 
         Returns
         -------
@@ -374,9 +444,14 @@ class BaseWeightLayer(ABC):
                 self.mean_forecast_correlation_[ticker] = 1.0
                 continue
 
+            # Extract ticker-aligned returns (same returns series for all tickers in single-ticker research)
+            ticker_returns: Optional[pd.Series] = None
+            if returns is not None:
+                ticker_returns = returns  # pass the full series; subclasses align by index
+
             # --- Delegate weight calculation to subclass ---
             ticker_weights = self._fit_ticker_weights(
-                ticker_signals, ticker_forecast_vectors
+                ticker_signals, ticker_forecast_vectors, ticker_returns
             )
 
             self.weights_[ticker] = ticker_weights
@@ -750,6 +825,218 @@ class BaseWeightLayer(ABC):
 
 
 # ---------------------------------------------------------------------------
+# Private helper functions (used by new concrete subclasses)
+# ---------------------------------------------------------------------------
+
+def _extract_group_assignments(
+    model_names: List[str],
+    group_method: str,
+    signals_df: pd.DataFrame,
+    rho_cut: float = 0.70,
+) -> Dict[str, str]:
+    """Map model names to group IDs.
+
+    Parameters
+    ----------
+    model_names : list[str]
+        All model names for this ticker.
+    group_method : str
+        ``"feature_family"`` or ``"correlation_clustering"``.
+    signals_df : pd.DataFrame
+        (date × model) binary signal matrix, used only for correlation_clustering.
+    rho_cut : float
+        Correlation cutoff for clustering method.
+
+    Returns
+    -------
+    dict mapping model_name → group_id (string)
+    """
+    if group_method == "feature_family":
+        return {name: name.split("_")[0] for name in model_names}
+
+    # correlation_clustering: hierarchical Ward on full-period correlation
+    from scipy.cluster.hierarchy import linkage as _scipy_linkage, fcluster
+    from scipy.spatial.distance import squareform
+
+    if signals_df.empty or len(signals_df.columns) < 2:
+        return {name: name for name in model_names}
+
+    available = [m for m in model_names if m in signals_df.columns]
+    if len(available) < 2:
+        return {name: name for name in model_names}
+
+    corr = signals_df[available].corr().fillna(0.0).clip(lower=0.0)
+    dist = np.sqrt(0.5 * (1.0 - corr.values))
+    np.fill_diagonal(dist, 0.0)
+    condensed = squareform(dist)
+    Z = _scipy_linkage(condensed, method="ward")
+    # Cut at rho_cut: distance threshold = sqrt(0.5*(1-rho_cut))
+    dist_threshold = float(np.sqrt(0.5 * (1.0 - rho_cut)))
+    labels = fcluster(Z, dist_threshold, criterion="distance")
+    group_map = {name: f"cluster_{lbl}" for name, lbl in zip(available, labels)}
+    # Any models not in signals_df get their own group
+    for name in model_names:
+        if name not in group_map:
+            group_map[name] = name
+    return group_map
+
+
+def _compute_group_signals_and_returns(
+    ticker_signals: pd.DataFrame,
+    ticker_returns: Optional[pd.Series],
+    group_assignments: Dict[str, str],
+) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+    """Build (T×K) group signal and group return DataFrames.
+
+    group_signal_k(t) = mean(signal_i(t) for i in group_k)
+    group_return_k(t) = group_signal_k(t) × return(t)  [if returns provided]
+
+    Returns
+    -------
+    group_signals_df : pd.DataFrame  columns = group IDs
+    group_returns_df : pd.DataFrame or None  columns = group IDs
+    """
+    groups = sorted(set(group_assignments.values()))
+    group_signals: Dict[str, pd.Series] = {}
+    for grp in groups:
+        members = [m for m, g in group_assignments.items() if g == grp and m in ticker_signals.columns]
+        if not members:
+            continue
+        group_signals[grp] = ticker_signals[members].mean(axis=1)
+
+    group_signals_df = pd.DataFrame(group_signals)
+
+    if ticker_returns is None:
+        return group_signals_df, None
+
+    aligned_returns = ticker_returns.reindex(group_signals_df.index)
+    group_returns_df = group_signals_df.multiply(aligned_returns, axis=0)
+    return group_signals_df, group_returns_df
+
+
+def _compute_downside_semi_covariance(
+    group_returns_df: pd.DataFrame,
+    shrinkage: str = "ledoit_wolf",
+) -> np.ndarray:
+    """Compute K×K downside semi-covariance matrix.
+
+    r_k^-(t) = min(group_return_k(t), 0)
+    Σ^down_kl = (1/T) × Σ_t [r_k^-(t) × r_l^-(t)]
+
+    Applies Ledoit-Wolf shrinkage if requested.
+    """
+    data = group_returns_df.values.copy()
+    # Lower semi-returns: clip positive values to zero
+    semi = np.minimum(data, 0.0)
+    T = semi.shape[0]
+    semi_cov = (semi.T @ semi) / max(T, 1)
+
+    if shrinkage == "ledoit_wolf" and semi_cov.shape[0] >= 2:
+        try:
+            from sklearn.covariance import LedoitWolf
+            lw = LedoitWolf(assume_centered=True)
+            lw.fit(semi)
+            semi_cov = lw.covariance_
+        except Exception:
+            pass  # fall back to raw estimate
+
+    return semi_cov
+
+
+def _hrp_weights_from_semi_cov(
+    semi_cov: np.ndarray,
+    linkage_method: str = "ward",
+) -> np.ndarray:
+    """HRP weight vector from a K×K downside semi-covariance matrix.
+
+    Steps: downside correlation → distance → Ward linkage → recursive bisection.
+
+    Returns
+    -------
+    np.ndarray of length K, summing to 1.0
+    """
+    from scipy.cluster.hierarchy import linkage as _scipy_linkage, to_tree
+    from scipy.spatial.distance import squareform
+
+    K = semi_cov.shape[0]
+    if K == 1:
+        return np.array([1.0])
+
+    # Downside correlation
+    diag = np.diag(semi_cov)
+    denom = np.sqrt(np.outer(diag, diag))
+    denom[denom == 0] = 1.0
+    corr = semi_cov / denom
+    np.fill_diagonal(corr, 1.0)
+    corr = np.clip(corr, -1.0, 1.0)
+
+    # Distance
+    dist = np.sqrt(np.clip(0.5 * (1.0 - corr), 0.0, None))
+    np.fill_diagonal(dist, 0.0)
+
+    condensed = squareform(dist)
+    Z = _scipy_linkage(condensed, method=linkage_method)
+
+    # Leaf order from dendrogram
+    root, _ = to_tree(Z, rd=True)
+
+    def _leaf_order(node):
+        if node.is_leaf():
+            return [node.id]
+        return _leaf_order(node.get_left()) + _leaf_order(node.get_right())
+
+    leaf_order = _leaf_order(root)
+
+    # Recursive bisection
+    weights = np.ones(K, dtype=float)
+
+    def _bisect(items: list) -> None:
+        if len(items) <= 1:
+            return
+        mid = len(items) // 2
+        left, right = items[:mid], items[mid:]
+
+        def _cluster_var(idx_list: list) -> float:
+            n = len(idx_list)
+            w = np.ones(n) / n
+            sub = semi_cov[np.ix_(idx_list, idx_list)]
+            return float(w @ sub @ w)
+
+        var_l = _cluster_var(left)
+        var_r = _cluster_var(right)
+        total = var_l + var_r
+        alpha = (var_r / total) if total > 0 else 0.5  # fraction to left
+        weights[left] *= alpha
+        weights[right] *= (1.0 - alpha)
+        _bisect(left)
+        _bisect(right)
+
+    _bisect(leaf_order)
+    total = weights.sum()
+    return weights / total if total > 0 else np.ones(K) / K
+
+
+def _compute_fdm_from_corr_matrix(
+    corr_matrix: np.ndarray,
+    fdm_max: float = 2.0,
+) -> float:
+    """FDM from a K×K correlation matrix.
+
+    mean_corr = mean of off-diagonal upper-triangle entries (clipped ≥ 0)
+    FDM = min(sqrt(1 / (mean_corr + 0.01)), fdm_max)
+    """
+    K = corr_matrix.shape[0]
+    if K <= 1:
+        return 1.0
+    mask = np.triu(np.ones((K, K), dtype=bool), k=1)
+    off_diag = corr_matrix[mask]
+    off_diag = np.clip(off_diag, 0.0, None)
+    mean_corr = float(off_diag.mean()) if len(off_diag) > 0 else 1.0
+    fdm = float(np.sqrt(1.0 / (mean_corr + 0.01)))
+    return min(fdm, fdm_max)
+
+
+# ---------------------------------------------------------------------------
 # Concrete Strategy: Inverse Correlation
 # ---------------------------------------------------------------------------
 
@@ -776,11 +1063,315 @@ class InverseCorrelationWeightLayer(BaseWeightLayer):
         self,
         ticker_signals: pd.DataFrame,
         ticker_forecast_vectors: List[pd.DataFrame],
+        ticker_returns: Optional[pd.Series] = None,
     ) -> pd.Series:
         """Compute inverse-correlation weights from binary signals."""
         weighter = InverseCorrelationWeighter()
         weighter.fit(ticker_signals)
         return weighter.get_weights()
+
+# ---------------------------------------------------------------------------
+# Concrete Strategy: Equal Flat (Level 0)
+# ---------------------------------------------------------------------------
+
+class EqualFlatWeightLayer(BaseWeightLayer):
+    """Level 0 — Equal weights across all N signals, no grouping.
+
+    The hard baseline. FDM computed from full-period forecast correlations.
+    """
+
+    def __init__(self, config: Optional['WeightLayerConfig'] = None) -> None:
+        cfg = config or WeightLayerConfig()
+        super().__init__(fdm_max=cfg.fdm_max)
+        self._wl_config = cfg
+
+    @property
+    def weight_method(self) -> str:
+        return 'equal_flat'
+
+    def _fit_ticker_weights(
+        self,
+        ticker_signals: pd.DataFrame,
+        ticker_forecast_vectors: List[pd.DataFrame],
+        ticker_returns: Optional[pd.Series] = None,
+    ) -> pd.Series:
+        n = len(ticker_signals.columns)
+        equal_w = 1.0 / n if n > 0 else 1.0
+        return pd.Series({m: equal_w for m in ticker_signals.columns})
+
+
+# ---------------------------------------------------------------------------
+# Concrete Strategy: Equal Grouped (Level 1)
+# ---------------------------------------------------------------------------
+
+class EqualGroupedWeightLayer(BaseWeightLayer):
+    """Level 1 — Equal within group, equal across groups.
+
+    Tests whether grouping structure alone adds value over flat equal weights.
+    FDM from full-period correlation.
+    """
+
+    def __init__(self, config: Optional['WeightLayerConfig'] = None) -> None:
+        cfg = config or WeightLayerConfig()
+        super().__init__(fdm_max=cfg.fdm_max)
+        self._wl_config = cfg
+
+    @property
+    def weight_method(self) -> str:
+        return 'equal_grouped'
+
+    def _fit_ticker_weights(
+        self,
+        ticker_signals: pd.DataFrame,
+        ticker_forecast_vectors: List[pd.DataFrame],
+        ticker_returns: Optional[pd.Series] = None,
+    ) -> pd.Series:
+        model_names = list(ticker_signals.columns)
+        group_map = _extract_group_assignments(
+            model_names, self._wl_config.group_method,
+            ticker_signals, self._wl_config.rho_cut,
+        )
+        groups = sorted(set(group_map.values()))
+        K = len(groups)
+        group_weight = 1.0 / K if K > 0 else 1.0
+        weights: Dict[str, float] = {}
+        for grp in groups:
+            members = [m for m in model_names if group_map[m] == grp]
+            per_model = group_weight / len(members) if members else 0.0
+            for m in members:
+                weights[m] = per_model
+        total = sum(weights.values())
+        if total > 0:
+            weights = {k: v / total for k, v in weights.items()}
+        return pd.Series(weights)
+
+
+# ---------------------------------------------------------------------------
+# Concrete Strategy: Inverse Downside Vol, Grouped (Level 2)
+# ---------------------------------------------------------------------------
+
+class InvDownsideVolGroupedWeightLayer(BaseWeightLayer):
+    """Level 2 — Equal within group, inverse downside vol across groups.
+
+    Group weights ∝ 1/σ^down_k. No correlation matrix — targets drawdown
+    without matrix estimation risk.
+    """
+
+    def __init__(self, config: Optional['WeightLayerConfig'] = None) -> None:
+        cfg = config or WeightLayerConfig()
+        super().__init__(fdm_max=cfg.fdm_max)
+        self._wl_config = cfg
+
+    @property
+    def weight_method(self) -> str:
+        return 'inv_downside_vol_grouped'
+
+    def _fit_ticker_weights(
+        self,
+        ticker_signals: pd.DataFrame,
+        ticker_forecast_vectors: List[pd.DataFrame],
+        ticker_returns: Optional[pd.Series] = None,
+    ) -> pd.Series:
+        model_names = list(ticker_signals.columns)
+        group_map = _extract_group_assignments(
+            model_names, self._wl_config.group_method,
+            ticker_signals, self._wl_config.rho_cut,
+        )
+        groups = sorted(set(group_map.values()))
+        K = len(groups)
+
+        if ticker_returns is None or K == 1:
+            # Fallback: equal across groups
+            group_weight = 1.0 / K if K > 0 else 1.0
+            weights: Dict[str, float] = {}
+            for grp in groups:
+                members = [m for m in model_names if group_map[m] == grp]
+                per_model = group_weight / len(members) if members else 0.0
+                for m in members:
+                    weights[m] = per_model
+            total = sum(weights.values())
+            return pd.Series({k: v / total for k, v in weights.items()})
+
+        _, group_returns_df = _compute_group_signals_and_returns(
+            ticker_signals, ticker_returns, group_map
+        )
+        if group_returns_df is None or group_returns_df.empty:
+            equal_w = 1.0 / len(model_names)
+            return pd.Series({m: equal_w for m in model_names})
+
+        # Downside vol per group
+        semi = np.minimum(group_returns_df.values, 0.0)
+        downside_std = semi.std(axis=0, ddof=0)
+        downside_std = np.where(downside_std == 0, 1e-8, downside_std)
+        inv_vol = 1.0 / downside_std
+        group_weights_arr = inv_vol / inv_vol.sum()
+        group_cols = list(group_returns_df.columns)
+
+        weights_out: Dict[str, float] = {}
+        for i, grp in enumerate(group_cols):
+            members = [m for m in model_names if group_map.get(m) == grp]
+            per_model = group_weights_arr[i] / len(members) if members else 0.0
+            for m in members:
+                weights_out[m] = per_model
+
+        total = sum(weights_out.values())
+        if total > 0:
+            weights_out = {k: v / total for k, v in weights_out.items()}
+        return pd.Series(weights_out)
+
+
+# ---------------------------------------------------------------------------
+# Concrete Strategy: Downside HRP, Grouped (Level 3) — Default
+# ---------------------------------------------------------------------------
+
+class DownsideHRPGroupedWeightLayer(BaseWeightLayer):
+    """Level 3 — Equal within group, Downside-HRP across groups.
+
+    Full algorithm from weight_layer.md Section 4.  This is the default
+    production method candidate.
+
+    Steps
+    -----
+    1. Within-group aggregation (equal weights).
+    2. Downside semi-covariance on group return streams.
+    3. Ledoit-Wolf shrinkage.
+    4. HRP recursive bisection on Ward dendrogram of downside distance.
+    5. FDM from downside correlation of groups.
+    """
+
+    def __init__(self, config: Optional['WeightLayerConfig'] = None) -> None:
+        cfg = config or WeightLayerConfig()
+        super().__init__(fdm_max=cfg.fdm_max)
+        self._wl_config = cfg
+
+    @property
+    def weight_method(self) -> str:
+        return 'downside_hrp_grouped'
+
+    def _fit_ticker_weights(
+        self,
+        ticker_signals: pd.DataFrame,
+        ticker_forecast_vectors: List[pd.DataFrame],
+        ticker_returns: Optional[pd.Series] = None,
+    ) -> pd.Series:
+        model_names = list(ticker_signals.columns)
+        group_map = _extract_group_assignments(
+            model_names, self._wl_config.group_method,
+            ticker_signals, self._wl_config.rho_cut,
+        )
+        groups = sorted(set(group_map.values()))
+        K = len(groups)
+
+        if K <= 1 or ticker_returns is None:
+            # Single group or no returns: equal weights
+            equal_w = 1.0 / len(model_names)
+            return pd.Series({m: equal_w for m in model_names})
+
+        _, group_returns_df = _compute_group_signals_and_returns(
+            ticker_signals, ticker_returns, group_map
+        )
+        if group_returns_df is None or group_returns_df.empty or len(group_returns_df) < 2:
+            equal_w = 1.0 / len(model_names)
+            return pd.Series({m: equal_w for m in model_names})
+
+        semi_cov = _compute_downside_semi_covariance(
+            group_returns_df, shrinkage=self._wl_config.shrinkage
+        )
+        group_weights_arr = _hrp_weights_from_semi_cov(
+            semi_cov, linkage_method=self._wl_config.linkage
+        )
+        group_cols = list(group_returns_df.columns)
+
+        weights_out: Dict[str, float] = {}
+        for i, grp in enumerate(group_cols):
+            members = [m for m in model_names if group_map.get(m) == grp]
+            per_model = group_weights_arr[i] / len(members) if members else 0.0
+            for m in members:
+                weights_out[m] = per_model
+
+        total = sum(weights_out.values())
+        if total > 0:
+            weights_out = {k: v / total for k, v in weights_out.items()}
+        return pd.Series(weights_out)
+
+    def _calculate_fdm(
+        self,
+        forecast_vectors: List[pd.DataFrame],
+        ticker: Optional[str] = None,
+    ) -> float:
+        """Override: FDM from group-level downside correlation, not individual forecasts."""
+        # Retrieve stored group returns for this ticker (set during _fit_ticker_weights via fit)
+        # Fallback to parent FDM if group data not available
+        group_returns = getattr(self, f"_group_returns_{ticker}", None)
+        if group_returns is None or not isinstance(group_returns, pd.DataFrame):
+            return super()._calculate_fdm(forecast_vectors, ticker)
+
+        semi_cov = _compute_downside_semi_covariance(
+            group_returns, shrinkage=self._wl_config.shrinkage
+        )
+        K = semi_cov.shape[0]
+        diag = np.diag(semi_cov)
+        denom = np.sqrt(np.outer(diag, diag))
+        denom[denom == 0] = 1.0
+        corr = semi_cov / denom
+        np.fill_diagonal(corr, 1.0)
+        corr = np.clip(corr, 0.0, None)
+        fdm = _compute_fdm_from_corr_matrix(corr, fdm_max=self._wl_config.fdm_max)
+        mean_corr = float(np.triu(corr, k=1).sum() / max(K * (K - 1) / 2, 1))
+        if ticker is not None:
+            self.mean_forecast_correlation_[ticker] = mean_corr
+        return fdm
+
+
+# ---------------------------------------------------------------------------
+# Concrete Strategy: Downside HRP, Flat (Level 4)
+# ---------------------------------------------------------------------------
+
+class DownsideHRPFlatWeightLayer(BaseWeightLayer):
+    """Level 4 — Downside-HRP directly on all N signals (no grouping).
+
+    Control experiment: does grouping improve stability over raw HRP on
+    individual signals?  Expect more weight instability than Level 3 as N grows.
+    """
+
+    def __init__(self, config: Optional['WeightLayerConfig'] = None) -> None:
+        cfg = config or WeightLayerConfig()
+        super().__init__(fdm_max=cfg.fdm_max)
+        self._wl_config = cfg
+
+    @property
+    def weight_method(self) -> str:
+        return 'downside_hrp_flat'
+
+    def _fit_ticker_weights(
+        self,
+        ticker_signals: pd.DataFrame,
+        ticker_forecast_vectors: List[pd.DataFrame],
+        ticker_returns: Optional[pd.Series] = None,
+    ) -> pd.Series:
+        model_names = list(ticker_signals.columns)
+        N = len(model_names)
+
+        if N <= 1 or ticker_returns is None:
+            equal_w = 1.0 / N if N > 0 else 1.0
+            return pd.Series({m: equal_w for m in model_names})
+
+        aligned_returns = ticker_returns.reindex(ticker_signals.index)
+        # Per-model return streams: signal_i(t) × return(t)
+        model_returns_df = ticker_signals.multiply(aligned_returns, axis=0)
+
+        if len(model_returns_df.dropna()) < 2:
+            equal_w = 1.0 / N
+            return pd.Series({m: equal_w for m in model_names})
+
+        semi_cov = _compute_downside_semi_covariance(
+            model_returns_df.fillna(0.0), shrinkage=self._wl_config.shrinkage
+        )
+        weights_arr = _hrp_weights_from_semi_cov(
+            semi_cov, linkage_method=self._wl_config.linkage
+        )
+        return pd.Series(dict(zip(model_names, weights_arr)))
+
 
 # ---------------------------------------------------------------------------
 # Backward-compatible factory function
@@ -789,44 +1380,69 @@ class InverseCorrelationWeightLayer(BaseWeightLayer):
 def WeightLayer(
     weight_method: str = 'inverse_correlation',
     fdm_max: float = 2.5,
+    config: Optional['WeightLayerConfig'] = None,
     **kwargs,
 ) -> BaseWeightLayer:
     """
     Factory that creates the appropriate weight layer by method name.
 
-    This function preserves full backward compatibility: all existing code that
-    calls ``WeightLayer(...)`` continues to work unchanged.
-
     Parameters
     ----------
     weight_method : str, default='inverse_correlation'
-        Weight calculation strategy. Only ``'inverse_correlation'`` is supported.
+        Ignored when ``config`` is provided.
     fdm_max : float, default=2.5
-        Maximum FDM value
+        FDM cap. Ignored when ``config`` is provided (use config.fdm_max).
+    config : WeightLayerConfig, optional
+        When provided, ``config.weighting_method`` takes precedence over
+        ``weight_method``.
     **kwargs
-        Ignored. Included for backward-compatibility in call sites.
+        Ignored. Included for backward compatibility.
 
     Returns
     -------
     BaseWeightLayer
-        A fitted-ready weight layer instance.
 
     Examples
     --------
     >>> layer = WeightLayer()                                     # inverse correlation (default)
+    >>> layer = WeightLayer(config=WeightLayerConfig(weighting_method='downside_hrp_grouped'))
     """
-    if weight_method != 'inverse_correlation':
+    if config is not None:
+        method = config.weighting_method
+    else:
+        method = weight_method
+
+    _REGISTRY: Dict[str, type] = {
+        'inverse_correlation': InverseCorrelationWeightLayer,
+        'equal_flat': EqualFlatWeightLayer,
+        'equal_grouped': EqualGroupedWeightLayer,
+        'inv_downside_vol_grouped': InvDownsideVolGroupedWeightLayer,
+        'downside_hrp_grouped': DownsideHRPGroupedWeightLayer,
+        'downside_hrp_flat': DownsideHRPFlatWeightLayer,
+    }
+    if method not in _REGISTRY:
         raise ValueError(
-            f"Unknown weight method: {weight_method}. "
-            "Supported methods: ['inverse_correlation']"
+            f"Unknown weight method: '{method}'. "
+            f"Supported methods: {sorted(_REGISTRY)}"
         )
-    return InverseCorrelationWeightLayer(fdm_max=fdm_max)
+    cls = _REGISTRY[method]
+    if method == 'inverse_correlation':
+        # backward-compat: use fdm_max from arg if no config
+        effective_fdm_max = config.fdm_max if config is not None else fdm_max
+        return cls(fdm_max=effective_fdm_max)
+    return cls(config=config)
 
 
 __all__ = [
+    'WeightLayerConfig',
     'WeightLayer',
     'BaseWeightLayer',
     'InverseCorrelationWeightLayer',
+    'EqualFlatWeightLayer',
+    'EqualGroupedWeightLayer',
+    'InvDownsideVolGroupedWeightLayer',
+    'DownsideHRPGroupedWeightLayer',
+    'DownsideHRPFlatWeightLayer',
     'InverseCorrelationWeighter',
     'Weighter',
 ]

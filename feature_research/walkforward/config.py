@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from feature_research.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
+
+_VALID_SELECTION_METHODS = ("top_k", "enhanced", "stable_region")
 
 
 @dataclass(frozen=True)
@@ -18,8 +20,13 @@ class WalkforwardResearchConfig:
     objective_metric_name: str = "sortino"
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
-    use_enhanced_selection: bool = False
+    use_enhanced_selection: bool = False  # deprecated; prefer selection_method="enhanced"
     trade_freq_min: float = 0.05
+    # --- Configurable ensemble selection algorithm ---
+    selection_method: str = "top_k"  # "top_k" | "enhanced" | "stable_region"
+    stable_region: object = field(default=None)  # StableRegionConfig | None
+    # --- Configurable weight layer method ---
+    weight_layer_config: object = field(default=None)  # WeightLayerConfig | None
 
     def __post_init__(self) -> None:
         if self.train_end <= self.train_start:
@@ -44,3 +51,14 @@ class WalkforwardResearchConfig:
             raise ValueError("output_root must be a non-empty Path")
         if not (0.0 <= self.trade_freq_min <= 1.0):
             raise ValueError("trade_freq_min must be in [0, 1]")
+        if self.selection_method not in _VALID_SELECTION_METHODS:
+            raise ValueError(
+                f"selection_method must be one of {_VALID_SELECTION_METHODS}, "
+                f"got '{self.selection_method}'"
+            )
+
+    def _effective_selection_method(self) -> str:
+        """Resolve the active selection method, honouring the legacy flag."""
+        if self.use_enhanced_selection and self.selection_method == "top_k":
+            return "enhanced"
+        return self.selection_method

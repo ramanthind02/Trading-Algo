@@ -10,6 +10,7 @@ import pandas as pd
 
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
+from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from feature_research.walkforward.metrics import resolve_objective_metric
 from utils.enums import TimeFrame, Ticker
 from utils.helpers import build_feature_column_name
@@ -118,6 +119,7 @@ def build_research_portfolio(
     trading_timeframe: TimeFrame | str = TimeFrame.D,
     target_volatility: float = 0.15,
     module_name: str = "rsi",
+    weight_layer_config: WeightLayerConfig | None = None,
 ) -> Portfolio:
     timeframe = _normalize_timeframe(trading_timeframe)
     control_payload = _build_control_file_payload(
@@ -141,10 +143,12 @@ def build_research_portfolio(
     finally:
         control_file.unlink(missing_ok=True)
 
+    weight_layer = WeightLayer(config=weight_layer_config) if weight_layer_config is not None else None
     return Portfolio(
         ensembles=[ensemble],
         trading_timeframe=timeframe,
         target_volatility=target_volatility,
+        weight_layer=weight_layer,
     )
 
 
@@ -159,6 +163,7 @@ def evaluate_fold_portfolio(
     target_volatility: float = 0.15,
     module_name: str = "rsi",
     objective_metric_name: str = "sharpe",
+    weight_layer_config: WeightLayerConfig | None = None,
 ) -> FoldPortfolioResult:
     timeframe = _normalize_timeframe(trading_timeframe)
     train_ready = ensure_portfolio_candle_columns(train_candles, timeframe)
@@ -173,6 +178,7 @@ def evaluate_fold_portfolio(
         trading_timeframe=timeframe,
         target_volatility=target_volatility,
         module_name=module_name,
+        weight_layer_config=weight_layer_config,
     )
 
     train_index = pd.DatetimeIndex(pd.to_datetime(train_ready["datetime"], utc=False))
