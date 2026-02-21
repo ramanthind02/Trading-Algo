@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 
 from feature_research.continuous_binning.config import ResearchConfig, load_config
-from feature_research.walkforward.config import WalkforwardResearchConfig
+from feature_research.walkforward.config import (
+    WalkforwardResearchConfig,
+    WalkforwardSelectionMethod,
+    WeightLayerAlgorithm,
+)
 from utils.enums import Ticker, TimeFrame
 
 
@@ -39,6 +43,23 @@ def test_load_config_includes_walkforward_defaults() -> None:
     assert config.walkforward.train_start == config.start
     assert config.walkforward.train_end < config.end
     assert config.walkforward.output_root == Path("feature_research/shared_results")
+
+
+def test_load_config_exposes_walkforward_selection_control() -> None:
+    config = load_config()
+
+    assert config.walkforward_selection_method == WalkforwardSelectionMethod.TOP_K
+    assert config.walkforward.selection_method == config.walkforward_selection_method
+
+
+def test_load_config_exposes_weight_layer_algorithm_control() -> None:
+    config = load_config()
+
+    assert (
+        config.weight_layer_algorithm
+        == WeightLayerAlgorithm.INVERSE_CORRELATION
+    )
+    assert config.walkforward.weight_layer_algorithm == config.weight_layer_algorithm
 
 
 def _make_research_config(*, tickers: list[Ticker], target_col: str) -> ResearchConfig:
@@ -89,3 +110,88 @@ def test_research_config_allows_normalized_targets_with_multiple_tickers() -> No
 
     assert ewsd_config.target_col == "log_return_ewsd"
     assert atr_config.target_col == "log_return_atr"
+
+
+def test_research_config_coerces_top_level_controls_from_strings() -> None:
+    walkforward = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2023, 1, 1),
+        selection_method="stable_region",
+        weight_layer_algorithm="equal_grouped",
+    )
+
+    config = ResearchConfig(
+        tickers=[Ticker.ES],
+        start=datetime(2000, 1, 1),
+        end=datetime(2024, 12, 31),
+        bias_spec={
+            "module_name": "rsi",
+            "timeframes": [TimeFrame.D],
+            "params": {"lookback": 5},
+        },
+        target_col="log_return",
+        strategy="long",
+        use_cache=True,
+        populate_cache=False,
+        reports_dir=Path("/tmp/test_reports"),
+        walkforward_selection_method="stable_region",
+        weight_layer_algorithm="equal_grouped",
+        walkforward=walkforward,
+    )
+
+    assert config.walkforward_selection_method == WalkforwardSelectionMethod.STABLE_REGION
+    assert config.weight_layer_algorithm == WeightLayerAlgorithm.EQUAL_GROUPED
+
+
+def test_research_config_rejects_walkforward_selection_method_mismatch() -> None:
+    walkforward = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2023, 1, 1),
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
+    )
+
+    with pytest.raises(ValueError, match="walkforward_selection_method"):
+        ResearchConfig(
+            tickers=[Ticker.ES],
+            start=datetime(2000, 1, 1),
+            end=datetime(2024, 12, 31),
+            bias_spec={
+                "module_name": "rsi",
+                "timeframes": [TimeFrame.D],
+                "params": {"lookback": 5},
+            },
+            target_col="log_return",
+            strategy="long",
+            use_cache=True,
+            populate_cache=False,
+            reports_dir=Path("/tmp/test_reports"),
+            walkforward_selection_method=WalkforwardSelectionMethod.TOP_K,
+            walkforward=walkforward,
+        )
+
+
+def test_research_config_rejects_weight_layer_algorithm_mismatch() -> None:
+    walkforward = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2023, 1, 1),
+        weight_layer_algorithm=WeightLayerAlgorithm.EQUAL_FLAT,
+    )
+
+    with pytest.raises(ValueError, match="weight_layer_algorithm"):
+        ResearchConfig(
+            tickers=[Ticker.ES],
+            start=datetime(2000, 1, 1),
+            end=datetime(2024, 12, 31),
+            bias_spec={
+                "module_name": "rsi",
+                "timeframes": [TimeFrame.D],
+                "params": {"lookback": 5},
+            },
+            target_col="log_return",
+            strategy="long",
+            use_cache=True,
+            populate_cache=False,
+            reports_dir=Path("/tmp/test_reports"),
+            weight_layer_algorithm=WeightLayerAlgorithm.INVERSE_CORRELATION,
+            walkforward=walkforward,
+        )

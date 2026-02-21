@@ -28,6 +28,10 @@ Base Models → DiversifiedEnsemble → WeightLayer → Portfolio → PositionSi
 
 The WeightLayer receives per-model volatility-scaled forecasts from one or more DiversifiedEnsembles and combines them into a single `forecast_score` per ticker. It applies the Forecast Diversification Multiplier (FDM) to account for the diversification benefit of combining multiple signals.
 
+The WeightLayer is the primary forecast combiner.
+
+Upstream selection methods are selection-only and determine membership; this layer performs the first portfolio-impacting forecast combination.
+
 **What the WeightLayer must do:**
 - Combine signals to maximise diversification, especially in downside regimes
 - Produce stable weights fold-to-fold (weight instability is a sign of overfitting)
@@ -226,9 +230,11 @@ When equal weights are used (Levels 0–1), FDM is computed from the full-period
 
 All parameters are pre-committed before any walkforward fold begins. They are not adjusted based on observed results.
 
+This layer is controlled by the `weighting_method` knob, while upstream membership is controlled by the feature-selection `selection_method` knob described in [top_k_ensemble_selection.md](../Feature_selection/Parameter%20Sensitivity/top_k_ensemble_selection.md#configuration).
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `weighting_method` | `downside_hrp_grouped` | One of: `equal_flat`, `equal_grouped`, `inv_downside_vol_grouped`, `downside_hrp_grouped`, `downside_hrp_flat` |
+| `weighting_method` | `inverse_correlation` | One of: `inverse_correlation`, `equal_flat`, `equal_grouped`, `inv_downside_vol_grouped`, `downside_hrp_grouped`, `downside_hrp_flat` |
 | `group_method` | `feature_family` | `feature_family` (pre-specified) or `correlation_clustering` (data-driven fallback) |
 | `rho_cut` | `0.70` | Correlation cutoff for data-driven grouping |
 | `within_group_weights` | `equal` | `equal` or `smoothed_metric_proportional` |

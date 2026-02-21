@@ -12,9 +12,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from feature_research.walkforward.config import WalkforwardResearchConfig
+from feature_research.walkforward.config import (
+    WeightLayerAlgorithm,
+    WalkforwardResearchConfig,
+    WalkforwardSelectionMethod,
+)
 from feature_research.walkforward.runner import run_walkforward_research, run_portfolio_simulation
+from feature_research.walkforward.stable_region_selection import StableRegionResult
 from feature_research.walkforward.top_k_selection import EnhancedSelectionResult
+from ensemble.weight_layer import WeightLayerConfig
 
 
 def _build_inputs() -> tuple[pd.DataFrame, pd.Series]:
@@ -335,9 +341,11 @@ def test_run_walkforward_research_enhanced_selection_forwards_train_end_metadata
         evaluate_param_combo: Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series],
         smoothed_objectives: dict[str, float],
         config: WalkforwardResearchConfig,
+        precomputed_trade_frequencies: dict[str, float] | None = None,
     ) -> EnhancedSelectionResult:
         _ = smoothed_objectives
         _ = config
+        _ = precomputed_trade_frequencies
         call_index = len(enhanced_fold_maxes)
         _ = evaluate_param_combo(training_data, training_target, param_grid[0])
         enhanced_call_indices.append(call_index)
@@ -589,6 +597,118 @@ def test_enhanced_selection_uses_top_k_labels_for_selected_flags(
     assert not bool(selected_flags.loc["lookback=3"])
 
 
+def test_enhanced_selection_outputs_selected_members_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candles_df, target = _make_enhanced_inputs(1000)
+    param_grid: list[dict[str, object]] = [
+        {"lookback": 3},
+        {"lookback": 4},
+        {"lookback": 5},
+    ]
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2002, 1, 1),
+        num_steps=1,
+        top_k=2,
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
+    )
+
+    def fake_run_enhanced_selection(**_kwargs: object) -> EnhancedSelectionResult:
+        return EnhancedSelectionResult(
+            selected_labels=["lookback=4", "lookback=5"],
+            trade_frequencies={"lookback=3": 0.7, "lookback=4": 0.8, "lookback=5": 0.6},
+        )
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.top_k_selection.run_enhanced_selection",
+        fake_run_enhanced_selection,
+    )
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="rsi",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=_enhanced_dummy_evaluate,
+    )
+
+    summary = report.selection_summary_df.loc[0]
+    assert json.loads(summary["top_k_features"]) == ["lookback=4", "lookback=5"]
+    assert pd.isna(summary["selected_feature"])
+    assert pd.isna(summary["selected_raw_objective"])
+    assert pd.isna(summary["selected_smoothed_objective"])
+    selected_flags = report.fold_scores_df.set_index("param_label")["selected_feature"]
+    assert bool(selected_flags.loc["lookback=4"])
+    assert bool(selected_flags.loc["lookback=5"])
+    assert not bool(selected_flags.loc["lookback=3"])
+    assert report.fold_scores_df["selected_feature"].equals(
+        report.fold_scores_df["selected_in_top_k"]
+    )
+
+
+def test_stable_region_selection_outputs_selected_members_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candles_df, target = _make_enhanced_inputs(1000)
+    param_grid: list[dict[str, object]] = [
+        {"lookback": 3},
+        {"lookback": 4},
+        {"lookback": 5},
+    ]
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2002, 1, 1),
+        num_steps=1,
+        top_k=2,
+        selection_method=WalkforwardSelectionMethod.STABLE_REGION,
+    )
+
+    def fake_run_stable_region_selection(**_kwargs: object) -> StableRegionResult:
+        detail = pd.DataFrame(
+            {
+                "param_label": ["lookback=3", "lookback=4", "lookback=5"],
+                "above_floor": [False, True, True],
+                "region_id": [float("nan"), 0, 0],
+                "region_size": [float("nan"), 2, 2],
+            }
+        )
+        return StableRegionResult(
+            selected_labels=["lookback=4", "lookback=5"],
+            per_param_detail=detail,
+        )
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.stable_region_selection.run_stable_region_selection",
+        fake_run_stable_region_selection,
+    )
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="rsi",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=_enhanced_dummy_evaluate,
+    )
+
+    summary = report.selection_summary_df.loc[0]
+    assert json.loads(summary["top_k_features"]) == ["lookback=4", "lookback=5"]
+    assert pd.isna(summary["selected_feature"])
+    assert pd.isna(summary["selected_raw_objective"])
+    assert pd.isna(summary["selected_smoothed_objective"])
+    selected_flags = report.fold_scores_df.set_index("param_label")["selected_feature"]
+    assert bool(selected_flags.loc["lookback=4"])
+    assert bool(selected_flags.loc["lookback=5"])
+    assert not bool(selected_flags.loc["lookback=3"])
+    assert report.fold_scores_df["selected_feature"].equals(
+        report.fold_scores_df["selected_in_top_k"]
+    )
+
+
 def test_run_walkforward_research_param_label_includes_bin_count_when_present() -> None:
     candles_df, target = _build_inputs()
     config = WalkforwardResearchConfig(
@@ -752,3 +872,310 @@ def test_run_portfolio_simulation_records_error_without_crash(monkeypatch: pytes
     assert result.loc[0, "fold_id"] == 0
     assert pd.isna(result.loc[0, "oos_portfolio_sharpe"])
     assert result.loc[0, "error"] == "sim failed"
+
+
+def test_run_portfolio_simulation_builds_weight_layer_config_from_algorithm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index = pd.date_range("2020-01-01", periods=40, freq="D")
+    candles_df = pd.DataFrame(
+        {
+            "datetime": index,
+            "open": np.arange(40) + 100.0,
+            "high": np.arange(40) + 101.0,
+            "low": np.arange(40) + 99.0,
+            "close": np.arange(40) + 100.5,
+            "ticker": ["ES"] * 40,
+        },
+        index=index,
+    )
+    target = pd.Series(np.linspace(-0.01, 0.01, 40), index=index)
+    fold_rows = [
+        {
+            "fold_id": 0,
+            "_train_mask": pd.Series([True] * 20 + [False] * 20, index=index),
+            "_test_mask": pd.Series([False] * 20 + [True] * 20, index=index),
+        }
+    ]
+    selection_summary_df = pd.DataFrame(
+        [
+            {
+                "fold_id": 0,
+                "selected_feature": "lookback=5",
+                "selected_raw_objective": 0.1,
+                "selected_smoothed_objective": 0.1,
+                "top_k_features": '["lookback=5|bin_count=4"]',
+            }
+        ]
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_evaluate(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return type(
+            "FakeResult",
+            (),
+            {"oos_portfolio_sharpe": 1.23, "n_params_selected": 1},
+        )()
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        _fake_evaluate,
+    )
+
+    research_config = type(
+        "ResearchCfg",
+        (),
+        {
+            "tickers": [],
+            "binning_params": object(),
+            "walkforward": type(
+                "WF",
+                (),
+                {
+                    "objective_metric_name": "sharpe",
+                    "weight_layer_algorithm": WeightLayerAlgorithm.EQUAL_FLAT,
+                    "weight_layer_config": None,
+                },
+            )(),
+            "bias_spec": {"module_name": "rsi", "timeframes": ["D"]},
+        },
+    )()
+
+    run_portfolio_simulation(
+        candles_df=candles_df,
+        target=target,
+        fold_rows=fold_rows,
+        selection_summary_df=selection_summary_df,
+        research_config=research_config,
+    )
+
+    forwarded = captured.get("weight_layer_config")
+    assert isinstance(forwarded, WeightLayerConfig)
+    assert forwarded.weighting_method == WeightLayerAlgorithm.EQUAL_FLAT.value
+
+
+def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index = pd.date_range("2020-01-01", periods=40, freq="D")
+    candles_df = pd.DataFrame(
+        {
+            "datetime": index,
+            "open": np.arange(40) + 100.0,
+            "high": np.arange(40) + 101.0,
+            "low": np.arange(40) + 99.0,
+            "close": np.arange(40) + 100.5,
+            "ticker": ["ES"] * 40,
+        },
+        index=index,
+    )
+    target = pd.Series(np.linspace(-0.01, 0.01, 40), index=index)
+    fold_rows = [
+        {
+            "fold_id": 0,
+            "_train_mask": pd.Series([True] * 20 + [False] * 20, index=index),
+            "_test_mask": pd.Series([False] * 20 + [True] * 20, index=index),
+        }
+    ]
+    selection_summary_df = pd.DataFrame(
+        [
+            {
+                "fold_id": 0,
+                "selected_feature": "lookback=5",
+                "selected_raw_objective": 0.1,
+                "selected_smoothed_objective": 0.1,
+                "top_k_features": '["lookback=5|bin_count=4"]',
+            }
+        ]
+    )
+    existing = WeightLayerConfig(
+        weighting_method=WeightLayerAlgorithm.INVERSE_CORRELATION.value,
+        group_method="correlation_clustering",
+        rho_cut=0.65,
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_evaluate(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return type(
+            "FakeResult",
+            (),
+            {"oos_portfolio_sharpe": 1.23, "n_params_selected": 1},
+        )()
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        _fake_evaluate,
+    )
+
+    research_config = type(
+        "ResearchCfg",
+        (),
+        {
+            "tickers": [],
+            "binning_params": object(),
+            "walkforward": type(
+                "WF",
+                (),
+                {
+                    "objective_metric_name": "sharpe",
+                    "weight_layer_algorithm": WeightLayerAlgorithm.EQUAL_GROUPED,
+                    "weight_layer_config": existing,
+                },
+            )(),
+            "bias_spec": {"module_name": "rsi", "timeframes": ["D"]},
+        },
+    )()
+
+    run_portfolio_simulation(
+        candles_df=candles_df,
+        target=target,
+        fold_rows=fold_rows,
+        selection_summary_df=selection_summary_df,
+        research_config=research_config,
+    )
+
+    forwarded = captured.get("weight_layer_config")
+    assert isinstance(forwarded, WeightLayerConfig)
+    assert forwarded.weighting_method == WeightLayerAlgorithm.EQUAL_GROUPED.value
+    assert forwarded.group_method == "correlation_clustering"
+    assert forwarded.rho_cut == pytest.approx(0.65)
+
+
+def test_run_portfolio_simulation_handles_invalid_top_k_features_json() -> None:
+    index = pd.date_range("2020-01-01", periods=40, freq="D")
+    candles_df = pd.DataFrame(
+        {
+            "datetime": index,
+            "open": np.arange(40) + 100.0,
+            "high": np.arange(40) + 101.0,
+            "low": np.arange(40) + 99.0,
+            "close": np.arange(40) + 100.5,
+            "ticker": ["ES"] * 40,
+        },
+        index=index,
+    )
+    target = pd.Series(np.linspace(-0.01, 0.01, 40), index=index)
+    fold_rows = [
+        {
+            "fold_id": 0,
+            "_train_mask": pd.Series([True] * 20 + [False] * 20, index=index),
+            "_test_mask": pd.Series([False] * 20 + [True] * 20, index=index),
+        }
+    ]
+    selection_summary_df = pd.DataFrame(
+        [
+            {
+                "fold_id": 0,
+                "selected_feature": "lookback=5",
+                "selected_raw_objective": 0.1,
+                "selected_smoothed_objective": 0.1,
+                "top_k_features": "not-json",
+            }
+        ]
+    )
+
+    research_config = type(
+        "ResearchCfg",
+        (),
+        {
+            "tickers": [],
+            "binning_params": object(),
+            "walkforward": type("WF", (), {"objective_metric_name": "sharpe"})(),
+            "bias_spec": {"module_name": "rsi", "timeframes": ["D"]},
+        },
+    )()
+
+    result = run_portfolio_simulation(
+        candles_df=candles_df,
+        target=target,
+        fold_rows=fold_rows,
+        selection_summary_df=selection_summary_df,
+        research_config=research_config,
+    )
+
+    assert result.loc[0, "fold_id"] == 0
+    assert pd.isna(result.loc[0, "oos_portfolio_sharpe"])
+    assert result.loc[0, "n_params_selected"] == 0
+    assert result.loc[0, "error"] == "no_selected_params"
+
+
+def test_run_portfolio_simulation_drops_malformed_top_k_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    index = pd.date_range("2020-01-01", periods=40, freq="D")
+    candles_df = pd.DataFrame(
+        {
+            "datetime": index,
+            "open": np.arange(40) + 100.0,
+            "high": np.arange(40) + 101.0,
+            "low": np.arange(40) + 99.0,
+            "close": np.arange(40) + 100.5,
+            "ticker": ["ES"] * 40,
+        },
+        index=index,
+    )
+    target = pd.Series(np.linspace(-0.01, 0.01, 40), index=index)
+    fold_rows = [
+        {
+            "fold_id": 0,
+            "_train_mask": pd.Series([True] * 20 + [False] * 20, index=index),
+            "_test_mask": pd.Series([False] * 20 + [True] * 20, index=index),
+        }
+    ]
+    selection_summary_df = pd.DataFrame(
+        [
+            {
+                "fold_id": 0,
+                "selected_feature": "lookback=5",
+                "selected_raw_objective": 0.1,
+                "selected_smoothed_objective": 0.1,
+                "top_k_features": '["lookback=5|bin_count=4", "no_equals", "|", "="]',
+            }
+        ]
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_evaluate(**kwargs: object) -> object:
+        captured.update(kwargs)
+        selected = kwargs["selected_params"]
+        return type(
+            "FakeResult",
+            (),
+            {
+                "oos_portfolio_sharpe": 1.23,
+                "n_params_selected": len(cast(list[dict[str, object]], selected)),
+            },
+        )()
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        _fake_evaluate,
+    )
+
+    research_config = type(
+        "ResearchCfg",
+        (),
+        {
+            "tickers": [],
+            "binning_params": object(),
+            "walkforward": type("WF", (), {"objective_metric_name": "sharpe"})(),
+            "bias_spec": {"module_name": "rsi", "timeframes": ["D"]},
+        },
+    )()
+
+    result = run_portfolio_simulation(
+        candles_df=candles_df,
+        target=target,
+        fold_rows=fold_rows,
+        selection_summary_df=selection_summary_df,
+        research_config=research_config,
+    )
+
+    assert result.loc[0, "error"] == ""
+    assert result.loc[0, "n_params_selected"] == 1
+    assert captured["selected_params"] == [{"lookback": 5, "bin_count": 4}]

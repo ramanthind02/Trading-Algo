@@ -444,6 +444,7 @@ class BinningModelBase(ABC):
         self,
         filepath: str,
         tickers: Optional[List[str]] = None,
+        member_identity: str = "",
     ) -> None:
         if self.feature_column is None:
             raise ValueError(
@@ -477,7 +478,7 @@ class BinningModelBase(ABC):
                     f"Feature column '{self.feature_column}' has invalid timeframe type '{type(tf)}'."
                 )
 
-        model_name = f"{self.feature_column}_{self.strategy}"
+        model_name = self.build_model_name(member_identity=member_identity)
         params = self.get_params()
 
         feature_config = {
@@ -496,6 +497,18 @@ class BinningModelBase(ABC):
             ) from exc
 
         add_feature_to_control_file(filepath, feature_config, tickers=tickers)
+
+    def build_model_name(self, member_identity: str = "") -> str:
+        if self.feature_column is None:
+            raise ValueError(
+                "feature_column not set. Call fit() with a named pd.Series first, "
+                "or ensure the Series has a name attribute (e.g., df['column_name'])."
+            )
+
+        from feature_selection.base_models.feature_base_model import build_member_model_name
+
+        base_model_name = f"{self.feature_column}_{self.strategy}"
+        return build_member_model_name(base_model_name, member_identity)
 
     def get_params(self, deep: bool = True) -> Dict[str, object]:
         return {

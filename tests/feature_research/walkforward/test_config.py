@@ -9,7 +9,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from feature_research.walkforward.config import WalkforwardResearchConfig
+from feature_research.walkforward.config import (
+    WalkforwardResearchConfig,
+    WalkforwardSelectionMethod,
+    WeightLayerAlgorithm,
+)
 
 
 def test_defaults_are_deterministic() -> None:
@@ -77,4 +81,65 @@ def test_config_rejects_invalid_trade_freq_min() -> None:
             train_start=datetime(2000, 1, 1),
             train_end=datetime(2015, 1, 1),
             trade_freq_min=1.5,
+        )
+
+
+@pytest.mark.parametrize(
+    ("selection_method", "expected"),
+    [
+        (WalkforwardSelectionMethod.ENHANCED, WalkforwardSelectionMethod.ENHANCED),
+        ("stable_region", WalkforwardSelectionMethod.STABLE_REGION),
+    ],
+)
+def test_selection_method_accepts_enum_or_enum_coercible_string(
+    selection_method: WalkforwardSelectionMethod | str,
+    expected: WalkforwardSelectionMethod,
+) -> None:
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2021, 1, 1),
+        selection_method=selection_method,
+    )
+
+    assert config.selection_method == expected
+
+
+@pytest.mark.parametrize(
+    ("weight_layer_algorithm", "expected"),
+    [
+        (
+            WeightLayerAlgorithm.DOWNSIDE_HRP_GROUPED,
+            WeightLayerAlgorithm.DOWNSIDE_HRP_GROUPED,
+        ),
+        ("equal_grouped", WeightLayerAlgorithm.EQUAL_GROUPED),
+    ],
+)
+def test_weight_layer_algorithm_accepts_enum_or_enum_coercible_string(
+    weight_layer_algorithm: WeightLayerAlgorithm | str,
+    expected: WeightLayerAlgorithm,
+) -> None:
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2021, 1, 1),
+        weight_layer_algorithm=weight_layer_algorithm,
+    )
+
+    assert config.weight_layer_algorithm == expected
+
+
+def test_selection_method_rejects_invalid_value() -> None:
+    with pytest.raises(ValueError, match="selection_method must be one of"):
+        WalkforwardResearchConfig(
+            train_start=datetime(2020, 1, 1),
+            train_end=datetime(2021, 1, 1),
+            selection_method="not_a_real_method",
+        )
+
+
+def test_weight_layer_algorithm_rejects_invalid_value() -> None:
+    with pytest.raises(ValueError, match="weight_layer_algorithm must be one of"):
+        WalkforwardResearchConfig(
+            train_start=datetime(2020, 1, 1),
+            train_end=datetime(2021, 1, 1),
+            weight_layer_algorithm="not_a_real_algorithm",
         )
