@@ -219,6 +219,87 @@ Observable behavior:
 - `exit_policy="threshold_or_bars"` exits after `exit_bars` or threshold cross.
 - Warmup outputs `0` until `rsi_period` candles.
 
+### `nodes.lagged_rsi.LaggedRSI`
+Type: class
+
+Signature:
+```python
+class LaggedRSI(BiasNode):
+    def __init__(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        rsiPeriod: int = 14,
+        lagPeriod: int = 3,
+    )
+```
+
+Observable behavior:
+- Outputs the RSI value from `lagPeriod` bars ago as a continuous feature.
+- Uses Cython-backed RSI stream helpers (`compute_rsi_initial_fast`, `update_rsi_fast`).
+- Warmup outputs `50.0` until both RSI and lag history are available.
+
+### `nodes.rsi_left_tail_pressure.RSILeftTailPressure`
+Type: class
+
+Signature:
+```python
+class RSILeftTailPressure(BiasNode):
+    def __init__(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        rsiPeriod: int = 14,
+        leftTailLevel: float = 30.0,
+    )
+```
+
+Observable behavior:
+- Outputs normalized left-tail depth `max(0, (leftTailLevel - rsi) / leftTailLevel)`.
+- Range is clamped to `[0, 1]` (continuous intensity feature).
+- Warmup outputs `0.0` until RSI is initialized.
+
+### `nodes.rsi_left_tail_streak.RSILeftTailStreak`
+Type: class
+
+Signature:
+```python
+class RSILeftTailStreak(BiasNode):
+    def __init__(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        rsiPeriod: int = 14,
+        leftTailLevel: float = 30.0,
+        maxStreak: int = 5,
+    )
+```
+
+Observable behavior:
+- Tracks consecutive bars with RSI below `leftTailLevel`.
+- Outputs normalized streak intensity `min(streak, maxStreak) / maxStreak` in `[0, 1]`.
+- Warmup outputs `0.0` until RSI is initialized.
+
+### `nodes.rsi_rebound_velocity.RSIReboundVelocity`
+Type: class
+
+Signature:
+```python
+class RSIReboundVelocity(BiasNode):
+    def __init__(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        rsiPeriod: int = 14,
+        leftTailLevel: float = 30.0,
+    )
+```
+
+Observable behavior:
+- Measures one-bar RSI rebound speed after left-tail conditions.
+- Emits `max(0, rsi[t] - rsi[t-1]) / 100` when `rsi[t-1] < leftTailLevel`, else `0`.
+- Warmup outputs `0.0` until RSI and previous RSI context exist.
+
 ### `nodes.atr.ATRNode`
 Type: class
 
