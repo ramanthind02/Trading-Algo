@@ -167,13 +167,17 @@ Signature:
 class WalkforwardResearchConfig:
     train_start: datetime
     train_end: datetime
-    enabled: bool
-    test_step: int
-    num_steps: int
-    top_k: int
-    objective_metric_name: str
-    min_fold_samples: int
-    output_root: Path
+    enabled: bool = False
+    test_step: int = 252
+    num_steps: int = 8
+    top_k: int = 3
+    objective_metric_name: str = "sortino"
+    min_fold_samples: int = 10
+    output_root: Path = Path("feature_research/shared_results")
+    use_enhanced_selection: bool = False
+    trade_freq_min: float = 0.05
+    diversity_weight: float = 0.20
+    quality_exponent: float = 2.0
 ```
 
 Description: frozen configuration contract for walk-forward feature-research runs, including fold geometry, objective metric selection, and output location.
@@ -289,9 +293,13 @@ class WalkforwardArtifactPaths:
     folds_csv: Path
     fold_scores_csv: Path
     selection_summary_csv: Path
+    selected_params_detailed_csv: Path
+    oos_metrics_csv: Path
     report_json: Path
     walkforward_stability_png: Path
     fold_timeline_png: Path
+    summary_md: Path
+    summary_html: Path
 ```
 
 Description: immutable output-path contract for persisted walkforward artifacts under the shared-results layout.
@@ -334,14 +342,20 @@ Output-file contract (exact filenames):
 - `folds.csv`
 - `fold_scores.csv`
 - `selection_summary.csv`
+- `selected_params_detailed.csv`
+- `oos_metrics.csv`
 - `report.json`
 - `walkforward_stability.png`
 - `fold_timeline.png`
+- `summary.md`
+- `summary.html`
 
 Table schema contract (exact columns):
 - `folds.csv`: `fold_id`, `train_start`, `train_end`, `test_start`, `test_end`, `train_samples`, `test_samples`
-- `fold_scores.csv`: `fold_id`, `param_label`, `raw_objective`, `smoothed_objective`, `rank`, `selected_feature`
+- `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `smoothed_objective`, `rank`, `selected_feature`
+- `fold_scores.csv` enhanced (when `use_enhanced_selection=True`): add `trade_frequency`, `quality_score`, `selected_by_diversity`
 - `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
+- `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_by_diversity=True` when present, otherwise `selected_feature=True`
 
 `report.json` minimum keys:
 - `feature_type`

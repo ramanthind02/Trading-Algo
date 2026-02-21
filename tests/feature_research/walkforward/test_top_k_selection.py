@@ -14,7 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from feature_research.walkforward.top_k_selection import (
     EnhancedSelectionResult,
     compute_quality_scores,
-    compute_robustness_score,
     compute_signal_correlation_matrix,
     compute_trade_frequency,
     greedy_diversity_select,
@@ -65,29 +64,6 @@ def test_trade_frequency_empty_series() -> None:
     assert compute_trade_frequency(signal) == pytest.approx(0.0)
 
 
-def test_robustness_score_perfectly_consistent() -> None:
-    assert compute_robustness_score([0.6, 0.6, 0.6, 0.6, 0.6]) == pytest.approx(0.6)
-
-
-def test_robustness_score_high_variance_penalised() -> None:
-    low_var = compute_robustness_score([0.6, 0.58, 0.62, 0.59, 0.61])
-    high_var = compute_robustness_score([0.6, 0.10, 1.10, 0.20, 1.00])
-
-    assert low_var > high_var
-
-
-def test_robustness_score_zero_mean_returns_zero() -> None:
-    assert compute_robustness_score([0.0, 0.0, 0.0]) == pytest.approx(0.0)
-
-
-def test_robustness_score_negative_mean_returns_zero() -> None:
-    assert compute_robustness_score([-0.2, -0.3, -0.1]) == pytest.approx(0.0)
-
-
-def test_robustness_score_single_block() -> None:
-    assert compute_robustness_score([0.5]) == pytest.approx(0.5)
-
-
 def test_corr_matrix_identical_signals() -> None:
     signals = _make_signals({"A": [1.0, -1.0, 1.0, 1.0], "B": [1.0, -1.0, 1.0, 1.0]})
 
@@ -132,13 +108,10 @@ def test_corr_matrix_single_param() -> None:
 
 def test_quality_scores_normalised_to_unit_interval() -> None:
     smoothed = {"A": 0.8, "B": 0.6, "C": 0.4}
-    robustness = {"A": 0.5, "B": 0.7, "C": 0.3}
 
     scores = compute_quality_scores(
         smoothed,
-        robustness,
-        weight_stability=0.5,
-        weight_robustness=0.5,
+        quality_exponent=1.0,
     )
 
     assert all(0.0 <= value <= 1.0 for value in scores.values())
@@ -146,13 +119,10 @@ def test_quality_scores_normalised_to_unit_interval() -> None:
 
 def test_quality_scores_best_param_scores_one() -> None:
     smoothed = {"A": 1.0, "B": 0.5}
-    robustness = {"A": 1.0, "B": 0.5}
 
     scores = compute_quality_scores(
         smoothed,
-        robustness,
-        weight_stability=0.5,
-        weight_robustness=0.5,
+        quality_exponent=1.0,
     )
 
     assert scores["A"] == pytest.approx(1.0)
@@ -161,38 +131,23 @@ def test_quality_scores_best_param_scores_one() -> None:
 
 def test_quality_scores_all_equal_inputs_zero() -> None:
     smoothed = {"A": 0.6, "B": 0.6}
-    robustness = {"A": 0.4, "B": 0.4}
 
     scores = compute_quality_scores(
         smoothed,
-        robustness,
-        weight_stability=0.5,
-        weight_robustness=0.5,
+        quality_exponent=1.0,
     )
 
     assert scores["A"] == pytest.approx(0.0)
     assert scores["B"] == pytest.approx(0.0)
 
 
-def test_quality_scores_weights_applied() -> None:
-    smoothed = {"A": 1.0, "B": 0.0}
-    robustness = {"A": 0.0, "B": 1.0}
+def test_quality_scores_quality_exponent_emphasises_leaders() -> None:
+    smoothed = {"A": 0.9, "B": 0.8, "C": 0.7}
 
-    scores_stability = compute_quality_scores(
-        smoothed,
-        robustness,
-        weight_stability=1.0,
-        weight_robustness=0.0,
-    )
-    assert scores_stability["A"] > scores_stability["B"]
+    linear_scores = compute_quality_scores(smoothed, quality_exponent=1.0)
+    concave_scores = compute_quality_scores(smoothed, quality_exponent=2.0)
 
-    scores_robustness = compute_quality_scores(
-        smoothed,
-        robustness,
-        weight_stability=0.0,
-        weight_robustness=1.0,
-    )
-    assert scores_robustness["B"] > scores_robustness["A"]
+    assert linear_scores["A"] - linear_scores["B"] < concave_scores["A"] - concave_scores["B"]
 
 
 def test_greedy_select_returns_k_items() -> None:
@@ -315,6 +270,7 @@ def test_run_enhanced_selection_returns_result() -> None:
     assert isinstance(result, EnhancedSelectionResult)
     assert len(result.selected_labels) <= config.top_k
     assert all(label in smoothed for label in result.selected_labels)
+    assert set(result.quality_scores).issubset(set(smoothed))
 
 
 def test_run_enhanced_selection_respects_trade_freq_min() -> None:

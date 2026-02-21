@@ -71,16 +71,15 @@ def _build_enhanced_report() -> WalkforwardRunReport:
     )
     fold_scores_df = pd.DataFrame(
         {
-            "fold_id": [0, 0],
-            "param_label": ["x=1", "x=2"],
-            "raw_objective": [0.4, 0.6],
-            "smoothed_objective": [0.45, 0.65],
-            "rank": [2, 1],
-            "selected_feature": [False, True],
-            "trade_frequency": [0.6, 0.7],
-            "robustness_score": [0.5, 0.8],
-            "quality_score": [0.55, 0.75],
-            "selected_by_diversity": [False, True],
+            "fold_id": [0, 0, 0],
+            "param_label": ["x=1", "x=2", "x=3"],
+            "raw_objective": [0.4, 0.6, 0.5],
+            "smoothed_objective": [0.45, 0.65, 0.62],
+            "rank": [3, 1, 2],
+            "selected_feature": [False, True, False],
+            "trade_frequency": [0.6, 0.7, 0.65],
+            "quality_score": [0.55, 0.75, 0.72],
+            "selected_by_diversity": [False, True, True],
         }
     )
     selection_summary_df = pd.DataFrame(
@@ -326,7 +325,6 @@ def test_write_walkforward_artifacts_includes_enhanced_columns_when_present(
         "rank",
         "selected_feature",
         "trade_frequency",
-        "robustness_score",
         "quality_score",
         "selected_by_diversity",
     ]
@@ -353,7 +351,6 @@ def test_write_walkforward_artifacts_legacy_report_omits_enhanced_columns(
 
     written = pd.read_csv(paths.fold_scores_csv)
     assert "trade_frequency" not in written.columns
-    assert "robustness_score" not in written.columns
     assert "quality_score" not in written.columns
     assert "selected_by_diversity" not in written.columns
     assert written.columns.tolist() == [
@@ -364,3 +361,26 @@ def test_write_walkforward_artifacts_legacy_report_omits_enhanced_columns(
         "rank",
         "selected_feature",
     ]
+
+
+def test_write_walkforward_artifacts_selected_params_detailed_uses_selected_by_diversity_rows(
+    tmp_path: Path,
+) -> None:
+    report = _build_enhanced_report()
+    stability_figure = _build_figure()
+    timeline_figure = _build_figure()
+    try:
+        paths = write_walkforward_artifacts(
+            report=report,
+            walkforward_stability_figure=stability_figure,
+            fold_timeline_figure=timeline_figure,
+            feature_type="continuous",
+            module_name="rsi",
+            root_dir=tmp_path,
+        )
+    finally:
+        plt.close(stability_figure)
+        plt.close(timeline_figure)
+
+    selected_params = pd.read_csv(paths.selected_params_detailed_csv)
+    assert set(selected_params["param_label"]) == {"x=2", "x=3"}

@@ -417,7 +417,6 @@ def test_enhanced_selection_produces_expected_columns() -> None:
 
     assert "top_k_features" in report.selection_summary_df.columns
     assert "trade_frequency" in report.fold_scores_df.columns
-    assert "robustness_score" in report.fold_scores_df.columns
     assert "quality_score" in report.fold_scores_df.columns
     assert "selected_by_diversity" in report.fold_scores_df.columns
 
@@ -443,7 +442,6 @@ def test_enhanced_selection_uses_diversity_selected_labels_for_top_k(
         return EnhancedSelectionResult(
             selected_labels=["lookback=4", "lookback=5"],
             trade_frequencies={"lookback=3": 0.7, "lookback=4": 0.8, "lookback=5": 0.6},
-            robustness_scores={"lookback=4": 0.2, "lookback=5": 0.1},
             quality_scores={"lookback=4": 0.9, "lookback=5": 0.8},
             corr_matrix=pd.DataFrame(),
         )
@@ -470,3 +468,41 @@ def test_enhanced_selection_uses_diversity_selected_labels_for_top_k(
     assert bool(selected_flags.loc["lookback=4"])
     assert bool(selected_flags.loc["lookback=5"])
     assert not bool(selected_flags.loc["lookback=3"])
+
+
+def test_run_walkforward_research_param_label_includes_bin_count_when_present() -> None:
+    candles_df, target = _build_inputs()
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        test_step=20,
+        num_steps=1,
+        top_k=2,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+    )
+    param_grid: list[dict[str, object]] = [
+        {"lookback": 4, "bin_count": 8},
+        {"lookback": 6, "bin_count": 10},
+    ]
+
+    def evaluate_param_combo(
+        _fold_candles: pd.DataFrame,
+        _fold_target: pd.Series,
+        params: dict[str, object],
+    ) -> pd.Series:
+        return pd.Series([1.0 if int(params["lookback"]) == 6 else 0.5])
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluate_param_combo,
+    )
+
+    labels = set(report.fold_scores_df["param_label"].tolist())
+    assert "bin_count=8|lookback=4" in labels
+    assert "bin_count=10|lookback=6" in labels

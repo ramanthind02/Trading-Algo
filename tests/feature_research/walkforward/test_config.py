@@ -20,9 +20,9 @@ def test_defaults_are_deterministic() -> None:
 
     assert config.enabled is False
     assert config.test_step == 252
-    assert config.num_steps == 10
+    assert config.num_steps == 8
     assert config.top_k == 3
-    assert config.objective_metric_name == "sharpe"
+    assert config.objective_metric_name == "sortino"
     assert config.min_fold_samples == 10
     assert config.output_root == Path("feature_research/shared_results")
 
@@ -69,10 +69,8 @@ def test_config_enhanced_selection_defaults() -> None:
 
     assert config.use_enhanced_selection is False
     assert config.trade_freq_min == pytest.approx(0.05)
-    assert config.n_robustness_blocks == 5
-    assert config.diversity_weight == pytest.approx(0.40)
-    assert config.weight_stability == pytest.approx(0.50)
-    assert config.weight_robustness == pytest.approx(0.50)
+    assert config.diversity_weight == pytest.approx(0.20)
+    assert config.quality_exponent == pytest.approx(2.0)
 
 
 def test_config_rejects_invalid_trade_freq_min() -> None:
@@ -84,19 +82,19 @@ def test_config_rejects_invalid_trade_freq_min() -> None:
         )
 
 
-def test_config_rejects_too_few_robustness_blocks() -> None:
-    with pytest.raises(ValueError, match="n_robustness_blocks"):
-        WalkforwardResearchConfig(
-            train_start=datetime(2000, 1, 1),
-            train_end=datetime(2015, 1, 1),
-            n_robustness_blocks=2,
-        )
-
-
 def test_config_rejects_invalid_diversity_weight() -> None:
     with pytest.raises(ValueError, match="diversity_weight"):
         WalkforwardResearchConfig(
             train_start=datetime(2000, 1, 1),
             train_end=datetime(2015, 1, 1),
             diversity_weight=1.5,
+        )
+
+
+def test_config_rejects_non_positive_quality_exponent() -> None:
+    with pytest.raises(ValueError, match="quality_exponent"):
+        WalkforwardResearchConfig(
+            train_start=datetime(2000, 1, 1),
+            train_end=datetime(2015, 1, 1),
+            quality_exponent=0.0,
         )

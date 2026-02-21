@@ -78,6 +78,17 @@ def _build_walkforward_evaluator(
     return evaluate_param_combo
 
 
+def _expand_params_with_bin_count(
+    params: dict[str, object],
+    bin_counts: list[int],
+) -> list[dict[str, object]]:
+    if "bin_count" in params:
+        return [dict(params)]
+    if not bin_counts:
+        return [dict(params)]
+    return [{**params, "bin_count": int(bin_count)} for bin_count in bin_counts]
+
+
 def run_continuous_eda_pipeline(
     config: "ResearchConfig",
     output_dir: Path,
@@ -163,8 +174,14 @@ def run_continuous_eda_pipeline(
         saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
         results[label] = saved_path
 
-        combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
-        successful_param_grid.append(dict(combo))
+        base_returns = _normalize_series_datetime_index(feature.mul(target))
+        expanded_combo_params = _expand_params_with_bin_count(
+            params=dict(combo),
+            bin_counts=config.binning_params.bin_counts,
+        )
+        for combo_params in expanded_combo_params:
+            combo_returns[_combo_key(combo_params)] = base_returns
+            successful_param_grid.append(combo_params)
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)
 
@@ -289,8 +306,14 @@ def run_continuous_walkforward_pipeline(
 
         feature = paired["feature"]
         target = paired["target"]
-        combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
-        successful_param_grid.append(dict(combo))
+        base_returns = _normalize_series_datetime_index(feature.mul(target))
+        expanded_combo_params = _expand_params_with_bin_count(
+            params=dict(combo),
+            bin_counts=config.binning_params.bin_counts,
+        )
+        for combo_params in expanded_combo_params:
+            combo_returns[_combo_key(combo_params)] = base_returns
+            successful_param_grid.append(combo_params)
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)
         print(f"  [{label}] loaded n={len(feature):,}")
