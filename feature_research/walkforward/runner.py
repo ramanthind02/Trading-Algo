@@ -21,6 +21,7 @@ class FoldScoreRow:
     test_end: pd.Timestamp
     param_label: str
     raw_objective: float
+    oos_objective: float
     smoothed_objective: float
     rank: int
 
@@ -102,25 +103,41 @@ def _build_fold_scores(
     combined_mask = train_mask | test_mask
     fold_candles = candles_df.loc[combined_mask]
     fold_target = target.loc[combined_mask]
+    train_index = candles_df.index[train_mask]
     test_index = candles_df.index[test_mask]
 
-    def score_param(params: dict[str, object]) -> float:
+    def score_param(params: dict[str, object]) -> tuple[float, float]:
         scored_returns = evaluate_param_combo(fold_candles, fold_target, params)
+
         if isinstance(scored_returns.index, pd.DatetimeIndex):
-            scored_returns = scored_returns.loc[scored_returns.index.isin(test_index)]
-        elif len(scored_returns) > len(test_index):
-            scored_returns = scored_returns.tail(len(test_index))
-        return float(objective_metric(scored_returns))
+            train_returns = scored_returns.loc[scored_returns.index.isin(train_index)]
+            test_returns = scored_returns.loc[scored_returns.index.isin(test_index)]
+        else:
+            train_len = len(train_index)
+            test_len = len(test_index)
+            train_returns = scored_returns.head(train_len)
+            test_returns = scored_returns.tail(test_len)
+
+        active_train_returns = train_returns[train_returns != 0]
+        active_test_returns = test_returns[test_returns != 0]
+
+        return (
+            float(objective_metric(active_train_returns)),
+            float(objective_metric(active_test_returns)),
+        )
 
     param_columns = sorted({key for params in param_grid for key in params})
-    raw_rows = [
-        {
-            **{column: params.get(column) for column in param_columns},
-            "param_label": _canonical_param_label(params),
-            "raw_objective": score_param(params),
-        }
-        for params in param_grid
-    ]
+    raw_rows: list[dict[str, object]] = []
+    for params in param_grid:
+        train_objective, oos_objective = score_param(params)
+        raw_rows.append(
+            {
+                **{column: params.get(column) for column in param_columns},
+                "param_label": _canonical_param_label(params),
+                "raw_objective": train_objective,
+                "oos_objective": oos_objective,
+            }
+        )
 
     raw_df = pd.DataFrame(raw_rows)
     smoothed_df = add_smoothed_objective(
@@ -149,6 +166,7 @@ def _build_fold_scores(
             test_end=cast(pd.Timestamp, fold_row["test_end"]),
             param_label=str(row.param_label),
             raw_objective=float(row.raw_objective),
+            oos_objective=float(row.oos_objective),
             smoothed_objective=float(row.smoothed_objective),
             rank=int(row.rank),
         )
@@ -163,6 +181,7 @@ def _build_fold_scores(
                 "fold_id": row.fold_id,
                 "param_label": row.param_label,
                 "raw_objective": row.raw_objective,
+                "oos_objective": float(row.oos_objective),
                 "smoothed_objective": row.smoothed_objective,
                 "rank": row.rank,
                 "selected_feature": row.param_label == selected_feature,
@@ -283,6 +302,7 @@ def run_walkforward_research(
                 "fold_id",
                 "param_label",
                 "raw_objective",
+                "oos_objective",
                 "smoothed_objective",
                 "rank",
                 "selected_feature",

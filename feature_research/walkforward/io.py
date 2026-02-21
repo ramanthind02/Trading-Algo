@@ -15,6 +15,7 @@ _FOLD_SCORE_BASE_COLS = [
     "fold_id",
     "param_label",
     "raw_objective",
+    "oos_objective",
     "smoothed_objective",
     "rank",
     "selected_feature",
@@ -76,6 +77,7 @@ def _build_selected_params_detailed(
         "fold_id",
         "param_label",
         "raw_objective",
+        "oos_objective",
         "smoothed_objective",
         "rank",
         "trade_frequency",
@@ -113,7 +115,8 @@ def _build_oos_metrics(report: WalkforwardRunReport) -> pd.DataFrame:
             }
         )
 
-    raw = selected["raw_objective"].astype(float)
+    objective_col = "oos_objective" if "oos_objective" in selected.columns else "raw_objective"
+    raw = selected[objective_col].astype(float)
     smooth = selected["smoothed_objective"].astype(float)
     chosen_counts = report.selection_summary_df["selected_feature"].value_counts(dropna=False)
     most_selected_feature = str(chosen_counts.index[0]) if not chosen_counts.empty else ""
@@ -266,7 +269,7 @@ def write_walkforward_artifacts(
             "test_samples",
         ]
     ].to_csv(paths.folds_csv, index=False, lineterminator="\n")
-    fold_score_cols = _FOLD_SCORE_BASE_COLS + [
+    fold_score_cols = [col for col in _FOLD_SCORE_BASE_COLS if col in report.fold_scores_df.columns] + [
         col for col in _FOLD_SCORE_ENHANCED_COLS if col in report.fold_scores_df.columns
     ]
     report.fold_scores_df[fold_score_cols].to_csv(

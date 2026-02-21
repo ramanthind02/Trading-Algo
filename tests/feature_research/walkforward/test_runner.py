@@ -337,7 +337,7 @@ def test_run_walkforward_research_validates_inputs(
         )
 
 
-def test_run_walkforward_research_scores_only_out_of_sample_segment_when_series_spans_fold() -> None:
+def test_run_walkforward_research_ranks_by_in_sample_objective_when_series_spans_fold() -> None:
     candles_df, target = _build_inputs()
 
     config = WalkforwardResearchConfig(
@@ -370,7 +370,10 @@ def test_run_walkforward_research_scores_only_out_of_sample_segment_when_series_
         evaluate_param_combo=evaluate_param_combo,
     )
 
-    assert report.selection_summary_df.loc[0, "selected_raw_objective"] == pytest.approx(5.0)
+    # Selection/ranking should be driven by in-sample score, not OOS.
+    assert report.selection_summary_df.loc[0, "selected_raw_objective"] == pytest.approx(1.0)
+    # OOS score is tracked separately for evaluation.
+    assert report.fold_scores_df.loc[0, "oos_objective"] == pytest.approx(5.0)
 
 
 def _make_enhanced_inputs(n: int = 600) -> tuple[pd.DataFrame, pd.Series]:
@@ -418,6 +421,7 @@ def test_enhanced_selection_produces_expected_columns() -> None:
     assert "top_k_features" in report.selection_summary_df.columns
     assert "trade_frequency" in report.fold_scores_df.columns
     assert "selected_in_top_k" in report.fold_scores_df.columns
+    assert "oos_objective" in report.fold_scores_df.columns
 
 
 def test_enhanced_selection_uses_top_k_labels_for_selected_flags(
@@ -503,3 +507,42 @@ def test_run_walkforward_research_param_label_includes_bin_count_when_present() 
     labels = set(report.fold_scores_df["param_label"].tolist())
     assert "bin_count=8|lookback=4" in labels
     assert "bin_count=10|lookback=6" in labels
+
+
+def test_run_walkforward_research_objective_uses_active_returns_only() -> None:
+    candles_df, target = _build_inputs()
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        test_step=20,
+        num_steps=1,
+        top_k=1,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+    )
+    param_grid: list[dict[str, object]] = [{"x": 1}, {"x": 2}]
+
+    def evaluate_param_combo(
+        fold_candles: pd.DataFrame,
+        _fold_target: pd.Series,
+        params: dict[str, object],
+    ) -> pd.Series:
+        if int(params["x"]) == 1:
+            # Better active returns, but sparse (zeros are flat/no-position).
+            train = pd.Series([1.0] + [0.0] * 39, index=fold_candles.index[:40])
+        else:
+            train = pd.Series([0.5] * 40, index=fold_candles.index[:40])
+        test = pd.Series([0.0] * (len(fold_candles.index) - 40), index=fold_candles.index[40:])
+        return pd.concat([train, test])
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluate_param_combo,
+    )
+
+    assert report.selection_summary_df.loc[0, "selected_feature"] == "x=1"

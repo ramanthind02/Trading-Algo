@@ -248,7 +248,7 @@ def run_walkforward_research(
 ) -> WalkforwardRunReport
 ```
 
-Description: evaluates all parameter combinations per walkforward fold, scores objective values on out-of-sample rows only, applies deterministic rank ordering (`smoothed_objective` desc, `raw_objective` desc, `param_label` asc), and emits fold/selection dataframes.
+Description: evaluates all parameter combinations per walkforward fold, ranks selections from in-sample (train-window) objectives, applies deterministic rank ordering (`smoothed_objective` desc, `raw_objective` desc, `param_label` asc), and emits fold/selection dataframes with separate out-of-sample objective tracking (`oos_objective`).
 
 Validation behavior:
 - Raises `ValueError` when `feature_type` or `module_name` is blank.
@@ -350,7 +350,7 @@ Output-file contract (exact filenames):
 
 Table schema contract (exact columns):
 - `folds.csv`: `fold_id`, `train_start`, `train_end`, `test_start`, `test_end`, `train_samples`, `test_samples`
-- `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `smoothed_objective`, `rank`, `selected_feature`
+- `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `oos_objective`, `smoothed_objective`, `rank`, `selected_feature`
 - `fold_scores.csv` enhanced (when `use_enhanced_selection=True`): add `trade_frequency`, `selected_in_top_k`
 - `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
 - `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_in_top_k=True` when present, otherwise `selected_feature=True`
