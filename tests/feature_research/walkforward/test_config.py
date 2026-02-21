@@ -19,7 +19,7 @@ def test_defaults_are_deterministic() -> None:
     )
 
     assert config.enabled is False
-    assert config.test_step == 252
+    assert config.test_step == 365
     assert config.num_steps == 8
     assert config.top_k == 3
     assert config.objective_metric_name == "sortino"
@@ -69,8 +69,6 @@ def test_config_enhanced_selection_defaults() -> None:
 
     assert config.use_enhanced_selection is False
     assert config.trade_freq_min == pytest.approx(0.05)
-    assert config.diversity_weight == pytest.approx(0.20)
-    assert config.quality_exponent == pytest.approx(2.0)
 
 
 def test_config_rejects_invalid_trade_freq_min() -> None:
@@ -79,22 +77,4 @@ def test_config_rejects_invalid_trade_freq_min() -> None:
             train_start=datetime(2000, 1, 1),
             train_end=datetime(2015, 1, 1),
             trade_freq_min=1.5,
-        )
-
-
-def test_config_rejects_invalid_diversity_weight() -> None:
-    with pytest.raises(ValueError, match="diversity_weight"):
-        WalkforwardResearchConfig(
-            train_start=datetime(2000, 1, 1),
-            train_end=datetime(2015, 1, 1),
-            diversity_weight=1.5,
-        )
-
-
-def test_config_rejects_non_positive_quality_exponent() -> None:
-    with pytest.raises(ValueError, match="quality_exponent"):
-        WalkforwardResearchConfig(
-            train_start=datetime(2000, 1, 1),
-            train_end=datetime(2015, 1, 1),
-            quality_exponent=0.0,
         )

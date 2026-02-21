@@ -417,11 +417,10 @@ def test_enhanced_selection_produces_expected_columns() -> None:
 
     assert "top_k_features" in report.selection_summary_df.columns
     assert "trade_frequency" in report.fold_scores_df.columns
-    assert "quality_score" in report.fold_scores_df.columns
-    assert "selected_by_diversity" in report.fold_scores_df.columns
+    assert "selected_in_top_k" in report.fold_scores_df.columns
 
 
-def test_enhanced_selection_uses_diversity_selected_labels_for_top_k(
+def test_enhanced_selection_uses_top_k_labels_for_selected_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     candles_df, target = _make_enhanced_inputs(1000)
@@ -442,8 +441,6 @@ def test_enhanced_selection_uses_diversity_selected_labels_for_top_k(
         return EnhancedSelectionResult(
             selected_labels=["lookback=4", "lookback=5"],
             trade_frequencies={"lookback=3": 0.7, "lookback=4": 0.8, "lookback=5": 0.6},
-            quality_scores={"lookback=4": 0.9, "lookback=5": 0.8},
-            corr_matrix=pd.DataFrame(),
         )
 
     monkeypatch.setattr(
@@ -464,7 +461,7 @@ def test_enhanced_selection_uses_diversity_selected_labels_for_top_k(
     top_k_features = json.loads(report.selection_summary_df.loc[0, "top_k_features"])
     assert top_k_features == ["lookback=4", "lookback=5"]
 
-    selected_flags = report.fold_scores_df.set_index("param_label")["selected_by_diversity"]
+    selected_flags = report.fold_scores_df.set_index("param_label")["selected_in_top_k"]
     assert bool(selected_flags.loc["lookback=4"])
     assert bool(selected_flags.loc["lookback=5"])
     assert not bool(selected_flags.loc["lookback=3"])

@@ -176,8 +176,6 @@ class WalkforwardResearchConfig:
     output_root: Path = Path("feature_research/shared_results")
     use_enhanced_selection: bool = False
     trade_freq_min: float = 0.05
-    diversity_weight: float = 0.20
-    quality_exponent: float = 2.0
 ```
 
 Description: frozen configuration contract for walk-forward feature-research runs, including fold geometry, objective metric selection, and output location.
@@ -353,9 +351,9 @@ Output-file contract (exact filenames):
 Table schema contract (exact columns):
 - `folds.csv`: `fold_id`, `train_start`, `train_end`, `test_start`, `test_end`, `train_samples`, `test_samples`
 - `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `smoothed_objective`, `rank`, `selected_feature`
-- `fold_scores.csv` enhanced (when `use_enhanced_selection=True`): add `trade_frequency`, `quality_score`, `selected_by_diversity`
+- `fold_scores.csv` enhanced (when `use_enhanced_selection=True`): add `trade_frequency`, `selected_in_top_k`
 - `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
-- `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_by_diversity=True` when present, otherwise `selected_feature=True`
+- `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_in_top_k=True` when present, otherwise `selected_feature=True`
 
 `report.json` minimum keys:
 - `feature_type`

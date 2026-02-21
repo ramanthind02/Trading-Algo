@@ -21,8 +21,7 @@ _FOLD_SCORE_BASE_COLS = [
 ]
 _FOLD_SCORE_ENHANCED_COLS = [
     "trade_frequency",
-    "quality_score",
-    "selected_by_diversity",
+    "selected_in_top_k",
 ]
 
 
@@ -80,13 +79,12 @@ def _build_selected_params_detailed(
         "smoothed_objective",
         "rank",
         "trade_frequency",
-        "quality_score",
-        "selected_by_diversity",
+        "selected_in_top_k",
     ]
     available_cols = [col for col in selected_cols if col in report.fold_scores_df.columns]
     selection_mask = (
-        report.fold_scores_df["selected_by_diversity"].astype(bool)
-        if "selected_by_diversity" in report.fold_scores_df.columns
+        report.fold_scores_df["selected_in_top_k"].astype(bool)
+        if "selected_in_top_k" in report.fold_scores_df.columns
         else report.fold_scores_df["selected_feature"].astype(bool)
     )
     selected_rows = report.fold_scores_df.loc[selection_mask, available_cols].copy()

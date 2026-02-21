@@ -78,8 +78,7 @@ def _build_enhanced_report() -> WalkforwardRunReport:
             "rank": [3, 1, 2],
             "selected_feature": [False, True, False],
             "trade_frequency": [0.6, 0.7, 0.65],
-            "quality_score": [0.55, 0.75, 0.72],
-            "selected_by_diversity": [False, True, True],
+            "selected_in_top_k": [False, True, True],
         }
     )
     selection_summary_df = pd.DataFrame(
@@ -325,8 +324,7 @@ def test_write_walkforward_artifacts_includes_enhanced_columns_when_present(
         "rank",
         "selected_feature",
         "trade_frequency",
-        "quality_score",
-        "selected_by_diversity",
+        "selected_in_top_k",
     ]
 
 
@@ -351,8 +349,7 @@ def test_write_walkforward_artifacts_legacy_report_omits_enhanced_columns(
 
     written = pd.read_csv(paths.fold_scores_csv)
     assert "trade_frequency" not in written.columns
-    assert "quality_score" not in written.columns
-    assert "selected_by_diversity" not in written.columns
+    assert "selected_in_top_k" not in written.columns
     assert written.columns.tolist() == [
         "fold_id",
         "param_label",
@@ -363,7 +360,7 @@ def test_write_walkforward_artifacts_legacy_report_omits_enhanced_columns(
     ]
 
 
-def test_write_walkforward_artifacts_selected_params_detailed_uses_selected_by_diversity_rows(
+def test_write_walkforward_artifacts_selected_params_detailed_uses_selected_in_top_k_rows(
     tmp_path: Path,
 ) -> None:
     report = _build_enhanced_report()

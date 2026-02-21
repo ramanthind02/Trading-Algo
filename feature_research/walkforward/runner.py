@@ -185,21 +185,18 @@ def _build_fold_scores(
                 str(row.param_label): float(row.smoothed_objective)
                 for row in smoothed_df.itertuples(index=False)
             },
-            objective_metric=objective_metric,
             config=config,
         )
         top_k_features = enhanced_result.selected_labels
         fold_scores_df = fold_scores_df.assign(
             trade_frequency=fold_scores_df["param_label"].map(enhanced_result.trade_frequencies),
-            quality_score=fold_scores_df["param_label"].map(enhanced_result.quality_scores),
-            selected_by_diversity=fold_scores_df["param_label"].isin(enhanced_result.selected_labels),
+            selected_in_top_k=fold_scores_df["param_label"].isin(enhanced_result.selected_labels),
         )
     else:
         top_k_features = ranked_df["param_label"].head(top_k).tolist()
         fold_scores_df = fold_scores_df.assign(
             trade_frequency=float("nan"),
-            quality_score=float("nan"),
-            selected_by_diversity=False,
+            selected_in_top_k=False,
         )
 
     summary_row = {
@@ -290,8 +287,7 @@ def run_walkforward_research(
                 "rank",
                 "selected_feature",
                 "trade_frequency",
-                "quality_score",
-                "selected_by_diversity",
+                "selected_in_top_k",
             ]
         )
     )

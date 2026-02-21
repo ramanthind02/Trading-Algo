@@ -12,7 +12,7 @@ class WalkforwardResearchConfig:
     train_start: datetime
     train_end: datetime
     enabled: bool = False
-    test_step: int = 252
+    test_step: int = 365
     num_steps: int = 8
     top_k: int = 3
     objective_metric_name: str = "sortino"
@@ -20,8 +20,6 @@ class WalkforwardResearchConfig:
     output_root: Path = Path("feature_research/shared_results")
     use_enhanced_selection: bool = False
     trade_freq_min: float = 0.05
-    diversity_weight: float = 0.20
-    quality_exponent: float = 2.0
 
     def __post_init__(self) -> None:
         if self.train_end <= self.train_start:
@@ -46,7 +44,3 @@ class WalkforwardResearchConfig:
             raise ValueError("output_root must be a non-empty Path")
         if not (0.0 <= self.trade_freq_min <= 1.0):
             raise ValueError("trade_freq_min must be in [0, 1]")
-        if not (0.0 <= self.diversity_weight <= 1.0):
-            raise ValueError("diversity_weight must be in [0, 1]")
-        if self.quality_exponent <= 0.0:
-            raise ValueError("quality_exponent must be > 0")
