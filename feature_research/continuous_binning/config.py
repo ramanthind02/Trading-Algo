@@ -79,7 +79,7 @@ class BinningAnalysisConfig:
     """
 
     bin_counts: list[int] = field(default_factory=lambda: [10, 8, 5, 3])
-    selection_metric: str = "sharpe"
+    selection_metric: str = "sortino"
     strategy: str = "long"
     metric_threshold: float = 0.0
     t_threshold: float = 2.0
@@ -146,7 +146,7 @@ class ResearchConfig:
     walkforward: WalkforwardResearchConfig = field(
         default_factory=lambda: WalkforwardResearchConfig(
             train_start=datetime(2020, 1, 1),
-            train_end=datetime(2024, 12, 31),
+            train_end=datetime(2023, 12, 31),
             enabled=False,
         )
     )
@@ -178,7 +178,7 @@ def load_config() -> ResearchConfig:
     ]
 
     start = datetime(2000, 1, 1)
-    end = datetime(2024, 12, 31)
+    end = datetime(2023, 12, 31)
 
     bias_spec = {
         "module_name": "rsi",
@@ -187,7 +187,7 @@ def load_config() -> ResearchConfig:
     }
 
     target_col = "log_return_atr"
-    strategy = "long-short"
+    strategy = "long"
 
     # Caching
     use_cache = True
@@ -197,7 +197,7 @@ def load_config() -> ResearchConfig:
 
     binning_params = BinningAnalysisConfig(
         bin_counts=[10,9, 8, 7, 6, 5, 4, 3],
-        strategy="long_short",
+        strategy="long",
         t_threshold=2.0,
         use_coverage_bonus=False,
     )
@@ -207,7 +207,7 @@ def load_config() -> ResearchConfig:
 
     module_name = bias_spec["module_name"]
     reports_dir = _CB_DIR / "results" / module_name
-    walkforward_test_step = 252
+    walkforward_test_step = 365
     walkforward_num_steps = 8
     walkforward_train_end = end - timedelta(days=walkforward_test_step * walkforward_num_steps)
     if walkforward_train_end <= start:
