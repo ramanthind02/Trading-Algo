@@ -3,7 +3,7 @@ import chromadb
 from chromadb.config import Settings
 from typing import Any
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 import pathlib
 
 
@@ -26,33 +26,45 @@ class MemoryService:
         )
     
     def store(self, text: str, metadata: dict[str, Any] | None = None) -> None:
-        chunks = self.text_splitter.split_text(text)
-        chunk_ids = [f"chunk_{i}_{hash(chunk) % 100000}" for i, chunk in enumerate(chunks)]
-        embeddings = self.embeddings.embed_documents(chunks)
+        if not text or not text.strip():
+            raise ValueError("text cannot be empty")
         
-        metadatas = [metadata or {} for _ in chunks]
-        
-        self.collection.add(
-            ids=chunk_ids,
-            documents=chunks,
-            embeddings=embeddings,
-            metadatas=metadatas
-        )
+        try:
+            chunks = self.text_splitter.split_text(text)
+            chunk_ids = [f"chunk_{i}_{hash(chunk) % 100000}" for i, chunk in enumerate(chunks)]
+            embeddings = self.embeddings.embed_documents(chunks)
+            
+            metadatas = [metadata or {} for _ in chunks]
+            
+            self.collection.add(
+                ids=chunk_ids,
+                documents=chunks,
+                embeddings=embeddings,
+                metadatas=metadatas
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to store text: {e}") from e
     
     def retrieve(self, query: str, k: int = 5) -> list[dict[str, Any]]:
-        query_embedding = self.embeddings.embed_query(query)
-        results = self.collection.query(
-            query_embeddings=[query_embedding],
-            n_results=k
-        )
+        if not query or not query.strip():
+            raise ValueError("query cannot be empty")
+        
+        try:
+            query_embedding = self.embeddings.embed_query(query)
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=k
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to retrieve: {e}") from e
         
         output = []
         if results["documents"] and results["documents"][0]:
             for i, doc in enumerate(results["documents"][0]):
                 output.append({
                     "text": doc,
-                    "distance": results["distances"][0][i] if "distances" in results else None,
-                    "metadata": results["metadatas"][0][i] if "metadatas" in results else {}
+                    "distance": results["distances"][0][i] if results.get("distances") else None,
+                    "metadata": results["metadatas"][0][i] if results.get("metadatas") else {}
                 })
         
         return output
