@@ -89,6 +89,34 @@ def _expand_params_with_bin_count(
     return [{**params, "bin_count": int(bin_count)} for bin_count in bin_counts]
 
 
+def _build_bin_count_specific_returns(
+    feature: pd.Series,
+    target: pd.Series,
+    bin_count: int,
+    config: "ResearchConfig",
+) -> pd.Series:
+    model = ContinuousBinningModel(
+        n_bins=bin_count,
+        bin_counts=[bin_count],
+        selection_metric=config.binning_params.selection_metric,
+        strategy=config.binning_params.strategy,
+        metric_threshold=config.binning_params.metric_threshold,
+        t_threshold=config.binning_params.t_threshold,
+        min_region_width=config.binning_params.min_region_width,
+        shrinkage_k=config.binning_params.shrinkage_k,
+        long_clip_min=config.binning_params.long_clip_min,
+        long_clip_max=config.binning_params.long_clip_max,
+        short_clip_min=config.binning_params.short_clip_min,
+        short_clip_max=config.binning_params.short_clip_max,
+        use_coverage_bonus=config.binning_params.use_coverage_bonus,
+        coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
+        max_coverage_bonus=config.binning_params.max_coverage_bonus,
+    )
+    model.fit(feature, target)
+    signal = model.predict(feature, strategy=config.binning_params.strategy)
+    return _normalize_series_datetime_index(signal.mul(target))
+
+
 def run_continuous_eda_pipeline(
     config: "ResearchConfig",
     output_dir: Path,
@@ -174,13 +202,18 @@ def run_continuous_eda_pipeline(
         saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
         results[label] = saved_path
 
-        base_returns = _normalize_series_datetime_index(feature.mul(target))
         expanded_combo_params = _expand_params_with_bin_count(
             params=dict(combo),
             bin_counts=config.binning_params.bin_counts,
         )
         for combo_params in expanded_combo_params:
-            combo_returns[_combo_key(combo_params)] = base_returns
+            combo_bin_count = int(combo_params.get("bin_count", config.binning_params.bin_counts[0]))
+            combo_returns[_combo_key(combo_params)] = _build_bin_count_specific_returns(
+                feature=feature,
+                target=target,
+                bin_count=combo_bin_count,
+                config=config,
+            )
             successful_param_grid.append(combo_params)
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)
@@ -306,13 +339,18 @@ def run_continuous_walkforward_pipeline(
 
         feature = paired["feature"]
         target = paired["target"]
-        base_returns = _normalize_series_datetime_index(feature.mul(target))
         expanded_combo_params = _expand_params_with_bin_count(
             params=dict(combo),
             bin_counts=config.binning_params.bin_counts,
         )
         for combo_params in expanded_combo_params:
-            combo_returns[_combo_key(combo_params)] = base_returns
+            combo_bin_count = int(combo_params.get("bin_count", config.binning_params.bin_counts[0]))
+            combo_returns[_combo_key(combo_params)] = _build_bin_count_specific_returns(
+                feature=feature,
+                target=target,
+                bin_count=combo_bin_count,
+                config=config,
+            )
             successful_param_grid.append(combo_params)
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)

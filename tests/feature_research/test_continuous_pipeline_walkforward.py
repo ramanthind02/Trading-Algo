@@ -273,6 +273,154 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
     assert "selected_feature" in selection_summary_df.columns
 
 
+def test_walkforward_evaluator_uses_bin_count_specific_returns(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi",
+                "timeframes": [TimeFrame.D],
+                "params": {"lookback": 2},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"], tz="UTC"),
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.run_eda_for_continuous_feature",
+        lambda *_args, **_kwargs: _mock_eda_report(),
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.save_eda_report",
+        lambda report, output_dir, overwrite: output_dir,
+    )
+
+    class _FakeBinningModel:
+        def __init__(self, n_bins: int, **_kwargs: object) -> None:
+            self.n_bins = int(n_bins)
+
+        def fit(self, feature_data: pd.Series, target_data: pd.Series) -> "_FakeBinningModel":
+            _ = feature_data
+            _ = target_data
+            return self
+
+        def predict(self, feature_data: pd.Series, strategy: str = "long") -> pd.Series:
+            _ = strategy
+            return pd.Series(float(self.n_bins), index=feature_data.index)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.ContinuousBinningModel",
+        _FakeBinningModel,
+    )
+
+    captured_eval: dict[str, object] = {}
+
+    def _mock_run_walkforward_research(
+        candles_df: pd.DataFrame,
+        target: pd.Series,
+        feature_type: str,
+        module_name: str,
+        config: WalkforwardResearchConfig,
+        param_grid: list[dict[str, object]],
+        evaluate_param_combo,
+    ) -> WalkforwardRunReport:
+        _ = feature_type
+        _ = module_name
+        _ = config
+        captured_eval["candles_df"] = candles_df
+        captured_eval["target"] = target
+        captured_eval["param_grid"] = param_grid
+        captured_eval["evaluate"] = evaluate_param_combo
+
+        return WalkforwardRunReport(
+            folds_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": 0,
+                        "train_start": pd.Timestamp("2020-01-01"),
+                        "train_end": pd.Timestamp("2020-01-31"),
+                        "test_start": pd.Timestamp("2020-02-01"),
+                        "test_end": pd.Timestamp("2020-02-20"),
+                        "train_samples": 31,
+                        "test_samples": 20,
+                    }
+                ]
+            ),
+            fold_scores_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": 0,
+                        "param_label": "bin_count=4|lookback=2",
+                        "raw_objective": 0.1,
+                        "smoothed_objective": 0.1,
+                        "rank": 1,
+                        "selected_feature": True,
+                    }
+                ]
+            ),
+            selection_summary_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": 0,
+                        "selected_feature": "bin_count=4|lookback=2",
+                        "selected_raw_objective": 0.1,
+                        "selected_smoothed_objective": 0.1,
+                        "top_k_features": "[\"bin_count=4|lookback=2\"]",
+                    }
+                ]
+            ),
+        )
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.run_walkforward_research",
+        _mock_run_walkforward_research,
+        raising=False,
+    )
+
+    def _mock_plot_selection_stability(selection_summary_df: pd.DataFrame, top_k: int):
+        _ = top_k
+        figure, _ = plt.subplots(figsize=(6, 2))
+        return figure, selection_summary_df
+
+    def _mock_plot_fold_timeline(folds_df: pd.DataFrame):
+        figure, _ = plt.subplots(figsize=(6, 2))
+        return figure, folds_df
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.plot_selection_stability",
+        _mock_plot_selection_stability,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.plot_fold_timeline",
+        _mock_plot_fold_timeline,
+        raising=False,
+    )
+
+    run_continuous_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
+
+    evaluate = cast(object, captured_eval["evaluate"])
+    candles_df = cast(pd.DataFrame, captured_eval["candles_df"])
+    target = cast(pd.Series, captured_eval["target"])
+    eval_fn = cast(object, evaluate)
+
+    low_bins = cast(pd.Series, eval_fn(candles_df, target, {"lookback": 2, "bin_count": 3}))
+    high_bins = cast(pd.Series, eval_fn(candles_df, target, {"lookback": 2, "bin_count": 10}))
+
+    assert not low_bins.equals(high_bins)
+
+
 def test_run_continuous_walkforward_pipeline_returns_report_and_writes_artifacts(
     monkeypatch,
     tmp_path: Path,
