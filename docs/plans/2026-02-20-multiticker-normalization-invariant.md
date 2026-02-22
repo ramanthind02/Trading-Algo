@@ -10,7 +10,7 @@
 
 Layer 1 is the primary guard. Layer 2 is a belt-and-suspenders check for code paths that bypass `ResearchConfig`.
 
-**Tech Stack:** `feature_research/continuous_binning/config.py`, `feature_research/continuous_binning/data_loader.py`, `tests/feature_research/continuous_binning/test_config.py`
+**Tech Stack:** `feature_research/in_sample/continuous_binning/config.py`, `feature_research/in_sample/continuous_binning/data_loader.py`, `tests/feature_research/test_config.py`
 
 ---
 
@@ -25,7 +25,7 @@ With `log_return_ewsd` or `log_return_atr`, each return is divided by that ticke
 ### Task 1: Add config validation test
 
 **Files:**
-- Test: `tests/feature_research/continuous_binning/test_config.py` (new or existing)
+- Test: `tests/feature_research/test_config.py` (new or existing)
 
 **Step 1: Write the failing test**
 
@@ -34,7 +34,7 @@ With `log_return_ewsd` or `log_return_atr`, each return is divided by that ticke
 import pytest
 from datetime import datetime
 from pathlib import Path
-from feature_research.continuous_binning.config import (
+from feature_research.in_sample.continuous_binning.config import (
     ResearchConfig,
     BinningAnalysisConfig,
     PermutationSuiteConfig,
@@ -103,7 +103,7 @@ def test_log_return_atr_with_multiple_tickers_allowed():
 **Step 2: Run to verify they fail**
 
 ```bash
-pytest tests/feature_research/continuous_binning/test_config.py -v
+pytest tests/feature_research/test_config.py -v
 ```
 
 Expected: all tests FAIL (no validation exists yet in `ResearchConfig`).
@@ -113,7 +113,7 @@ Expected: all tests FAIL (no validation exists yet in `ResearchConfig`).
 ### Task 2: Add `__post_init__` validation to `ResearchConfig`
 
 **Files:**
-- Modify: `feature_research/continuous_binning/config.py`
+- Modify: `feature_research/in_sample/continuous_binning/config.py`
 
 **Step 1: Add `__post_init__`**
 
@@ -141,7 +141,7 @@ Note: `RAW_TARGET_COLS` is defined at module level, not inside the class, to avo
 **Step 2: Run tests**
 
 ```bash
-pytest tests/feature_research/continuous_binning/test_config.py -v
+pytest tests/feature_research/test_config.py -v
 ```
 
 Expected: all tests PASS.
@@ -157,8 +157,8 @@ Expected: all unit tests pass. If any test creates a multi-ticker config with `l
 **Step 4: Commit**
 
 ```bash
-git add feature_research/continuous_binning/config.py \
-        tests/feature_research/continuous_binning/test_config.py
+git add feature_research/in_sample/continuous_binning/config.py \
+        tests/feature_research/test_config.py
 git commit -m "feat(config): validate vol-normalized target for multi-ticker research configs"
 ```
 
@@ -169,7 +169,7 @@ git commit -m "feat(config): validate vol-normalized target for multi-ticker res
 This catches code paths that bypass `ResearchConfig` entirely (e.g., tests or scripts that call `load_features_for_combo` directly).
 
 **Files:**
-- Modify: `feature_research/continuous_binning/data_loader.py`
+- Modify: `feature_research/in_sample/continuous_binning/data_loader.py`
 
 **Step 1: Add a cross-ticker std-ratio check**
 
@@ -198,7 +198,7 @@ if config.target_col in _UNNORMALIZED_RETURN_COLS:
 ```python
 def test_load_features_raises_on_raw_return_multiticker(monkeypatch):
     """Data loader raises if raw return is used with multiple tickers."""
-    from feature_research.continuous_binning import data_loader
+    from feature_research.in_sample.continuous_binning import data_loader
     import pandas as pd
     from utils.enums import Ticker, TimeFrame
 
@@ -221,7 +221,7 @@ def test_load_features_raises_on_raw_return_multiticker(monkeypatch):
 
     # Monkeypatch extract_features_for_bias_node to return our stubs
     monkeypatch.setattr(
-        "feature_research.continuous_binning.data_loader.extract_features_for_bias_node",
+        "feature_research.in_sample.continuous_binning.data_loader.extract_features_for_bias_node",
         lambda **_: (features_df, targets_df),
     )
 
@@ -235,7 +235,7 @@ def test_load_features_raises_on_raw_return_multiticker(monkeypatch):
 **Step 3: Run test**
 
 ```bash
-pytest tests/feature_research/continuous_binning/ -v
+pytest tests/feature_research/test_config.py -v
 ```
 
 Expected: PASS.
@@ -243,8 +243,8 @@ Expected: PASS.
 **Step 4: Commit**
 
 ```bash
-git add feature_research/continuous_binning/data_loader.py \
-        tests/feature_research/continuous_binning/test_config.py
+git add feature_research/in_sample/continuous_binning/data_loader.py \
+        tests/feature_research/test_config.py
 git commit -m "feat(data_loader): guard against raw returns with multi-ticker datasets"
 ```
 
@@ -289,8 +289,8 @@ git commit -m "docs(binning): document vol-normalization invariant for multi-tic
 
 | Layer | File | Guard |
 |---|---|---|
-| Config | `feature_research/continuous_binning/config.py` | `__post_init__` raises if raw target + >1 ticker |
-| Data loader | `feature_research/continuous_binning/data_loader.py` | Runtime check in `load_features_for_combo` |
+| Config | `feature_research/in_sample/continuous_binning/config.py` | `__post_init__` raises if raw target + >1 ticker |
+| Data loader | `feature_research/in_sample/continuous_binning/data_loader.py` | Runtime check in `load_features_for_combo` |
 | Model doc | `feature_selection/base_models/continuous_binning.py` | Docstring documents the invariant |
 
 ### Error Messages (Exact)

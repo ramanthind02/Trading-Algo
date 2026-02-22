@@ -15,8 +15,8 @@ from feature_selection.validation.config import PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.enums import Ticker, TimeFrame
 
-_FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[1]
-_RB_DIR = _FEATURE_RESEARCH_DIR / "rule_based"
+_FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[2]
+_RB_DIR = _FEATURE_RESEARCH_DIR / "in_sample" / "rule_based"
 
 
 @dataclass(frozen=True)
@@ -75,7 +75,7 @@ class RuleBasedResearchConfig:
         If True, run ``CacheManager.populate_cache()`` before extraction.
     reports_dir : Path
         Root output directory for EDA reports.
-        Default: ``feature_research/rule_based/results/{module_name}/``
+        Default: ``feature_research/in_sample/rule_based/results/{module_name}/``
     """
 
     tickers: list[Ticker]

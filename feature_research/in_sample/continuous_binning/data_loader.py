@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 if TYPE_CHECKING:
-    from feature_research.continuous_binning.config import ResearchConfig
+    from feature_research.in_sample.continuous_binning.config import ResearchConfig
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from utils.cache_manager import CacheManager
@@ -86,7 +86,14 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
     if not config.populate_cache:
         return
 
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = next(
+        (
+            parent
+            for parent in Path(__file__).resolve().parents
+            if (parent / "pyproject.toml").exists()
+        ),
+        Path(__file__).resolve().parents[3],
+    )
     candle_dir = project_root / "data" / "ohlc_data"
     if not candle_dir.exists():
         print(

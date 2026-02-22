@@ -5,8 +5,8 @@ from typing import cast
 import pandas as pd
 import pytest
 
-from feature_research.continuous_binning.config import ResearchConfig
-from feature_research.continuous_binning.data_loader import (
+from feature_research.in_sample.continuous_binning.config import ResearchConfig
+from feature_research.in_sample.continuous_binning.data_loader import (
     expand_bias_specs,
     load_features_for_combo,
     param_combo_label,
@@ -79,7 +79,7 @@ def test_load_features_for_combo_rejects_raw_return_with_multi_ticker(
         return features_df, targets_df
 
     monkeypatch.setattr(
-        "feature_research.continuous_binning.data_loader.extract_features_for_bias_node",
+        "feature_research.in_sample.continuous_binning.data_loader.extract_features_for_bias_node",
         _fake_extract_features_for_bias_node,
     )
 

@@ -5,13 +5,13 @@ Runs walkforward-only analysis (no EDA) with enhanced selection enabled.
 Usage
 -----
     source /home/raman/repos/Trading-Algo/venv/bin/activate
-    python feature_research/rule_based/run_walkforward.py
+    python feature_research/walkforward/rule_based/run_walkforward.py
 
 Artifacts are written to the ``output_root`` defined in ``config.walkforward``
 (default: ``feature_research/shared_results/rule_based/{module_name}/walkforward/``).
 
 To customise tickers, dates, bias_spec, or walkforward parameters, edit
-``feature_research/rule_based/config.py``.
+``feature_research/in_sample/rule_based/config.py``.
 
 To disable enhanced selection, set ``use_enhanced_selection=False`` in the
 ``dataclasses.replace`` call below, or override ``load_config()`` directly.
@@ -20,12 +20,25 @@ import dataclasses
 import sys
 from pathlib import Path
 
-_repo_root = Path(__file__).resolve().parent.parent.parent
-if str(_repo_root) not in sys.path:
+
+def _find_repo_root(start: Path) -> Path | None:
+    search_root = start if start.is_dir() else start.parent
+
+    for parent in (search_root, *search_root.parents):
+        if (parent / "pyproject.toml").exists():
+            return parent
+        if (parent / ".git").exists():
+            return parent
+
+    return None
+
+
+_repo_root = _find_repo_root(Path(__file__).resolve())
+if _repo_root is not None and str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from feature_research.rule_based.config import load_config
-from feature_research.rule_based.pipeline import run_rule_based_walkforward_pipeline
+from feature_research.in_sample.rule_based.config import load_config
+from feature_research.in_sample.rule_based.pipeline import run_rule_based_walkforward_pipeline
 
 
 if __name__ == "__main__":

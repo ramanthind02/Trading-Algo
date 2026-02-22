@@ -8,8 +8,8 @@ from typing import cast
 
 import pandas as pd
 
-from feature_research.rule_based.config import RuleBasedResearchConfig
-from feature_research.rule_based.pipeline import run_rule_based_eda_pipeline
+from feature_research.in_sample.rule_based.config import RuleBasedResearchConfig
+from feature_research.in_sample.rule_based.pipeline import run_rule_based_eda_pipeline
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.runner import WalkforwardRunReport
 from utils.enums import Ticker, TimeFrame
@@ -83,11 +83,11 @@ def test_walkforward_enabled_handles_tz_aware_feature_indices(
     config = _build_config(tmp_path, walkforward_enabled=True)
 
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        "feature_research.in_sample.rule_based.pipeline.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.expand_bias_specs",
+        "feature_research.in_sample.rule_based.pipeline.expand_bias_specs",
         lambda _bias_spec: [
             {
                 "module_name": "rsi_signal",
@@ -104,15 +104,15 @@ def test_walkforward_enabled_handles_tz_aware_feature_indices(
         ],
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.load_features_for_combo",
+        "feature_research.in_sample.rule_based.pipeline.load_features_for_combo",
         lambda single_spec, _config: _series_for_combo(single_spec["params"], tz="UTC"),
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.run_eda_for_rule_based_feature",
+        "feature_research.in_sample.rule_based.pipeline.run_eda_for_rule_based_feature",
         lambda *_args, **_kwargs: _mock_eda_report(),
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.save_eda_report",
+        "feature_research.in_sample.rule_based.pipeline.save_eda_report",
         lambda report, output_dir, overwrite: output_dir,
     )
 
@@ -128,11 +128,11 @@ def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -
     config = _build_config(tmp_path, walkforward_enabled=False)
 
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        "feature_research.in_sample.rule_based.pipeline.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.expand_bias_specs",
+        "feature_research.in_sample.rule_based.pipeline.expand_bias_specs",
         lambda _bias_spec: [
             {
                 "module_name": "rsi_signal",
@@ -149,36 +149,36 @@ def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -
         ],
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.load_features_for_combo",
+        "feature_research.in_sample.rule_based.pipeline.load_features_for_combo",
         lambda single_spec, _config: _series_for_combo(single_spec["params"]),
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.run_eda_for_rule_based_feature",
+        "feature_research.in_sample.rule_based.pipeline.run_eda_for_rule_based_feature",
         lambda *_args, **_kwargs: _mock_eda_report(),
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.save_eda_report",
+        "feature_research.in_sample.rule_based.pipeline.save_eda_report",
         lambda report, output_dir, overwrite: output_dir,
     )
 
     calls = {"runner": 0, "stability": 0, "timeline": 0, "writer": 0}
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.run_walkforward_research",
+        "feature_research.in_sample.rule_based.pipeline.run_walkforward_research",
         lambda *_args, **_kwargs: calls.__setitem__("runner", calls["runner"] + 1),
         raising=False,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.plot_selection_stability",
+        "feature_research.in_sample.rule_based.pipeline.plot_selection_stability",
         lambda *_args, **_kwargs: calls.__setitem__("stability", calls["stability"] + 1),
         raising=False,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.plot_fold_timeline",
+        "feature_research.in_sample.rule_based.pipeline.plot_fold_timeline",
         lambda *_args, **_kwargs: calls.__setitem__("timeline", calls["timeline"] + 1),
         raising=False,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.write_walkforward_artifacts",
+        "feature_research.in_sample.rule_based.pipeline.write_walkforward_artifacts",
         lambda *_args, **_kwargs: calls.__setitem__("writer", calls["writer"] + 1),
         raising=False,
     )
@@ -196,11 +196,11 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
     output_dir = tmp_path / "rule_based_reports"
 
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        "feature_research.in_sample.rule_based.pipeline.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.expand_bias_specs",
+        "feature_research.in_sample.rule_based.pipeline.expand_bias_specs",
         lambda _bias_spec: [
             {
                 "module_name": "rsi_signal",
@@ -229,15 +229,15 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
         ],
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.load_features_for_combo",
+        "feature_research.in_sample.rule_based.pipeline.load_features_for_combo",
         lambda single_spec, _config: _series_for_combo(single_spec["params"]),
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.run_eda_for_rule_based_feature",
+        "feature_research.in_sample.rule_based.pipeline.run_eda_for_rule_based_feature",
         lambda *_args, **_kwargs: _mock_eda_report(),
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.save_eda_report",
+        "feature_research.in_sample.rule_based.pipeline.save_eda_report",
         lambda report, output_dir, overwrite: output_dir,
     )
 
@@ -259,16 +259,16 @@ def test_run_rule_based_walkforward_pipeline_returns_report_and_writes_artifacts
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    from feature_research.in_sample.rule_based.pipeline import run_rule_based_walkforward_pipeline
 
     config = _build_config(tmp_path, walkforward_enabled=True)
 
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        "feature_research.in_sample.rule_based.pipeline.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.expand_bias_specs",
+        "feature_research.in_sample.rule_based.pipeline.expand_bias_specs",
         lambda _bias_spec: [
             {
                 "module_name": "rsi_signal",
@@ -297,7 +297,7 @@ def test_run_rule_based_walkforward_pipeline_returns_report_and_writes_artifacts
         ],
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.load_features_for_combo",
+        "feature_research.in_sample.rule_based.pipeline.load_features_for_combo",
         lambda single_spec, _config: _series_for_combo(single_spec["params"]),
     )
 
@@ -317,17 +317,17 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_combos_load(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    from feature_research.in_sample.rule_based.pipeline import run_rule_based_walkforward_pipeline
     import pytest
 
     config = _build_config(tmp_path, walkforward_enabled=True)
 
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        "feature_research.in_sample.rule_based.pipeline.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.expand_bias_specs",
+        "feature_research.in_sample.rule_based.pipeline.expand_bias_specs",
         lambda _bias_spec: [
             {
                 "module_name": "rsi_signal",
@@ -344,7 +344,7 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_combos_load(
         ],
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.load_features_for_combo",
+        "feature_research.in_sample.rule_based.pipeline.load_features_for_combo",
         lambda single_spec, _config: None,
     )
 
@@ -356,7 +356,7 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_folds(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    from feature_research.in_sample.rule_based.pipeline import run_rule_based_walkforward_pipeline
     import pytest
 
     config = _build_config(tmp_path, walkforward_enabled=True)
@@ -370,11 +370,11 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_folds(
     )
 
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.populate_cache_if_needed",
+        "feature_research.in_sample.rule_based.pipeline.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.expand_bias_specs",
+        "feature_research.in_sample.rule_based.pipeline.expand_bias_specs",
         lambda _bias_spec: [
             {
                 "module_name": "rsi_signal",
@@ -391,7 +391,7 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_folds(
         ],
     )
     monkeypatch.setattr(
-        "feature_research.rule_based.pipeline.load_features_for_combo",
+        "feature_research.in_sample.rule_based.pipeline.load_features_for_combo",
         lambda single_spec, _config: _series_for_combo(single_spec["params"]),
     )
 

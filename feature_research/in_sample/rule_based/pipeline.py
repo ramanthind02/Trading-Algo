@@ -1,14 +1,14 @@
-# feature_research/continuous_binning/pipeline.py
-"""Core EDA pipeline for continuous binning research.
+# feature_research/rule_based/pipeline.py
+"""Core EDA pipeline for rule-based feature research.
 
-Entry point for tests and scripts alike — import ``run_continuous_eda_pipeline``
+Entry point for tests and scripts alike — import ``run_rule_based_eda_pipeline``
 rather than duplicating this logic.
 """
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -17,15 +17,14 @@ import pandas as pd
 matplotlib.use("Agg")  # non-interactive backend (safe for scripts and tests)
 
 if TYPE_CHECKING:
-    from feature_research.continuous_binning.config import ResearchConfig
+    from feature_research.in_sample.rule_based.config import RuleBasedResearchConfig
     from feature_research.walkforward.runner import WalkforwardRunReport
     from feature_selection.validation.reports import PermutationTestSuite
 
-from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.validation.config import PermutationTestConfig
 from feature_selection.validation.objective_metrics import resolve_objective_metric
 from feature_selection.validation.orchestration import run_permutation_test_suite
-from feature_research.continuous_binning.data_loader import (
+from feature_research.in_sample.rule_based.data_loader import (
     expand_bias_specs,
     load_candles_for_config,
     load_features_for_combo,
@@ -36,7 +35,7 @@ from feature_research.walkforward.io import write_walkforward_artifacts
 from feature_research.walkforward.runner import run_walkforward_research
 from feature_research.walkforward.visualization import plot_fold_timeline, plot_selection_stability
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
-from feature_selection.eda.eda_reporter import run_eda_for_continuous_feature, save_eda_report
+from feature_selection.eda.eda_reporter import run_eda_for_rule_based_feature, save_eda_report
 from utils.enums import TimeFrame
 
 
@@ -64,112 +63,39 @@ def _normalize_series_datetime_index(series: pd.Series) -> pd.Series:
 
 
 def _build_walkforward_evaluator(
-    combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame],
-    config: "ResearchConfig",
-) -> Callable[..., pd.Series]:
+    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series],
+) -> Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series]:
     def evaluate_param_combo(
         fold_candles: pd.DataFrame,
         _fold_target: pd.Series,
         params: dict[str, object],
-        *,
-        train_end: pd.Timestamp | None = None,
     ) -> pd.Series:
-        combo_data = combo_feature_target[_combo_key(params)]
-        fold_data = combo_data.reindex(_normalize_datetime_index(fold_candles.index)).dropna()
-        if fold_data.empty:
-            return pd.Series(dtype=float)
-
-        train_cutoff = pd.Timestamp(train_end) if train_end is not None else pd.Timestamp(fold_data.index.max())
-        train_data = fold_data.loc[fold_data.index <= train_cutoff]
-        if train_data.empty:
-            return pd.Series(dtype=float)
-
-        bin_count = int(cast(int, params.get("bin_count", config.binning_params.bin_counts[0])))
-        model = ContinuousBinningModel(
-            n_bins=bin_count,
-            bin_counts=[bin_count],
-            selection_metric=config.binning_params.selection_metric,
-            strategy=config.binning_params.strategy,
-            metric_threshold=config.binning_params.metric_threshold,
-            t_threshold=config.binning_params.t_threshold,
-            min_region_width=config.binning_params.min_region_width,
-            shrinkage_k=config.binning_params.shrinkage_k,
-            long_clip_min=config.binning_params.long_clip_min,
-            long_clip_max=config.binning_params.long_clip_max,
-            short_clip_min=config.binning_params.short_clip_min,
-            short_clip_max=config.binning_params.short_clip_max,
-            use_coverage_bonus=config.binning_params.use_coverage_bonus,
-            coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
-            max_coverage_bonus=config.binning_params.max_coverage_bonus,
-        )
-        try:
-            model.fit(train_data["feature"], train_data["target"])
-        except ValueError:
-            return pd.Series(dtype=float)
-        signal = model.predict(fold_data["feature"], strategy=config.binning_params.strategy)
-        return _normalize_series_datetime_index(signal.mul(fold_data["target"]))
+        returns = combo_returns[_combo_key(params)]
+        fold_returns = returns.reindex(fold_candles.index).dropna()
+        return fold_returns if not fold_returns.empty else pd.Series(dtype=float)
 
     return evaluate_param_combo
 
 
-def _expand_params_with_bin_count(
-    params: dict[str, object],
-    bin_counts: list[int],
-) -> list[dict[str, object]]:
-    if "bin_count" in params:
-        return [dict(params)]
-    if not bin_counts:
-        return [dict(params)]
-    return [{**params, "bin_count": int(bin_count)} for bin_count in bin_counts]
-
-
-def _build_bin_count_specific_returns(
-    feature: pd.Series,
-    target: pd.Series,
-    bin_count: int,
-    config: "ResearchConfig",
-) -> pd.Series:
-    model = ContinuousBinningModel(
-        n_bins=bin_count,
-        bin_counts=[bin_count],
-        selection_metric=config.binning_params.selection_metric,
-        strategy=config.binning_params.strategy,
-        metric_threshold=config.binning_params.metric_threshold,
-        t_threshold=config.binning_params.t_threshold,
-        min_region_width=config.binning_params.min_region_width,
-        shrinkage_k=config.binning_params.shrinkage_k,
-        long_clip_min=config.binning_params.long_clip_min,
-        long_clip_max=config.binning_params.long_clip_max,
-        short_clip_min=config.binning_params.short_clip_min,
-        short_clip_max=config.binning_params.short_clip_max,
-        use_coverage_bonus=config.binning_params.use_coverage_bonus,
-        coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
-        max_coverage_bonus=config.binning_params.max_coverage_bonus,
-    )
-    model.fit(feature, target)
-    signal = model.predict(feature, strategy=config.binning_params.strategy)
-    return _normalize_series_datetime_index(signal.mul(target))
-
-
-def run_continuous_eda_pipeline(
-    config: "ResearchConfig",
+def run_rule_based_eda_pipeline(
+    config: "RuleBasedResearchConfig",
     output_dir: Path,
 ) -> dict[str, Path]:
-    """Run the full continuous-feature EDA pipeline for every param combo in config.
+    """Run the full rule-based feature EDA pipeline for every param combo in config.
 
     For each param combo:
     1. Extract feature + target data (cache-backed).
     2. Build ``EDAMetadata`` and ``EDAConfig``.
-    3. Run ``run_eda_for_continuous_feature`` to produce a ``ContinuousEDAReport``.
+    3. Run ``run_eda_for_rule_based_feature`` to produce a ``RuleBasedEDAReport``.
     4. Save the report under ``output_dir / param_label /``.
     5. Print a one-line summary.
 
     Parameters
     ----------
-    config : ResearchConfig
+    config : RuleBasedResearchConfig
         Researcher-defined settings (tickers, dates, bias_spec, cache flags).
     output_dir : Path
-        Root directory for output reports.  Created if it does not exist.
+        Root directory for output reports. Created if it does not exist.
         Each param combo writes to ``output_dir / param_label /``.
 
     Returns
@@ -185,13 +111,12 @@ def run_continuous_eda_pipeline(
     tf = _normalize_timeframe(config.bias_spec)
 
     results: dict[str, Path] = {}
-    combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
+    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
     successful_param_grid: list[dict[str, object]] = []
     reference_index: pd.DatetimeIndex | None = None
-    reference_target_series: pd.Series | None = None
 
     print(f"\n{'='*64}")
-    print(f"Continuous EDA Pipeline: {config.bias_spec['module_name'].upper()}")
+    print(f"Rule-Based EDA Pipeline: {config.bias_spec['module_name'].upper()}")
     print(f"Tickers : {[t.name for t in config.tickers]}")
     print(f"Period  : {config.start.date()} -> {config.end.date()}")
     print(f"Target  : {config.target_col}  |  Strategy: {config.strategy}")
@@ -227,9 +152,9 @@ def run_continuous_eda_pipeline(
             ticker=config.tickers[0],
             timestamp=datetime.now(),
         )
-        eda_config = EDAConfig(n_bins=15, rolling_window=rolling_window)
+        eda_config = EDAConfig(rolling_window=rolling_window, bootstrap_iterations=500)
 
-        report = run_eda_for_continuous_feature(feature, target, timestamps, metadata, eda_config)
+        report = run_eda_for_rule_based_feature(feature, target, timestamps, metadata, eda_config)
 
         combo_output_dir = output_dir / label
         combo_output_dir.mkdir(parents=True, exist_ok=True)
@@ -237,55 +162,36 @@ def run_continuous_eda_pipeline(
         saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
         results[label] = saved_path
 
-        expanded_combo_params = _expand_params_with_bin_count(
-            params=dict(combo),
-            bin_counts=config.binning_params.bin_counts,
-        )
-        normalized_feature = _normalize_series_datetime_index(feature)
-        normalized_target = _normalize_series_datetime_index(target)
-        for combo_params in expanded_combo_params:
-            combo_bin_count = int(
-                cast(int, combo_params.get("bin_count", config.binning_params.bin_counts[0]))
-            )
-            combo_feature_target[_combo_key(combo_params)] = pd.DataFrame(
-                {
-                    "feature": normalized_feature,
-                    "target": normalized_target,
-                }
-            )
-            successful_param_grid.append(combo_params)
+        combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
+        successful_param_grid.append(dict(combo))
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)
-            reference_target_series = normalized_target.reindex(reference_index)
 
-        pearson = report.common_stats.correlation_analysis.pearson
-        spread = report.continuous_stats.quintile_spread.spread
-        trend = report.continuous_stats.decile_analysis.overall_trend
+        stats_by_level = report.rule_stats.per_level_stats.stats_by_level
+        level_parts = "  ".join(
+            f"L[{lvl}]: sharpe={stats_by_level[lvl].sharpe:+.2f}"
+            if lvl in stats_by_level
+            else f"L[{lvl}]: n/a"
+            for lvl in [-1, 0, 1]
+        )
         viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
         warnings_count = len(report.diagnostics.warnings)
 
         print(
-            f"  [{label}] n={len(feature):,}  pearson={pearson:+.3f}  "
-            f"spread={spread:+.3f}  trend={trend}  {viable}  warnings={warnings_count}"
+            f"  [{label}] n={len(feature):,}  {level_parts}  {viable}  warnings={warnings_count}"
         )
 
     if config.walkforward.enabled and reference_index is not None and successful_param_grid:
-        if reference_target_series is None:
-            reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
-        else:
-            reference_target = reference_target_series.fillna(0.0).rename("walkforward_target")
+        reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
         reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
-        portfolio_candles = load_candles_for_config(config)
         walkforward_report = run_walkforward_research(
             candles_df=reference_candles,
             target=reference_target,
-            feature_type="continuous",
+            feature_type="rule_based",
             module_name=str(config.bias_spec["module_name"]),
             config=config.walkforward,
             param_grid=successful_param_grid,
-            evaluate_param_combo=_build_walkforward_evaluator(combo_feature_target, config),
-            research_config=config,
-            portfolio_candles_df=portfolio_candles,
+            evaluate_param_combo=_build_walkforward_evaluator(combo_returns),
         )
         stability_figure, _ = plot_selection_stability(
             selection_summary_df=walkforward_report.selection_summary_df,
@@ -296,7 +202,7 @@ def run_continuous_eda_pipeline(
             report=walkforward_report,
             walkforward_stability_figure=stability_figure,
             fold_timeline_figure=timeline_figure,
-            feature_type="continuous",
+            feature_type="rule_based",
             module_name=str(config.bias_spec["module_name"]),
             root_dir=config.walkforward.output_root,
             research_context={
@@ -305,7 +211,6 @@ def run_continuous_eda_pipeline(
                 "period_end": str(config.end.date()),
                 "target_col": config.target_col,
                 "strategy": config.strategy,
-                "binning_bin_counts": config.binning_params.bin_counts,
                 "walkforward_test_step": config.walkforward.test_step,
                 "walkforward_num_steps": config.walkforward.num_steps,
                 "walkforward_top_k": config.walkforward.top_k,
@@ -319,11 +224,11 @@ def run_continuous_eda_pipeline(
     return results
 
 
-def run_continuous_walkforward_pipeline(
-    config: "ResearchConfig",
+def run_rule_based_walkforward_pipeline(
+    config: "RuleBasedResearchConfig",
     output_dir: Path,
 ) -> "WalkforwardRunReport":
-    """Run walkforward research only (no EDA) for continuous features.
+    """Run walkforward research only (no EDA) for rule-based features.
 
     Loads feature data for all param combos, builds the return-series evaluator,
     runs walkforward research with optional enhanced selection, and writes artifacts
@@ -331,7 +236,7 @@ def run_continuous_walkforward_pipeline(
 
     Parameters
     ----------
-    config : ResearchConfig
+    config : RuleBasedResearchConfig
         Research settings. Set ``config.walkforward.use_enhanced_selection = True``
         to activate the three-objective enhanced selection algorithm.
     output_dir : Path
@@ -355,7 +260,7 @@ def run_continuous_walkforward_pipeline(
     expanded = expand_bias_specs(config.bias_spec)
 
     print(f"\n{'='*64}")
-    print(f"Continuous Walkforward Pipeline: {config.bias_spec['module_name'].upper()}")
+    print(f"Rule-Based Walkforward Pipeline: {config.bias_spec['module_name'].upper()}")
     print(f"Tickers : {[t.name for t in config.tickers]}")
     print(f"Period  : {config.start.date()} -> {config.end.date()}")
     print(f"Combos  : {len(expanded)}")
@@ -364,10 +269,9 @@ def run_continuous_walkforward_pipeline(
     )
     print(f"{'='*64}\n")
 
-    combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
+    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
     successful_param_grid: list[dict[str, object]] = []
     reference_index: pd.DatetimeIndex | None = None
-    reference_target_series: pd.Series | None = None
 
     for single_spec in expanded:
         combo = single_spec["params"]
@@ -386,48 +290,26 @@ def run_continuous_walkforward_pipeline(
 
         feature = paired["feature"]
         target = paired["target"]
-        expanded_combo_params = _expand_params_with_bin_count(
-            params=dict(combo),
-            bin_counts=config.binning_params.bin_counts,
-        )
-        normalized_feature = _normalize_series_datetime_index(feature)
-        normalized_target = _normalize_series_datetime_index(target)
-        for combo_params in expanded_combo_params:
-            combo_bin_count = int(
-                cast(int, combo_params.get("bin_count", config.binning_params.bin_counts[0]))
-            )
-            combo_feature_target[_combo_key(combo_params)] = pd.DataFrame(
-                {
-                    "feature": normalized_feature,
-                    "target": normalized_target,
-                }
-            )
-            successful_param_grid.append(combo_params)
+        combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
+        successful_param_grid.append(dict(combo))
         if reference_index is None:
             reference_index = _normalize_datetime_index(target.index)
-            reference_target_series = normalized_target.reindex(reference_index)
         print(f"  [{label}] loaded n={len(feature):,}")
 
     if not successful_param_grid or reference_index is None:
         raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
 
-    if reference_target_series is None:
-        reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
-    else:
-        reference_target = reference_target_series.fillna(0.0).rename("walkforward_target")
+    reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
     reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
-    portfolio_candles = load_candles_for_config(config)
 
     walkforward_report = run_walkforward_research(
         candles_df=reference_candles,
         target=reference_target,
-        feature_type="continuous",
+        feature_type="rule_based",
         module_name=str(config.bias_spec["module_name"]),
         config=config.walkforward,
         param_grid=successful_param_grid,
-        evaluate_param_combo=_build_walkforward_evaluator(combo_feature_target, config),
-        research_config=config,
-        portfolio_candles_df=portfolio_candles,
+        evaluate_param_combo=_build_walkforward_evaluator(combo_returns),
     )
     if walkforward_report.folds_df.empty:
         first_ts = pd.Timestamp(reference_index.min())
@@ -448,7 +330,7 @@ def run_continuous_walkforward_pipeline(
         report=walkforward_report,
         walkforward_stability_figure=stability_figure,
         fold_timeline_figure=timeline_figure,
-        feature_type="continuous",
+        feature_type="rule_based",
         module_name=str(config.bias_spec["module_name"]),
         root_dir=config.walkforward.output_root,
         research_context={
@@ -457,7 +339,6 @@ def run_continuous_walkforward_pipeline(
             "period_end": str(config.end.date()),
             "target_col": config.target_col,
             "strategy": config.strategy,
-            "binning_bin_counts": config.binning_params.bin_counts,
             "walkforward_test_step": config.walkforward.test_step,
             "walkforward_num_steps": config.walkforward.num_steps,
             "walkforward_top_k": config.walkforward.top_k,
@@ -494,11 +375,11 @@ def _build_fold_structure(
     return folds
 
 
-def run_continuous_permutation_pipeline(
-    config: "ResearchConfig",
+def run_rule_based_permutation_pipeline(
+    config: "RuleBasedResearchConfig",
     output_dir: Path,
 ) -> "PermutationTestSuite":
-    """Run the shared permutation suite using the continuous-research adapter."""
+    """Run the shared permutation suite using the rule-based research adapter."""
     if not config.permutation_suite.enabled:
         raise ValueError("Permutation suite is disabled; set config.permutation_suite.enabled=True.")
 
@@ -557,12 +438,6 @@ def run_continuous_permutation_pipeline(
         fold_structure=fold_structure,
         config=permutation_config,
         extractor_func=extractor_func,
-        binning_model_factory=lambda _params: ContinuousBinningModel(
-            bin_counts=config.binning_params.bin_counts,
-            use_coverage_bonus=config.binning_params.use_coverage_bonus,
-            coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
-            max_coverage_bonus=config.binning_params.max_coverage_bonus,
-        ),
-        feature_type="continuous",
+        feature_type="rule_based",
         feature_name=feature_col,
     )

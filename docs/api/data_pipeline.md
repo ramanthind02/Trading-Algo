@@ -273,7 +273,7 @@ Raises:
 - `ValueError` when no valid data points remain after alignment/cleaning.
 
 ### EDA/Research entrypoints
-- `feature_research/continuous_binning/run_binning_analysis.py`: CLI entrypoint that orchestrates continuous binning analysis runs and emits research artifacts.
+- `feature_research/in_sample/continuous_binning/run_binning_analysis.py`: CLI entrypoint that orchestrates continuous binning analysis runs and emits research artifacts.
 
 ### `build_feature_metadata`
 Type: function  
@@ -369,7 +369,7 @@ Notes / Constraints:
 
 ### `run_rule_based_eda_pipeline`
 Type: function  
-Module: `feature_research/rule_based/pipeline.py`
+Module: `feature_research/in_sample/rule_based/pipeline.py`
 
 Signature:
 ```python
@@ -387,7 +387,7 @@ Walkforward output contract (`feature_type="rule_based"`):
 
 ### `run_continuous_eda_pipeline`
 Type: function  
-Module: `feature_research/continuous_binning/pipeline.py`
+Module: `feature_research/in_sample/continuous_binning/pipeline.py`
 
 Signature:
 ```python

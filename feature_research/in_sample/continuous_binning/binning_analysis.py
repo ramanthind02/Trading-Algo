@@ -9,9 +9,9 @@ import sys
 import matplotlib
 
 if TYPE_CHECKING:
-    from feature_research.continuous_binning.config import ResearchConfig
+    from feature_research.in_sample.continuous_binning.config import ResearchConfig
 
-from feature_research.continuous_binning.data_loader import (
+from feature_research.in_sample.continuous_binning.data_loader import (
     expand_bias_specs,
     load_features_for_combo,
     param_combo_label,

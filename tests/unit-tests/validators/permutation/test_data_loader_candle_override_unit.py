@@ -7,8 +7,8 @@ from typing import Any
 import pandas as pd
 
 from feature_extraction import feature_extractor
-from feature_research.continuous_binning import data_loader as continuous_data_loader
-from feature_research.rule_based import data_loader as rule_based_data_loader
+from feature_research.in_sample.continuous_binning import data_loader as continuous_data_loader
+from feature_research.in_sample.rule_based import data_loader as rule_based_data_loader
 from utils.enums import TimeFrame, Ticker
 
 

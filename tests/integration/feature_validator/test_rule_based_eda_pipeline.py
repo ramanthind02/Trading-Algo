@@ -16,11 +16,11 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.rule_based.config import (
+from feature_research.in_sample.rule_based.config import (
     PermutationSuiteConfig,
     RuleBasedResearchConfig,
 )
-from feature_research.rule_based.pipeline import (
+from feature_research.in_sample.rule_based.pipeline import (
     run_rule_based_eda_pipeline,
     run_rule_based_permutation_pipeline,
 )

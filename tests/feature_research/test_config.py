@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from feature_research.continuous_binning.config import ResearchConfig, load_config
+from feature_research.in_sample.continuous_binning.config import ResearchConfig, load_config
 from feature_research.walkforward.config import (
     WalkforwardResearchConfig,
     WalkforwardSelectionMethod,

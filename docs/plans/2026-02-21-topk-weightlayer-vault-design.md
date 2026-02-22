@@ -65,7 +65,7 @@ The user decisions driving this design are:
 - `ensemble/portfolio.py`: strict weight-layer-centric aggregation path.
 - `ensemble/weight_layer.py`: combination behavior under flattened member naming.
 - `feature_research/walkforward/config.py`: enum-backed method/algorithm selection.
-- `feature_research/continuous_binning/config.py`: researcher-facing configuration defaults.
+- `feature_research/in_sample/continuous_binning/config.py`: researcher-facing configuration defaults.
 - `feature_research/walkforward/runner.py`: selection-only fold outputs + metadata propagation.
 - `feature_research/walkforward/portfolio_evaluator.py`: fold evaluation using weight-layer combiner path.
 - `ensemble/vault_manager.py`: member-aware persistence and loading.

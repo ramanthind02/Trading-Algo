@@ -12,7 +12,7 @@ The key insight: Stage 1 finds stable params cheaply; Stage 2 evaluates their co
 
 **Prerequisite:** `2026-02-20-walkforward-correctness-fix.md` must be implemented first.
 
-**Tech Stack:** `ensemble/portfolio.py`, `ensemble/diversified_ensemble.py`, `feature_selection/base_models/continuous_binning.py`, `feature_research/continuous_binning/pipeline.py`, `feature_research/walkforward/runner.py`
+**Tech Stack:** `ensemble/portfolio.py`, `ensemble/diversified_ensemble.py`, `feature_selection/base_models/continuous_binning.py`, `feature_research/in_sample/continuous_binning/pipeline.py`, `feature_research/walkforward/runner.py`
 
 ---
 
@@ -233,7 +233,7 @@ def build_research_portfolio(
 ```python
 def test_build_research_portfolio_creates_portfolio_with_correct_models():
     from feature_research.walkforward.portfolio_evaluator import build_research_portfolio
-    from feature_research.continuous_binning.config import BinningAnalysisConfig
+    from feature_research.in_sample.continuous_binning.config import BinningAnalysisConfig
     from utils.enums import TimeFrame, Ticker
 
     binning_config = BinningAnalysisConfig(bin_counts=[5], strategy="long")
@@ -393,8 +393,8 @@ def test_evaluate_fold_portfolio_returns_valid_sharpe():
         pytest.skip("Cache data not available")
 
     from feature_research.walkforward.portfolio_evaluator import evaluate_fold_portfolio
-    from feature_research.continuous_binning.config import load_config, BinningAnalysisConfig
-    from feature_research.continuous_binning.data_loader import load_candles_for_config
+    from feature_research.in_sample.continuous_binning.config import load_config, BinningAnalysisConfig
+    from feature_research.in_sample.continuous_binning.data_loader import load_candles_for_config
 
     config = load_config()
     candles = load_candles_for_config(config)
@@ -414,7 +414,7 @@ def test_evaluate_fold_portfolio_returns_valid_sharpe():
     ]
 
     # Load target series (vol-normalized returns)
-    from feature_research.continuous_binning.data_loader import load_features_for_combo, expand_bias_specs
+    from feature_research.in_sample.continuous_binning.data_loader import load_features_for_combo, expand_bias_specs
     single_spec = expand_bias_specs(config.bias_spec)[0]
     data = load_features_for_combo(single_spec, config)
     assert data is not None

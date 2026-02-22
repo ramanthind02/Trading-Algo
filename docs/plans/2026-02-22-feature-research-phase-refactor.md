@@ -301,7 +301,7 @@ Also update any `docs/plans/*.md` that reference `feature_research.continuous_bi
 **Step 2: Verify no legacy strings in docs**
 
 Run:
-`git grep -n "feature_research/(rule_based|continuous_binning)" docs || true`
+`git grep -n "feature_research\\.(rule_based|continuous_binning)" -- '*.py' || true`
 Expected: no matches
 
 ---

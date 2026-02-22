@@ -78,10 +78,19 @@ def _build_control_file_payload(
             params=feature_params,
         )
         bin_count = int(params.get("bin_count", binning_config.bin_counts[0]))
-        members = [{"member_id": f"member_{i}", "bin_index": i} for i in range(bin_count)]
+        model_name = f"{feature_column}_{strategy}"
+        members = [
+            {
+                "member_name": f"{model_name}__member_{i}",
+                "params": {"bin_index": i},
+                "member_id": f"member_{i}",
+                "bin_index": i,
+            }
+            for i in range(bin_count)
+        ]
         model_configs.append(
             {
-                "name": f"{feature_column}_{strategy}",
+                "name": model_name,
                 "model_type": "continuous_binning",
                 "feature_column": feature_column,
                 "strategy": strategy,

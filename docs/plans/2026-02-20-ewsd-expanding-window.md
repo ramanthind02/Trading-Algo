@@ -261,8 +261,8 @@ def test_ewsd_targets_no_excessive_nan_drop():
     if not os.path.exists("data/ohlc_data"):
         pytest.skip("Cache not available")
 
-    from feature_research.continuous_binning.config import load_config
-    from feature_research.continuous_binning.data_loader import load_features_for_combo, expand_bias_specs
+    from feature_research.in_sample.continuous_binning.config import load_config
+    from feature_research.in_sample.continuous_binning.data_loader import load_features_for_combo, expand_bias_specs
 
     config = load_config()
     import dataclasses

@@ -24,8 +24,8 @@ from utils.enums import Ticker, TimeFrame
 # Root of the feature_research tree — resolved at import time so scripts
 # work regardless of the working directory they are launched from.
 # ---------------------------------------------------------------------------
-_FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[1]
-_CB_DIR = _FEATURE_RESEARCH_DIR / "continuous_binning"
+_FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[2]
+_CB_DIR = _FEATURE_RESEARCH_DIR / "in_sample" / "continuous_binning"
 RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 EnumT = TypeVar("EnumT", bound=Enum)
 
@@ -147,7 +147,7 @@ class ResearchConfig:
         If True, run ``CacheManager.populate_cache()`` before extraction.
     reports_dir : Path
         Root output directory for EDA reports.
-        Default: ``feature_research/continuous_binning/results/{module_name}/``
+        Default: ``feature_research/in_sample/continuous_binning/results/{module_name}/``
     binning_params : BinningAnalysisConfig
         Binning model hyperparameters (bin_counts, thresholds, coverage bonus).
     """

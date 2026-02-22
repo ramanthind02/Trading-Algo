@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
-import sys
 
 import pandas as pd
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-from feature_research.continuous_binning.config import BinningAnalysisConfig
+from feature_research.in_sample.continuous_binning.config import BinningAnalysisConfig
 from feature_research.walkforward.portfolio_evaluator import (
     build_research_portfolio,
     ensure_portfolio_candle_columns,
 )
 from utils.enums import TimeFrame, Ticker
-
 
 def test_build_research_portfolio_creates_expected_models() -> None:
     portfolio = build_research_portfolio(
@@ -29,6 +23,12 @@ def test_build_research_portfolio_creates_expected_models() -> None:
     ensemble = portfolio.ensembles[0]
     assert "rsi_signal_D_lookback_5_long" in ensemble.base_models
     assert "rsi_signal_D_lookback_7_long" in ensemble.base_models
+    control_file = ensemble.control_file_data or {}
+    base_models = control_file.get("base_models", [])
+    assert base_models
+    members = base_models[0]["members"]
+    assert all("member_name" in member for member in members)
+    assert all("params" in member for member in members)
     assert not portfolio.is_fitted_
 
 
