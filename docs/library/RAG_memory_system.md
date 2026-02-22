@@ -6,8 +6,8 @@ A dual-layered persistent memory pipeline for OpenCode sessions. It combines cod
 
 This system provides persistent memory across OpenCode sessions using a hybrid architecture:
 
-1.  **Codebase RAG (ChromaDB)**: Optimized for large-scale repository indexing. It stores chunks of source code, documentation, and logs.
-2.  **Cognitive Memory (OpenMemory)**: Optimized for facts, preferences, and high-level decisions. It uses a graph-like structure (stored in SQLite) to maintain cross-session continuity.
+1.  **Codebase RAG (ChromaDB)**: Optimized for large-scale repository indexing. It stores chunks of source code, documentation, and logs. It stays in sync with your code via Git hooks.
+2.  **Cognitive Memory (OpenMemory)**: Optimized for facts, preferences, and high-level decisions. It uses a structured SQLite store to maintain cross-session continuity for your instructions and preferences.
 
 ### Core Technologies
 - **ChromaDB** — Local vector database for codebase indexing
@@ -19,132 +19,107 @@ This system provides persistent memory across OpenCode sessions using a hybrid a
 
 | Benefit | Description |
 |---------|-------------|
-| **Token Reduction** | Retrieve only relevant context instead of sending full history |
-| **Local Storage** | No cloud costs, all data stays on your machine |
-| **Semantic Search** | Find related concepts even without exact keyword matches |
-| **Hybrid Retrieval** | Combine precise codebase facts with broader cognitive context |
-| **Session Continuity** | Remember specific preferences and design decisions indefinitely |
+| **Zero-Configuration Retrieval** | No more manual `@` file references; relevant context is injected automatically. |
+| **Token Reduction** | Retrieve only relevant chunks instead of sending full files or entire conversation history. |
+| **Local Privacy & Cost** | 100% local storage and open-source embeddings; no API costs or data leakage. |
+| **Cognitive Continuity** | The agent remembers your "style" and "decisions" across different projects and sessions. |
+| **Hybrid Synergy** | Combines precise code facts ("How is X implemented?") with persistent intent ("How do *I* want X implemented?"). |
 
 ## Architecture
 
 ```
-User Query ──┬──→ [Recall Orchestrator]
+User Query ──┬──→ [Recall Orchestrator (MessageSend Hook)]
              │           │
              │           ├──→ [Cognitive Memory (SQLite)] ──┐
+             │           │      (Preferences, Decisions)     │
              │           │                                   │
              │           └──→ [Codebase RAG (ChromaDB)] ────┤
+             │                  (Files, Docs, Code)          │
              │                                               ↓
-             └────────────────────────────────────────→ [Combined Prompt]
+             └────────────────────────────────────────→ [Enriched Prompt]
+                                                        (Agent sees all)
 
-[/remember] ──→ [Cognitive Memory Store (OpenMemory)]
-[Commit]   ──→ [Auto-Indexer] ──→ [ChromaDB Store]
+[/remember] ──→ [Cognitive Memory Store]
+[Commit]   ──→ [Incremental Indexer] ──→ [Codebase RAG Store]
 ```
 
-## Installation
+## Installation & Setup
 
-### Dependencies
-
-The required packages are in `requirements.txt`:
-
+### 1. Dependencies
+Ensure the following are in your `requirements.txt`:
 ```bash
 chromadb>=0.4.0
 openmemory-py>=1.3.2
 langchain>=0.1.0
 langchain-community>=0.0.10
+langchain-huggingface>=0.0.1
 sentence-transformers>=2.2.0
 nltk>=3.8.0
 ```
 
-### First-Time Setup
-
-The first time you use memory commands, it will automatically:
-1. Download the embedding model (~90MB, cached after first use)
-2. Create the ChromaDB storage at `~/.codex/memory_db/`
-3. Initialize the Cognitive Memory SQLite database at `~/.codex/cognitive_memory.db`
-
-## Usage
-
-### OpenCode Commands
-
-| Command | Description | Target Store |
-|---------|-------------|--------------|
-| `/remember <text>` | Store a fact or preference | **Cognitive Memory** |
-| `/recall <query>` | Search both memory stores | **Both** |
-| `/mem` | Show storage statistics | **Both** |
-
-### Behavior Details
-
-- **`/remember`**: Directs all manual input to **Cognitive Memory**. This is intended for explicit instructions like "We prefer using Pydantic for models" or "Task 5 is complete".
-- **`/recall`**: Performs a parallel search across both the codebase index (ChromaDB) and the cognitive fact store (OpenMemory), presenting results from both layers to the agent.
-
-### Python API
-
-```python
-from utils.memory_service import MemoryService
-from utils.cognitive_memory import CognitiveMemory
-from utils.memory_commands import handle_remember, handle_recall
-
-# Initialize services
-rag = MemoryService()
-cog = CognitiveMemory()
-
-# Manual storage (Cognitive)
-handle_remember("Use functional patterns for data nodes")
-
-# Retrieval (Hybrid)
-context = handle_recall("How do we implement nodes?")
-print(context)
+### 2. Activate Automation
+Install the Git hooks to enable automatic indexing and retrieval:
+```bash
+./scripts/install-hooks.sh
 ```
 
-## Local Cognitive Memory
+## Usage in OpenCode
 
-The Cognitive Memory layer (powered by `OpenMemory`) is specifically designed for high-value persistent facts that should not be lost when the RAG index is cleared or rebuilt.
+### Manual Commands
 
-### What to store here:
-- **Researcher Preferences**: "I prefer `match/case` over nested `if` statements."
-- **Project Decisions**: "We decided to use SQLite for local state instead of JSON files."
-- **Workflow State**: "Task 4 of the memory plan is currently in progress."
-- **Domain Knowledge**: "The 'ES' ticker represents the S&P 500 E-mini futures."
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `/remember <text>` | `/remember use Pydantic V2` | Stores a high-priority fact in **Cognitive Memory**. |
+| `/recall <query>` | `/recall risk scaling` | Searches **Both** stores and displays labeled results. |
+| `/mem` | `/mem` | Shows statistics for both storage engines. |
 
-## Automation & Indexing (Codebase RAG)
+### Automatic Agent Behavior
+You don't need to do anything special to benefit from the memory system. On **every message** you send:
+1. The `MessageSend` hook triggers.
+2. It silently retrieves the top 5 relevant code snippets from RAG.
+3. It silently retrieves the top 5 relevant facts from Cognitive Memory.
+4. It injects them into the agent's hidden context.
 
-The Codebase RAG system includes automation to keep the local memory synchronized with the repository.
+**Result:** You can ask "How should I implement the new bias node?" and the agent will know both the current node architecture (from RAG) and your preference for functional patterns (from Cognitive Memory).
 
-### 1. Automatic Indexing (post-commit)
+## Cognitive Memory Best Practices
 
-A git `post-commit` hook automatically re-indexes changed files after every commit. This ensures your RAG memory always reflects the current state of the repository.
+The Cognitive Memory layer is for **high-value instructions** that define your relationship with the agent.
 
-- **Hook location:** `.git/hooks/post-commit` (installed via `scripts/install-hooks.sh`)
-- **Behavior:** Runs `utils/index_repo.py` in the background after a commit.
+### What to /remember:
+- **Coding Style**: "I prefer `snake_case` for all local variables."
+- **Architecture**: "All new nodes must inherit from `BaseBiasNode`."
+- **Contextual Facts**: "The 'vault' directory is our source of truth for validated features."
+- **Workflow State**: "We are currently refactoring the weight layer; ignore the execution folder for now."
 
-### 2. Manual Indexing
+## Maintenance & Indexing
 
-You can manually trigger a full or incremental repository index:
+### Automatic Sync
+The system automatically updates the Codebase RAG index whenever you commit. It only re-indexes the files you changed (incremental indexing).
 
+### Manual Re-indexing
+If you've made large changes without committing, or want to force a refresh:
 ```bash
-# From the project root
 python3 utils/index_repo.py
 ```
 
-## Storage Locations
+### Clearing Memory
+To clear both stores (useful when starting a completely new architectural direction):
+```bash
+/mem clear
+```
+*Note: RAG is cleared immediately; Cognitive Memory may require manual deletion of `~/.codex/cognitive_memory.db` for a factory reset.*
 
+## Storage Locations
 - **Codebase RAG (ChromaDB):** `~/.codex/memory_db/`
 - **Cognitive Memory (SQLite):** `~/.codex/cognitive_memory.db`
+- **Error Logs:** `~/.codex/memory_errors.log`
 
-## Files
+## Troubleshooting
 
-| File | Purpose |
-|------|---------|
-| `utils/memory_service.py` | Core RAG (ChromaDB) management |
-| `utils/cognitive_memory.py` | Core Cognitive (OpenMemory) management |
-| `utils/memory_commands.py` | Hybrid CLI command handlers |
-| `utils/index_repo.py` | Repository indexing utility |
-| `scripts/install-hooks.sh` | Hook installation script |
-| `tests/validators/test_memory_service.py` | RAG unit tests |
-| `tests/validators/test_cognitive_memory.py` | Cognitive unit tests |
-| `tests/integration/test_memory_pipeline.py` | E2E Integration test |
-
-## Related
-
-- **Supermemory** — Cloud-hosted long-term memory (adds automatic session continuity)
-- **OpenMemory** — The underlying engine for local cognitive facts
+- **First run is slow**: The system downloads the embedding model (~90MB) on the first use.
+- **Agent doesn't seem to remember**: 
+  1. Check stats with `/mem` to ensure documents are stored.
+  2. Try `/recall <topic>` to see if the search returns what you expect.
+  3. Re-run `./scripts/install-hooks.sh` to ensure hooks are active.
+- **Hook errors**: If retrieval fails, it fails **silently** to avoid breaking your session. Check `~/.codex/memory_errors.log` for details.
