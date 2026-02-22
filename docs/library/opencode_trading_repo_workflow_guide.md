@@ -123,6 +123,18 @@ OH_MY_OPENCODE_SLIM_PRESET=execute opencode
 
 If you want more than these, add presets in `~/.config/opencode/oh-my-opencode-slim.json(.jsonc)`.
 
+### Launcher Script (Provider Flag)
+
+Instead of manually setting `OH_MY_OPENCODE_SLIM_PRESET`, use the repo launcher:
+
+```bash
+./scripts/oc --provider openai --preset execute
+./scripts/oc --provider zen --preset execute
+./scripts/oc --provider zen --preset research
+```
+
+This maps to `OH_MY_OPENCODE_SLIM_PRESET` for you (for example: `execute` -> `execute_zen`).
+
 ## 4) Local RAG/Memory Controls (Token Guardrails)
 
 The hook logic is `.opencode/hooks/rag_retriever.py`.
