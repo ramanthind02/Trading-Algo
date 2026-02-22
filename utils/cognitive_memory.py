@@ -21,11 +21,11 @@ class CognitiveMemory:
         
         self.client = Memory()
 
-    async def add(self, content: str, user_id: str = "default", type: str = "fact", tags: List[str] = None):
+    async def add(self, content: str, user_id: str = "default", doc_type: str = "fact", tags: List[str] = None):
         if not content or not content.strip():
             raise ValueError("Content cannot be empty")
         # Memory.add uses **kwargs to pass meta and tags to ingest_document
-        await self.client.add(content, user_id=user_id, meta={"type": type}, tags=tags or [])
+        await self.client.add(content, user_id=user_id, meta={"type": doc_type}, tags=tags or [])
 
     async def search(self, query: str, user_id: str = "default", k: int = 5) -> List[Dict[str, Any]]:
         if not query or not query.strip():
@@ -33,4 +33,8 @@ class CognitiveMemory:
         return await self.client.search(query, user_id=user_id, limit=k)
 
     async def stats(self) -> Dict[str, Any]:
-        return {"engine": "OpenMemory", "storage": "SQLite"}
+        return {
+            "engine": "OpenMemory", 
+            "storage": "SQLite",
+            "database_url": env.database_url
+        }
