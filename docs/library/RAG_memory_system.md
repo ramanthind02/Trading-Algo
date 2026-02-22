@@ -82,15 +82,44 @@ You don't need to do anything special to benefit from the memory system. On **ev
 
 **Result:** You can ask "How should I implement the new bias node?" and the agent will know both the current node architecture (from RAG) and your preference for functional patterns (from Cognitive Memory).
 
+## Workflow Examples
+
+### 1. Setting Project Direction
+**User:** `/remember we are moving away from manual weight files to dynamic portfolio optimization.`
+**Effect:** Future answers about weighting will automatically prioritize dynamic optimization over file-based methods, even if old files still exist in the repo.
+
+### 2. Deep Technical Query
+**User:** *"How does the RSI bias node handle outliers?"*
+**RAG Action:** Automatically pulls relevant sections from `utils/rsi_helpers.py` and `nodes/rsi_node.py`.
+**Agent Response:** *"The RSI node uses a clipping mechanism in `rsi_helpers.py` that bounds the raw RSI between 0 and 100, and our specific implementation in `nodes/rsi_node.py` further scales this into a -1 to +1 range for the ensemble..."*
+
+### 3. Cross-Session Continuity
+**User (Session A):** `/remember always use frozen dataclasses for domain models.`
+**(User starts New Session B)**
+**User (Session B):** *"Create a model for a new execution order."*
+**Agent:** *"Sure, I'll create a frozen dataclass as per your preference stored in memory..."*
+
 ## Cognitive Memory Best Practices
 
 The Cognitive Memory layer is for **high-value instructions** that define your relationship with the agent.
 
-### What to /remember:
-- **Coding Style**: "I prefer `snake_case` for all local variables."
-- **Architecture**: "All new nodes must inherit from `BaseBiasNode`."
-- **Contextual Facts**: "The 'vault' directory is our source of truth for validated features."
-- **Workflow State**: "We are currently refactoring the weight layer; ignore the execution folder for now."
+### Detailed Examples of What to /remember:
+
+| Category | Example Command | Purpose |
+|----------|-----------------|---------|
+| **Coding Style** | `/remember I prefer snake_case for all local variables.` | Ensures consistent naming without repetitive instructions. |
+| **Tooling** | `/remember we use pytest-asyncio for all network-related tests.` | Avoids the agent suggesting standard `unittest`. |
+| **Architecture** | `/remember all new nodes must inherit from BaseBiasNode.` | Enforces inheritance patterns. |
+| **Contextual Facts** | `/remember the 'vault' directory is our source of truth for validated features.` | Prevents the agent from looking in temporary or draft folders. |
+| **Workflow State** | `/remember we are currently refactoring the weight layer; ignore execution/ for now.` | Keeps the agent focused on the active task. |
+| **Personal Preference** | `/remember keep explanations concise and focus on code snippets.` | Adjusts the agent's "personality" and verbosity. |
+
+## Tips for Better Retrieval
+
+1.  **Be Specific with /remember**: Instead of `/remember handle errors`, use `/remember use the custom 'AppError' class for all domain-level exceptions`.
+2.  **Regular Maintenance**: Run `python3 utils/index_repo.py` after significant refactors if you haven't committed yet.
+3.  **Search via /recall**: If you're unsure if the agent "knows" something, try `/recall <topic>`. It will show you exactly what the RAG is seeing.
+4.  **Clear When Pivoting**: If you start a radically different architectural approach, use `/mem clear` to avoid old context polluting new designs.
 
 ## Maintenance & Indexing
 
