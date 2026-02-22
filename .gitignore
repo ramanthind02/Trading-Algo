@@ -234,5 +234,7 @@ research/reports/
 
 # Bias node cache (parquet files)
 cache/
-
 .worktrees/
+
+# Intraday data
+data/intraday*/*

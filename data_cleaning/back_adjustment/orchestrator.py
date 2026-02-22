@@ -27,6 +27,18 @@ from data_cleaning.back_adjustment.back_adjuster import (
     validate_adjusted_data,
 )
 
+# Kibot ticker -> Norgate unadjusted continuous symbol
+_TICKER_TO_NORGATE_RAW: dict[str, str] = {
+    "ES": "&ES", "NQ": "&NQ", "YM": "&YM", "RTY": "&RTY",
+    "CL": "&CL", "HO": "&HO",
+    "GC": "&GC", "HG": "&HG", "SI": "&SI", "PL": "&PL",
+    "EU": "&6E", "JY": "&6J", "BP": "&6B", "CD": "&6C", "SF": "&6S",
+    "C": "&ZC", "S": "&ZS", "W": "&ZW", "GF": "&GF",
+    "TY": "&ZN", "FV": "&ZF", "US": "&ZB", "TU": "&ZT", "TLT": "&TLT",
+}
+
+_DEFAULT_NORGATE_RAW = Path("data/norgate/continuous_futures/unadjusted")
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_INPUT = Path("data/intraday_1min_original")
@@ -53,11 +65,20 @@ def _serialize_metadata(meta: AdjustmentMetadata) -> dict:
     return d
 
 
+def _load_norgate_unadjusted(ticker: Ticker, norgate_dir: Path) -> pd.DataFrame | None:
+    """Load Norgate unadjusted data for Norgate-guided roll detection."""
+    norgate_path = norgate_dir / f"{ticker.name}.parquet"
+    if norgate_path.exists():
+        return pd.read_parquet(norgate_path)
+    return None
+
+
 def process_ticker(
     ticker: Ticker,
     input_dir: Path = _DEFAULT_INPUT,
     output_dir: Path = _DEFAULT_OUTPUT,
     metadata_dir: Path = _DEFAULT_METADATA,
+    norgate_dir: Path = _DEFAULT_NORGATE_RAW,
 ) -> AdjustmentMetadata:
     source_path = input_dir / f"{ticker.name}.parquet"
     if not source_path.exists():
@@ -67,7 +88,12 @@ def process_ticker(
 
     df = pd.read_parquet(source_path)
     rule = get_roll_rule(ticker)
-    roll_events = detect_roll_dates(df, rule)
+
+    # Try Norgate-guided detection first, fall back to threshold-based
+    norgate_raw = _load_norgate_unadjusted(ticker, norgate_dir)
+    if norgate_raw is not None:
+        logger.info("%s: using Norgate-guided roll detection", ticker.name)
+    roll_events = detect_roll_dates(df, rule, norgate_unadjusted=norgate_raw)
     logger.info("%s: %d rolls detected", ticker.name, len(roll_events))
 
     adjustments = calculate_adjustments(roll_events)
