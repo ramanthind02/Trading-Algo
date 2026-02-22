@@ -78,3 +78,26 @@ class MemoryService:
     def clear(self) -> None:
         self.client.delete_collection("memories")
         self.collection = self.client.get_or_create_collection("memories")
+
+    def delete_by_metadata(self, filter: dict[str, Any]) -> None:
+        """Delete entries that match the metadata filter."""
+        try:
+            self.collection.delete(where=filter)
+        except Exception as e:
+            raise RuntimeError(f"Failed to delete by metadata: {e}") from e
+
+    def get_by_metadata(self, filter: dict[str, Any]) -> list[dict[str, Any]]:
+        """Get entries that match the metadata filter."""
+        try:
+            results = self.collection.get(where=filter)
+            output = []
+            if results["documents"]:
+                for i, doc in enumerate(results["documents"]):
+                    output.append({
+                        "id": results["ids"][i],
+                        "text": doc,
+                        "metadata": results["metadatas"][i] if results.get("metadatas") else {}
+                    })
+            return output
+        except Exception as e:
+            raise RuntimeError(f"Failed to get by metadata: {e}") from e

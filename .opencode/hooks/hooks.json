@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "MessageSend": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${REPO_ROOT}/.opencode/hooks/query-hook.sh",
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}
