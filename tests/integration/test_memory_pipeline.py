@@ -1,7 +1,9 @@
 import pytest
 import tempfile
+import asyncio
 from pathlib import Path
 from utils.memory_service import MemoryService
+from utils.cognitive_memory import CognitiveMemory
 from utils.memory_commands import handle_remember, handle_recall, handle_mem_stats
 
 
@@ -12,15 +14,35 @@ def memory_service(tmp_path):
     yield service
 
 
-def test_full_memory_pipeline(memory_service):
+@pytest.fixture
+def cognitive_memory(tmp_path):
+    """Fixture that provides a CognitiveMemory instance with automatic teardown."""
+    db_path = str(tmp_path / "test_cognitive.db")
+    memory = CognitiveMemory(db_path=db_path)
+    yield memory
+
+
+def test_full_memory_pipeline(memory_service, cognitive_memory):
     """Validates that the full memory pipeline works: storing, retrieving, and stats."""
-    service = memory_service
+    rag_service = memory_service
+    cog_service = cognitive_memory
     
-    handle_remember("We decided to use ChromaDB for vector storage", service=service)
-    handle_remember("The embedding model is all-MiniLM-L6-v2", service=service)
+    # Store in RAG (manual)
+    rag_service.store("We decided to use ChromaDB for vector storage", metadata={"source": "design"})
     
-    stats = handle_mem_stats(service=service)
-    assert "Documents: 2" in stats
+    # Store in Cognitive (via handler)
+    handle_remember("The user prefers using pydantic for data models", cog_service=cog_service)
     
-    results = handle_recall("Which vector DB did we choose?", service=service)
+    # Check stats
+    stats = handle_mem_stats(rag_service=rag_service, cog_service=cog_service)
+    assert "CODEBASE RAG" in stats
+    assert "COGNITIVE MEMORY" in stats
+    
+    # Recall (searching both)
+    results = handle_recall("vector storage", rag_service=rag_service, cog_service=cog_service)
+    assert "CODEBASE RAG" in results
     assert "ChromaDB" in results
+    
+    results_cog = handle_recall("pydantic", rag_service=rag_service, cog_service=cog_service)
+    assert "COGNITIVE MEMORY" in results_cog
+    assert "pydantic" in results_cog
