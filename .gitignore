@@ -236,11 +236,9 @@ research/reports/
 cache/
 .worktrees/
 
-# Intraday & Norgate data (too large for git — use setup scripts)
+# Intraday & Norgate data
 data/intraday_original/
 data/intraday_adjusted/
-data/intraday_1min_original/
-data/intraday_1min_adjusted/
 data/adjustment_metadata/
 data/norgate/
 data/kibot_data.zip
