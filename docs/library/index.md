@@ -17,16 +17,24 @@
 
 ### Feature Selection
 - [[Feature_selection/pipeline]] — End-to-end feature selection pipeline overview
-- [[Feature_selection/eda]] — Exploratory data analysis for features
-- [[Feature_selection/base_feature]] — Base feature contracts and naming conventions
-- [[Feature_selection/continuous_binning]] — Quantile / decision-tree binning strategies
-- [[Feature_selection/rule_based]] — Rule-based binary signal models
-- [[Feature_selection/param_stability]] — Parameter sensitivity and stability analysis
-- [[Feature_selection/permutation_testing]] — Permutation tests (T013–T016)
-- [[Feature_selection/candle_permutation]] — Candle-level permutation for signal validation
-- [[Feature_selection/kfold]] — K-fold cross-validation setup
-- [[Feature_selection/cpcv]] — Combinatorial purged cross-validation
-- [[Feature_selection/walkforward]] — Walk-forward validation and stability
+
+**Feature Types**
+- [[Feature_selection/Features/base_feature]] — Base feature contracts and naming conventions
+- [[Feature_selection/Features/continuous_binning]] — Quantile / decision-tree binning strategies
+- [[Feature_selection/Features/rule_based]] — Rule-based binary signal models
+
+**Phase 1 — EDA**
+- [[Feature_selection/Phase_1_EDA/eda]] — Exploratory data analysis for features
+
+**Phase 2 — IS Screening**
+- [[Feature_selection/Phase_2_IS_Screening/permutation_testing]] — Permutation tests (T013–T016)
+- [[Feature_selection/Phase_2_IS_Screening/candle_permutation]] — Candle-level permutation for signal validation
+- [[Feature_selection/Phase_2_IS_Screening/kfold]] — K-fold cross-validation setup
+- [[Feature_selection/Phase_2_IS_Screening/cpcv]] — Combinatorial purged cross-validation
+
+**Phase 3–4 — Walkforward**
+- [[Feature_selection/Phase_3_4_Walkforward/walkforward]] — Walk-forward validation and stability
+- [[Feature_selection/Phase_3_4_Walkforward/param_stability]] — Parameter sensitivity and stability analysis
 
 ### Ensemble
 - [[Ensemble/base_model]] — `BinningModelBase` ABC, `get_fitted_vector()`
@@ -47,7 +55,7 @@
 > 2. [[Feature_selection/pipeline]] — understand data flow
 > 3. [[bias_nodes/creating_nodes]] — implement your first node
 > 4. [[Ensemble/base_model]] → [[Ensemble/weight_layer]] → [[Ensemble/portfolio]]
-> 5. [[Feature_selection/param_stability]] + [[Feature_selection/permutation_testing]]
+> 5. [[Feature_selection/Phase_3_4_Walkforward/param_stability]] + [[Feature_selection/Phase_2_IS_Screening/permutation_testing]]
 > 6. [[Vault/vault]] — understand how validated features are stored
 
 ## Key Naming Convention
