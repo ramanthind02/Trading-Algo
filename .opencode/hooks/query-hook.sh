@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 FIND_ROOT() {
     local dir="$PWD"
     while [[ "$dir" != "/" ]]; do
-        if [[ -e "$dir/.git" ]]; then
+        if [[ -d "$dir/.git" ]]; then
             echo "$dir"
             return 0
         fi
