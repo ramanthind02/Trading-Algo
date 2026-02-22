@@ -13,7 +13,7 @@ Intraday data is too large for git (~700MB). Follow these steps to set up the da
 ### Quick Setup (existing tickers)
 
 ```bash
-# 1. Extract M1 files from Kibot zip
+# 1. Extract M1 files from Kibot zip (D files are already tracked in git — don't overwrite)
 python -c "
 import zipfile, os
 z = zipfile.ZipFile('data/kibot_data.zip')
