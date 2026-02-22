@@ -1,5 +1,3 @@
-# cmpt-459-project
-
 ## Data Setup — Back-Adjusted Intraday Futures
 
 Intraday data is too large for git (~700MB). Follow these steps to set up the data locally.
@@ -13,20 +11,8 @@ Intraday data is too large for git (~700MB). Follow these steps to set up the da
 ### Quick Setup (existing tickers)
 
 ```bash
-# 1. Extract M1 files from Kibot zip (D files are already tracked in git — don't overwrite)
-python -c "
-import zipfile, os
-z = zipfile.ZipFile('data/kibot_data.zip')
-for entry in z.infolist():
-    name = entry.filename
-    if '/M1_' in name and name.endswith('.parquet'):
-        ticker = name.split('/')[-1].replace('M1_', '').replace('.parquet', '')
-        os.makedirs('data/intraday_1min_original', exist_ok=True)
-        with z.open(name) as src:
-            with open(f'data/intraday_1min_original/{ticker}.parquet', 'wb') as dst:
-                dst.write(src.read())
-        print(f'Extracted {ticker}')
-"
+# 1. Extract M1 files from Kibot zip (D files are tracked in git — not touched)
+python scripts/extract_kibot_data.py
 
 # 2. Fetch Norgate reference data (NDU must be running)
 python scripts/fetch_norgate_data.py
