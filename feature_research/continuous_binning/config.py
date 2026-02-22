@@ -6,11 +6,16 @@ All other scripts import from here — change once, apply everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from feature_research.walkforward.config import WalkforwardResearchConfig
+from feature_research.walkforward.config import (
+    WalkforwardResearchConfig,
+    WalkforwardSelectionMethod,
+    WeightLayerAlgorithm,
+)
 from feature_selection.validation.config import PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.enums import Ticker, TimeFrame
@@ -21,6 +26,22 @@ from utils.enums import Ticker, TimeFrame
 # ---------------------------------------------------------------------------
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[1]
 _CB_DIR = _FEATURE_RESEARCH_DIR / "continuous_binning"
+RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
+EnumT = TypeVar("EnumT", bound=Enum)
+
+
+def _coerce_enum_or_raise(value: object, enum_cls: type[EnumT], field_name: str) -> EnumT:
+    valid_values = tuple(item.value for item in enum_cls)
+    if isinstance(value, enum_cls):
+        return value
+    if isinstance(value, str):
+        try:
+            return enum_cls(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"{field_name} must be one of {valid_values}, got '{value}'"
+            ) from exc
+    raise ValueError(f"{field_name} must be one of {valid_values}, got '{value}'")
 
 
 @dataclass(frozen=True)
@@ -35,7 +56,7 @@ class PermutationSuiteConfig:
     min_folds_stable: int = 1
     random_seed: int | None = 42
     permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
-    fold_years: int = 2
+    fold_years: int = 1
     objective_metric: ObjectiveMetricSpec = field(
         default_factory=lambda: ObjectiveMetricSpec(builtin="sharpe")
     )
@@ -78,7 +99,7 @@ class BinningAnalysisConfig:
     """
 
     bin_counts: list[int] = field(default_factory=lambda: [10, 8, 5, 3])
-    selection_metric: str = "sharpe"
+    selection_metric: str = "sortino"
     strategy: str = "long"
     metric_threshold: float = 0.0
     t_threshold: float = 2.0
@@ -142,6 +163,12 @@ class ResearchConfig:
     reports_dir: Path
     permutation_suite: PermutationSuiteConfig = field(default_factory=PermutationSuiteConfig)
     binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)
+    walkforward_selection_method: WalkforwardSelectionMethod | str = (
+        WalkforwardSelectionMethod.TOP_K
+    )
+    weight_layer_algorithm: WeightLayerAlgorithm | str = (
+        WeightLayerAlgorithm.INVERSE_CORRELATION
+    )
     walkforward: WalkforwardResearchConfig = field(
         default_factory=lambda: WalkforwardResearchConfig(
             train_start=datetime(2020, 1, 1),
@@ -149,6 +176,61 @@ class ResearchConfig:
             enabled=False,
         )
     )
+
+    def __post_init__(self) -> None:
+        if self.target_col in RAW_TARGET_COLS and len(self.tickers) > 1:
+            raise ValueError(
+                f"target_col='{self.target_col}' uses raw (unnormalized) returns with "
+                f"multiple tickers ({len(self.tickers)} configured). "
+                "Raw returns cannot be compared across tickers with different volatility. "
+                "Use 'log_return_ewsd' or 'log_return_atr' for multi-ticker research."
+            )
+
+        normalized_selection_method = _coerce_enum_or_raise(
+            self.walkforward_selection_method,
+            WalkforwardSelectionMethod,
+            "walkforward_selection_method",
+        )
+        object.__setattr__(
+            self,
+            "walkforward_selection_method",
+            normalized_selection_method,
+        )
+
+        normalized_weight_layer_algorithm = _coerce_enum_or_raise(
+            self.weight_layer_algorithm,
+            WeightLayerAlgorithm,
+            "weight_layer_algorithm",
+        )
+        object.__setattr__(
+            self,
+            "weight_layer_algorithm",
+            normalized_weight_layer_algorithm,
+        )
+
+        nested_selection_method = _coerce_enum_or_raise(
+            self.walkforward.selection_method,
+            WalkforwardSelectionMethod,
+            "walkforward.selection_method",
+        )
+        if nested_selection_method != normalized_selection_method:
+            raise ValueError(
+                "walkforward_selection_method must match walkforward.selection_method; "
+                f"got top-level={normalized_selection_method.value!r}, "
+                f"nested={nested_selection_method.value!r}"
+            )
+
+        nested_weight_layer_algorithm = _coerce_enum_or_raise(
+            self.walkforward.weight_layer_algorithm,
+            WeightLayerAlgorithm,
+            "walkforward.weight_layer_algorithm",
+        )
+        if nested_weight_layer_algorithm != normalized_weight_layer_algorithm:
+            raise ValueError(
+                "weight_layer_algorithm must match walkforward.weight_layer_algorithm; "
+                f"got top-level={normalized_weight_layer_algorithm.value!r}, "
+                f"nested={nested_weight_layer_algorithm.value!r}"
+            )
 
 
 def load_config() -> ResearchConfig:
@@ -176,18 +258,20 @@ def load_config() -> ResearchConfig:
         "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10]},
     }
 
-    target_col = "log_return"
-    strategy = "long-short"
+    target_col = "log_return_atr"
+    strategy = "long"
 
     # Caching
     use_cache = True
     populate_cache = True
 
     permutation_suite = PermutationSuiteConfig(enabled=False)
+    walkforward_selection_method = WalkforwardSelectionMethod.TOP_K
+    weight_layer_algorithm = WeightLayerAlgorithm.INVERSE_CORRELATION
 
     binning_params = BinningAnalysisConfig(
-        bin_counts=[10,9, 8, 7, 6, 5, 4, 3],
-        strategy="long_short",
+        bin_counts=[10, 9, 8, 7, 6, 5, 4, 3],
+        strategy="long",
         t_threshold=2.0,
         use_coverage_bonus=False,
     )
@@ -197,6 +281,22 @@ def load_config() -> ResearchConfig:
 
     module_name = bias_spec["module_name"]
     reports_dir = _CB_DIR / "results" / module_name
+    walkforward_test_step = 365
+    walkforward_num_steps = 8
+    walkforward_train_end = end - timedelta(days=walkforward_test_step * walkforward_num_steps)
+    if walkforward_train_end <= start:
+        walkforward_train_end = end - timedelta(days=walkforward_test_step)
+
+    walkforward = WalkforwardResearchConfig(
+        train_start=start,
+        train_end=walkforward_train_end,
+        enabled=False,
+        test_step=walkforward_test_step,
+        num_steps=walkforward_num_steps,
+        selection_method=walkforward_selection_method,
+        weight_layer_algorithm=weight_layer_algorithm,
+        output_root=Path("feature_research/shared_results"),
+    )
 
     return ResearchConfig(
         tickers=tickers,
@@ -210,4 +310,7 @@ def load_config() -> ResearchConfig:
         reports_dir=reports_dir,
         permutation_suite=permutation_suite,
         binning_params=binning_params,
+        walkforward_selection_method=walkforward_selection_method,
+        weight_layer_algorithm=weight_layer_algorithm,
+        walkforward=walkforward,
     )

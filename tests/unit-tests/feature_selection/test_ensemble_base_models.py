@@ -611,7 +611,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         model_names = [m['name'] for m in control_file['base_models']]
         self.assertIn('rsi_signal_D_lookback_14_long', model_names)
         self.assertIn('momentum_signal_D_lookback_20_short', model_names)
-    
+
     def test_control_file_is_fit_flag(self):
         """Test that is_fit flag is correctly set in control files."""
         # Create unfitted control file

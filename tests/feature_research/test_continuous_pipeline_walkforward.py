@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,6 +50,7 @@ def _mock_eda_report() -> SimpleNamespace:
     return SimpleNamespace(
         common_stats=SimpleNamespace(correlation_analysis=SimpleNamespace(pearson=0.1)),
         continuous_stats=SimpleNamespace(
+            quintile_spread=SimpleNamespace(spread=0.3),
             monotonicity_test=SimpleNamespace(kendall_tau=0.2),
             decile_analysis=SimpleNamespace(overall_trend="up"),
         ),
@@ -66,6 +68,23 @@ def _series_for_combo(
     feature = pd.Series([float(lookback)] * len(index), index=index, name=f"feature_{lookback}")
     target = pd.Series([0.01] * len(index), index=index, name="target")
     return feature, target, feature.name
+
+
+def _mock_candles_for_config() -> pd.DataFrame:
+    index = pd.date_range("2020-01-01", periods=120, freq="D")
+    return pd.DataFrame(
+        {
+            "datetime": index,
+            "open": [100.0] * len(index),
+            "high": [101.0] * len(index),
+            "low": [99.0] * len(index),
+            "close": [100.5] * len(index),
+            "volume": [1000.0] * len(index),
+            "ticker": ["ES"] * len(index),
+            "timeframe": [TimeFrame.D] * len(index),
+        },
+        index=index,
+    )
 
 
 def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -> None:
@@ -96,6 +115,10 @@ def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -
     monkeypatch.setattr(
         "feature_research.continuous_binning.pipeline.save_eda_report",
         lambda report, output_dir, overwrite: output_dir,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
     )
 
     calls = {"runner": 0, "stability": 0, "timeline": 0, "writer": 0}
@@ -173,6 +196,8 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
         config: WalkforwardResearchConfig,
         param_grid: list[dict[str, object]],
         evaluate_param_combo,
+        research_config=None,
+        portfolio_candles_df: pd.DataFrame | None = None,
     ) -> WalkforwardRunReport:
         captured_inputs["candles_df"] = candles_df
         captured_inputs["target"] = target
@@ -181,6 +206,8 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
         captured_inputs["param_grid"] = param_grid
         captured_inputs["config"] = config
         captured_inputs["evaluate_param_combo"] = evaluate_param_combo
+        captured_inputs["research_config"] = research_config
+        captured_inputs["portfolio_candles_df"] = portfolio_candles_df
 
         return WalkforwardRunReport(
             folds_df=pd.DataFrame(
@@ -218,6 +245,9 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
                         "top_k_features": "[\"lookback=2\",\"lookback=3\"]",
                     }
                 ]
+            ),
+            portfolio_results_df=pd.DataFrame(
+                columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
             ),
         )
 
@@ -269,3 +299,274 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
     assert selection_summary_csv.exists()
     selection_summary_df = pd.read_csv(selection_summary_csv)
     assert "selected_feature" in selection_summary_df.columns
+
+
+def test_walkforward_evaluator_uses_bin_count_specific_returns(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {
+                "module_name": "rsi",
+                "timeframes": [TimeFrame.D],
+                "params": {"lookback": 2},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"], tz="UTC"),
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.run_eda_for_continuous_feature",
+        lambda *_args, **_kwargs: _mock_eda_report(),
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.save_eda_report",
+        lambda report, output_dir, overwrite: output_dir,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
+    )
+
+    class _FakeBinningModel:
+        def __init__(self, n_bins: int, **_kwargs: object) -> None:
+            self.n_bins = int(n_bins)
+
+        def fit(self, feature_data: pd.Series, target_data: pd.Series) -> "_FakeBinningModel":
+            _ = feature_data
+            _ = target_data
+            return self
+
+        def predict(self, feature_data: pd.Series, strategy: str = "long") -> pd.Series:
+            _ = strategy
+            return pd.Series(float(self.n_bins), index=feature_data.index)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.ContinuousBinningModel",
+        _FakeBinningModel,
+    )
+
+    captured_eval: dict[str, object] = {}
+
+    def _mock_run_walkforward_research(
+        candles_df: pd.DataFrame,
+        target: pd.Series,
+        feature_type: str,
+        module_name: str,
+        config: WalkforwardResearchConfig,
+        param_grid: list[dict[str, object]],
+        evaluate_param_combo,
+        research_config=None,
+        portfolio_candles_df: pd.DataFrame | None = None,
+    ) -> WalkforwardRunReport:
+        _ = feature_type
+        _ = module_name
+        _ = config
+        captured_eval["candles_df"] = candles_df
+        captured_eval["target"] = target
+        captured_eval["param_grid"] = param_grid
+        captured_eval["evaluate"] = evaluate_param_combo
+        captured_eval["research_config"] = research_config
+        captured_eval["portfolio_candles_df"] = portfolio_candles_df
+
+        return WalkforwardRunReport(
+            folds_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": 0,
+                        "train_start": pd.Timestamp("2020-01-01"),
+                        "train_end": pd.Timestamp("2020-01-31"),
+                        "test_start": pd.Timestamp("2020-02-01"),
+                        "test_end": pd.Timestamp("2020-02-20"),
+                        "train_samples": 31,
+                        "test_samples": 20,
+                    }
+                ]
+            ),
+            fold_scores_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": 0,
+                        "param_label": "bin_count=4|lookback=2",
+                        "raw_objective": 0.1,
+                        "smoothed_objective": 0.1,
+                        "rank": 1,
+                        "selected_feature": True,
+                    }
+                ]
+            ),
+            selection_summary_df=pd.DataFrame(
+                [
+                    {
+                        "fold_id": 0,
+                        "selected_feature": "bin_count=4|lookback=2",
+                        "selected_raw_objective": 0.1,
+                        "selected_smoothed_objective": 0.1,
+                        "top_k_features": "[\"bin_count=4|lookback=2\"]",
+                    }
+                ]
+            ),
+            portfolio_results_df=pd.DataFrame(
+                columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
+            ),
+        )
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.run_walkforward_research",
+        _mock_run_walkforward_research,
+        raising=False,
+    )
+
+    def _mock_plot_selection_stability(selection_summary_df: pd.DataFrame, top_k: int):
+        _ = top_k
+        figure, _ = plt.subplots(figsize=(6, 2))
+        return figure, selection_summary_df
+
+    def _mock_plot_fold_timeline(folds_df: pd.DataFrame):
+        figure, _ = plt.subplots(figsize=(6, 2))
+        return figure, folds_df
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.plot_selection_stability",
+        _mock_plot_selection_stability,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.plot_fold_timeline",
+        _mock_plot_fold_timeline,
+        raising=False,
+    )
+
+    run_continuous_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
+
+    evaluate = cast(object, captured_eval["evaluate"])
+    candles_df = cast(pd.DataFrame, captured_eval["candles_df"])
+    target = cast(pd.Series, captured_eval["target"])
+    eval_fn = cast(object, evaluate)
+
+    low_bins = cast(pd.Series, eval_fn(candles_df, target, {"lookback": 2, "bin_count": 3}))
+    high_bins = cast(pd.Series, eval_fn(candles_df, target, {"lookback": 2, "bin_count": 10}))
+
+    assert not low_bins.equals(high_bins)
+
+
+def test_run_continuous_walkforward_pipeline_returns_report_and_writes_artifacts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {"module_name": "rsi", "timeframes": [TimeFrame.D], "params": {"lookback": 2}},
+            {"module_name": "rsi", "timeframes": [TimeFrame.D], "params": {"lookback": 3}},
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
+    )
+
+    report = run_continuous_walkforward_pipeline(config, tmp_path / "wf_out")
+
+    assert isinstance(report, WalkforwardRunReport)
+    walkforward_dir = (
+        config.walkforward.output_root / "continuous" / config.bias_spec["module_name"] / "walkforward"
+    )
+    assert walkforward_dir.exists()
+    assert (walkforward_dir / "selection_summary.csv").exists()
+    assert (walkforward_dir / "fold_scores.csv").exists()
+    assert (walkforward_dir / "folds.csv").exists()
+
+
+def test_run_continuous_walkforward_pipeline_raises_if_no_combos_load(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+    import pytest
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {"module_name": "rsi", "timeframes": [TimeFrame.D], "params": {"lookback": 2}},
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_features_for_combo",
+        lambda single_spec, _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
+    )
+
+    with pytest.raises(ValueError, match="No param combos loaded successfully"):
+        run_continuous_walkforward_pipeline(config, tmp_path / "wf_out")
+
+
+def test_run_continuous_walkforward_pipeline_raises_if_no_folds(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from feature_research.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+    import pytest
+
+    config = _build_config(tmp_path, walkforward_enabled=True)
+    empty_fold_config = dataclasses.replace(
+        config,
+        walkforward=dataclasses.replace(
+            config.walkforward,
+            train_start=datetime(2025, 1, 1),
+            train_end=datetime(2025, 2, 1),
+        ),
+    )
+
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.populate_cache_if_needed",
+        lambda _config: None,
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.expand_bias_specs",
+        lambda _bias_spec: [
+            {"module_name": "rsi", "timeframes": [TimeFrame.D], "params": {"lookback": 2}},
+        ],
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_features_for_combo",
+        lambda single_spec, _config: _series_for_combo(single_spec["params"]),
+    )
+    monkeypatch.setattr(
+        "feature_research.continuous_binning.pipeline.load_candles_for_config",
+        lambda _config: _mock_candles_for_config(),
+    )
+
+    with pytest.raises(ValueError, match="No walkforward folds were generated"):
+        run_continuous_walkforward_pipeline(empty_fold_config, tmp_path / "wf_out")

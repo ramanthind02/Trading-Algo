@@ -1473,8 +1473,8 @@ class Portfolio:
                     logger.info(f"\nFitting WeightLayer...")
                     logger.info(f"  Forecast vectors: {len(forecast_vectors)}")
                     logger.info(f"  Signals DataFrame: {len(signals_df)} samples, {len(signals_df.columns)} models")
-                    self.weight_layer.fit(forecast_vectors, signals_df)
-                    
+                    self.weight_layer.fit(forecast_vectors, signals_df, returns=target_data)
+
                     # Get diagnostics for success message
                     diag = self.weight_layer.get_diagnostics()
                     summary = diag.get('summary', {})

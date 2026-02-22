@@ -16,11 +16,18 @@ import pandas as pd
 import utils.helpers as helpers
 from feature_selection.base_models import (
     BaseModel,
-    DecisionTreeBinningModel,
     ContinuousBinningModel,
     RuleBasedModel,
-    TwoBinBinningModel,
 )
+try:
+    from feature_selection.base_models import DecisionTreeBinningModel
+except ImportError:  # pragma: no cover - optional model
+    DecisionTreeBinningModel = None
+
+try:
+    from feature_selection.base_models import TwoBinBinningModel
+except ImportError:  # pragma: no cover - optional model
+    TwoBinBinningModel = None
 from utils.enums import Ticker, TimeFrame
 
 
@@ -88,7 +95,15 @@ def validate_control_file(control_file: Dict[str, Any]) -> None:
         raise ValueError("Control file metadata 'is_fit' must be a boolean")
     
     is_fit = metadata['is_fit']
-    
+
+    # If is_fit=True, require selection_method in metadata for multi-member ensemble
+    if is_fit:
+        if 'selection_method' not in metadata:
+            raise ValueError(
+                "Control file with is_fit=True must contain 'selection_method' in metadata. "
+                "Multi-member ensemble requires selection method specification."
+            )
+
     # Validate base_models
     if not isinstance(control_file['base_models'], list):
         raise ValueError("base_models must be a list")
@@ -365,6 +380,39 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
     # Validate constructor_params is a dict
     if not isinstance(config['constructor_params'], dict):
         raise ValueError(f"{prefix}constructor_params must be a dictionary")
+    
+    # Validate members (multi-member schema requirement)
+    if 'members' not in config:
+        raise ValueError(f"{prefix}Multi-member schema requires 'members' array")
+    
+    if not isinstance(config['members'], list):
+        raise ValueError(f"{prefix}Multi-member schema requires 'members' to be a list")
+    
+    if len(config['members']) == 0:
+        raise ValueError(f"{prefix}Multi-member schema requires non-empty 'members' array")
+
+    # Validate multi-member schema: require 'members' array
+    if 'members' not in config:
+        raise ValueError(
+            f"{prefix}Multi-member schema requires 'members' array. "
+            f"Legacy single-model schemas are not accepted."
+        )
+
+    # Validate members is a non-empty list
+    members = config['members']
+    if not isinstance(members, list):
+        raise ValueError(f"{prefix}'members' must be a list")
+    if not members:
+        raise ValueError(f"{prefix}'members' array must be non-empty")
+
+    # Validate each member has required fields
+    for j, member in enumerate(members):
+        if not isinstance(member, dict):
+            raise ValueError(f"{prefix}Member at index {j} must be a dictionary")
+        if 'member_name' not in member:
+            raise ValueError(f"{prefix}Member at index {j} is missing required 'member_name' field")
+        if 'params' not in member:
+            raise ValueError(f"{prefix}Member at index {j} is missing required 'params' field")
 
 
 def create_base_model_from_config(
@@ -411,10 +459,14 @@ def create_base_model_from_config(
     if model_type == 'continuous_binning':
         binning_model = ContinuousBinningModel(**constructor_params)
     elif model_type == 'decision_tree_binning':
+        if DecisionTreeBinningModel is None:
+            raise ValueError("decision_tree_binning is not available in this repository build")
         tree_params = constructor_params.copy()
         tree_params.pop('normalize_by', None)
         binning_model = DecisionTreeBinningModel(**tree_params)
     elif model_type == 'two_bin_binning':
+        if TwoBinBinningModel is None:
+            raise ValueError("two_bin_binning is not available in this repository build")
         # TwoBinBinningModel doesn't accept n_bins (it's hardcoded to 2)
         two_bin_params = constructor_params.copy()
         two_bin_params.pop('n_bins', None)

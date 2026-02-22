@@ -88,9 +88,8 @@ vault/
 
 Model IDs are automatically generated from binning model type and hyperparameters:
 
-- `QuantileBinningModel(n_bins=3)` → `quantile_binning_3`
-- `QuantileBinningModel(n_bins=5)` → `quantile_binning_5`
-- `DecisionTreeBinningModel(n_bins=3)` → `decision_tree_binning_3`
+- `ContinuousBinningModel(n_bins=3)` → `continuous_binning_3`
+- `ContinuousBinningModel(n_bins=5)` → `continuous_binning_5`
 
 No manual naming required - the system ensures uniqueness.
 
@@ -259,6 +258,55 @@ Each feature has a JSON control file containing:
 - Metadata: `created_at`, `updated_at`, `feature_column`
 
 Fitted and unfitted models coexist in the same file - no duplication.
+
+### Multi-Member Schema (Required)
+
+As of v2.0.0, all base model configurations must include a `members` array:
+
+```python
+base_model_config = {
+    'name': 'my_feature_model',
+    'model_type': 'continuous_binning',
+    'feature_column': 'rsi_signal_D_lookback_14',
+    'strategy': 'long',
+    'constructor_params': {'n_bins': 3},
+    'members': [
+        {'member_id': 'member_1', 'bin_index': 0},
+        {'member_id': 'member_2', 'bin_index': 1},
+        {'member_id': 'member_3', 'bin_index': 2},
+    ]
+}
+```
+
+Each member represents a bin in the model with:
+- `member_id`: Unique identifier for the member
+- `bin_index`: Which bin this member represents
+
+The `members` array is required and must be non-empty. Legacy schemas without `members` are rejected.
+
+### Selection Method and Hyperparameters
+
+When saving a fitted ensemble, you can persist the selection method used:
+
+```python
+metadata = {
+    'is_fit': True,
+    'version': '2.0.0',
+    'selection_method': 'walkforward_stability',
+    'selection_hyperparams': {
+        'min_stability_score': 0.7,
+        'n_folds': 5,
+        'metric': 'sharpe'
+    }
+}
+```
+
+Supported selection methods:
+- `walkforward_stability`: Walk-forward stability-based selection
+- `permutation_test`: Permutation testing-based selection
+- `manual`: Manual researcher selection
+
+Selection hyperparameters vary by method and are stored in the control file for reproducibility.
 
 ## Troubleshooting
 

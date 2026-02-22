@@ -167,13 +167,15 @@ Signature:
 class WalkforwardResearchConfig:
     train_start: datetime
     train_end: datetime
-    enabled: bool
-    test_step: int
-    num_steps: int
-    top_k: int
-    objective_metric_name: str
-    min_fold_samples: int
-    output_root: Path
+    enabled: bool = False
+    test_step: int = 252
+    num_steps: int = 8
+    top_k: int = 3
+    objective_metric_name: str = "sortino"
+    min_fold_samples: int = 10
+    output_root: Path = Path("feature_research/shared_results")
+    use_enhanced_selection: bool = False
+    trade_freq_min: float = 0.05
 ```
 
 Description: frozen configuration contract for walk-forward feature-research runs, including fold geometry, objective metric selection, and output location.
@@ -210,6 +212,7 @@ class FoldScoreRow:
     test_end: pd.Timestamp
     param_label: str
     raw_objective: float
+    oos_objective: float
     smoothed_objective: float
     rank: int
 ```
@@ -226,6 +229,7 @@ class WalkforwardRunReport:
     folds_df: pd.DataFrame
     fold_scores_df: pd.DataFrame
     selection_summary_df: pd.DataFrame
+    portfolio_results_df: pd.DataFrame
 ```
 
 Description: aggregate walkforward research output with fold boundaries, full per-fold scores, and selected-feature summaries.
@@ -242,11 +246,13 @@ def run_walkforward_research(
     module_name: str,
     config: WalkforwardResearchConfig,
     param_grid: list[dict[str, object]],
-    evaluate_param_combo: Callable[[pd.DataFrame, pd.Series, dict[str, object]], pd.Series],
+    evaluate_param_combo: Callable[..., pd.Series],
+    research_config: Any | None = None,
+    portfolio_candles_df: pd.DataFrame | None = None,
 ) -> WalkforwardRunReport
 ```
 
-Description: evaluates all parameter combinations per walkforward fold, scores objective values on out-of-sample rows only, applies deterministic rank ordering (`smoothed_objective` desc, `raw_objective` desc, `param_label` asc), and emits fold/selection dataframes.
+Description: evaluates all parameter combinations per walkforward fold, ranks selections from in-sample (train-window) objectives, applies deterministic rank ordering (`smoothed_objective` desc, `raw_objective` desc, `param_label` asc), and emits fold/selection dataframes with separate out-of-sample objective tracking (`oos_objective`). When `research_config` is provided, a second portfolio simulation stage runs per fold using the production `Portfolio` stack and stores results in `portfolio_results_df`.
 
 Validation behavior:
 - Raises `ValueError` when `feature_type` or `module_name` is blank.
@@ -289,9 +295,13 @@ class WalkforwardArtifactPaths:
     folds_csv: Path
     fold_scores_csv: Path
     selection_summary_csv: Path
+    selected_params_detailed_csv: Path
+    oos_metrics_csv: Path
     report_json: Path
     walkforward_stability_png: Path
     fold_timeline_png: Path
+    summary_md: Path
+    summary_html: Path
 ```
 
 Description: immutable output-path contract for persisted walkforward artifacts under the shared-results layout.
@@ -334,14 +344,21 @@ Output-file contract (exact filenames):
 - `folds.csv`
 - `fold_scores.csv`
 - `selection_summary.csv`
+- `selected_params_detailed.csv`
+- `oos_metrics.csv`
 - `report.json`
 - `walkforward_stability.png`
 - `fold_timeline.png`
+- `summary.md`
+- `summary.html`
 
 Table schema contract (exact columns):
 - `folds.csv`: `fold_id`, `train_start`, `train_end`, `test_start`, `test_end`, `train_samples`, `test_samples`
-- `fold_scores.csv`: `fold_id`, `param_label`, `raw_objective`, `smoothed_objective`, `rank`, `selected_feature`
+- `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `oos_objective`, `smoothed_objective`, `rank`, `selected_feature`
+- `fold_scores.csv` enhanced (when `use_enhanced_selection=True`): add `trade_frequency`, `selected_in_top_k`
 - `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
+- `portfolio_results_df` columns: `fold_id`, `oos_portfolio_sharpe`, `n_params_selected`, `error`
+- `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_in_top_k=True` when present, otherwise `selected_feature=True`
 
 `report.json` minimum keys:
 - `feature_type`

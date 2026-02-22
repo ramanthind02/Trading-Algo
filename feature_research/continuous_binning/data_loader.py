@@ -15,6 +15,8 @@ from utils.cache_manager import CacheManager
 from utils.enums import TimeFrame
 from utils.helpers import load_data_multi_ticker
 
+_UNNORMALIZED_RETURN_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
+
 
 def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
     """Expand a bias_spec with list-valued params into one spec per param combo."""
@@ -169,6 +171,19 @@ def load_features_for_combo(
 
     if aligned.empty:
         return None
+
+    if target_col_name in _UNNORMALIZED_RETURN_COLS:
+        unique_tickers = (
+            int(features_df["ticker"].nunique())
+            if "ticker" in features_df.columns
+            else len(config.tickers)
+        )
+        if unique_tickers > 1:
+            raise ValueError(
+                f"load_features_for_combo received target_col='{target_col_name}' with "
+                f"{unique_tickers} tickers. Raw return targets must not be mixed "
+                "across tickers. Use 'log_return_ewsd' or 'log_return_atr'."
+            )
 
     feature_series = aligned["feature"].copy()
     feature_series.name = feature_col

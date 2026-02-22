@@ -398,9 +398,13 @@ run_continuous_eda_pipeline(
 ```
 Description: runs continuous-feature EDA per parameter combo and, when `config.walkforward.enabled=True`, also runs the shared walkforward research runner/visualization/artifact IO pipeline.
 
+Walkforward execution details:
+- Stage 1 refits `ContinuousBinningModel` per fold using train-only rows for parameter scoring (no future-data leakage).
+- Stage 2 (when full `ResearchConfig` is passed through) evaluates selected top-k params via production `Portfolio`/`DiversifiedEnsemble` and records per-fold portfolio Sharpe.
+
 Walkforward output contract (`feature_type="continuous"`):
 - Root directory: `feature_research/shared_results/continuous/{module_name}/walkforward/` (or `config.walkforward.output_root / "continuous" / module_name / "walkforward"`).
-- Files: `folds.csv`, `fold_scores.csv`, `selection_summary.csv`, `report.json`, `walkforward_stability.png`, `fold_timeline.png`.
+- Files: `folds.csv`, `fold_scores.csv`, `selection_summary.csv`, `oos_metrics.csv`, `selected_params_detailed.csv`, `report.json`, `walkforward_stability.png`, `fold_timeline.png`, `summary.md`, `summary.html`.
 - `selection_summary.csv` includes `selected_feature` for each fold.
 
 ## Examples

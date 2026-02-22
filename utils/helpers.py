@@ -3,7 +3,9 @@ import os
 import gc
 import numpy as np
 import pandas as pd
+import re
 from typing import Dict, List, Any, Tuple, Optional
+from pathlib import Path
 from utils.enums import TimeFrame, Ticker
 from datetime import datetime, timezone
 from utils.logger import get_logger
@@ -237,6 +239,43 @@ def load_numpy_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = date
         gc.collect()
 
 
+def _normalize_module_base_name(module_name: str) -> str:
+    """Normalize incoming module names to a flat base module token."""
+    normalized = module_name.replace('.py', '').strip()
+    base_module_match = re.match(r'^([a-z_]+)(?:_\d+.*)?$', normalized)
+    if base_module_match:
+        return base_module_match.group(1)
+    return normalized
+
+
+def _resolve_bias_node_import_path(base_module_name: str) -> str:
+    """Resolve module import path using taxonomy map, then recursive search."""
+    from nodes._taxonomy import CANONICAL_MODULE_IMPORTS
+
+    canonical_path = CANONICAL_MODULE_IMPORTS.get(base_module_name)
+    if canonical_path:
+        return canonical_path
+
+    nodes_root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "nodes"
+    matches = [
+        candidate
+        for candidate in nodes_root.rglob(f"{base_module_name}.py")
+        if candidate.name != "__init__.py" and "archive" not in candidate.parts
+    ]
+
+    if not matches:
+        raise ValueError(f"Could not find module file recursively for: {base_module_name}")
+
+    if len(matches) > 1:
+        candidate_paths = sorted(str(candidate.relative_to(nodes_root)) for candidate in matches)
+        raise ValueError(
+            f"Ambiguous module resolution for '{base_module_name}'. Candidates: {candidate_paths}"
+        )
+
+    relative_module_path = matches[0].relative_to(nodes_root).with_suffix("")
+    return f"nodes.{'.'.join(relative_module_path.parts)}"
+
+
 
 def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Dict) -> Any:
     """
@@ -252,10 +291,7 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
     - BiasNode: The appropriate bias node instance
     """
     import importlib
-    import os
     import inspect
-    import re
-    from pathlib import Path
     
     # Special handling for TimeSeriesFeatureNode
     if module_name == 'ts_feature' or module_name == 'tsFeature':
@@ -299,29 +335,13 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
                 transformation_name, transformation_args
             )
     
-    # Extract the base module name (e.g., 'ma_diff' from 'ma_diff_50_D')
-    # This pattern matches the base module name before any underscore followed by numbers
-    base_module_match = re.match(r'^([a-z_]+)(?:_\d+.*)?$', module_name)
-    if base_module_match:
-        base_module_name = base_module_match.group(1)
-    else:
-        base_module_name = module_name
-    
-    # Make sure we're using the module name without extension
-    base_module_name = base_module_name.replace('.py', '')
-    
-    # Try to find the module in the nodes directory
-    base_path = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "nodes"
-    potential_file = base_path / f"{base_module_name}.py"
-    
-    if not potential_file.exists():
-        raise ValueError(f"Could not find module file: {potential_file}")
+    base_module_name = _normalize_module_base_name(module_name)
+    full_module_name = _resolve_bias_node_import_path(base_module_name)
     
     # Store the original module name for later use
     original_module_name = module_name
     
-    # Import the module using the base module name
-    full_module_name = f"nodes.{base_module_name}"
+    # Import the resolved module path
     try:
         module = importlib.import_module(full_module_name)
     except ImportError as e:

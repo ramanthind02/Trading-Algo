@@ -22,12 +22,19 @@ import numpy as np
 import pandas as pd
 
 import utils.helpers as helpers
-from feature_selection.base_models import (
-    DecisionTreeBinningModel,
-    ContinuousBinningModel,
-    TwoBinBinningModel,
-)
+from feature_selection.base_models import ContinuousBinningModel, RuleBasedModel
 from feature_selection.base_models.feature_base_model import BaseModel
+
+try:
+    from feature_selection.base_models import DecisionTreeBinningModel
+except ImportError:
+    DecisionTreeBinningModel = None
+
+try:
+    from feature_selection.base_models import TwoBinBinningModel
+except ImportError:
+    TwoBinBinningModel = None
+
 from utils.enums import Direction, TimeFrame, Ticker
 
 # Type hint for forward reference

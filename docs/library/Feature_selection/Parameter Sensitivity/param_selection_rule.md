@@ -112,6 +112,8 @@ Ensemble signal = mean(signal(P) for P in qualifying)
 
 Both gates must be passed. A parameter that is stable but weak (e.g., Sharpe = 0.05 with stability ratio 0.95) is rejected by Gate B. A parameter that is strong but isolated (e.g., Sharpe = 1.5 with stability ratio 0.3) is rejected by Gate A.
 
+**Steps 4–6 have an enhanced replacement.** [`top_k_ensemble_selection.md`](top_k_ensemble_selection.md) specifies an algorithm that replaces Steps 4–6 with smoothed-objective top-k selection plus a trade-frequency hard filter. The basic Steps 4–6 below remain the default; the enhanced version is opt-in via `use_enhanced_selection = True` in config.
+
 **Step 4 — Rank by smoothed objective:** Ranking by smoothed (not raw) objective means the selection favors stable high performers over isolated high performers. `K_max` prevents the ensemble from growing large when many mediocre parameters marginally pass the gates.
 
 **Step 5 — K_min check:** If too few parameters qualify, there is insufficient neighborhood support. Rather than trading a single isolated qualifier, the rule returns an empty ensemble. An empty ensemble means **no position** for this period — not a flat signal, but a genuine absence of a tradeable hypothesis.
@@ -538,6 +540,7 @@ The selection rule is thus responsible for the first level of aggregation: from 
 - [`grid_search_parameter_stability.md`](grid_search_parameter_stability.md) — Neighbor smoothing theory, algorithm comparison, interpretation guidelines, edge cases
 - [`../Walkforward/walkforward.md`](../Walkforward/walkforward.md) — Walkforward implementation and fold structure
 - [`../feature_validator.md`](../feature_validator.md) — Phase 1 (IS EDA) and Phase 2 (IS Permutation Screening) details
+- [`top_k_ensemble_selection.md`](top_k_ensemble_selection.md) — **Enhanced selection algorithm** that replaces Steps 4–6 of this document with a three-objective procedure (stability + robustness + diversity). Use this when naive smoothed-rank selection is insufficient.
 
 ---
 

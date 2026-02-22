@@ -6,7 +6,7 @@ All other scripts import from here — change once, apply everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -142,12 +142,19 @@ def load_config() -> RuleBasedResearchConfig:
 
     module_name = bias_spec["module_name"]
     reports_dir = _RB_DIR / "results" / module_name
+    walkforward_test_step = 252
+    walkforward_num_steps = 8
+    walkforward_train_end = end - timedelta(days=walkforward_test_step * walkforward_num_steps)
+    if walkforward_train_end <= start:
+        walkforward_train_end = end - timedelta(days=walkforward_test_step)
 
     walkforward = WalkforwardResearchConfig(
         train_start=start,
-        train_end=end,
+        train_end=walkforward_train_end,
         enabled=False,
-        output_root=reports_dir,
+        test_step=walkforward_test_step,
+        num_steps=walkforward_num_steps,
+        output_root=Path("feature_research/shared_results"),
     )
 
     return RuleBasedResearchConfig(

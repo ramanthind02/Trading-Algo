@@ -23,6 +23,13 @@ from feature_selection.base_models.base_model import BinningModelBase
 logger = logging.getLogger(__name__)
 
 
+def build_member_model_name(base_model_name: str, member_identity: str) -> str:
+    """Build deterministic model names for flattened multi-member outputs."""
+    if member_identity:
+        return f"{base_model_name}::{member_identity}"
+    return base_model_name
+
+
 @dataclass(frozen=True)
 class BiasNodeSpec:
     """Immutable specification for bias node creation."""
@@ -126,20 +133,20 @@ class BaseModel:
         # Get or create binning model
         if binning_model is None:
             # Try to create from feature_config
-            from feature_selection.base_models.quantile_binning import QuantileBinningModel
+            from feature_selection.base_models.continuous_binning import ContinuousBinningModel
         
-            from feature_selection.base_models.rule_based_binning import RuleBasedBinningModel
+            from feature_selection.base_models.rule_based import RuleBasedModel
 
             model_type = feature_config.get('model_type', 'QuantileBinningModel')
             constructor_params = feature_config.get('constructor_params', {})
 
             if model_type == 'QuantileBinningModel':
-                self.binning_model = QuantileBinningModel(**constructor_params)
+                self.binning_model = ContinuousBinningModel(**constructor_params)
             elif model_type == 'RuleBasedBinningModel':
-                self.binning_model = RuleBasedBinningModel(**constructor_params)
+                self.binning_model = RuleBasedModel(**constructor_params)
             else:
-                # Default to QuantileBinningModel
-                self.binning_model = QuantileBinningModel()
+                # Default to ContinuousBinningModel
+                self.binning_model = ContinuousBinningModel()
         else:
             self.binning_model = binning_model
         
@@ -182,6 +189,23 @@ class BaseModel:
         # Maps datetime -> feature value
         self._feature_values: Dict[Any, float] = {}
         self._feature_datetimes: List[Any] = []
+        
+        # Multi-member container: list of (member_name, binning_model) tuples
+        # Each member is an independent binning model that can be fitted on the same features
+        self.members: List[Tuple[str, BinningModelBase]] = []
+    
+    def add_member(self, name: str, binning_model: BinningModelBase) -> None:
+        """
+        Add a member model to this base model.
+        
+        Parameters
+        ----------
+        name : str
+            Unique identifier for this member
+        binning_model : BinningModelBase
+            The binning model instance to add as a member
+        """
+        self.members.append((name, binning_model))
     
     def __getattr__(self, name: str) -> Any:
         """
@@ -996,6 +1020,64 @@ class BaseModel:
         predictions = self.binning_model.predict(feature_data, strategy=strategy)
 
         return predictions
+
+    def emit_member_signals(
+        self,
+        feature_data: Optional[pd.Series] = None,
+        strategy: str = "long"
+    ) -> pd.DataFrame:
+        """
+        Emit flattened member-level signal outputs.
+        
+        For each member in self.members, generates predictions and combines them
+        into a DataFrame with member names as columns.
+        
+        Parameters
+        ----------
+        feature_data : pd.Series, optional
+            Feature data for prediction. If not provided, uses the training feature data
+            from the primary binning model (for backward compatibility).
+        strategy : str, default='long'
+            Strategy to use: 'long', 'short', or 'long_short'
+            
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with member names as columns and predictions as values,
+            indexed by datetime.
+        """
+        if not self.members:
+            if feature_data is None:
+                raise ValueError(
+                    "No members defined and no feature_data provided. "
+                    "Either add members or provide feature_data."
+                )
+            predictions_df = pd.DataFrame({
+                self.feature_column or "default": self.binning_model.predict(feature_data, strategy=strategy)
+            })
+            return predictions_df
+        
+        member_signals: Dict[str, pd.Series] = {}
+        
+        for member_name, binning_model in self.members:
+            if not binning_model.is_fitted_:
+                logger.warning(f"Member {member_name} is not fitted, skipping")
+                continue
+            
+            if feature_data is not None:
+                signal = binning_model.predict(feature_data, strategy=strategy)
+            elif hasattr(binning_model, '_training_feature_data'):
+                signal = binning_model.get_fitted_vector(strategy=strategy)
+            else:
+                logger.warning(f"Member {member_name} has no training data, skipping")
+                continue
+            
+            member_signals[member_name] = signal
+        
+        if not member_signals:
+            raise ValueError("No valid member signals to emit. Ensure members are fitted.")
+        
+        return pd.DataFrame(member_signals)
 
     def save_to_vault(
         self,

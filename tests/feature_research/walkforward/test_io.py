@@ -35,6 +35,7 @@ def _build_report() -> WalkforwardRunReport:
             "fold_id": [0, 0, 1, 1],
             "param_label": ["x=1", "x=2", "x=1", "x=2"],
             "raw_objective": [0.4, 0.6, 0.5, 0.7],
+            "oos_objective": [0.3, 0.8, 0.4, 0.9],
             "smoothed_objective": [0.45, 0.65, 0.55, 0.75],
             "rank": [2, 1, 2, 1],
             "selected_feature": [False, True, False, True],
@@ -53,6 +54,54 @@ def _build_report() -> WalkforwardRunReport:
         folds_df=folds_df,
         fold_scores_df=fold_scores_df,
         selection_summary_df=selection_summary_df,
+        portfolio_results_df=pd.DataFrame(
+            columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
+        ),
+    )
+
+
+def _build_enhanced_report() -> WalkforwardRunReport:
+    """WalkforwardRunReport with enhanced selection columns in fold_scores_df."""
+    folds_df = pd.DataFrame(
+        {
+            "fold_id": [0],
+            "train_start": [pd.Timestamp("2020-01-01")],
+            "train_end": [pd.Timestamp("2020-01-31")],
+            "test_start": [pd.Timestamp("2020-02-01")],
+            "test_end": [pd.Timestamp("2020-02-29")],
+            "train_samples": [31],
+            "test_samples": [29],
+        }
+    )
+    fold_scores_df = pd.DataFrame(
+        {
+            "fold_id": [0, 0, 0],
+            "param_label": ["x=1", "x=2", "x=3"],
+            "raw_objective": [0.4, 0.6, 0.5],
+            "oos_objective": [0.3, 0.7, 0.65],
+            "smoothed_objective": [0.45, 0.65, 0.62],
+            "rank": [3, 1, 2],
+            "selected_feature": [False, True, False],
+            "trade_frequency": [0.6, 0.7, 0.65],
+            "selected_in_top_k": [False, True, True],
+        }
+    )
+    selection_summary_df = pd.DataFrame(
+        {
+            "fold_id": [0],
+            "selected_feature": ["x=2"],
+            "selected_raw_objective": [0.6],
+            "selected_smoothed_objective": [0.65],
+            "top_k_features": ['["x=2","x=1"]'],
+        }
+    )
+    return WalkforwardRunReport(
+        folds_df=folds_df,
+        fold_scores_df=fold_scores_df,
+        selection_summary_df=selection_summary_df,
+        portfolio_results_df=pd.DataFrame(
+            columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
+        ),
     )
 
 
@@ -84,9 +133,13 @@ def test_write_walkforward_artifacts_writes_required_files_and_columns(tmp_path:
     assert paths.folds_csv.exists()
     assert paths.fold_scores_csv.exists()
     assert paths.selection_summary_csv.exists()
+    assert paths.selected_params_detailed_csv.exists()
+    assert paths.oos_metrics_csv.exists()
     assert paths.report_json.exists()
     assert paths.walkforward_stability_png.exists()
     assert paths.fold_timeline_png.exists()
+    assert paths.summary_md.exists()
+    assert paths.summary_html.exists()
 
     folds_df = pd.read_csv(paths.folds_csv)
     assert folds_df.columns.tolist() == [
@@ -104,6 +157,7 @@ def test_write_walkforward_artifacts_writes_required_files_and_columns(tmp_path:
         "fold_id",
         "param_label",
         "raw_objective",
+        "oos_objective",
         "smoothed_objective",
         "rank",
         "selected_feature",
@@ -117,6 +171,12 @@ def test_write_walkforward_artifacts_writes_required_files_and_columns(tmp_path:
         "selected_smoothed_objective",
         "top_k_features",
     ]
+
+    detailed_df = pd.read_csv(paths.selected_params_detailed_csv)
+    assert "param_x" in detailed_df.columns
+
+    oos_metrics_df = pd.read_csv(paths.oos_metrics_csv)
+    assert oos_metrics_df.columns.tolist() == ["metric", "value"]
 
 
 def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: Path) -> None:
@@ -139,6 +199,10 @@ def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: 
         first_folds_csv = first_paths.folds_csv.read_text(encoding="utf-8")
         first_fold_scores_csv = first_paths.fold_scores_csv.read_text(encoding="utf-8")
         first_summary_csv = first_paths.selection_summary_csv.read_text(encoding="utf-8")
+        first_selected_params_csv = first_paths.selected_params_detailed_csv.read_text(encoding="utf-8")
+        first_oos_metrics_csv = first_paths.oos_metrics_csv.read_text(encoding="utf-8")
+        first_summary_md = first_paths.summary_md.read_text(encoding="utf-8")
+        first_summary_html = first_paths.summary_html.read_text(encoding="utf-8")
 
         second_paths = write_walkforward_artifacts(
             report=report,
@@ -158,6 +222,10 @@ def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: 
     assert first_folds_csv == second_paths.folds_csv.read_text(encoding="utf-8")
     assert first_fold_scores_csv == second_paths.fold_scores_csv.read_text(encoding="utf-8")
     assert first_summary_csv == second_paths.selection_summary_csv.read_text(encoding="utf-8")
+    assert first_selected_params_csv == second_paths.selected_params_detailed_csv.read_text(encoding="utf-8")
+    assert first_oos_metrics_csv == second_paths.oos_metrics_csv.read_text(encoding="utf-8")
+    assert first_summary_md == second_paths.summary_md.read_text(encoding="utf-8")
+    assert first_summary_html == second_paths.summary_html.read_text(encoding="utf-8")
 
 
 def test_write_walkforward_artifacts_normalizes_metadata_identifiers_to_match_output_path(
@@ -235,3 +303,132 @@ def test_write_walkforward_artifacts_rejects_blank_identifiers(
     finally:
         plt.close(stability_figure)
         plt.close(timeline_figure)
+
+
+def test_write_walkforward_artifacts_includes_enhanced_columns_when_present(
+    tmp_path: Path,
+) -> None:
+    report = _build_enhanced_report()
+    stability_figure = _build_figure()
+    timeline_figure = _build_figure()
+    try:
+        paths = write_walkforward_artifacts(
+            report=report,
+            walkforward_stability_figure=stability_figure,
+            fold_timeline_figure=timeline_figure,
+            feature_type="continuous",
+            module_name="rsi",
+            root_dir=tmp_path,
+        )
+    finally:
+        plt.close(stability_figure)
+        plt.close(timeline_figure)
+
+    written = pd.read_csv(paths.fold_scores_csv)
+    assert written.columns.tolist() == [
+        "fold_id",
+        "param_label",
+        "raw_objective",
+        "oos_objective",
+        "smoothed_objective",
+        "rank",
+        "selected_feature",
+        "trade_frequency",
+        "selected_in_top_k",
+    ]
+
+
+def test_write_walkforward_artifacts_legacy_report_omits_enhanced_columns(
+    tmp_path: Path,
+) -> None:
+    report = _build_report()
+    stability_figure = _build_figure()
+    timeline_figure = _build_figure()
+    try:
+        paths = write_walkforward_artifacts(
+            report=report,
+            walkforward_stability_figure=stability_figure,
+            fold_timeline_figure=timeline_figure,
+            feature_type="continuous",
+            module_name="rsi",
+            root_dir=tmp_path,
+        )
+    finally:
+        plt.close(stability_figure)
+        plt.close(timeline_figure)
+
+    written = pd.read_csv(paths.fold_scores_csv)
+    assert "trade_frequency" not in written.columns
+    assert "selected_in_top_k" not in written.columns
+    assert written.columns.tolist() == [
+        "fold_id",
+        "param_label",
+        "raw_objective",
+        "oos_objective",
+        "smoothed_objective",
+        "rank",
+        "selected_feature",
+    ]
+
+
+def test_write_walkforward_artifacts_selected_params_detailed_uses_selected_in_top_k_rows(
+    tmp_path: Path,
+) -> None:
+    report = _build_enhanced_report()
+    stability_figure = _build_figure()
+    timeline_figure = _build_figure()
+    try:
+        paths = write_walkforward_artifacts(
+            report=report,
+            walkforward_stability_figure=stability_figure,
+            fold_timeline_figure=timeline_figure,
+            feature_type="continuous",
+            module_name="rsi",
+            root_dir=tmp_path,
+        )
+    finally:
+        plt.close(stability_figure)
+        plt.close(timeline_figure)
+
+    selected_params = pd.read_csv(paths.selected_params_detailed_csv)
+    assert set(selected_params["param_label"]) == {"x=2", "x=3"}
+
+
+def test_write_walkforward_artifacts_includes_portfolio_simulation_section(
+    tmp_path: Path,
+) -> None:
+    report = _build_report()
+    report = WalkforwardRunReport(
+        folds_df=report.folds_df,
+        fold_scores_df=report.fold_scores_df,
+        selection_summary_df=report.selection_summary_df,
+        portfolio_results_df=pd.DataFrame(
+            [
+                {
+                    "fold_id": 0,
+                    "oos_portfolio_sharpe": 0.42,
+                    "n_params_selected": 2,
+                    "error": "",
+                }
+            ]
+        ),
+    )
+    stability_figure = _build_figure()
+    timeline_figure = _build_figure()
+    try:
+        paths = write_walkforward_artifacts(
+            report=report,
+            walkforward_stability_figure=stability_figure,
+            fold_timeline_figure=timeline_figure,
+            feature_type="continuous",
+            module_name="rsi",
+            root_dir=tmp_path,
+        )
+    finally:
+        plt.close(stability_figure)
+        plt.close(timeline_figure)
+
+    summary_md = paths.summary_md.read_text(encoding="utf-8")
+    assert "Portfolio Simulation (Stage 2)" in summary_md
+    oos_metrics_df = pd.read_csv(paths.oos_metrics_csv)
+    assert "mean_oos_portfolio_sharpe" in set(oos_metrics_df["metric"])
