@@ -95,7 +95,15 @@ def validate_control_file(control_file: Dict[str, Any]) -> None:
         raise ValueError("Control file metadata 'is_fit' must be a boolean")
     
     is_fit = metadata['is_fit']
-    
+
+    # If is_fit=True, require selection_method in metadata for multi-member ensemble
+    if is_fit:
+        if 'selection_method' not in metadata:
+            raise ValueError(
+                "Control file with is_fit=True must contain 'selection_method' in metadata. "
+                "Multi-member ensemble requires selection method specification."
+            )
+
     # Validate base_models
     if not isinstance(control_file['base_models'], list):
         raise ValueError("base_models must be a list")
@@ -382,6 +390,29 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
     
     if len(config['members']) == 0:
         raise ValueError(f"{prefix}Multi-member schema requires non-empty 'members' array")
+
+    # Validate multi-member schema: require 'members' array
+    if 'members' not in config:
+        raise ValueError(
+            f"{prefix}Multi-member schema requires 'members' array. "
+            f"Legacy single-model schemas are not accepted."
+        )
+
+    # Validate members is a non-empty list
+    members = config['members']
+    if not isinstance(members, list):
+        raise ValueError(f"{prefix}'members' must be a list")
+    if not members:
+        raise ValueError(f"{prefix}'members' array must be non-empty")
+
+    # Validate each member has required fields
+    for j, member in enumerate(members):
+        if not isinstance(member, dict):
+            raise ValueError(f"{prefix}Member at index {j} must be a dictionary")
+        if 'member_name' not in member:
+            raise ValueError(f"{prefix}Member at index {j} is missing required 'member_name' field")
+        if 'params' not in member:
+            raise ValueError(f"{prefix}Member at index {j} is missing required 'params' field")
 
 
 def create_base_model_from_config(
