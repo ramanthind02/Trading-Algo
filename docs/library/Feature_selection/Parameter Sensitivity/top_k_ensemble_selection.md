@@ -8,6 +8,8 @@
 
 ## Overview
 
+This document is the canonical specification for the **pre-committed parameter selection rule** used inside each walkforward training fold and in production refits.
+
 Param combo selection uses a **stable region detection** algorithm: the smoothed performance landscape is analysed to find connected plateaus of high performance, then the best representatives from each plateau are selected.
 
 This replaces the previous fixed top-K ranking approach, which had two weaknesses:
@@ -17,6 +19,8 @@ This replaces the previous fixed top-K ranking approach, which had two weaknesse
 The new approach is self-normalising (thresholds are relative to the landscape), finds however many stable regions exist, and produces natural structural diversity when multiple valid regions are present.
 
 Selection is selection-only: no forecast averaging is performed at the selection stage.
+
+If `|selected| < 2`, no position is taken.
 
 ---
 

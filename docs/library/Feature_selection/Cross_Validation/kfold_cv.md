@@ -179,5 +179,5 @@ Stage 3 requires each fold to have enough data for reliable neighbor-smoothed me
 | [pipeline_overview.md](../pipeline_overview.md) | Master pipeline spec; see Phases 2 and 3 |
 | [in-sample_pt.md](../Permutation Testing/in-sample_pt.md) | Stage 1+2+3 specifications; k-fold integrates here |
 | [cpcv.md](cpcv.md) | Combinatorial Purged CV — alternative for Stage 3 with more paths |
-| [param_selection_rule.md](../Parameter%20Sensitivity/param_selection_rule.md) | Pre-committed selection rule used inside CV folds |
+| [top_k_ensemble_selection.md](../Parameter%20Sensitivity/top_k_ensemble_selection.md) | Pre-committed selection rule used inside CV folds |
 | [grid_search_parameter_stability.md](../Parameter%20Sensitivity/grid_search_parameter_stability.md) | Neighbor smoothing theory |

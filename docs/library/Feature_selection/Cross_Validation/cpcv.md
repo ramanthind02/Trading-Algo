@@ -203,5 +203,5 @@ CPCV is not a permutation test and should not be used as one. CPCV evaluates how
 | [pipeline_overview.md](../pipeline_overview.md) | Master pipeline spec; see Phases 2 and 3 |
 | [in-sample_pt.md](../Permutation Testing/in-sample_pt.md) | Stage 3 IS stability spec; CPCV integrates here |
 | [kfold_cv.md](kfold_cv.md) | K-fold CV — simpler alternative with fewer paths but correct temporal structure |
-| [param_selection_rule.md](../Parameter Sensitivity/param_selection_rule.md) | Pre-committed selection rule run inside each CPCV path |
+| [top_k_ensemble_selection.md](../Parameter Sensitivity/top_k_ensemble_selection.md) | Pre-committed selection rule run inside each CPCV path |
 | [walkforward.md](../Walkforward/walkforward.md) | Phase 3 sequential WF — primary test that CPCV supplements |

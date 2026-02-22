@@ -190,40 +190,37 @@ Within each training fold (or production training window):
   1. Fit ALL candidate param combos on the training data.
 
   2. For each param combo p, compute:
-         raw_metric(p) = Sharpe (or Sortino) on training data
+         raw_metric(p)      = Sharpe (or Sortino) on training data
+         smoothed_metric(p) = neighbour-smoothed metric on the param grid
 
-  3. Apply neighbor smoothing:
-         smoothed_metric(p) = mean(raw_metric(neighbors(p)))
-         stability_ratio(p) = smoothed_metric(p) / raw_metric(p)
+  3. Apply the pre-committed selection algorithm (canonical spec):
+         - Upstream prefilter: enforce `trade_freq_min` at the walkforward runner boundary
+         - Compute a relative/adaptive performance floor on `smoothed_metric`
+         - qualifying = {p : smoothed_metric(p) > floor}
+         - Find connected components of `qualifying` using grid adjacency
+         - Discard degenerate components (e.g., size < 2)
+         - Select up to `k_per_region` per component, cap total at `k_max`
 
-  4. Select p if:
-         stability_ratio(p) ≥ 0.80
-         AND raw_metric(p) > pre_committed_threshold
-
-  5. If |selected| < K_min (default: K_min = 2):
+  4. If |selected| < 2:
          → no position this period
 
-  6. Ensemble signal = mean(signal(p) for p in selected)
+  5. Downstream: combine forecasts from the selected param set.
+         (Selection is selection-only; combination is handled downstream.)
 ```
 
 ### Key Properties
 
-**Thresholds are global and pre-committed.** The values 0.80, `pre_committed_threshold`, and `K_min = 2` are set once for the entire pipeline. They are not tuned per feature and not adjusted based on observed results.
+**Config is global and pre-committed.** The selector configuration is set once for the pipeline. It is not tuned per feature and not adjusted based on observed results.
 
-**Neighbor smoothing requires the full param grid.** Neighbor smoothing computes, for each parameter combination, the average performance of its nearby neighbors in parameter space. This is only meaningful if the full grid is present. Pre-filtering the grid (e.g., "only include lookbacks > 5") distorts the neighborhood structure and makes stability_ratio unreliable. All param combos must be fit in every fold.
+**Neighbor smoothing requires the full param grid.** Neighbour smoothing and grid-adjacency-based region detection are only meaningful if the full grid is present. Pre-filtering the grid distorts the neighborhood structure and changes which regions qualify. All param combos must be fit in every fold.
 
 **Example — RSI lookback grid [2, 3, 4, 5, 10, 14, 20]:**
 
-Say in training fold ending 2017:
-- raw Sharpe: [0.2, 0.3, 0.35, 0.4, 0.5, 0.45, 0.1]
-- smoothed Sharpe: [0.25, 0.28, 0.32, 0.38, 0.45, 0.38, 0.3]
-- stability_ratio: [1.25, 0.93, 0.91, 0.95, 0.90, 0.84, 3.0]
+Say the neighbour-smoothed metrics form a plateau around lookbacks 4–10. The selector computes a floor (relative or adaptive), keeps the superlevel set above that floor, then selects representatives from the connected plateau component. Isolated single-point passers are discarded (min region size = 2). If fewer than 2 params remain selected, the feature takes no position this period.
 
-Lookbacks 14 and 20 have stability_ratio < 0.80 (or in lookback 20's case, the smoothed is higher than raw, which may indicate it is in a good neighborhood but its own raw metric is low). Lookbacks 2, 3, 4, 5, 10 qualify on stability_ratio. After applying the raw_metric threshold, lookbacks 5, 10, 14 may survive. The ensemble for test fold 2017–2018 uses those that qualify.
+**Multiple params = robustness to parameter uncertainty.** Selecting multiple representatives from a stable region reduces single-param fragility.
 
-**Multiple params = implicit diversification.** When several param combos are selected, the ensemble signal is their mean. This reduces single-param risk: if lookback-10 happens to perform poorly in the test fold but lookback-5 and lookback-14 perform well, the ensemble is partially protected. This also means the pipeline naturally prefers features with stable regions in param space over features with single, narrow peaks.
-
-**The K_min=2 rule prevents degenerate ensembles.** If only one param passes, the selection rule has effectively made a point estimate. The pipeline requires at least two to ensure some diversification. If no params pass, the pipeline takes no position rather than forcing a trade with insufficient evidence.
+**The |selected|>=2 rule prevents degenerate ensembles.** If fewer than two params are selected, the pipeline takes no position rather than forcing a trade with insufficient evidence.
 
 ---
 
@@ -317,7 +314,7 @@ Feature FAILS IS screening if:
 
 The individual Stage 1 and Stage 2 results per param combo are **not used to filter which params enter the walkforward**. All param combos in the grid enter the walkforward regardless of their IS permutation pass/fail status.
 
-**Why?** The pre-committed param selection rule uses neighbor smoothing. Neighbor smoothing requires the full param grid to correctly compute stable regions. If params that failed IS permutation were excluded from the walkforward grid, the neighbor structure would be distorted, the stability_ratio values would be incorrect, and the selection rule would make different (and less reliable) decisions than production would make.
+**Why?** The pre-committed param selection rule depends on neighbour smoothing and grid adjacency over the full param grid. If params that failed IS permutation were excluded from the walkforward grid, the neighborhood structure would be distorted, and the selection rule would make different (and less reliable) decisions than production would make.
 
 There is also a subtler reason: a param combo that appears weak in isolation on the IS period may contribute genuine diversification within an ensemble. The walkforward selection rule evaluates params in the context of their neighborhood; the IS permutation test evaluates them in isolation. These are different questions.
 
@@ -389,12 +386,13 @@ Step 1: Fit ALL param combos on training data.
         (e.g., for RSI, fit lookbacks [2,3,4,5,10,14,20] on 2000–2015)
 
 Step 2: Compute raw_metric and smoothed_metric for each param.
-        Identify the stable neighborhood (params with stability_ratio ≥ 0.80).
+        Apply upstream gates (e.g., trade-frequency prefilter).
 
-Step 3: Apply pre-committed selection rule.
-        → Set of selected params for this fold's test period.
+Step 3: Apply the pre-committed selection rule.
+        → Selected param set for this fold's test period (possibly empty).
 
-Step 4: Compute ensemble signal = mean(signal(p) for p in selected).
+Step 4: Form the ensemble forecast from the selected param set.
+        (Selection is selection-only; forecast combination is downstream.)
 
 Step 5: Evaluate ensemble signal on test fold (OOS).
         Record: test Sharpe, selected param set, neighborhood centroid.
@@ -653,14 +651,14 @@ The following documents describe specific components of this pipeline in detail.
 | `Permutation Testing/in-sample_pt.md` | Phase 2 | Stage 1 (vector shuffle) and Stage 2 (pipeline/candle shuffle) permutation test specifications, null distribution construction, significance thresholds |
 | `Walkforward/walkforward.md` | Phases 3 & 4 | Walkforward fold structure, window policy (`expanding`/`rolling`), per-fold workflow implementation, walkforward permutation test implementation |
 | `Parameter Sensitivity/grid_search_parameter_stability.md` | All phases | Neighbor smoothing theory, stability_ratio computation, param grid heatmap generation |
-| `Parameter Sensitivity/param_selection_rule.md` | Phases 3, 4, 5 | Pre-committed selection rule full specification, K_min behavior, ensemble formation, production refit schedule |
+| `Parameter Sensitivity/top_k_ensemble_selection.md` | Phases 3, 4, 5 | Pre-committed param selection rule (stable-region selector), configuration, output fields |
 | `Cross_Validation/kfold_cv.md` | Phase 2 | K-fold CV specification: fold-by-fold permutation diagnostics, IS stability formalization, purging and boundary trimming requirements |
 | `Cross_Validation/cpcv.md` | Phases 2 & 3 | CPCV specification: param selection frequency, PBO computation (logit-rank formulation), Sharpe distribution, limitations |
 
 ### Reading Order for New Researchers
 
 1. Start here (this document) to understand the full pipeline and the role of each phase.
-2. Read `Parameter Sensitivity/param_selection_rule.md` to understand the selection rule in depth, since it is central to Phases 3, 4, and 5.
+2. Read `Parameter Sensitivity/top_k_ensemble_selection.md` to understand the selection rule in depth, since it is central to Phases 3, 4, and 5.
 3. Read `Parameter Sensitivity/grid_search_parameter_stability.md` to understand neighbor smoothing, which underpins the selection rule.
 4. Read `feature_validator.md` for Phase 1 and Phase 2 implementation details.
 5. Read `Walkforward/walkforward.md` for Phase 3 and Phase 4 implementation details.
