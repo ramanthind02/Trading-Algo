@@ -1,33 +1,33 @@
 ## Data Setup — Back-Adjusted Intraday Futures
 
-Intraday data is too large for git (~700MB). Follow these steps to set up the data locally.
+Intraday data is too large for git (~2GB across all timeframes). Follow these steps to set up the data locally.
 
 ### Prerequisites
 
-1. **Kibot data**: Place `kibot_data.zip` in `data/` (contains M1 parquet files for 10 tickers)
+1. **Kibot data**: `kibot_data.zip` in `data/` (contains intraday parquet files for 10 tickers across 15 timeframes)
 2. **Norgate Data Updater (NDU)**: Install and authenticate ([norgatedata.com](https://norgatedata.com)). Must be running on Windows.
 3. **norgatedata package**: `pip install norgatedata`
 
 ### Quick Setup (existing tickers)
 
 ```bash
-# 1. Extract M1 files from Kibot zip (D files are tracked in git — not touched)
+# 1. Extract all intraday files from Kibot zip (M1-M30, H1-H4; skips seconds and D/W/M)
 python scripts/extract_kibot_data.py
 
 # 2. Fetch Norgate reference data (NDU must be running)
 python scripts/fetch_norgate_data.py
 
-# 3. Run back-adjustment on all tickers
+# 3. Run back-adjustment on all tickers (adjusts every timeframe per ticker)
 python -m data_cleaning.back_adjustment.orchestrator --all
 
 # 4. Verify
-ls data/intraday_1min_adjusted/   # Should show adjusted parquet files
+ls data/intraday_adjusted/ES/     # Should show M1_ES.parquet, M5_ES.parquet, H1_ES.parquet, etc.
 ls data/adjustment_metadata/       # Should show JSON metadata per ticker
 ```
 
 ### Adding a New Ticker
 
-When you have Kibot M1 data for a new ticker (e.g., `NG` for Natural Gas):
+When you have Kibot intraday data for a new ticker (e.g., `NG` for Natural Gas):
 
 **Step 1: Add the ticker to the Ticker enum** (if not already there)
 
@@ -62,13 +62,17 @@ syms = norgatedata.database_symbols('Continuous Futures')
 **Step 4: Place the data and run**
 
 ```bash
-# Place the M1 parquet in the input directory
-cp /path/to/M1_NG.parquet data/intraday_1min_original/NG.parquet
+# Place the intraday parquets in the input directory
+# Structure: data/intraday_original/{TICKER}/{TF}_{TICKER}.parquet
+mkdir -p data/intraday_original/NG
+cp /path/to/M1_NG.parquet data/intraday_original/NG/M1_NG.parquet
+cp /path/to/M5_NG.parquet data/intraday_original/NG/M5_NG.parquet
+# ... (all available timeframes)
 
 # Re-fetch Norgate data (picks up new ticker)
 python scripts/fetch_norgate_data.py
 
-# Run back-adjustment for the new ticker
+# Run back-adjustment for the new ticker (adjusts all timeframes)
 python -m data_cleaning.back_adjustment.orchestrator --ticker NG
 
 # Check the comparison report
@@ -86,16 +90,16 @@ The `test_all_tickers_have_rules` test will fail if you added a Ticker enum memb
 ### Architecture
 
 ```
-data/kibot_data.zip                    # Source (gitignored)
-  └─ ohlc_data/{TICKER}/M1_{TICKER}.parquet
+data/kibot_data.zip                    # Source (tracked in git)
+  └─ ohlc_data/{TICKER}/{TF}_{TICKER}.parquet
        │
-       ▼ extract
-data/intraday_1min_original/           # Raw M1 data (gitignored)
-  └─ {TICKER}.parquet
+       ▼ extract (extract_kibot_data.py — M1-M30, H1-H4 only)
+data/intraday_original/                # Raw intraday data (gitignored)
+  └─ {TICKER}/{TF}_{TICKER}.parquet
        │
-       ▼ back-adjust (orchestrator)
-data/intraday_1min_adjusted/           # Adjusted M1 data (gitignored)
-  └─ {TICKER}.parquet
+       ▼ back-adjust (orchestrator — rolls detected once, applied to all TFs)
+data/intraday_adjusted/                # Adjusted intraday data (gitignored)
+  └─ {TICKER}/{TF}_{TICKER}.parquet
        │
        ▼ compare (validator)
 data/norgate/continuous_futures/       # Norgate reference (gitignored)
