@@ -74,11 +74,21 @@ Install the Git hooks to enable automatic indexing and retrieval:
 | `/mem` | `/mem` | Shows statistics for both storage engines. |
 
 ### Automatic Agent Behavior
-You don't need to do anything special to benefit from the memory system. On **every message** you send:
-1. The `MessageSend` hook triggers.
-2. It silently retrieves the top 5 relevant code snippets from RAG.
-3. It silently retrieves the top 5 relevant facts from Cognitive Memory.
-4. It injects them into the agent's hidden context.
+You don't need to do anything special to benefit from the memory system. On **every message** you send, the `MessageSend` hook can retrieve relevant code snippets and cognitive facts and inject them into the agent's hidden context.
+
+This repo supports token-aware retrieval sizing:
+
+- In execution-focused flows (default), injection is minimal.
+- In research flows, injection is richer.
+
+You can explicitly control it via environment variables:
+
+- `RAG_MODE=off|execute|research`
+- `RAG_K_CODE=<int>`
+- `RAG_K_FACTS=<int>`
+- `RAG_MAX_CHARS=<int>`
+- `RAG_CHUNK_MAX_CHARS=<int>`
+- `RAG_FACT_MAX_CHARS=<int>`
 
 **Result:** You can ask "How should I implement the new bias node?" and the agent will know both the current node architecture (from RAG) and your preference for functional patterns (from Cognitive Memory).
 
