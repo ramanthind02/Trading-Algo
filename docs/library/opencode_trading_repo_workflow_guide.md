@@ -1,37 +1,38 @@
-# Trading-Algo: OpenCode Workflow Guide (omos + Local RAG/Memory + Superpowers)
+# Trading-Algo: OpenCode Workflow Guide
 
-This is the single, canonical workflow guide for doing any task in this repo using:
+Use this repo with OpenCode via the launcher script. It picks the right preset (OpenAI vs Zen) so you do not have to remember env vars.
 
-- OpenCode
-- omos (oh-my-opencode-slim) multi-agent orchestration
-- local Codebase RAG (ChromaDB) + Cognitive Memory (OpenMemory)
-- Superpowers skills (used on-demand; no always-on plugin assumed)
-- optional power features: cartography codemaps, background tasks, tmux panes, prompt overrides
+## Start Here (Copy/Paste)
 
-If you want only the minimum, use the “Execute” recipe and skip the advanced sections.
+Default (cheap + quiet):
 
-## TL;DR (Your 3 Phases)
+```bash
+./scripts/oc --provider openai --preset execute
+```
 
-You described 3 phases: research -> planning -> implementation.
+Research (web tools allowed for research roles):
 
-Use these defaults:
+```bash
+./scripts/oc --provider openai --preset research
+```
 
-1) Research (chatty, architecture decisions)
+Rate-limit fallback (Zen models):
 
-- Launch: `OH_MY_OPENCODE_SLIM_PRESET=research opencode`
-- Talk to: `@orchestrator` (ask it to consult `oracle`, `explorer`, `librarian`)
+```bash
+./scripts/oc --provider zen --preset execute
+```
 
-2) Planning (turn ideas into an executable plan)
+RAG toggle (optional):
 
-- Stay in research preset.
-- Output: a concrete plan with file paths + invariants + test commands.
-- Consider a retrieval cap if the injected context starts to drown out the plan.
+```bash
+./scripts/oc --provider openai --preset execute --rag off
+```
 
-3) Implementation (do the plan, minimal overhead)
+## Daily Loop
 
-- Launch: `OH_MY_OPENCODE_SLIM_PRESET=execute opencode`
-- Talk to: `@build` (or `@orchestrator` if you want explicit delegation)
-- Local retrieval: minimal injection by default; rely on targeted `Read` + `/recall`.
+- Research: ask `@orchestrator` to delegate to `explorer` (repo mapping), `librarian` (external retrieval), `oracle` (architecture/debugging).
+- Plan: produce a brief with exact file paths + invariants + `python -m pytest ...` commands.
+- Execute: use `--preset execute` and implement from the brief.
 
 ## 0) What Is Actually Running (The Two Layers)
 
@@ -114,12 +115,7 @@ You can have as many presets as you want. This repo currently uses:
 - `execute`: tools off + minimal local injection
 - `dynamic`: treated like execute for injection (low overhead)
 
-How to launch:
-
-```bash
-OH_MY_OPENCODE_SLIM_PRESET=research opencode
-OH_MY_OPENCODE_SLIM_PRESET=execute opencode
-```
+How to launch: use `./scripts/oc`.
 
 If you want more than these, add presets in `~/.config/opencode/oh-my-opencode-slim.json(.jsonc)`.
 
@@ -145,6 +141,8 @@ Instead of manually setting `OH_MY_OPENCODE_SLIM_PRESET`, use the repo launcher:
 
 This maps to `OH_MY_OPENCODE_SLIM_PRESET` for you (for example: `execute` -> `execute_zen`).
 
+Escape hatch (advanced): you can still set `OH_MY_OPENCODE_SLIM_PRESET` directly, but the launcher should be the default.
+
 ## 4) Local RAG/Memory Controls (Token Guardrails)
 
 The hook logic is `.opencode/hooks/rag_retriever.py`.
@@ -157,9 +155,9 @@ Defaults:
 Hard overrides (use any time):
 
 ```bash
-RAG_MODE=off opencode
-RAG_MODE=execute opencode
-RAG_MODE=research opencode
+./scripts/oc --rag off
+./scripts/oc --rag execute
+./scripts/oc --rag research
 ```
 
 Fine tuning knobs:
@@ -171,7 +169,7 @@ Fine tuning knobs:
 If injection feels “too chatty” while you ship, do this:
 
 ```bash
-OH_MY_OPENCODE_SLIM_PRESET=execute RAG_MAX_CHARS=2500 opencode
+RAG_MAX_CHARS=2500 ./scripts/oc --preset execute
 ```
 
 ## 4.1) Why Execute Injects Less (Builders Still Get Context)
@@ -293,7 +291,7 @@ This pattern keeps you fast and cheap.
 Step 1: Research preset
 
 ```bash
-OH_MY_OPENCODE_SLIM_PRESET=research opencode
+./scripts/oc --preset research
 ```
 
 Step 2: Ask orchestrator to produce a brief by delegating
@@ -315,7 +313,7 @@ Then hand that brief to fixer.
 Step 3: Switch to execute preset and implement
 
 ```bash
-OH_MY_OPENCODE_SLIM_PRESET=execute opencode
+./scripts/oc --preset execute
 ```
 
 ```text
@@ -326,88 +324,23 @@ Run the listed tests via python -m pytest.
 <paste brief>
 ```
 
-## 9) Trading-Repo Task Playbooks (Copy/Paste)
+## 9) Copy/Paste Prompts (One Set)
 
-These are designed to match the repo architecture (candles -> nodes -> models -> ensemble -> weights -> portfolio -> execution).
-
-### Playbook A: Add a New Bias Node
-
-Use when you need a new feature generator under `nodes/`.
-
-Research prompt:
+Use this for most tasks:
 
 ```text
-We are adding a new bias node.
+Task: <what you want to change>.
 
-1) Explorer: locate existing bias node patterns and base classes; identify naming conventions for generated columns.
-2) Use /recall for: "bias node", "BaseBiasNode", "feature naming".
-3) Orchestrator: propose the new node interface and where it plugs into the pipeline.
-4) Orchestrator: draft acceptance criteria (what columns, what ranges, what invariants).
-Return: design + file list + tests to add.
-```
+1) Explorer: identify exact files/functions and the call/data flow.
+2) /recall: any repo-specific invariants/schemas that matter.
+3) Librarian: external references only if needed.
+4) Oracle: highlight risks/invariants; what must not silently change.
 
-Execute prompt:
-
-```text
-Implement the new bias node based on the approved design.
-
-Requirements:
-- Follow functional core / imperative shell.
-- Prefer frozen dataclasses for new domain models.
-- Add unit tests under the correct taxonomy (unit vs integration).
-- Run: source venv/bin/activate && python -m pytest <targeted tests>.
-
-If you need context, use /recall rather than websearch.
-```
-
-### Playbook B: Modify Feature Selection / Validation
-
-```text
-We are changing feature selection logic.
-
-1) Explorer: find current feature selection pipeline and validators.
-2) Use /recall: "feature_selection", "permutation test", "walkforward".
-3) Oracle: highlight risks (leakage, alignment, scaling assumptions) and what must not silently change.
-4) Orchestrator: propose the minimal safe change + tests.
-Return a brief for fixer.
-```
-
-### Playbook C: Change Ensemble Diversification / Weighting
-
-```text
-We are changing ensemble construction / weighting.
-
-1) Explorer: locate ensemble layers and any control-file schemas used by vault/deployment.
-2) Use /recall: "ensemble", "weight layer", "vault artifacts schema".
-3) Oracle: identify invariants and how to verify no silent schema semantics change.
-4) Orchestrator: define acceptance tests (unit + integration if cross-layer).
-Return: a brief + specific pytest commands.
-```
-
-### Playbook D: Execution / Position Sizing Change
-
-```text
-We are changing execution sizing logic.
-
-1) Explorer: locate execution sizing conversion points (forecast -> contracts) and rounding/constraints.
-2) Use /recall: "position sizing", "execution", "contracts".
-3) Oracle: enumerate edge cases (min size, leverage caps, missing prices, sign conventions).
-4) Orchestrator: propose smallest change + unit tests that pin the numeric behavior.
-Return a brief.
-```
-
-### Playbook E: Fix a Bug / Failing Test
-
-```text
-We have a failure.
-
-Invoke `systematic-debugging`.
-Steps:
-1) Reproduce with python -m pytest (target the smallest test).
-2) Identify root cause and the minimal fix.
-3) Add/adjust a regression test.
-4) Re-run the targeted tests.
-Return: cause + fix + evidence.
+Return a 10-line brief:
+- what exists today
+- what we will change
+- exact files to edit
+- tests to run (python -m pytest ...)
 ```
 
 ## 10) Cartography (Codemaps)
@@ -497,5 +430,5 @@ If you changed cross-layer behavior (nodes -> ensemble -> execution), include th
 - Tools not available in execute mode:
   - switch to research preset or enable MCPs in your preset config
 - Too many tokens:
-  - `OH_MY_OPENCODE_SLIM_PRESET=execute`
+  - `./scripts/oc --preset execute`
   - `RAG_MAX_CHARS=2500` or `RAG_MODE=off`
