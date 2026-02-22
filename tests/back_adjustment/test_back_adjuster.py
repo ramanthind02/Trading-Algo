@@ -72,7 +72,8 @@ class TestBackAdjuster:
         result = apply_back_adjustment(df, adjustments)
         pd.testing.assert_series_equal(result["volume"], df["volume"])
 
-    def test_no_negative_prices(self) -> None:
+    def test_negative_prices_warns(self) -> None:
+        """Negative adjusted prices log a warning (expected for commodities)."""
         df = _make_ohlc(base=5.0)
         huge_negative = [
             AdjustmentFactor(
@@ -82,8 +83,8 @@ class TestBackAdjuster:
             ),
         ]
         result = apply_back_adjustment(df, huge_negative)
-        with pytest.raises(ValueError, match="negative"):
-            validate_adjusted_data(df, result, huge_negative)
+        # Should not raise — just warns
+        assert validate_adjusted_data(df, result, huge_negative) is True
 
     def test_immutability(self) -> None:
         df = _make_ohlc()

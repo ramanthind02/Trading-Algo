@@ -56,7 +56,15 @@ def validate_adjusted_data(
     adjusted: pd.DataFrame,
     adjustments: List[AdjustmentFactor],
 ) -> bool:
-    """Validate back-adjusted data integrity. Raises ValueError on failure."""
+    """Validate back-adjusted data integrity.
+
+    Raises ValueError for hard failures (row count, volume, timestamps).
+    Logs a warning for negative prices (expected for commodities with
+    large contango/backwardation and arithmetic adjustment).
+    """
+    import logging
+    _logger = logging.getLogger(__name__)
+
     if len(original) != len(adjusted):
         raise ValueError(
             f"Row count mismatch: original={len(original)}, adjusted={len(adjusted)}"
@@ -66,8 +74,10 @@ def validate_adjusted_data(
         if col in adjusted.columns:
             min_val = adjusted[col].min()
             if min_val < 0:
-                raise ValueError(
-                    f"Adjusted '{col}' contains negative prices (min={min_val:.4f})"
+                _logger.warning(
+                    "Adjusted '%s' contains negative prices (min=%.4f). "
+                    "Expected for commodities with large contango/backwardation.",
+                    col, min_val,
                 )
 
     if "volume" in original.columns and "volume" in adjusted.columns:
