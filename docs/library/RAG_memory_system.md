@@ -79,6 +79,46 @@ handle_recall("Find context about X")
 handle_mem_stats()
 ```
 
+## Automation & Indexing
+
+The system includes automation to keep the local memory synchronized with the codebase and to provide context-aware assistance.
+
+### 1. Automatic Indexing (post-commit)
+
+A git `post-commit` hook automatically re-indexes changed files after every commit. This ensures your local memory always reflects the current state of the repository.
+
+- **Hook location:** `.git/hooks/post-commit` (installed via `scripts/install-hooks.sh`)
+- **Behavior:** Runs `utils/index_repo.py` in the background after a commit.
+- **Incremental:** Only indexes new or modified files.
+
+### 2. Manual Indexing
+
+You can manually trigger a full or incremental repository index using the `RepoIndexer` utility.
+
+```bash
+# From the project root
+python3 utils/index_repo.py
+```
+
+This scans the repository for supported file types (`.py`, `.md`, `.txt`, `.json`, etc.) and stores their content in ChromaDB.
+
+### 3. Automatic Context Retrieval (MessageSend hook)
+
+The system integrates with OpenCode via a `MessageSend` hook to automatically retrieve relevant context from memory for your queries.
+
+- **Hook script:** `.opencode/hooks/query-hook.sh`
+- **Retrieval script:** `.opencode/hooks/rag_retriever.py`
+- **Behavior:** On every message, the hook retrieves the top-k relevant chunks from memory and presents them to the model as context.
+
+### 4. Setup Automation
+
+Install the git hooks and configure the system with one command:
+
+```bash
+# From the project root
+./scripts/install-hooks.sh
+```
+
 ## Storage Location
 
 - **Default:** `~/.codex/memory_db/`
@@ -137,6 +177,10 @@ The system starts empty. Use `/remember` to populate with useful context.
 |------|---------|
 | `utils/memory_service.py` | Core MemoryService class |
 | `utils/memory_commands.py` | CLI command handlers |
+| `utils/index_repo.py` | Repository indexing utility |
+| `scripts/install-hooks.sh` | Git hook installation script |
+| `.opencode/hooks/query-hook.sh` | Context retrieval hook |
+| `.opencode/hooks/rag_retriever.py` | Hook-specific retrieval logic |
 | `.opencode/command/remember.md` | OpenCode /remember command |
 | `.opencode/command/recall.md` | OpenCode /recall command |
 | `.opencode/command/mem.md` | OpenCode /mem command |
