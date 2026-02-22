@@ -170,11 +170,13 @@ Edit mapping:
 
 This setup currently uses:
 
-- `orchestrator`: `openai/gpt-5.1-codex-mini`
-- `oracle`: `openai/gpt-5.2`
-- `fixer`: `openai/codex-mini-latest`
-- `librarian` + `explorer`: `opencode/gemini-3-flash`
-- `designer`: `opencode/gpt-5-nano`
+- `orchestrator`: `openai/gpt-5.2` (backup: `opencode/kimi-2.5`)
+- `oracle`: `openai/gpt-5.2-codex` (backup: `opencode/kimi-k2-thinking`)
+- `explorer`: `openai/gpt-5.1-codex-mini` (backup: `opencode/minimax-2.5`)
+- `librarian`: `openai/gpt-5.1-codex-mini` (backup: `opencode/gemini-3-flash`)
+- `fixer`: `openai/gpt-5.1-codex-max` (backup: `opencode/qwen3-coder-480b`)
+
+Backups are used only if we hit rate limits with our OpenAI subscription; at that point we switch over to the Zen API models.
 
 Rationale:
 

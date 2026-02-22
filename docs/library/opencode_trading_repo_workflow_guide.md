@@ -123,6 +123,16 @@ OH_MY_OPENCODE_SLIM_PRESET=execute opencode
 
 If you want more than these, add presets in `~/.config/opencode/oh-my-opencode-slim.json(.jsonc)`.
 
+## 3.1) Current OSOS Model Mapping (Primary + Rate-Limit Backup)
+
+Primary models are the default mapping. Backup models are used only if we hit rate limits with the OpenAI subscription; in that case we switch over to the Zen API models by changing presets/config in `~/.config/opencode/oh-my-opencode-slim.json(.jsonc)`.
+
+- `orchestrator`: `openai/gpt-5.2` (backup: `opencode/kimi-2.5`)
+- `oracle`: `openai/gpt-5.2-codex` (backup: `opencode/kimi-k2-thinking`)
+- `explorer`: `openai/gpt-5.1-codex-mini` (backup: `opencode/minimax-2.5`)
+- `librarian`: `openai/gpt-5.1-codex-mini` (backup: `opencode/gemini-3-flash`)
+- `fixer`: `openai/gpt-5.1-codex-max` (backup: `opencode/qwen3-coder-480b`)
+
 ### Launcher Script (Provider Flag)
 
 Instead of manually setting `OH_MY_OPENCODE_SLIM_PRESET`, use the repo launcher:
