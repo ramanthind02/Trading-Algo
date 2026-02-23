@@ -12,9 +12,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from nodes.ewsd import EWSDNode
-from utils.enums import Ticker, TimeFrame
-from utils.fast_volatility import compute_ewsd_annualized_from_closes
-from utils.models import Candle
+from utils.core.enums import Ticker, TimeFrame
+from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
+from utils.core.models import Candle
 
 
 def _make_candle(close: float, day_index: int) -> Candle:

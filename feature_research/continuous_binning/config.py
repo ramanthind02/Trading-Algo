@@ -18,7 +18,7 @@ from feature_research.walkforward.config import (
 )
 from feature_selection.validation.config import PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 # ---------------------------------------------------------------------------
 # Root of the feature_research tree — resolved at import time so scripts

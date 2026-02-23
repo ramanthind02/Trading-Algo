@@ -11,17 +11,17 @@
 
 ```bash
 source /home/raman/repos/Trading-Algo/venv/bin/activate
-python utils/setup_cython.py build_ext --inplace
+python utils/compute/cython/setup_cython.py build_ext --inplace
 ```
 
 Compiles two modules:
 
 | Source | Module | Used by |
 |---|---|---|
-| `utils/cython_optimized.pyx` | `utils.cython_optimized` | `utils.fast_stats` (Spearman, rank, threshold opt, MA-diff) |
-| `utils/cython_nodes.pyx` | `utils.cython_nodes` | `utils.fast_nodes` (ATR, EMA, RSI, ROC, Donchian, etc.) |
+| `utils/compute/cython/cython_optimized.pyx` | `utils.compute.cython.cython_optimized` | `utils.compute.fast_stats` (Spearman, rank, threshold opt, MA-diff) |
+| `utils/compute/cython/cython_nodes.pyx` | `utils.compute.cython.cython_nodes` | `utils.compute.fast_nodes` (ATR, EMA, RSI, ROC, Donchian, etc.) |
 
-> [!note] Portfolio volatility uses `utils.fast_volatility` (pure NumPy EWSD). No Cython required for that path.
+> [!note] Portfolio volatility uses `utils.compute.fast_volatility` (pure NumPy EWSD). No Cython required for that path.
 
 ---
 
@@ -32,7 +32,7 @@ Compiles two modules:
 ```python
 from ensemble.portfolio import Portfolio
 from ensemble.portfolio_tester import PortfolioTester
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 portfolio = Portfolio(
     ensembles=ensembles,          # list of DiversifiedEnsemble or vault-loaded ensembles
@@ -69,7 +69,7 @@ Uses mock ensembles and synthetic candles. Writes `profile_portfolio_pipeline.pr
 
 ## What Is Vectorized / Optimized
 
-- **Volatility** — `compute_ewsd_annualized_from_closes` in `utils.fast_volatility` (array-based, no per-bar loops)
+- **Volatility** — `compute_ewsd_annualized_from_closes` in `utils.compute.fast_volatility` (array-based, no per-bar loops)
 - **Risk management** — `_apply_risk_management_to_forecasts`: vectorized pandas merge/clip/instrument weights
 - **Returns calculation** — `calculate_strategy_returns_from_positions`, baseline returns: vectorized groupby/merge/diff
 - **Cython kernels** — RSI, EMA, ATR, MA-diff, Spearman rank (when built)

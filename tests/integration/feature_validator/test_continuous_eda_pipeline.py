@@ -25,7 +25,7 @@ from feature_research.continuous_binning.pipeline import (
     run_continuous_eda_pipeline,
     run_continuous_permutation_pipeline,
 )
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def _project_root() -> Path:

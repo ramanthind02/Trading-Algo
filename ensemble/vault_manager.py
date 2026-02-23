@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
+import utils.core.helpers as helpers
 from feature_selection.base_models import ContinuousBinningModel, RuleBasedModel
 from feature_selection.base_models.feature_base_model import BaseModel
 
@@ -35,7 +35,7 @@ try:
 except ImportError:
     TwoBinBinningModel = None
 
-from utils.enums import Direction, TimeFrame, Ticker
+from utils.core.enums import Direction, TimeFrame, Ticker
 
 # Type hint for forward reference
 if TYPE_CHECKING:

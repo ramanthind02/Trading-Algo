@@ -11,8 +11,8 @@ import pandas as pd
 from ensemble.weight_layer import WeightLayerConfig
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.metrics import resolve_objective_metric
-from utils.enums import Ticker
-from utils.grid_smoothing import add_smoothed_objective
+from utils.core.enums import Ticker
+from utils.compute.grid_smoothing import add_smoothed_objective
 
 
 @dataclass(frozen=True)

@@ -21,8 +21,8 @@ import matplotlib.pyplot as plt
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.robustness_test import robustness_test
-from utils.enums import ResamplingMethod
+from utils.evaluation.robustness_test import robustness_test
+from utils.core.enums import ResamplingMethod
 
 
 def load_es_data(filepath: str) -> pd.DataFrame:

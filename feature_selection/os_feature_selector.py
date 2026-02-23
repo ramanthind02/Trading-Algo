@@ -24,7 +24,7 @@ from sklearn.model_selection import KFold
 from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.walkforward.walkforward_model import WalkForwardSplitter
 from metrics.performance import ObjectiveMetric
-from utils.permutation_test.permutation_engine import (
+from utils.evaluation.permutation_test.permutation_engine import (
     PermutationEngine, 
     FeaturePermutationStrategy
 )

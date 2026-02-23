@@ -39,7 +39,7 @@ Expected: `pytest-asyncio` in list. If not, run `pip install pytest-asyncio`.
 ```python
 import pytest
 import pathlib
-from utils.cognitive_memory import CognitiveMemory
+from utils.memory.cognitive_memory import CognitiveMemory
 
 def test_cognitive_memory_init(tmp_path):
     db_path = str(tmp_path / "test.db")

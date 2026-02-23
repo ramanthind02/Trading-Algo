@@ -30,7 +30,7 @@ Not public:
 ## Quickstart (minimal)
 ```python
 from deployment.test_forecast_server import TestForecastServer
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 server = TestForecastServer(config_dir="deployment/config")
 server.load_historical_data(days_back=90)  # warm up node lookbacks
@@ -42,7 +42,7 @@ server.stop()
 ## Data contracts
 
 Input(s):
-- Candle payloads consumed by deployment services are `utils.models.Candle` objects with:
+- Candle payloads consumed by deployment services are `utils.core.models.Candle` objects with:
   - `datetime`, `open`, `high`, `low`, `close`, `volume`, `ticker`, `tf`
 - Forecast map passed to notifier:
   - `Dict[str, float]` (`ticker -> forecast_value`)
@@ -163,7 +163,7 @@ No-lookahead / time alignment:
 Example:
 ```python
 from deployment.mt5_data_connector import create_mt5_connector
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 conn = create_mt5_connector()
 candle = conn.get_latest_candle("EURUSD", TimeFrame.D)
@@ -310,7 +310,7 @@ No-lookahead / time alignment:
 Example:
 ```python
 from deployment.production_training_pipeline import ProductionTrainingPipeline
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 pipeline = ProductionTrainingPipeline(output_dir="deployment/config")
 path = pipeline.train_ticker_timeframe(Ticker.ES, TimeFrame.D)

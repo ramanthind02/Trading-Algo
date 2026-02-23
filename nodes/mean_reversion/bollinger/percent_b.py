@@ -10,8 +10,8 @@ Output: Rule-based 0 or 1 (long signal when oversold, flat otherwise)
 from typing import List
 import numpy as np
 from collections import deque
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

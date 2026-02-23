@@ -9,8 +9,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.parent.absolute()
 sys.path.insert(0, str(REPO_ROOT))
 
-@patch('utils.cognitive_memory.CognitiveMemory')
-@patch('utils.memory_service.MemoryService')
+@patch('utils.memory.cognitive_memory.CognitiveMemory')
+@patch('utils.memory.memory_service.MemoryService')
 def test_rag_retriever_dual_output(mock_rag_class, mock_cog_class):
     import importlib.util
     
@@ -51,8 +51,8 @@ def test_rag_retriever_dual_output(mock_rag_class, mock_cog_class):
     assert "<COGNITIVE-MEMORY-CONTEXT>" in context
     assert "Cognitive fact 1" in context
 
-@patch('utils.cognitive_memory.CognitiveMemory')
-@patch('utils.memory_service.MemoryService')
+@patch('utils.memory.cognitive_memory.CognitiveMemory')
+@patch('utils.memory.memory_service.MemoryService')
 def test_rag_retriever_graceful_failure(mock_rag_class, mock_cog_class):
     import importlib.util
     

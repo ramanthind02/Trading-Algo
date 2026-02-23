@@ -52,9 +52,9 @@ from feature_selection.validation.stability_analysis import (
     _param_combo_name,
     run_walkforward_stability,
 )
-from utils.cache_manager import CacheManager
-from utils.enums import Ticker, TimeFrame
-from utils.permutation_test.candle_shuffle import CandleShuffler
+from utils.cache.cache_manager import CacheManager
+from utils.core.enums import Ticker, TimeFrame
+from utils.evaluation.permutation_test.candle_shuffle import CandleShuffler
 
 # ---------------------------------------------------------------------------
 # Default integration test configuration (RSI-5 on ES daily 2020-2023)

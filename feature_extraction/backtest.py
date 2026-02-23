@@ -7,13 +7,13 @@ sys.path.append(parent_dir)
 import numpy as np
 from typing import List, Optional
 
-from utils.enums import TimeFrame
-from utils.candle_fetcher import CandleFetcher
-from utils.models import Candle
+from utils.core.enums import TimeFrame
+from utils.data.candle_fetcher import CandleFetcher
+from utils.core.models import Candle
 from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, timezone
 # No order imports needed
-from utils.logger import get_logger
+from utils.core.logger import get_logger
 
 
 logger = get_logger(__name__)
@@ -150,7 +150,7 @@ class Backtest:
         """
         if self.fast_mode:
             # Use FastCandle for 5-10x speedup (no validation overhead)
-            from utils.fast_candle import FastCandle
+            from utils.compute.fast_candle import FastCandle
             return FastCandle.from_numpy(
                 candle,
                 ticker=self.ml_manager.ticker,

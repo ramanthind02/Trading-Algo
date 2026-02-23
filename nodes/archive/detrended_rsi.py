@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

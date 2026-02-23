@@ -452,8 +452,8 @@ class BinningModelBase(ABC):
                 "or ensure the Series has a name attribute (e.g., df['column_name'])."
             )
 
-        import utils.helpers as helpers
-        from utils.enums import TimeFrame
+        import utils.core.helpers as helpers
+        from utils.core.enums import TimeFrame
 
         parsed = helpers.parse_feature_column_name(self.feature_column)
         if parsed.get("module") is None or parsed.get("tf") is None:

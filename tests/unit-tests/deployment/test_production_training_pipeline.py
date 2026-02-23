@@ -16,7 +16,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from deployment.production_training_pipeline import ProductionTrainingPipeline
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 
 
 class TestProductionTrainingPipeline(unittest.TestCase):

@@ -15,9 +15,9 @@ from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
 import logging
 
-from utils.enums import Ticker, TimeFrame
-from utils.models import Candle
-from utils import helpers
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core import helpers
 from feature_selection.base_models.base_model import BinningModelBase
 
 logger = logging.getLogger(__name__)
@@ -606,7 +606,7 @@ class BaseModel:
         CacheMissError
             If cache is not available for any bias node
         """
-        from utils.bias_node_cache import CacheMissError
+        from utils.cache.bias_node_cache import CacheMissError
 
         # Convert target_data to Series if it's a DataFrame
         if isinstance(target_data, pd.DataFrame):
@@ -942,7 +942,7 @@ class BaseModel:
         pd.Series
             Predictions indexed by candle datetimes
         """
-        from utils.bias_node_cache import CacheMissError
+        from utils.cache.bias_node_cache import CacheMissError
 
         # Infer date range from candles_df if not provided
         if start_date is None:
@@ -1113,7 +1113,7 @@ class BaseModel:
         """
         # Import here to avoid circular dependency
         from ensemble.vault_manager import add_feature_to_ensemble
-        from utils.enums import Ticker
+        from utils.core.enums import Ticker
         
         # Generate feature_column from bias_node_spec if not set (for unfitted models)
         if self.feature_column is None:

@@ -50,9 +50,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
-from utils.enums import TimeFrame, Ticker
-from utils.models import Candle
+import utils.core.helpers as helpers
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.models import Candle
 
 
 def _expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -461,7 +461,7 @@ def _extract_features_single_ticker(
 
     # CACHED PATH: Load from BiasNodeCache (fast)
     if use_cache:
-        from utils.bias_node_cache import BiasNodeCache, CacheMissError
+        from utils.cache.bias_node_cache import BiasNodeCache, CacheMissError
 
         for bias_node, orig_params, orig_tf in bias_node_info:
             # Get params from bias node, falling back to original params if node doesn't have them

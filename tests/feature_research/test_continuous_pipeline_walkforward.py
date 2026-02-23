@@ -13,7 +13,7 @@ from feature_research.continuous_binning.config import ResearchConfig
 from feature_research.continuous_binning.pipeline import run_continuous_eda_pipeline
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.runner import WalkforwardRunReport
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def _build_config(tmp_path: Path, *, walkforward_enabled: bool) -> ResearchConfig:

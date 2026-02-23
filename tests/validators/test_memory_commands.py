@@ -1,7 +1,7 @@
 import pytest
 import asyncio
 from unittest.mock import MagicMock, patch
-from utils.memory_commands import (
+from utils.memory.memory_commands import (
     handle_remember,
     handle_recall,
     handle_mem_stats,
@@ -32,7 +32,7 @@ def test_parse_clear():
     assert result["command"] == "clear"
 
 
-@patch("utils.memory_commands.asyncio.run")
+@patch("utils.memory.memory_commands.asyncio.run")
 def test_handle_remember_success(mock_run):
     mock_cog = MagicMock()
     result = handle_remember("test memory", cog_service=mock_cog)
@@ -45,7 +45,7 @@ def test_handle_remember_empty_text():
     assert result == "Usage: /remember <text to store>"
 
 
-@patch("utils.memory_commands.asyncio.run")
+@patch("utils.memory.memory_commands.asyncio.run")
 def test_handle_remember_long_text(mock_run):
     mock_cog = MagicMock()
     long_text = "x" * 100
@@ -54,7 +54,7 @@ def test_handle_remember_long_text(mock_run):
     assert "..." in result
 
 
-@patch("utils.memory_commands.asyncio.run")
+@patch("utils.memory.memory_commands.asyncio.run")
 def test_handle_remember_error(mock_run):
     mock_cog = MagicMock()
     mock_run.side_effect = Exception("Storage failed")
@@ -62,7 +62,7 @@ def test_handle_remember_error(mock_run):
     assert "Error" in result
 
 
-@patch("utils.memory_commands.asyncio.run")
+@patch("utils.memory.memory_commands.asyncio.run")
 def test_handle_recall_success(mock_run):
     mock_cog = MagicMock()
     mock_rag = MagicMock()
@@ -89,7 +89,7 @@ def test_handle_recall_empty_query():
     assert result == "Usage: /recall <query>"
 
 
-@patch("utils.memory_commands.asyncio.run")
+@patch("utils.memory.memory_commands.asyncio.run")
 def test_handle_recall_no_results(mock_run):
     mock_cog = MagicMock()
     mock_rag = MagicMock()
@@ -101,7 +101,7 @@ def test_handle_recall_no_results(mock_run):
     assert result == "No relevant memory found in either store."
 
 
-@patch("utils.memory_commands.asyncio.run")
+@patch("utils.memory.memory_commands.asyncio.run")
 def test_handle_mem_stats_success(mock_run):
     mock_cog = MagicMock()
     mock_rag = MagicMock()

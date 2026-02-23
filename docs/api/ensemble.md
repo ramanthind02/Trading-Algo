@@ -26,7 +26,7 @@ Private helpers prefixed with `_` are omitted unless required to understand the 
 ```python
 from ensemble import DiversifiedEnsemble, Portfolio, PortfolioManager, WeightLayer
 from execution import PositionSizer, ContractSpec
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 # 1) Load/construct ensemble from a unified control file
 ensemble = DiversifiedEnsemble(

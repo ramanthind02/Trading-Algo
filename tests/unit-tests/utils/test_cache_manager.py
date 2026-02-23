@@ -16,8 +16,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.cache_manager import CacheManager
-from utils.enums import Ticker, TimeFrame
+from utils.cache.cache_manager import CacheManager
+from utils.core.enums import Ticker, TimeFrame
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 # ─── T001: Common EDA ────────────────────────────────────────────────────────

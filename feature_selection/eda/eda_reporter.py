@@ -58,7 +58,7 @@ from feature_selection.eda.rule_based_eda import (
     compute_per_level_stats,
     create_rule_based_eda_plots,
 )
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def run_eda_for_continuous_feature(

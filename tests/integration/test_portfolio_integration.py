@@ -35,8 +35,8 @@ import numpy as np
 from datetime import datetime
 from typing import Dict, Any
 
-from utils.enums import TimeFrame, Ticker
-from utils import helpers
+from utils.core.enums import TimeFrame, Ticker
+from utils.core import helpers
 from ensemble.portfolio import Portfolio
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet

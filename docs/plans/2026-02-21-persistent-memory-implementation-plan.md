@@ -54,7 +54,7 @@ Create `tests/validators/test_memory_service.py`:
 
 ```python
 import pytest
-from utils.memory_service import MemoryService
+from utils.memory.memory_service import MemoryService
 
 
 def test_memory_service_init():
@@ -75,7 +75,7 @@ def test_store_and_retrieve():
 **Step 2: Run test to verify it fails**
 
 Run: `pytest tests/validators/test_memory_service.py::test_memory_service_init -v`
-Expected: FAIL with "ModuleNotFoundError: No module named 'utils.memory_service'"
+Expected: FAIL with "ModuleNotFoundError: No module named 'utils.memory.memory_service'"
 
 **Step 3: Write minimal implementation**
 
@@ -177,7 +177,7 @@ Create `tests/validators/test_memory_commands.py`:
 
 ```python
 import pytest
-from utils.memory_commands import (
+from utils.memory.memory_commands import (
     handle_remember,
     handle_recall,
     handle_mem_stats,
@@ -219,7 +219,7 @@ Create `utils/memory_commands.py`:
 ```python
 from __future__ import annotations
 from typing import Any
-from utils.memory_service import MemoryService
+from utils.memory.memory_service import MemoryService
 
 
 def parse_memory_command(input_str: str) -> dict[str, Any]:
@@ -315,7 +315,7 @@ description: Store text to persistent memory
 Call the memory store command with the following text:
 
 ```python
-from utils.memory_commands import handle_remember
+from utils.memory.memory_commands import handle_remember
 result = handle_remember("""$ARGUMENTS""")
 print(result)
 ```
@@ -332,7 +332,7 @@ description: Retrieve relevant memory
 Call the memory recall command with the following query:
 
 ```python
-from utils.memory_commands import handle_recall
+from utils.memory.memory_commands import handle_recall
 result = handle_recall("""$ARGUMENTS""")
 print(result)
 ```
@@ -349,7 +349,7 @@ description: Show memory statistics
 Call the memory stats command:
 
 ```python
-from utils.memory_commands import handle_mem_stats
+from utils.memory.memory_commands import handle_mem_stats
 result = handle_mem_stats()
 print(result)
 ```
@@ -374,8 +374,8 @@ git commit -m "feat: add OpenCode memory commands"
 
 ```python
 import pytest
-from utils.memory_service import MemoryService
-from utils.memory_commands import handle_remember, handle_recall, handle_mem_stats
+from utils.memory.memory_service import MemoryService
+from utils.memory.memory_commands import handle_remember, handle_recall, handle_mem_stats
 
 
 def test_full_memory_pipeline(tmp_path):

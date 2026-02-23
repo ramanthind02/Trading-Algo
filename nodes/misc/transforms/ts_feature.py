@@ -4,9 +4,9 @@ import polars as pl
 import numpy as np
 from datetime import datetime
 from nodes import BiasNode
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
-import utils.helpers as _helpers
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
+import utils.core.helpers as _helpers
 
 
 class TimeSeriesFeatureNode(BiasNode):
@@ -16,7 +16,7 @@ class TimeSeriesFeatureNode(BiasNode):
     
     This node:
     - Wraps another BiasNode and collects its outputs in a rolling window
-    - Applies a specified time series transformation function from utils.functime to the window
+    - Applies a specified time series transformation function from utils.core.functime to the window
     - Computes features lazily using Polars when features are extracted
     
     Performance Note:
@@ -31,11 +31,11 @@ class TimeSeriesFeatureNode(BiasNode):
     Parameters:
     - wrapped_node: Another BiasNode instance to wrap
     - lookback: Rolling window size for time series features
-    - transformation: functime feature extraction function (from utils.functime or passed as function object)
+    - transformation: functime feature extraction function (from utils.core.functime or passed as function object)
     - transformation_name: String name for the transformation (for column naming)
     - transformation_args: Optional arguments for the transformation function
     
-    Example functime functions available from utils.functime:
+    Example functime functions available from utils.core.functime:
     - mean_abs_change: Compute mean absolute change
     - mean_change: Compute mean change
     - autocorrelation: Calculate autocorrelation at specified lag (requires n_lags arg)
@@ -43,10 +43,10 @@ class TimeSeriesFeatureNode(BiasNode):
     - linear_trend: Compute slope, intercept, RSS (returns dict; extracts slope by default)
     - number_peaks: Count peaks with specified support (requires support arg)
     - longest_streak_above_mean: Length of longest streak above mean
-    - And many more - see utils/functime.py for full list
+        - And many more - see utils/core/functime.py for full list
     
     Usage example:
-        from utils.functime import mean_abs_change
+        from utils.core.functime import mean_abs_change
         
         ts_node = TimeSeriesFeatureNode(
             ticker=Ticker.ES,
@@ -57,7 +57,7 @@ class TimeSeriesFeatureNode(BiasNode):
             transformation_name='meanAbsChange'
         )
         
-    Or using string name (will lookup from utils.functime):
+    Or using string name (will lookup from utils.core.functime):
         # In bias_node_specs:
         {
             'module_name': 'ts_feature',
@@ -283,7 +283,7 @@ class TimeSeriesFeatureNode(BiasNode):
                 return np.nan
             
             # Call transformation function
-            # Most functime functions accept pl.Series from utils.functime
+            # Most functime functions accept pl.Series from utils.core.functime
             if self.transformation_args:
                 result = self.transformation(series, **self.transformation_args)
             else:
@@ -351,4 +351,3 @@ class TimeSeriesFeatureNode(BiasNode):
             logger = logging.getLogger(__name__)
             logger.debug(f"Error computing transformation {self.transformation_name}: {e}")
             return np.nan
-

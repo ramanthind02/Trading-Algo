@@ -21,7 +21,7 @@ from metrics.plotting.parameter_plots import (
     plot_parameter_sensitivity as plot_parameter_sensitivity_pure,
     plot_2d_parameter_surface as plot_2d_parameter_surface_pure,
 )
-from utils.grid_smoothing import add_smoothed_objective
+from utils.compute.grid_smoothing import add_smoothed_objective
 
 def _get_metric_name_from_object(metric_obj: Any) -> str:
     """
@@ -54,7 +54,7 @@ def _get_metric_name_from_object(metric_obj: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
-# T009 — Grid-Aware Neighbor Smoothing (wrapper around utils.grid_smoothing)
+# T009 — Grid-Aware Neighbor Smoothing (wrapper around utils.compute.grid_smoothing)
 # ---------------------------------------------------------------------------
 
 def identify_neighbors(
@@ -107,7 +107,7 @@ def compute_neighbor_smoothing(
     """
     Add smoothed objective, stability ratio, and neighbor count columns.
 
-    Wraps ``utils.grid_smoothing.add_smoothed_objective()`` and enriches the
+    Wraps ``utils.compute.grid_smoothing.add_smoothed_objective()`` and enriches the
     result with:
     - ``smoothed_{metric_col}``: neighbor-averaged metric
     - ``stability_ratio``: smoothed / raw (NaN when raw == 0)

@@ -1,12 +1,12 @@
 import math
 from typing import List
 import numpy as np
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 try:
-    from utils.fast_nodes import (
+    from utils.compute.fast_nodes import (
         CYTHON_NODES_AVAILABLE,
         compute_sma_fast,
         compute_atr_from_slice_fast,

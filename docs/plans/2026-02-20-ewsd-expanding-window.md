@@ -26,8 +26,8 @@ The fix must not change the blending formula or annualization factor (multiply b
 """Tests for EWSDNode expanding window and no-NaN behavior."""
 import numpy as np
 import pytest
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes.ewsd import EWSDNode
 
 
@@ -120,7 +120,7 @@ def test_ewsd_matches_fast_volatility_blending():
     Both use lambda=0.06061, 70% short-run EWMA, 30% long-run std.
     """
     import numpy as np
-    from utils.fast_volatility import compute_ewsd_annualized_from_closes
+    from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 
     np.random.seed(3)
     closes = 4000.0 * np.cumprod(1 + np.random.normal(0, 0.01, 500))

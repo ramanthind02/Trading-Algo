@@ -15,7 +15,7 @@ from typing import Tuple, Optional, List
 import warnings
 
 # Import the abstract walkforward utility
-from utils.walkforward import apply_function_to_rolling_windows
+from utils.evaluation.walkforward import apply_function_to_rolling_windows
 
 
 def compute_decile_stats(

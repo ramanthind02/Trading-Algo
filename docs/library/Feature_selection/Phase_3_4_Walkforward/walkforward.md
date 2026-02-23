@@ -133,7 +133,7 @@ class FeatureValidator:
 
 - **WalkForwardSplitter** (`feature_selection/walkforward/walkforward_model.py`): handles all splitting; filters folds with insufficient data (min 100 train, 10 test samples)
 - **PortfolioTester** (`ensemble/portfolio_tester.py`): computes fold-level metrics (Sharpe, Sortino, drawdown, win rate)
-- **FeaturePermutationStrategy** (`utils/permutation_test/permutation_engine.py`): already supports `train_windows` parameter for two-region shuffling
+- **FeaturePermutationStrategy** (`utils/evaluation/permutation_test/permutation_engine.py`): already supports `train_windows` parameter for two-region shuffling
 
 ---
 

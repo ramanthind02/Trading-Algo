@@ -34,8 +34,8 @@ if str(_PROJECT_ROOT) not in sys.path:
 from ensemble.portfolio import Portfolio  # noqa: E402
 from ensemble.portfolio_tester import PortfolioTester  # noqa: E402
 from ensemble.vault_manager import load_ensemble_from_vault  # noqa: E402
-from utils.enums import TimeFrame, Ticker  # noqa: E402
-from utils import helpers  # noqa: E402
+from utils.core.enums import TimeFrame, Ticker  # noqa: E402
+from utils.core import helpers  # noqa: E402
 
 
 def _cython_status() -> dict[str, bool]:
@@ -43,12 +43,12 @@ def _cython_status() -> dict[str, bool]:
     stats_available = False
     nodes_available = False
     try:
-        import utils.fast_stats as fs  # noqa: F401
+        import utils.compute.fast_stats as fs  # noqa: F401
         stats_available = getattr(fs, "CYTHON_AVAILABLE", False)
     except Exception:
         pass
     try:
-        import utils.fast_nodes as fn  # noqa: F401
+        import utils.compute.fast_nodes as fn  # noqa: F401
         nodes_available = getattr(fn, "CYTHON_NODES_AVAILABLE", False)
     except Exception:
         pass
@@ -206,7 +206,7 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
     print(f"  Core pipeline (fit + predict + returns): ~{total_core:.2f}s")
     print()
     print("Sequential ensemble execution (no joblib) for Cython-friendly pipeline.")
-    print("To enable Cython: python utils/setup_cython.py build_ext --inplace")
+    print("To enable Cython: python utils/compute/cython/setup_cython.py build_ext --inplace")
     print("Re-run this script and compare timings (fit/predict benefit most).")
 
 

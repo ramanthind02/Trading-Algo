@@ -14,19 +14,19 @@
 
 ## Public API policy
 This document includes public API from these modules:
-- `utils.enums`
-- `utils.models`
-- `utils.helpers`
-- `utils.logger`
-- `utils.candle_fetcher`
-- `utils.bias_node_cache`
-- `utils.cache_manager`
-- `utils.fast_nodes`, `utils.fast_stats`, `utils.fast_volatility`, `utils.fast_candle`
+- `utils.core.enums`
+- `utils.core.models`
+- `utils.core.helpers`
+- `utils.core.logger`
+- `utils.data.candle_fetcher`
+- `utils.cache.bias_node_cache`
+- `utils.cache.cache_manager`
+- `utils.compute.fast_nodes`, `utils.compute.fast_stats`, `utils.compute.fast_volatility`, `utils.compute.fast_candle`
 
 Included symbols are:
 - public names (not prefixed with `_`)
 - symbols imported/used outside `utils/` (cross-package dependency surface)
-- CLI entrypoint in `utils.cache_manager`
+- CLI entrypoint in `utils.cache.cache_manager`
 
 Skipped unless required:
 - `_`-prefixed helpers and fallback internals
@@ -35,8 +35,8 @@ Skipped unless required:
 ## Quickstart
 ```python
 from datetime import datetime
-from utils.enums import Ticker, TimeFrame
-from utils.helpers import load_data, build_feature_column_name
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.helpers import load_data, build_feature_column_name
 
 candles = load_data(Ticker.ES, TimeFrame.D, start=datetime(2020, 1, 1))
 col = build_feature_column_name("rsi", "signal", TimeFrame.D, {"lookback": 14})
@@ -46,14 +46,14 @@ print(candles.columns.tolist())
 
 ```python
 import numpy as np
-from utils.fast_volatility import compute_ewsd_annualized_from_closes
+from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 
 sigma = compute_ewsd_annualized_from_closes(np.array([100.0, 101.0, 99.5, 102.0]))
 print(round(sigma, 4))
 ```
 
 ## Data contracts
-- **Candle model (`utils.models.Candle`)**
+- **Candle model (`utils.core.models.Candle`)**
   - fields: `datetime, open, high, low, close, volume, ticker, tf`
   - computed fields: `range, body_high, body_low, end_time`
 - **Candle DataFrame contract (loaders/alignment/cache manager)**
@@ -74,7 +74,7 @@ print(round(sigma, 4))
 
 ## Public API reference
 
-### `utils.enums`
+### `utils.core.enums`
 
 `TimeFrame`  
 Type: enum  
@@ -96,7 +96,7 @@ Type: enum
 Signature: `class Direction(Enum); from_string(direction_str: str) -> Direction`  
 Behavior: long/short routing enum with case-insensitive parser; raises `ValueError` on unknown string.
 
-### `utils.models`
+### `utils.core.models`
 
 `Candle`  
 Type: class (Pydantic model)  
@@ -118,7 +118,7 @@ Type: method
 Signature: `convert_for_mongo_db() -> dict`  
 Behavior: emits UTC timestamped dict with ticker/timeframe names.
 
-### `utils.helpers` (cross-package surface)
+### `utils.core.helpers` (cross-package surface)
 
 `load_data`  
 Type: function  
@@ -160,7 +160,7 @@ Type: function
 Signature: `(timestamp: int) -> datetime`, `(dt_ny: datetime) -> int`  
 Behavior: FTMO server <-> New York conversions used by deployment connectors.
 
-### `utils.logger`
+### `utils.core.logger`
 
 `setup_logger`  
 Type: function  
@@ -172,7 +172,7 @@ Type: function
 Signature: `get_logger(name)`  
 Behavior: returns named logger with `FeatureExtractorFilter` applied.
 
-### `utils.candle_fetcher`
+### `utils.data.candle_fetcher`
 
 `get_candle`  
 Type: function (Numba-jitted)  
@@ -184,7 +184,7 @@ Type: class
 Signature: `CandleFetcher(ticker: Ticker, tfs: list[TimeFrame])`  
 Behavior: preloads per-timeframe numpy candle arrays; `get_candle(...)` does fast timestamp lookup.
 
-### `utils.bias_node_cache`
+### `utils.cache.bias_node_cache`
 
 `CacheMissError`  
 Type: exception class  
@@ -201,7 +201,7 @@ Type: methods
 Signature: `exists()`, `load()`, `save(data)`, `get_values(start=None, end=None, require_cache=True)`, `get_dataframe(...)`, `invalidate()`, `get_metadata()`  
 Behavior: load/save/query cache slices with optional strict cache requirement.
 
-### `utils.cache_manager`
+### `utils.cache.cache_manager`
 
 `CacheManager`  
 Type: class  
@@ -226,26 +226,26 @@ Behavior: cache introspection and deletion utilities.
 `main`  
 Type: CLI entrypoint  
 Signature: `main()`  
-Behavior: `python -m utils.cache_manager ...` command interface.
+Behavior: `python -m utils.cache.cache_manager ...` command interface.
 
 ### fast modules (`utils.fast_*`)
 
-`utils.fast_nodes`  
+`utils.compute.fast_nodes`  
 Type: module constants/functions  
 Signature: `CYTHON_NODES_AVAILABLE` and functions including `compute_atr_fast`, `compute_ema_fast`, `compute_high_low_channel_fast`, `compute_momentum_fast`, `compute_roc_fast`, `compute_rsi_initial_fast`, `update_rsi_fast`, `compute_stddev_sample_fast`, `compute_return_fast`, `batch_compute_log_returns`  
 Behavior: Cython-first numeric kernels with Python fallbacks for node math.
 
-`utils.fast_stats`  
+`utils.compute.fast_stats`  
 Type: module functions  
 Signature: `rank_with_tie_correction`, `spearman_rho`, `optimize_threshold_fast`, `compute_ma_diff_fast`  
 Behavior: optimized statistics and threshold/MA-diff helpers with fallback behavior.
 
-`utils.fast_volatility.compute_ewsd_annualized_from_closes`  
+`utils.compute.fast_volatility.compute_ewsd_annualized_from_closes`  
 Type: function  
 Signature: `compute_ewsd_annualized_from_closes(closes: np.ndarray, lambda_short=..., long_run_window=..., blend_short_weight=..., blend_long_weight=...) -> float`  
 Behavior: Carver-style blended annualized volatility estimate from close series.
 
-`utils.fast_candle.FastCandle` / `create_fast_candle_from_numpy`  
+`utils.compute.fast_candle.FastCandle` / `create_fast_candle_from_numpy`  
 Type: dataclass/function  
 Signature: `FastCandle.from_numpy(...) -> FastCandle`, `create_fast_candle_from_numpy(...) -> FastCandle`  
 Behavior: lightweight candle representation for performance-critical loops.
@@ -262,12 +262,12 @@ Behavior: lightweight candle representation for performance-critical loops.
   - `ValueError`: invalid enum parsing, malformed inputs, unsupported lookup methods
   - `ImportError`/`RuntimeError`: dynamic node import/instantiation failures in `create_bias_node`
 - Logging:
-  - `utils.logger` applies `FeatureExtractorFilter` and warning suppression globally
+  - `utils.core.logger` applies `FeatureExtractorFilter` and warning suppression globally
   - cache modules emit `info/warning/error` events for save/load/partial coverage/failures
   - `CacheManager` also prints progress to stdout when `show_progress=True`
 
 ## Open questions
-Q1: `helpers.get_ticker_list()` references `Ticker.NG`, but `Ticker` currently has no `NG` member in `utils.enums`. Is this a stale ticker or missing enum value?
+Q1: `helpers.get_ticker_list()` references `Ticker.NG`, but `Ticker` currently has no `NG` member in `utils.core.enums`. Is this a stale ticker or missing enum value?
 
 Q2: `logger.setup_logger(log_to_file=True)` writes to a hard-coded Windows path (`C:/Users/Administrator/Desktop/logs`). Should this be repository-relative or environment-configurable for non-Windows runs?
 

@@ -21,14 +21,14 @@ import matplotlib.pyplot as plt
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.robustness_test import (
+from utils.evaluation.robustness_test import (
     robustness_test,
     ResamplingStrategy,
     MonteCarloStrategy,
     BootstrapStrategy,
     BlockBootstrapStrategy
 )
-from utils.enums import ResamplingMethod
+from utils.core.enums import ResamplingMethod
 from metrics.equity import cumulative_returns
 
 

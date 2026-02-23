@@ -15,8 +15,8 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes.atr import ATRNode
 from nodes.donchian_channel import DonchianChannel
 from nodes.williamsr import WilliamsRNode
@@ -79,7 +79,7 @@ class TestATRNode:
         period = 14
         
         # Import the Python fallback function
-        from utils.fast_nodes import _python_atr
+        from utils.compute.fast_nodes import _python_atr
         
         # Create a version that always uses Python (simulating Cython with same logic)
         def python_atr_wrapper(high, low, close, prev_close, true_ranges, buffer_idx, n_filled, period):
@@ -127,7 +127,7 @@ class TestDonchianChannel:
         lookback = 20
         
         # Import the Python fallback function
-        from utils.fast_nodes import _python_high_low_channel
+        from utils.compute.fast_nodes import _python_high_low_channel
         
         # Create a version that always uses Python
         def python_hl_wrapper(highs, lows, start_idx, window, n):
@@ -173,7 +173,7 @@ class TestWilliamsRNode:
         lookback = 14
         
         # Import the Python fallback function
-        from utils.fast_nodes import _python_high_low_channel
+        from utils.compute.fast_nodes import _python_high_low_channel
         
         # Create a version that always uses Python
         def python_hl_wrapper(highs, lows, start_idx, window, n):
@@ -219,7 +219,7 @@ class TestRSI:
         lookback = 14
         
         # Import the Python fallback functions
-        from utils.fast_nodes import _python_rsi_initial, _python_update_rsi
+        from utils.compute.fast_nodes import _python_rsi_initial, _python_update_rsi
         
         # Create wrappers that use Python implementations
         def python_rsi_initial_wrapper(close_prices, lookback):
@@ -267,7 +267,7 @@ class TestCumulativeRSI:
         avg_period = 5
         
         # Import the Python fallback functions
-        from utils.fast_nodes import _python_rsi_initial, _python_update_rsi
+        from utils.compute.fast_nodes import _python_rsi_initial, _python_update_rsi
         
         # Create wrappers that use Python implementations
         def python_rsi_initial_wrapper(close_prices, lookback):
@@ -359,7 +359,7 @@ class TestMADiffNode:
         atr_length = 252
         
         # Import the Python fallback function
-        from utils.fast_stats import _python_ma_diff
+        from utils.compute.fast_stats import _python_ma_diff
         
         # Create a wrapper that uses Python implementation
         def python_ma_diff_wrapper(log_close, log_closes, true_ranges, lookback, compression):

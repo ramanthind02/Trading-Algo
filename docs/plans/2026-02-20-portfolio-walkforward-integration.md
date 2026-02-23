@@ -55,7 +55,7 @@ from unittest.mock import patch
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 
 
 def _make_mock_candles(tickers, n=300):
@@ -141,7 +141,7 @@ import pandas as pd
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 @dataclass(frozen=True)
@@ -234,7 +234,7 @@ def build_research_portfolio(
 def test_build_research_portfolio_creates_portfolio_with_correct_models():
     from feature_research.walkforward.portfolio_evaluator import build_research_portfolio
     from feature_research.continuous_binning.config import BinningAnalysisConfig
-    from utils.enums import TimeFrame, Ticker
+    from utils.core.enums import TimeFrame, Ticker
 
     binning_config = BinningAnalysisConfig(bin_counts=[5], strategy="long")
     params = [{"lookback": 5, "bin_count": 5}, {"lookback": 7, "bin_count": 5}]
@@ -403,7 +403,7 @@ def test_evaluate_fold_portfolio_returns_valid_sharpe():
     if "volume" not in candles.columns:
         candles["volume"] = 0.0
     if "timeframe" not in candles.columns:
-        from utils.enums import TimeFrame
+        from utils.core.enums import TimeFrame
         candles["timeframe"] = TimeFrame.D
 
     # Split candles into train (before 2016) and test (2016-2018)
@@ -696,4 +696,4 @@ The `build_research_portfolio` function currently hard-codes `rsi_signal_D_lookb
 ```
 {module}_{feature}_{timeframe}_{param}_{value}
 ```
-Use `utils.helpers.parse_feature_column_name` / `format_feature_column_name` to generate these dynamically from the bias spec.
+Use `utils.core.helpers.parse_feature_column_name` / `format_feature_column_name` to generate these dynamically from the bias spec.

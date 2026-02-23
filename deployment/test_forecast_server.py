@@ -14,8 +14,8 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from deployment.forecast_server import ForecastServer
-from utils.enums import TimeFrame
-from utils.logger import get_logger
+from utils.core.enums import TimeFrame
+from utils.core.logger import get_logger
 from zoneinfo import ZoneInfo
 
 logger = get_logger(__name__)

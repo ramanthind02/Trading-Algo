@@ -15,13 +15,13 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Dict, Any
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer
 from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from utils.models import Candle
+from utils.core.models import Candle
 
 
 # Hardcoded buy_hold feature config for testing

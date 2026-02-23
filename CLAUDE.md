@@ -31,7 +31,7 @@ pytest tests/test_integration.py -v
 pytest tests/test_integration.py::TestFormulaVerification -v
 
 # Compile Cython extensions (optional, for performance)
-python utils/setup_cython.py build_ext --inplace
+python utils/compute/cython/setup_cython.py build_ext --inplace
 ```
 
 ## Testing Boundaries

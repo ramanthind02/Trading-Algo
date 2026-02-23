@@ -1,11 +1,11 @@
 from nodes import BiasNode
-from utils.models import Candle
-from utils.enums import Bias, Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Bias, Ticker, TimeFrame
 from typing import List
 import numpy as np
 
 try:
-    from utils.fast_nodes import CYTHON_NODES_AVAILABLE, compute_return_fast
+    from utils.compute.fast_nodes import CYTHON_NODES_AVAILABLE, compute_return_fast
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
     compute_return_fast = None  # type: ignore[assignment]

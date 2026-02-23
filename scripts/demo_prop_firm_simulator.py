@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.prop_firm_simulator import (
+from utils.simulation.prop_firm_simulator import (
     PropFirmChallengeSimulator,
     SimulationConfig,
     SimulationMethod,

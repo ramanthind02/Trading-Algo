@@ -40,7 +40,7 @@ from feature_research.continuous_binning.config import (
     PermutationSuiteConfig,
 )
 from feature_research.walkforward.config import WalkforwardResearchConfig
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def _make_config(tickers, target_col):
@@ -200,7 +200,7 @@ def test_load_features_raises_on_raw_return_multiticker(monkeypatch):
     """Data loader raises if raw return is used with multiple tickers."""
     from feature_research.continuous_binning import data_loader
     import pandas as pd
-    from utils.enums import Ticker, TimeFrame
+    from utils.core.enums import Ticker, TimeFrame
 
     # Build a minimal multi-ticker features_df stub
     features_df = pd.DataFrame({

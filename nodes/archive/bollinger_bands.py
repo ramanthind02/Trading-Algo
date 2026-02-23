@@ -1,6 +1,6 @@
 from nodes import BiasNode
-from utils.models import Candle
-from utils.enums import Bias, Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Bias, Ticker, TimeFrame
 from typing import List
 import numpy as np
 from collections import deque

@@ -8,8 +8,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.parent.absolute()
 sys.path.insert(0, str(REPO_ROOT))
 
-from utils.memory_service import MemoryService
-from utils.cognitive_memory import CognitiveMemory
+from utils.memory.memory_service import MemoryService
+from utils.memory.cognitive_memory import CognitiveMemory
 
 
 def _as_int_env(name: str, default: int) -> int:

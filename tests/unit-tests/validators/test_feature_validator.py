@@ -13,7 +13,7 @@ import numpy as np
 from datetime import datetime
 import pytest
 from feature_selection.feature_validator import FeatureValidator
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 def create_mock_data(n_samples=1000):
@@ -77,7 +77,7 @@ def create_test_portfolio(features_df, feature_col='rsi_signal_D_lookback_14'):
     from ensemble.portfolio import Portfolio
     from ensemble.diversified_ensemble import DiversifiedEnsemble
     from ensemble.ensemble_utils import create_base_model_from_config
-    from utils.enums import TimeFrame, Ticker
+    from utils.core.enums import TimeFrame, Ticker
     import tempfile
     import json
     import os

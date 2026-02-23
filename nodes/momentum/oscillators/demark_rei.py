@@ -9,8 +9,8 @@ Output: Continuous -100 to +100
 
 from typing import List
 from collections import deque
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

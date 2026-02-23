@@ -12,8 +12,8 @@ from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from feature_research.walkforward.metrics import resolve_objective_metric
-from utils.enums import TimeFrame, Ticker
-from utils.helpers import build_feature_column_name
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.helpers import build_feature_column_name
 
 
 @dataclass(frozen=True)

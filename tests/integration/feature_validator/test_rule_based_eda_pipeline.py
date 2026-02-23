@@ -24,7 +24,7 @@ from feature_research.rule_based.pipeline import (
     run_rule_based_eda_pipeline,
     run_rule_based_permutation_pipeline,
 )
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def _project_root() -> Path:

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
+import utils.core.helpers as helpers
 from feature_selection.base_models import (
     BaseModel,
     ContinuousBinningModel,
@@ -28,7 +28,7 @@ try:
     from feature_selection.base_models import TwoBinBinningModel
 except ImportError:  # pragma: no cover - optional model
     TwoBinBinningModel = None
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def parse_control_file(filepath: str) -> Dict[str, Any]:

@@ -12,7 +12,7 @@
 
 ```python
 from deployment.test_forecast_server import TestForecastServer
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 server = TestForecastServer()
 server.load_historical_data()
