@@ -23,8 +23,8 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-from utils.enums import TimeFrame
-from utils.fast_volatility import compute_ewsd_annualized_from_closes
+from utils.core.enums import TimeFrame
+from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 from .weight_layer import BaseWeightLayer, WeightLayer
 
 logger = logging.getLogger(__name__)

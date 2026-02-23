@@ -3,9 +3,9 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 
-from utils.enums import Ticker, TimeFrame
-from utils.permutation_test.candle_shuffle import IntradayGapConfig
-from utils.permutation_test.permutation_engine import BarPermutationStrategy
+from utils.core.enums import Ticker, TimeFrame
+from utils.evaluation.permutation_test.candle_shuffle import IntradayGapConfig
+from utils.evaluation.permutation_test.permutation_engine import BarPermutationStrategy
 
 
 def _make_price_df() -> pd.DataFrame:
@@ -27,7 +27,7 @@ def _make_price_df() -> pd.DataFrame:
 
 
 def test_bar_permutation_strategy_uses_correct_import_and_passes_shuffle_kwargs(monkeypatch) -> None:
-    import utils.permutation_test.permute_bars as permute_bars_module
+    import utils.evaluation.permutation_test.permute_bars as permute_bars_module
 
     price_df = _make_price_df()
     gap_cfg = IntradayGapConfig(maintenance_prev_hour=16, maintenance_next_hour=17)
@@ -93,7 +93,7 @@ def test_bar_permutation_strategy_uses_correct_import_and_passes_shuffle_kwargs(
 
 
 def test_bar_permutation_strategy_uses_walkforward_permuter_when_train_windows_set(monkeypatch) -> None:
-    import utils.permutation_test.permute_bars as permute_bars_module
+    import utils.evaluation.permutation_test.permute_bars as permute_bars_module
 
     price_df = _make_price_df()
 

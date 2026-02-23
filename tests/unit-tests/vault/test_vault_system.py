@@ -20,7 +20,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
-from utils.enums import Direction, TimeFrame, Ticker
+from utils.core.enums import Direction, TimeFrame, Ticker
 from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.base_models import ContinuousBinningModel, DecisionTreeBinningModel
 from ensemble.vault_manager import (
@@ -126,7 +126,7 @@ class TestBaseModel:
         candles = []
         
         for i, date in enumerate(dates):
-            from utils.models import Candle
+            from utils.core.models import Candle
             candle = Candle(
                 datetime=date,
                 open=100.0 + i * 0.1,

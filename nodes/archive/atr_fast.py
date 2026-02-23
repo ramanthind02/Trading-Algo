@@ -6,14 +6,14 @@ Cython-compiled functions for 5-10x speedup.
 """
 
 from nodes import BiasNode
-from utils.models import Candle
-from utils.enums import Bias, Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Bias, Ticker, TimeFrame
 from typing import List, Optional
 import numpy as np
 
 # Try to import Cython optimized version
 try:
-    from utils.cython_nodes import compute_atr_fast
+    from utils.compute.cython.cython_nodes import compute_atr_fast
     CYTHON_AVAILABLE = True
 except ImportError:
     CYTHON_AVAILABLE = False

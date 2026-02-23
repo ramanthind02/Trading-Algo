@@ -198,8 +198,8 @@ def _compute_candle(self, candle: Candle) -> List:
 ```python
 from typing import List
 import numpy as np
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame, Bias
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame, Bias
 from nodes import BiasNode
 
 

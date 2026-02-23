@@ -18,7 +18,7 @@ from ensemble.weight_layer import (
     InverseCorrelationWeighter,
 )
 from ensemble.portfolio import Portfolio
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 class TestWeightLayerFlattenedMemberSignals:

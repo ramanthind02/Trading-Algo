@@ -1,8 +1,8 @@
 from typing import List
 import numpy as np
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
-from utils.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
+from utils.compute.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
 from nodes import BiasNode
 from collections import deque
 

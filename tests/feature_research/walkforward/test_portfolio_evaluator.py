@@ -8,7 +8,7 @@ from feature_research.walkforward.portfolio_evaluator import (
     build_research_portfolio,
     ensure_portfolio_candle_columns,
 )
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 
 def test_build_research_portfolio_creates_expected_models() -> None:
     portfolio = build_research_portfolio(

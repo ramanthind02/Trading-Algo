@@ -1,9 +1,9 @@
 from typing import List
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 from collections import deque
-from utils.fast_nodes import compute_momentum_fast
+from utils.compute.fast_nodes import compute_momentum_fast
 
 
 class Momentum(BiasNode):

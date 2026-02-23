@@ -24,7 +24,7 @@ Documented public symbols:
 ```python
 import pandas as pd
 from feature_selection.base_models import BaseModel, ContinuousBinningModel
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 feature_config = {
     "bias_node_spec": {
@@ -124,7 +124,7 @@ No-lookahead / time alignment:
 
 Raises:
 - `ValueError` for malformed config, ticker mismatch, empty features, failed alignment, insufficient aligned samples, unfitted vault updates.
-- `CacheMissError` (from `utils.bias_node_cache`) in vectorized fit/predict when required cache is missing.
+- `CacheMissError` (from `utils.cache.bias_node_cache`) in vectorized fit/predict when required cache is missing.
 
 Errors & logging:
 - `logger.error(...)` on cache misses with model/ticker/timeframe context.

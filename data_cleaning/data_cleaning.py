@@ -12,7 +12,7 @@ sys.path.append(parent_dir)
 import pandas as pd
 
 # Local imports
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 
 
 def txt_to_parquet(folder_path: str, all_tickers: bool = False, ticker: Optional[Ticker] = None) -> None:

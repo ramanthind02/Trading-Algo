@@ -12,8 +12,8 @@ This repo already injects retrieval context on every user message via a project 
 
 - OpenCode `MessageSend` hook -> `.opencode/hooks/query-hook.sh` -> `.opencode/hooks/rag_retriever.py`
 - `rag_retriever.py` pulls:
-  - Codebase RAG via `utils.memory_service.MemoryService` (ChromaDB)
-  - Cognitive Memory via `utils.cognitive_memory.CognitiveMemory` (OpenMemory)
+  - Codebase RAG via `utils.memory.memory_service.MemoryService` (ChromaDB)
+  - Cognitive Memory via `utils.memory.cognitive_memory.CognitiveMemory` (OpenMemory)
 
 oh-my-opencode-slim adds a multi-agent orchestration layer and presets:
 

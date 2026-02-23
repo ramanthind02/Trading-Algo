@@ -26,8 +26,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from deployment.forecast_server import ForecastServer
 from ensemble.portfolio import Portfolio
 from feature_extraction.ml_manager import MLManager
-from utils.enums import TimeFrame, Ticker
-from utils.models import Candle
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.models import Candle
 
 
 class TestForecastServer(unittest.TestCase):

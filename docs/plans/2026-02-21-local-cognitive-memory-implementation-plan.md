@@ -48,7 +48,7 @@ git commit -m "chore: add openmemory-py dependency"
 ```python
 import pytest
 import asyncio
-from utils.cognitive_memory import CognitiveMemory
+from utils.memory.cognitive_memory import CognitiveMemory
 
 @pytest.mark.asyncio
 async def test_cognitive_memory_add_search(tmp_path):

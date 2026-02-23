@@ -2,9 +2,9 @@ import pytest
 import tempfile
 import asyncio
 from pathlib import Path
-from utils.memory_service import MemoryService
-from utils.cognitive_memory import CognitiveMemory
-from utils.memory_commands import handle_remember, handle_recall, handle_mem_stats
+from utils.memory.memory_service import MemoryService
+from utils.memory.cognitive_memory import CognitiveMemory
+from utils.memory.memory_commands import handle_remember, handle_recall, handle_mem_stats
 
 
 @pytest.fixture

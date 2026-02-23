@@ -12,7 +12,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Dict, Any, Tuple, Optional
 
-from utils.prop_firm_simulator.data_structures import (
+from utils.simulation.prop_firm_simulator.data_structures import (
     ChallengeResult,
     ChallengePass,
     ChallengeFail,

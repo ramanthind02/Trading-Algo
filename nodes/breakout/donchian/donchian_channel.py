@@ -1,12 +1,12 @@
 from typing import List, Tuple, Optional
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 from nodes import BiasNode
-from utils.models import Candle
+from utils.core.models import Candle
 import numpy as np
 
 # Try to import Cython optimized version
 try:
-    from utils.fast_nodes import compute_high_low_channel_fast, CYTHON_NODES_AVAILABLE
+    from utils.compute.fast_nodes import compute_high_low_channel_fast, CYTHON_NODES_AVAILABLE
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
 

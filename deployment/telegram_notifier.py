@@ -13,8 +13,8 @@ from datetime import datetime
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logger import get_logger
-from utils.enums import TimeFrame
+from utils.core.logger import get_logger
+from utils.core.enums import TimeFrame
 
 logger = get_logger(__name__)
 

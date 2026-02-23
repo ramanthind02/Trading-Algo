@@ -12,7 +12,7 @@ from feature_research.in_sample.rule_based.config import RuleBasedResearchConfig
 from feature_research.in_sample.rule_based.pipeline import run_rule_based_eda_pipeline
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.runner import WalkforwardRunReport
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def _build_config(tmp_path: Path, *, walkforward_enabled: bool) -> RuleBasedResearchConfig:

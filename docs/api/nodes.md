@@ -10,7 +10,7 @@
 ## Public API policy (what we document)
 This document covers public API that is either:
 - defined as public symbols in `nodes/__init__.py` (`BiasNode`), or
-- used across package boundaries via `module_name` + dynamic construction (`utils.helpers.create_bias_node(...)`), or
+- used across package boundaries via `module_name` + dynamic construction (`utils.core.helpers.create_bias_node(...)`), or
 - imported directly outside `nodes` (notably `EWSDNode` and `TimeSeriesFeatureNode`).
 
 Private helpers and archived node implementations under `nodes/archive/` are intentionally excluded.
@@ -21,8 +21,8 @@ Private helpers and archived node implementations under `nodes/archive/` are int
 from datetime import datetime
 
 from nodes.rsi import RSI
-from utils.enums import Ticker, TimeFrame
-from utils.models import Candle
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.models import Candle
 
 node = RSI(ticker=Ticker.ES, tf=TimeFrame.D, lookback=14)
 
@@ -45,7 +45,7 @@ print(node.get_column_names())  # standardized feature column names
 
 ## Data contracts
 Input(s):
-- `Candle` (`utils.models.Candle`) with required fields: `datetime`, `open`, `high`, `low`, `close`, `volume`, `ticker`, `tf`.
+- `Candle` (`utils.core.models.Candle`) with required fields: `datetime`, `open`, `high`, `low`, `close`, `volume`, `ticker`, `tf`.
 - Candles should be streamed in ascending timestamp order per `(ticker, timeframe)` for deterministic output.
 
 Output(s):
@@ -192,7 +192,7 @@ class RSI(BiasNode):
 Observable behavior:
 - Outputs one value (`signal`) in `[0, 100]` scale.
 - Warmup output is `50.0` until lookback is reached.
-- Uses Cython fast kernels (`compute_rsi_initial_fast`, `update_rsi_fast`) via `utils.fast_nodes`.
+- Uses Cython fast kernels (`compute_rsi_initial_fast`, `update_rsi_fast`) via `utils.compute.fast_nodes`.
 
 ### `nodes.rsi_signal.RSISignal`
 Type: class
@@ -432,7 +432,7 @@ Observable behavior:
 ## Internal but required
 `nodes` is typically instantiated through dynamic factory logic outside this package:
 
-### `utils.helpers.create_bias_node`
+### `utils.core.helpers.create_bias_node`
 Type: function (external dependency required to consume `nodes` at scale)
 
 Signature:
@@ -451,8 +451,8 @@ Raises:
 
 Minimal example:
 ```python
-from utils.enums import Ticker, TimeFrame
-from utils.helpers import create_bias_node
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.helpers import create_bias_node
 
 node = create_bias_node("rsi", Ticker.ES, TimeFrame.D, {"lookback": 14})
 ```

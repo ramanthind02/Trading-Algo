@@ -18,8 +18,8 @@ from feature_selection.validators.binning.diagnostics import (
     extract_region_metadata,
     validate_binning_success,
 )
-from utils.cache_manager import CacheManager
-from utils.enums import Ticker, TimeFrame
+from utils.cache.cache_manager import CacheManager
+from utils.core.enums import Ticker, TimeFrame
 
 START_DATE = datetime(2000, 1, 1)
 END_DATE = datetime(2024, 12, 31)

@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
+import utils.core.helpers as helpers
 from eda.feature_explorer import FeatureExplorer
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_selection.base_models import (
@@ -23,7 +23,7 @@ from feature_selection.base_models import (
     QuantileBinningModel,
     TwoBinBinningModel,
 )
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def build_feature_metadata(features_df: pd.DataFrame) -> Dict[str, Any]:
@@ -31,7 +31,7 @@ def build_feature_metadata(features_df: pd.DataFrame) -> Dict[str, Any]:
     Build feature_metadata dict from a features DataFrame for use with FeatureExplorer.
 
     Iterates over feature columns (excluding 'ticker') and uses
-    utils.helpers.parse_feature_column_name to populate metadata.
+    utils.core.helpers.parse_feature_column_name to populate metadata.
     """
     metadata: Dict[str, Any] = {"feature_metadata": {}}
     for feature_col in features_df.columns:

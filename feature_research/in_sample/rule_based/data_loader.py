@@ -11,9 +11,9 @@ if TYPE_CHECKING:
     from feature_research.in_sample.rule_based.config import RuleBasedResearchConfig
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
-from utils.cache_manager import CacheManager
-from utils.enums import TimeFrame
-from utils.helpers import load_data_multi_ticker
+from utils.cache.cache_manager import CacheManager
+from utils.core.enums import TimeFrame
+from utils.core.helpers import load_data_multi_ticker
 
 
 def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:

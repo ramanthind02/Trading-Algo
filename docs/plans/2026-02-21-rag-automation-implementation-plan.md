@@ -25,7 +25,7 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 
-@patch('utils.memory_service.MemoryService')
+@patch('utils.memory.memory_service.MemoryService')
 def test_rag_retriever_output(mock_service_class):
     from opencode.hooks.rag_retriever import run_retrieval
     
@@ -62,7 +62,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent.parent.absolute()
 sys.path.insert(0, str(REPO_ROOT))
 
-from utils.memory_service import MemoryService
+from utils.memory.memory_service import MemoryService
 
 def run_retrieval(query: str) -> str:
     if not query:

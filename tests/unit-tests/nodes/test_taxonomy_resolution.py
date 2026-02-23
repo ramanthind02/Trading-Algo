@@ -4,8 +4,8 @@ import pytest
 
 from nodes.mean_reversion.rsi.rsi import RSI
 from nodes.momentum.core.momentum import Momentum
-from utils.enums import Ticker, TimeFrame
-from utils.helpers import (
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.helpers import (
     _normalize_module_base_name,
     _resolve_bias_node_import_path,
     create_bias_node,

@@ -11,7 +11,7 @@ from feature_research.in_sample.continuous_binning.data_loader import (
     load_features_for_combo,
     param_combo_label,
 )
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 def test_expand_bias_specs_single_param():

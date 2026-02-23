@@ -24,7 +24,7 @@ import pandas as pd
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.grid_smoothing import add_smoothed_objective
+from utils.compute.grid_smoothing import add_smoothed_objective
 
 
 class TestWorkedExample2D(unittest.TestCase):

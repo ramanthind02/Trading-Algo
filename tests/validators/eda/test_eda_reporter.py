@@ -42,7 +42,7 @@ from feature_selection.eda.eda_reporter import (
     run_eda_for_rule_based_feature,
     save_eda_report,
 )
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def _metadata(feature_name: str = "feat") -> EDAMetadata:

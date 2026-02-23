@@ -13,7 +13,7 @@ from typing import Any
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_selection.validation.config import PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[2]
 _RB_DIR = _FEATURE_RESEARCH_DIR / "in_sample" / "rule_based"

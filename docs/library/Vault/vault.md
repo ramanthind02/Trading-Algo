@@ -52,7 +52,7 @@ initialize_vault('vault')
 ### Create Ensemble Directory
 ```python
 from ensemble.vault_manager import create_ensemble_directory
-from utils.enums import TimeFrame, Direction
+from utils.core.enums import TimeFrame, Direction
 
 ensemble_dir = create_ensemble_directory(
     vault_root='vault', timeframe=TimeFrame.D,

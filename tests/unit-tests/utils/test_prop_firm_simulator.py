@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-from utils.prop_firm_simulator import (
+from utils.simulation.prop_firm_simulator import (
     PropFirmChallengeSimulator,
     SimulationConfig,
     SimulationMethod,

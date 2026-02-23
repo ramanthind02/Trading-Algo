@@ -11,8 +11,8 @@ from uuid import uuid4
 
 from nodes.basic_breakout import BasicBreakout
 from nodes.basic_mr import BasicMR
-from utils.enums import PositionMode, Ticker, TimeFrame
-from utils.models import Candle
+from utils.core.enums import PositionMode, Ticker, TimeFrame
+from utils.core.models import Candle
 
 
 def candle(

@@ -262,7 +262,7 @@ def run_pipeline_permutation_continuous(
                     no_trade_permutations += 1
 
     elif permutation_mode == 'candle_shuffle':
-        from utils.permutation_test.candle_shuffle import CandleShuffler
+        from utils.evaluation.permutation_test.candle_shuffle import CandleShuffler
 
         for i in range(nreps):
             try:
@@ -352,7 +352,7 @@ def run_pipeline_permutation_rule_based(
     References:
         docs/library/Feature_selection/Permutation Testing/in-sample_pt.md §2
     """
-    from utils.permutation_test.candle_shuffle import CandleShuffler
+    from utils.evaluation.permutation_test.candle_shuffle import CandleShuffler
 
     rng = np.random.default_rng(random_seed)
     seeds = rng.integers(0, 2 ** 31, size=nreps)

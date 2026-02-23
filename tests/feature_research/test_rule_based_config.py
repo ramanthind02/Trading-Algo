@@ -3,7 +3,7 @@ from pathlib import Path
 
 from feature_research.in_sample.rule_based.config import RuleBasedResearchConfig, load_config
 from feature_research.walkforward.config import WalkforwardResearchConfig
-from utils.enums import Ticker
+from utils.core.enums import Ticker
 
 
 def test_load_config_returns_rule_based_research_config():

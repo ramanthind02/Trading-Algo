@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
-from utils.enums import TimeFrame, Ticker
-from utils.models import Candle
+import utils.core.helpers as helpers
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.models import Candle
 from .ensemble_utils import filter_dataframe_by_timeframe
 
 logger = logging.getLogger(__name__)
@@ -1066,9 +1066,9 @@ class DiversifiedEnsemble:
         Dict[str, float]
             Mapping from ticker to annualized blended volatility (as decimal, not percentage)
         """
-        from utils.enums import Ticker, TimeFrame
+        from utils.core.enums import Ticker, TimeFrame
         from nodes.ewsd import EWSDNode
-        from utils.models import Candle
+        from utils.core.models import Candle
         
         volatility_dict = {}
         

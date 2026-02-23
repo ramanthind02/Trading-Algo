@@ -11,8 +11,8 @@ downstream systems.
 from typing import List
 
 from nodes import BiasNode
-from utils.enums import PositionMode, Ticker, TimeFrame
-from utils.models import Candle
+from utils.core.enums import PositionMode, Ticker, TimeFrame
+from utils.core.models import Candle
 
 
 class BasicBreakout(BiasNode):

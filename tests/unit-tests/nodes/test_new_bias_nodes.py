@@ -13,8 +13,8 @@ import numpy as np
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from utils.enums import Ticker, TimeFrame
-from utils.models import Candle
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.models import Candle
 
 # Import all new bias nodes
 from nodes.adaptive_rsi import AdaptiveRSI

@@ -147,8 +147,8 @@ Public symbols:
 - `apply_function_to_rolling_windows(...)`
 
 Cross-package import surface:
-- Canonical exports are re-imported by `utils/walkforward.py` for backward compatibility.
-- `utils.walkforward.generate_walkforward_splits(...)` is deprecated; prefer `WalkForwardSplitter` directly.
+- Canonical exports are re-imported by `utils/evaluation/walkforward.py` for backward compatibility.
+- `utils.evaluation.walkforward.generate_walkforward_splits(...)` is deprecated; prefer `WalkForwardSplitter` directly.
 
 ### Walk-forward research config and metrics
 Type: dataclass/function  

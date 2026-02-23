@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.bias_node_cache import BiasNodeCache, CacheMissError
-from utils.enums import Ticker, TimeFrame
+from utils.cache.bias_node_cache import BiasNodeCache, CacheMissError
+from utils.core.enums import Ticker, TimeFrame
 
 
 @pytest.fixture

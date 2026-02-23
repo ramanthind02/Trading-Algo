@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.ensemble_utils import validate_control_file
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 class TestDiversifiedEnsembleFlattenedMemberSignals:

@@ -1,7 +1,7 @@
 import pytest
 import pathlib
 import asyncio
-from utils.cognitive_memory import CognitiveMemory
+from utils.memory.cognitive_memory import CognitiveMemory
 from openmemory.memory import hsg
 
 def test_cognitive_memory_init(tmp_path):

@@ -25,7 +25,7 @@ from copy import deepcopy
 from feature_selection.walkforward.walkforward_model import WalkForwardSplitter
 from ensemble.portfolio import Portfolio
 from ensemble.portfolio_tester import PortfolioTester, calculate_log_returns_from_candles
-from utils.permutation_test.permutation_engine import PermutationEngine, FeaturePermutationStrategy
+from utils.evaluation.permutation_test.permutation_engine import PermutationEngine, FeaturePermutationStrategy
 
 logger = logging.getLogger(__name__)
 

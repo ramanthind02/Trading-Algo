@@ -1,14 +1,14 @@
-from utils.models import Candle
+from utils.core.models import Candle
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Dict, Type, TypeVar, Optional, TYPE_CHECKING
-from utils.enums import Bias, Ticker, TimeFrame
+from utils.core.enums import Bias, Ticker, TimeFrame
 from typing import Any, Dict
-import utils.helpers as _helpers
+import utils.core.helpers as _helpers
 
 if TYPE_CHECKING:
     import pandas as pd
-    from utils.bias_node_cache import BiasNodeCache
+    from utils.cache.bias_node_cache import BiasNodeCache
 
 
 T = TypeVar('T', bound='BiasNode')
@@ -191,7 +191,7 @@ class BiasNode(ABC):
             return
 
         try:
-            from utils.bias_node_cache import BiasNodeCache
+            from utils.cache.bias_node_cache import BiasNodeCache
 
             self._bias_node_cache = BiasNodeCache(
                 module_name=self.module_name,
@@ -260,7 +260,7 @@ class BiasNode(ABC):
         # Check if cache is initialized
         if self._bias_node_cache is None:
             if require_cache:
-                from utils.bias_node_cache import CacheMissError
+                from utils.cache.bias_node_cache import CacheMissError
                 logger.warning(
                     f"Cache not initialized for {self.module_name} ({self.ticker}, {self.tf}). "
                     f"Call _init_cache_after_params() in subclass __init__."
@@ -310,7 +310,7 @@ class BiasNode(ABC):
         """
         if self._bias_node_cache is None:
             if require_cache:
-                from utils.bias_node_cache import CacheMissError
+                from utils.cache.bias_node_cache import CacheMissError
                 raise CacheMissError(
                     module_name=self.module_name,
                     params=self.params,

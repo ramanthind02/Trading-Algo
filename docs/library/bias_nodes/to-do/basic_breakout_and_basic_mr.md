@@ -158,8 +158,8 @@ return [signal]
 
 ```python
 from typing import List
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame, PositionMode
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame, PositionMode
 from nodes import BiasNode
 
 
@@ -313,8 +313,8 @@ BasicMR **does not duplicate** breakout logic. It holds an instance of BasicBrea
 
 ```python
 from typing import List
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame, PositionMode
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame, PositionMode
 from nodes import BiasNode
 from nodes.basic_breakout import BasicBreakout
 

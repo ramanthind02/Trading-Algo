@@ -15,10 +15,10 @@ from zoneinfo import ZoneInfo
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.models import Candle
-from utils.logger import get_logger
-from utils.enums import TimeFrame, Ticker
-import utils.helpers as helpers
+from utils.core.models import Candle
+from utils.core.logger import get_logger
+from utils.core.enums import TimeFrame, Ticker
+import utils.core.helpers as helpers
 
 logger = get_logger(__name__)
 NY_TZ = ZoneInfo("America/New_York")

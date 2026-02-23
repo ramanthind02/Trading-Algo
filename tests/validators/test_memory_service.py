@@ -1,5 +1,5 @@
 import pytest
-from utils.memory_service import MemoryService
+from utils.memory.memory_service import MemoryService
 
 
 def test_memory_service_init():

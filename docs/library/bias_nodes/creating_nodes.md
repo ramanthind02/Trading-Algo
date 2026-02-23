@@ -57,8 +57,8 @@ Example: `rsi_signal_D_lookback_14`
 from typing import List
 import numpy as np
 from nodes import BiasNode
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 
 class MyNode(BiasNode):
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 14):
@@ -90,11 +90,11 @@ class MyNode(BiasNode):
 
 > [!tip] When to use Cython
 > Use Cython helpers for numeric hot-paths called every bar (rolling stats, EMA, ATR, RSI).
-> Do **not** import from `cython_nodes` directly — always use `utils.fast_nodes` or `utils.fast_stats`, which auto-fallback to pure Python.
+> Do **not** import from `cython_nodes` directly — always use `utils.compute.fast_nodes` or `utils.compute.fast_stats`, which auto-fallback to pure Python.
 
 Key helpers (`utils/fast_nodes.py`): `compute_atr_fast`, `compute_ema_fast`, `compute_rsi_initial_fast`, `update_rsi_fast`, `compute_high_low_channel_fast`, `compute_momentum_fast`, `compute_roc_fast`
 
-Build: `python utils/setup_cython.py build_ext --inplace`
+Build: `python utils/compute/cython/setup_cython.py build_ext --inplace`
 
 The node API (`_compute_candle`) is unchanged — only the inner math moves into a helper.
 

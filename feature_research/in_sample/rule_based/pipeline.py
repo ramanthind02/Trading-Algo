@@ -36,7 +36,7 @@ from feature_research.walkforward.runner import run_walkforward_research
 from feature_research.walkforward.visualization import plot_fold_timeline, plot_selection_stability
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
 from feature_selection.eda.eda_reporter import run_eda_for_rule_based_feature, save_eda_report
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 def _normalize_timeframe(bias_spec: dict[str, Any], fallback: TimeFrame = TimeFrame.D) -> TimeFrame:

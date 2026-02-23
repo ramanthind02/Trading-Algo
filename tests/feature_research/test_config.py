@@ -9,7 +9,7 @@ from feature_research.walkforward.config import (
     WalkforwardSelectionMethod,
     WeightLayerAlgorithm,
 )
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def test_load_config_returns_research_config():

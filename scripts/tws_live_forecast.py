@@ -51,7 +51,7 @@ from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
 from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.portfolio import Portfolio
 from deployment.telegram_notifier import TelegramNotifier
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 # ==============================================================================
