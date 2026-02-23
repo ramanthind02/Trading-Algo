@@ -85,9 +85,10 @@
 
 ## Codex Skills
 
-- Codex now discovers the `superpowers` skill catalog via `~/.codex/superpowers/skills` and the symlink `~/.agents/skills/superpowers`.
-- Before starting creative work, run the `using-superpowers` skill flow to confirm which skills apply; refer to the relevant `SKILL.md` under the symlink.
-- The project-level instructions above (especially around planning, testing, and architecture) assume those skills are available; mention specific skill requirements when you open a `SKILL.md`.
+- Codex discovers the `superpowers` skill catalog via `~/.codex/superpowers/skills` and the symlink `~/.agents/skills/superpowers`.
+- **Lean default:** Prefer direct implementation for small refactors, config moves, and quick fixes; do not invoke brainstorming or writing-plans unless the user explicitly asks for design or a multi-step plan. See `docs/library/workflow.md` for act-first workflow and when to use skills.
+- For explicit creative/design work, run the `using-superpowers` skill flow to confirm which skills apply; refer to the relevant `SKILL.md` under the symlink.
+- The project-level instructions above (especially around planning, testing, and architecture) assume those skills are available when needed; mention specific skill requirements when you open a `SKILL.md`.
 
 ## Docs Landscape
 

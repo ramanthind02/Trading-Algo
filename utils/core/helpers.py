@@ -102,11 +102,16 @@ def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1
     Raises:
         FileNotFoundError: If the parquet file does not exist.
     """
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
-    base_dir = os.path.join(root_dir, 'data', 'ohlc_data')
-    file_path = os.path.join(base_dir, ticker.name, f"{timeframe.name}_{ticker.name}.parquet")
+    # Project root: repo root (parent of utils/), not utils/ itself
+    _helpers_path = Path(__file__).resolve()
+    project_root = next(
+        (p for p in _helpers_path.parents if (p / "pyproject.toml").exists()),
+        _helpers_path.parents[2],
+    )
+    base_dir = project_root / "data" / "ohlc_data"
+    file_path = base_dir / ticker.name / f"{timeframe.name}_{ticker.name}.parquet"
 
-    if os.path.exists(file_path):
+    if file_path.exists():
         # Read parquet file with pandas (fastparquet engine for PyPy compatibility)
         df = pd.read_parquet(file_path, engine='fastparquet')
         
@@ -125,8 +130,7 @@ def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1
         df.sort_index(inplace=True)
         
         return df
-    else:
-        raise FileNotFoundError(f"File {file_path} does not exist")
+    raise FileNotFoundError(f"File {file_path} does not exist")
 
 
 def load_data_multi_ticker(

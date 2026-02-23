@@ -1,32 +1,27 @@
-"""Researcher-editable configuration for the continuous binning EDA pipeline.
-
-Edit the values in load_config() to customise tickers, date range, and bias node specs.
-All other scripts import from here — change once, apply everywhere.
-"""
+"""Continuous binning EDA config. Shared settings from feature_research.config; phase-specific here."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
 
+from feature_research.config import (
+    RAW_TARGET_COLS,
+    BaseResearchConfig,
+    PermutationSuiteConfig,
+    load_config as load_base_config,
+)
 from feature_research.walkforward.config import (
     WalkforwardResearchConfig,
     WalkforwardSelectionMethod,
     WeightLayerAlgorithm,
 )
-from feature_selection.validation.config import PermutationModeStage2
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.core.enums import Ticker, TimeFrame
 
-# ---------------------------------------------------------------------------
-# Root of the feature_research tree — resolved at import time so scripts
-# work regardless of the working directory they are launched from.
-# ---------------------------------------------------------------------------
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[2]
 _CB_DIR = _FEATURE_RESEARCH_DIR / "in_sample" / "continuous_binning"
-RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 EnumT = TypeVar("EnumT", bound=Enum)
 
 
@@ -42,24 +37,6 @@ def _coerce_enum_or_raise(value: object, enum_cls: type[EnumT], field_name: str)
                 f"{field_name} must be one of {valid_values}, got '{value}'"
             ) from exc
     raise ValueError(f"{field_name} must be one of {valid_values}, got '{value}'")
-
-
-@dataclass(frozen=True)
-class PermutationSuiteConfig:
-    """Settings for running the shared permutation test suite."""
-
-    enabled: bool = False
-    nreps: int = 100
-    alpha: float = 0.10
-    metric_threshold: float = 0.0
-    top_k: int = 3
-    min_folds_stable: int = 1
-    random_seed: int | None = 42
-    permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
-    fold_years: int = 1
-    objective_metric: ObjectiveMetricSpec = field(
-        default_factory=lambda: ObjectiveMetricSpec(builtin="sharpe")
-    )
 
 
 @dataclass(frozen=True)
@@ -234,83 +211,37 @@ class ResearchConfig:
 
 
 def load_config() -> ResearchConfig:
-    """Return the default research configuration.
-
-    **Edit this function** to customise tickers, dates, and bias node specs.
-    All pipeline scripts import from here.
-    """
-    # ==========================================================================
-    # EDIT BELOW
-    # ==========================================================================
-    tickers = [
-        Ticker.ES,   # E-Mini S&P 500
-        Ticker.NQ,   # E-Mini Nasdaq-100
-        Ticker.YM,   # E-Mini Dow Jones
-        Ticker.RTY,  # E-Mini Russell 2000
-    ]
-
-    start = datetime(2000, 1, 1)
-    end = datetime(2024, 12, 31)
-
+    """Return continuous-binning research config. Shared settings from feature_research.config."""
+    base = load_base_config()
+    # Phase-specific: bias spec, target, strategy, binning params
     bias_spec = {
         "module_name": "rsi",
         "timeframes": [TimeFrame.D],
         "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10]},
     }
-
     target_col = "log_return_atr"
     strategy = "long"
-
-    # Caching
-    use_cache = True
-    populate_cache = True
-
-    permutation_suite = PermutationSuiteConfig(enabled=False)
-    walkforward_selection_method = WalkforwardSelectionMethod.TOP_K
-    weight_layer_algorithm = WeightLayerAlgorithm.INVERSE_CORRELATION
-
     binning_params = BinningAnalysisConfig(
         bin_counts=[10, 9, 8, 7, 6, 5, 4, 3],
         strategy="long",
         t_threshold=2.0,
         use_coverage_bonus=False,
     )
-    # ==========================================================================
-    # EDIT ABOVE
-    # ==========================================================================
-
-    module_name = bias_spec["module_name"]
-    reports_dir = _CB_DIR / "results" / module_name
-    walkforward_test_step = 365
-    walkforward_num_steps = 8
-    walkforward_train_end = end - timedelta(days=walkforward_test_step * walkforward_num_steps)
-    if walkforward_train_end <= start:
-        walkforward_train_end = end - timedelta(days=walkforward_test_step)
-
-    walkforward = WalkforwardResearchConfig(
-        train_start=start,
-        train_end=walkforward_train_end,
-        enabled=False,
-        test_step=walkforward_test_step,
-        num_steps=walkforward_num_steps,
-        selection_method=walkforward_selection_method,
-        weight_layer_algorithm=weight_layer_algorithm,
-        output_root=Path("feature_research/shared_results"),
-    )
-
+    reports_dir = _CB_DIR / "results" / bias_spec["module_name"]
+    walkforward = base.build_walkforward(enabled=False)
     return ResearchConfig(
-        tickers=tickers,
-        start=start,
-        end=end,
+        tickers=base.tickers,
+        start=base.start,
+        end=base.end,
         bias_spec=bias_spec,
         target_col=target_col,
         strategy=strategy,
-        use_cache=use_cache,
-        populate_cache=populate_cache,
+        use_cache=base.use_cache,
+        populate_cache=base.populate_cache,
         reports_dir=reports_dir,
-        permutation_suite=permutation_suite,
+        permutation_suite=base.permutation_suite,
         binning_params=binning_params,
-        walkforward_selection_method=walkforward_selection_method,
-        weight_layer_algorithm=weight_layer_algorithm,
+        walkforward_selection_method=base.walkforward_selection_method,
+        weight_layer_algorithm=base.weight_layer_algorithm,
         walkforward=walkforward,
     )

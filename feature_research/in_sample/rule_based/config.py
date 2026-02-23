@@ -1,40 +1,17 @@
-"""Researcher-editable configuration for the rule-based EDA pipeline.
-
-Edit the values in load_config() to customise tickers, date range, and bias node specs.
-All other scripts import from here — change once, apply everywhere.
-"""
+"""Rule-based EDA config. Shared settings from feature_research.config; phase-specific here."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from feature_research.config import PermutationSuiteConfig, load_config as load_base_config
 from feature_research.walkforward.config import WalkforwardResearchConfig
-from feature_selection.validation.config import PermutationModeStage2
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.core.enums import Ticker, TimeFrame
 
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[2]
 _RB_DIR = _FEATURE_RESEARCH_DIR / "in_sample" / "rule_based"
-
-
-@dataclass(frozen=True)
-class PermutationSuiteConfig:
-    """Settings for running the shared permutation test suite."""
-
-    enabled: bool = False
-    nreps: int = 100
-    alpha: float = 0.10
-    metric_threshold: float = 0.0
-    top_k: int = 3
-    min_folds_stable: int = 1
-    random_seed: int | None = 42
-    permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
-    fold_years: int = 2
-    objective_metric: ObjectiveMetricSpec = field(
-        default_factory=lambda: ObjectiveMetricSpec(builtin="sharpe")
-    )
 
 
 @dataclass(frozen=True)
@@ -98,24 +75,9 @@ class RuleBasedResearchConfig:
 
 
 def load_config() -> RuleBasedResearchConfig:
-    """Return the default research configuration.
-
-    **Edit this function** to customise tickers, dates, and bias node specs.
-    All pipeline scripts import from here.
-    """
-    # ==========================================================================
-    # EDIT BELOW
-    # ==========================================================================
-    tickers = [
-        Ticker.ES,   # E-Mini S&P 500
-        Ticker.NQ,   # E-Mini Nasdaq-100
-        Ticker.YM,   # E-Mini Dow Jones
-        Ticker.RTY,  # E-Mini Russell 2000
-    ]
-
-    start = datetime(2000, 1, 1)
-    end = datetime(2024, 12, 31)
-
+    """Return rule-based research config. Shared settings from feature_research.config."""
+    base = load_base_config()
+    # Phase-specific: bias spec, target, strategy; rule_based uses test_step=252
     bias_spec = {
         "module_name": "rsi_signal",
         "timeframes": [TimeFrame.D],
@@ -128,45 +90,20 @@ def load_config() -> RuleBasedResearchConfig:
             "exit_bars": 5,
         },
     }
-
     target_col = "log_return"
     strategy = "long"
-
-    use_cache = True
-    populate_cache = True
-
-    permutation_suite = PermutationSuiteConfig(enabled=False)
-    # ==========================================================================
-    # EDIT ABOVE
-    # ==========================================================================
-
-    module_name = bias_spec["module_name"]
-    reports_dir = _RB_DIR / "results" / module_name
-    walkforward_test_step = 252
-    walkforward_num_steps = 8
-    walkforward_train_end = end - timedelta(days=walkforward_test_step * walkforward_num_steps)
-    if walkforward_train_end <= start:
-        walkforward_train_end = end - timedelta(days=walkforward_test_step)
-
-    walkforward = WalkforwardResearchConfig(
-        train_start=start,
-        train_end=walkforward_train_end,
-        enabled=False,
-        test_step=walkforward_test_step,
-        num_steps=walkforward_num_steps,
-        output_root=Path("feature_research/shared_results"),
-    )
-
+    reports_dir = _RB_DIR / "results" / bias_spec["module_name"]
+    walkforward = base.build_walkforward(test_step=252, num_steps=8, enabled=False)
     return RuleBasedResearchConfig(
-        tickers=tickers,
-        start=start,
-        end=end,
+        tickers=base.tickers,
+        start=base.start,
+        end=base.end,
         bias_spec=bias_spec,
         target_col=target_col,
         strategy=strategy,
-        use_cache=use_cache,
-        populate_cache=populate_cache,
+        use_cache=base.use_cache,
+        populate_cache=base.populate_cache,
         reports_dir=reports_dir,
-        permutation_suite=permutation_suite,
+        permutation_suite=base.permutation_suite,
         walkforward=walkforward,
     )

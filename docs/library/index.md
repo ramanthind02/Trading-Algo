@@ -7,7 +7,8 @@
 
 | Doc | Purpose |
 |-----|---------|
-| [[workflow]] | Daily research loop, agent presets, RAG/memory commands |
+| [[workflow]] | Daily research loop and agent presets |
+| [[cursor_sub_bridge]] | Use ChatGPT Pro / Claude Max in Cursor via Sub Bridge (MCP) |
 
 ## Pipeline Components
 
