@@ -12,11 +12,16 @@ from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.validation.config import PermutationTestConfig
 from feature_selection.validation.objective_metrics import resolve_objective_metric
 from feature_selection.validation.permutation_tests import (
+    _ContinuousPermutationBatchItem,
+    _RuleBasedPermutationBatchItem,
+    _run_pipeline_permutation_continuous_batch,
+    _run_pipeline_permutation_rule_based_batch,
     run_oos_permutation_for_param,
     run_pipeline_permutation_continuous,
     run_pipeline_permutation_rule_based,
@@ -144,13 +149,13 @@ def run_permutation_test_suite(
     Returns:
         PermutationTestSuite with all stage reports and funnel statistics.
     """
-    # ---------- Stage 1: Vector Shuffle ----------
+    # ---------- Stage 1: Vector Shuffle (all param combos) ----------
     print(f"\n{'='*60}")
     print(f"Stage 1: Vector Shuffle — testing {len(param_grid)} param combos")
     print(f"{'='*60}")
 
     stage1_reports: Dict[str, VectorShuffleReport] = {}
-    for params in param_grid:
+    for params in tqdm(param_grid, desc="Stage 1 (vector shuffle)", unit="combo"):
         combo_name = _param_combo_name(params)
         try:
             # Extract feature + fit binning to get position multipliers
@@ -174,8 +179,7 @@ def run_permutation_test_suite(
                 random_seed=config.random_seed,
                 param_combo=combo_name,
             )
-        except Exception as e:
-            # Create a failed report
+        except Exception:
             report = VectorShuffleReport(
                 param_combo=combo_name,
                 original_metric=0.0,
@@ -188,38 +192,42 @@ def run_permutation_test_suite(
             )
 
         stage1_reports[combo_name] = report
-        status = 'PASS' if report.passed else 'FAIL'
-        print(f"  {combo_name}: p={report.p_value:.3f} -> {status}")
 
     stage1_passers: Set[str] = {k for k, r in stage1_reports.items() if r.passed}
-    print(f"\nStage 1: {len(stage1_passers)}/{len(param_grid)} passed")
+    print(f"Stage 1: {len(stage1_passers)}/{len(param_grid)} passed")
 
-    # ---------- Stage 2: Pipeline Permutation (only Stage 1 passers) ----------
-    print(f"\n{'='*60}")
-    print(f"Stage 2: Pipeline Permutation — testing {len(stage1_passers)} passers")
-    print(f"{'='*60}")
-
+    # ---------- Stage 2: Pipeline / Candle Permutation (only Stage 1 passers) ----------
     stage2_reports: Dict[str, PipelinePermutationReport] = {}
-    for params in param_grid:
-        combo_name = _param_combo_name(params)
-        if combo_name not in stage1_passers:
-            continue
+    params_to_run_stage2 = [p for p in param_grid if _param_combo_name(p) in stage1_passers]
 
+    if params_to_run_stage2:
+        print(f"\n{'='*60}")
+        print(f"Stage 2: Pipeline Permutation (candle shuffle) — {len(params_to_run_stage2)} passers")
+        print(f"{'='*60}")
         try:
             if feature_type == 'continuous':
-                def _extractor_for_combo(df: pd.DataFrame, _params=params) -> pd.Series:
-                    return extractor_func(df, _params)
+                batch_items: list[_ContinuousPermutationBatchItem] = []
+                for params in params_to_run_stage2:
+                    combo_name = _param_combo_name(params)
 
-                model_template = (
-                    binning_model_factory(params) if binning_model_factory else None
-                )
-                if model_template is None:
-                    raise ValueError('binning_model_factory required for continuous features')
+                    def _extractor_for_combo(df: pd.DataFrame, _params=params) -> pd.Series:
+                        return extractor_func(df, _params)
 
-                report = run_pipeline_permutation_continuous(
+                    model_template = binning_model_factory(params) if binning_model_factory else None
+                    if model_template is None:
+                        raise ValueError('binning_model_factory required for continuous features')
+
+                    batch_items.append(
+                        _ContinuousPermutationBatchItem(
+                            param_combo=combo_name,
+                            bias_node_extractor=_extractor_for_combo,
+                            binning_model=model_template,
+                        )
+                    )
+
+                stage2_reports = _run_pipeline_permutation_continuous_batch(
                     candles_df=candles_df,
-                    bias_node_extractor=_extractor_for_combo,
-                    binning_model=model_template,
+                    items=batch_items,
                     target=target,
                     objective_func=objective_func,
                     permutation_mode=config.permutation_mode_stage2,
@@ -227,44 +235,54 @@ def run_permutation_test_suite(
                     nreps=config.nreps,
                     alpha=config.alpha,
                     random_seed=config.random_seed,
-                    param_combo=combo_name,
                 )
             else:
-                def _rule_extractor_for_combo(df: pd.DataFrame, _params=params) -> pd.Series:
-                    return extractor_func(df, _params)
+                batch_items_rb: list[_RuleBasedPermutationBatchItem] = []
+                for params in params_to_run_stage2:
+                    combo_name = _param_combo_name(params)
 
-                report = run_pipeline_permutation_rule_based(
+                    def _rule_extractor_for_combo(df: pd.DataFrame, _params=params) -> pd.Series:
+                        return extractor_func(df, _params)
+
+                    batch_items_rb.append(
+                        _RuleBasedPermutationBatchItem(
+                            param_combo=combo_name,
+                            rule_extractor=_rule_extractor_for_combo,
+                        )
+                    )
+
+                stage2_reports = _run_pipeline_permutation_rule_based_batch(
                     candles_df=candles_df,
-                    rule_extractor=_rule_extractor_for_combo,
+                    items=batch_items_rb,
                     target=target,
                     objective_func=objective_func,
                     metric_threshold=config.metric_threshold,
                     nreps=config.nreps,
                     alpha=config.alpha,
                     random_seed=config.random_seed,
-                    param_combo=combo_name,
                 )
         except Exception:
-            report = PipelinePermutationReport(
-                param_combo=combo_name,
-                feature_type=feature_type,  # type: ignore[arg-type]
-                permutation_mode=config.permutation_mode_stage2,
-                original_metric=0.0,
-                null_distribution=np.zeros(config.nreps),
-                critical_value=0.0,
-                p_value=1.0,
-                passed=False,
-                alpha=config.alpha,
-                nreps=config.nreps,
-                no_trade_permutations=config.nreps,
-            )
+            for params in params_to_run_stage2:
+                combo_name = _param_combo_name(params)
+                stage2_reports[combo_name] = PipelinePermutationReport(
+                    param_combo=combo_name,
+                    feature_type=feature_type,  # type: ignore[arg-type]
+                    permutation_mode=config.permutation_mode_stage2,
+                    original_metric=0.0,
+                    null_distribution=np.zeros(config.nreps),
+                    critical_value=0.0,
+                    p_value=1.0,
+                    passed=False,
+                    alpha=config.alpha,
+                    nreps=config.nreps,
+                    no_trade_permutations=config.nreps,
+                )
 
-        stage2_reports[combo_name] = report
-        status = 'PASS' if report.passed else 'FAIL'
-        print(f"  {combo_name}: p={report.p_value:.3f} -> {status}")
+        print(f"Stage 2: {len([r for r in stage2_reports.values() if r.passed])}/{len(params_to_run_stage2)} passed")
+    else:
+        print(f"\nStage 2: skipped (0 Stage 1 passers)")
 
     stage2_passers: Set[str] = {k for k, r in stage2_reports.items() if r.passed}
-    print(f"\nStage 2: {len(stage2_passers)}/{len(stage1_passers)} passed")
 
     # ---------- Stage 3: Walkforward Stability (ALL params) ----------
     print(f"\n{'='*60}")

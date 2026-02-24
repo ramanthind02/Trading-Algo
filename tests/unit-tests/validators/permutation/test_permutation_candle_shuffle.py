@@ -6,6 +6,7 @@ from utils.evaluation.permutation_test.candle_shuffle import (
     CandleShuffleMode,
     GapType,
     IntradayGapConfig,
+    _prepare_candle_shuffle,
     classify_intraday_gap,
 )
 
@@ -344,3 +345,24 @@ def test_intraday_reproducibility_with_fixed_seed() -> None:
     ).permute()
 
     pd.testing.assert_frame_equal(shuffled_1, shuffled_2)
+
+
+def test_prepared_internal_path_matches_public_shuffler_for_same_seed() -> None:
+    df = _make_intraday_df()
+    seed = 123
+
+    public = CandleShuffler(
+        df,
+        permute_start_idx=3,
+        mode=CandleShuffleMode.INTRADAY,
+        random_seed=seed,
+    ).permute()
+
+    prepared = _prepare_candle_shuffle(
+        df,
+        permute_start_idx=3,
+        mode=CandleShuffleMode.INTRADAY,
+    )
+    internal = prepared.permute_with_seed(seed)
+
+    pd.testing.assert_frame_equal(public, internal)

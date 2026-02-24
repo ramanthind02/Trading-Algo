@@ -172,6 +172,105 @@ def test_stage2_receives_only_stage1_passers() -> None:
     assert isinstance(suite.ensemble_candidates, list)
 
 
+def test_stage2_uses_single_batch_call_for_rule_based_passers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from feature_selection.validation import orchestration
+
+    dates = pd.date_range('2020-01-01', periods=30, freq='D')
+    candles = pd.DataFrame(
+        {
+            'datetime': dates,
+            'open': np.linspace(100.0, 103.0, len(dates)),
+            'high': np.linspace(100.5, 103.5, len(dates)),
+            'low': np.linspace(99.5, 102.5, len(dates)),
+            'close': np.linspace(100.2, 103.2, len(dates)),
+        },
+        index=dates,
+    )
+    target = pd.Series(np.linspace(-0.1, 0.2, len(dates)), index=dates)
+    param_grid = [{'lookback': 3}, {'lookback': 5}, {'lookback': 8}]
+
+    def extractor(df: pd.DataFrame, params: dict) -> pd.Series:
+        idx = pd.to_datetime(df['datetime']) if 'datetime' in df else df.index
+        return pd.Series(np.sign(np.sin(np.arange(len(idx)) + params['lookback'])), index=idx, name=str(params))
+
+    def objective(values: pd.Series) -> float:
+        return float(values.mean()) if len(values) else 0.0
+
+    passers = {'lookback_3', 'lookback_8'}
+    batch_calls: list[list[str]] = []
+
+    def fake_stage1(**kwargs: object) -> VectorShuffleReport:
+        combo = str(kwargs['param_combo'])
+        passed = combo in passers
+        return VectorShuffleReport(
+            param_combo=combo,
+            original_metric=1.0 if passed else 0.0,
+            null_distribution=np.zeros(4),
+            critical_value=0.5,
+            p_value=0.01 if passed else 0.99,
+            passed=passed,
+            alpha=0.1,
+            nreps=4,
+        )
+
+    def fake_stage2_batch(**kwargs: object) -> dict[str, PipelinePermutationReport]:
+        items = kwargs['items']
+        combo_names = [item.param_combo for item in items]
+        batch_calls.append(combo_names)
+        reports: dict[str, PipelinePermutationReport] = {}
+        for combo_name in combo_names:
+            reports[combo_name] = PipelinePermutationReport(
+                param_combo=combo_name,
+                feature_type='rule_based',
+                permutation_mode='candle_shuffle',
+                original_metric=0.0,
+                null_distribution=np.zeros(4),
+                critical_value=0.0,
+                p_value=1.0,
+                passed=False,
+                alpha=0.1,
+                nreps=4,
+                no_trade_permutations=4,
+            )
+        return reports
+
+    def fail_if_single_stage2_called(**kwargs: object) -> PipelinePermutationReport:
+        raise AssertionError(f"single-combo Stage 2 should not be called: {kwargs.get('param_combo')}")
+
+    def fake_walkforward(**kwargs: object) -> WalkforwardStabilityReport:
+        return WalkforwardStabilityReport(
+            feature_name='test',
+            feature_type='rule_based',
+            fold_results=[],
+            consistency_metrics={},
+            is_stable=False,
+            stability_verdict='UNSTABLE',
+            top_k=3,
+        )
+
+    monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
+    monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_batch)
+    monkeypatch.setattr(orchestration, 'run_pipeline_permutation_rule_based', fail_if_single_stage2_called)
+    monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
+
+    suite = orchestration.run_permutation_test_suite(
+        candles_df=candles,
+        feature_spec={'module_name': 'test'},
+        target=target,
+        param_grid=param_grid,
+        objective_func=objective,
+        fold_structure=[(dates[0], dates[-1])],
+        config=PermutationTestConfig(nreps=4, alpha=0.10, min_folds_stable=1),
+        extractor_func=extractor,
+        feature_type='rule_based',
+        feature_name='test',
+    )
+
+    assert len(batch_calls) == 1
+    assert sorted(batch_calls[0]) == sorted(passers)
+    assert len(suite.stage2_reports) == len(passers)
+
+
 def test_ensemble_candidate_intersection() -> None:
     """ensemble_candidates = stage2_passers intersection stable_params."""
     # We verify this via the suite logic directly
@@ -242,6 +341,12 @@ def test_suite_runs_oos_on_stage2_passers_by_default(monkeypatch: pytest.MonkeyP
             no_trade_permutations=0,
         )
 
+    def fake_stage2_rule_batch(**kwargs: object) -> dict[str, PipelinePermutationReport]:
+        return {
+            item.param_combo: fake_stage2_rule(param_combo=item.param_combo)  # type: ignore[arg-type]
+            for item in kwargs['items']  # type: ignore[index]
+        }
+
     def fake_walkforward(**kwargs: object) -> WalkforwardStabilityReport:
         return WalkforwardStabilityReport(
             feature_name='test',
@@ -295,7 +400,7 @@ def test_suite_runs_oos_on_stage2_passers_by_default(monkeypatch: pytest.MonkeyP
         )
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
-    monkeypatch.setattr(orchestration, 'run_pipeline_permutation_rule_based', fake_stage2_rule)
+    monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
     monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 
@@ -372,6 +477,12 @@ def test_suite_can_switch_oos_source_to_stable_intersection(
             no_trade_permutations=0,
         )
 
+    def fake_stage2_rule_batch(**kwargs: object) -> dict[str, PipelinePermutationReport]:
+        return {
+            item.param_combo: fake_stage2_rule(param_combo=item.param_combo)  # type: ignore[arg-type]
+            for item in kwargs['items']  # type: ignore[index]
+        }
+
     def fake_walkforward(**kwargs: object) -> WalkforwardStabilityReport:
         return WalkforwardStabilityReport(
             feature_name='test',
@@ -425,7 +536,7 @@ def test_suite_can_switch_oos_source_to_stable_intersection(
         )
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
-    monkeypatch.setattr(orchestration, 'run_pipeline_permutation_rule_based', fake_stage2_rule)
+    monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
     monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 
@@ -511,6 +622,25 @@ def test_oos_uses_configured_objective_metric_only_for_oos(
             no_trade_permutations=0,
         )
 
+    def fake_stage2_rule_batch(**kwargs: object) -> dict[str, PipelinePermutationReport]:
+        stage2_objective_values.append(float(kwargs['objective_func'](sample_returns)))  # type: ignore[index,operator]
+        return {
+            item.param_combo: PipelinePermutationReport(
+                param_combo=item.param_combo,
+                feature_type='rule_based',
+                permutation_mode='candle_shuffle',
+                original_metric=1.0,
+                null_distribution=np.zeros(5),
+                critical_value=0.0,
+                p_value=0.01,
+                passed=True,
+                alpha=0.1,
+                nreps=5,
+                no_trade_permutations=0,
+            )
+            for item in kwargs['items']  # type: ignore[index]
+        }
+
     def fake_walkforward(**kwargs: object) -> WalkforwardStabilityReport:
         walkforward_objective_values.append(float(kwargs['objective_func'](sample_returns)))  # type: ignore[index,operator]
         return WalkforwardStabilityReport(
@@ -565,7 +695,7 @@ def test_oos_uses_configured_objective_metric_only_for_oos(
         )
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
-    monkeypatch.setattr(orchestration, 'run_pipeline_permutation_rule_based', fake_stage2_rule)
+    monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
     monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 
@@ -642,6 +772,12 @@ def test_oos_combo_exception_does_not_abort_suite(
             no_trade_permutations=0,
         )
 
+    def fake_stage2_rule_batch(**kwargs: object) -> dict[str, PipelinePermutationReport]:
+        return {
+            item.param_combo: fake_stage2_rule(param_combo=item.param_combo)  # type: ignore[arg-type]
+            for item in kwargs['items']  # type: ignore[index]
+        }
+
     def fake_walkforward(**kwargs: object) -> WalkforwardStabilityReport:
         return WalkforwardStabilityReport(
             feature_name='test',
@@ -697,7 +833,7 @@ def test_oos_combo_exception_does_not_abort_suite(
         )
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
-    monkeypatch.setattr(orchestration, 'run_pipeline_permutation_rule_based', fake_stage2_rule)
+    monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
     monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 

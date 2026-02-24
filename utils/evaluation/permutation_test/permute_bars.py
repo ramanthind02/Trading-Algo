@@ -1,3 +1,17 @@
+"""Legacy bar permutation compatibility layer.
+
+Canonical candle permutation logic now lives in
+`utils.evaluation.permutation_test.candle_shuffle` (`CandleShuffler`).
+This module remains for:
+- backward-compatible `BarPermute` imports/adapters,
+- walk-forward-specific bar window shuffling (`BarPermuteWalkForward`),
+- legacy permutation engine integration helpers.
+
+Source-of-truth algorithm docs:
+- `docs/library/Feature_selection/Phase_1_IS/candle_permutation.md`
+- `docs/library/Feature_selection/Phase_1_IS/permutation_testing.md`
+"""
+
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional, Callable, Tuple
