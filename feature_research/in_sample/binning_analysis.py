@@ -1,4 +1,8 @@
-"""Continuous binning diagnostics pipeline for research runs."""
+"""Continuous binning diagnostics pipeline for research runs.
+
+Note: Phase 2 Binning Analysis is only for continuous features.
+Rule-based features skip this phase (they use fixed 3 levels).
+"""
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
@@ -9,16 +13,16 @@ import sys
 import matplotlib
 
 if TYPE_CHECKING:
-    from feature_research.in_sample.continuous_binning.config import ResearchConfig
+    from feature_research.in_sample.config import ResearchConfig
 
-from feature_research.in_sample.continuous_binning.data_loader import (
+from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     load_features_for_combo,
     param_combo_label,
     populate_cache_if_needed,
 )
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning import (
+from feature_selection.validation.binning import (
     BinningSuccessCriteria,
     generate_binning_report,
     save_report,

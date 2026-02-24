@@ -5,7 +5,7 @@ from feature_research.in_sample.continuous_binning.binning_analysis import (
     _extract_binning_params,
     run_binning_analysis_pipeline,
 )
-from feature_research.in_sample.continuous_binning.config import BinningAnalysisConfig, load_config
+from feature_research.in_sample.config import BinningAnalysisConfig, load_config
 
 
 def test_binning_analysis_dry_run(tmp_path: Path) -> None:

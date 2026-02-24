@@ -1,6 +1,6 @@
 import pytest
 
-from feature_selection.validators.binning.diagnostics import RegionMetadata, detect_region_shape
+from feature_selection.validation.binning.diagnostics import RegionMetadata, detect_region_shape
 
 
 def test_detect_tail() -> None:

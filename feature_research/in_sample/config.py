@@ -1,4 +1,10 @@
-"""Continuous binning EDA config. Shared settings from feature_research.config; phase-specific here."""
+"""Unified in-sample research config. Consolidates continuous_binning and rule_based paths.
+
+This module provides a single ResearchConfig that handles both feature types.
+The feature_type field determines validation behavior:
+  - CONTINUOUS: uses BinningAnalysisConfig, supports Phase 2 binning analysis
+  - RULE_BASED: uses fixed 3-level binning, skips Phase 2 analysis
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -10,6 +16,7 @@ from typing import Any, TypeVar
 from feature_research.config import (
     RAW_TARGET_COLS,
     BaseResearchConfig,
+    FeatureType,
     PermutationSuiteConfig,
     load_config as load_base_config,
 )
@@ -20,12 +27,12 @@ from feature_research.walkforward.config import (
 )
 from utils.core.enums import Ticker, TimeFrame
 
-_FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[2]
-_CB_DIR = _FEATURE_RESEARCH_DIR / "in_sample" / "continuous_binning"
+_FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[1]
 EnumT = TypeVar("EnumT", bound=Enum)
 
 
 def _coerce_enum_or_raise(value: object, enum_cls: type[EnumT], field_name: str) -> EnumT:
+    """Coerce a string or enum value to the specified enum type."""
     valid_values = tuple(item.value for item in enum_cls)
     if isinstance(value, enum_cls):
         return value
@@ -42,6 +49,9 @@ def _coerce_enum_or_raise(value: object, enum_cls: type[EnumT], field_name: str)
 @dataclass(frozen=True)
 class BinningAnalysisConfig:
     """Settings for continuous binning model parameters.
+
+    Only used when feature_type == FeatureType.CONTINUOUS.
+    Rule-based features use fixed 3 levels and ignore these settings.
 
     Attributes
     ----------
@@ -93,10 +103,12 @@ class BinningAnalysisConfig:
 
 @dataclass(frozen=True)
 class ResearchConfig:
-    """All researcher-editable settings for continuous-binning EDA.
+    """Unified in-sample research config for both continuous and rule-based features.
 
     Attributes
     ----------
+    feature_type : FeatureType
+        CONTINUOUS or RULE_BASED. Determines validation behavior and binning approach.
     tickers : list[Ticker]
         Instruments to include. Data is concatenated across tickers.
     start : datetime
@@ -104,14 +116,9 @@ class ResearchConfig:
     end : datetime
         In-sample period end (inclusive).
     bias_spec : dict[str, Any]
-        Bias-node specification.  ``params`` values may be lists for grid search.
-        Example::
-
-            {
-                "module_name": "rsi",
-                "timeframes": [TimeFrame.D],
-                "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10]},
-            }
+        Bias-node specification. ``params`` values may be lists for grid search.
+        For CONTINUOUS: typically RSI with lookback params.
+        For RULE_BASED: typically RSI_SIGNAL with rsi_period, oversold, overbought, etc.
     target_col : str
         Column from ``targets_df`` to use as the prediction target.
         Options: ``"log_return"``, ``"log_return_atr"``, ``"log_return_ewsd"``.
@@ -124,11 +131,19 @@ class ResearchConfig:
         If True, run ``CacheManager.populate_cache()`` before extraction.
     reports_dir : Path
         Root output directory for EDA reports.
-        Default: ``feature_research/in_sample/continuous_binning/results/{module_name}/``
+    permutation_suite : PermutationSuiteConfig
+        Settings for permutation test suite (if enabled).
     binning_params : BinningAnalysisConfig
-        Binning model hyperparameters (bin_counts, thresholds, coverage bonus).
+        Binning hyperparameters. Only used for CONTINUOUS; rule-based uses fixed 3 levels.
+    walkforward_selection_method : WalkforwardSelectionMethod | str
+        Method for selecting top features in walkforward splits.
+    weight_layer_algorithm : WeightLayerAlgorithm | str
+        Algorithm for combining forecasts.
+    walkforward : WalkforwardResearchConfig
+        Walkforward configuration (enabled/disabled, parameters).
     """
 
+    feature_type: FeatureType
     tickers: list[Ticker]
     start: datetime
     end: datetime
@@ -211,25 +226,57 @@ class ResearchConfig:
 
 
 def load_config() -> ResearchConfig:
-    """Return continuous-binning research config. Shared settings from feature_research.config."""
+    """Return unified research config with feature_type dispatched from base config.
+
+    This is the single entrypoint for loading in-sample research config.
+    It checks base.feature_type to determine which phase-specific defaults to apply.
+    """
     base = load_base_config()
-    # Phase-specific: bias spec, target, strategy, binning params
-    bias_spec = {
-        "module_name": "rsi",
-        "timeframes": [TimeFrame.D],
-        "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10]},
-    }
-    target_col = "log_return_atr"
-    strategy = "long"
-    binning_params = BinningAnalysisConfig(
-        bin_counts=[10, 9, 8, 7, 6, 5, 4, 3],
-        strategy="long",
-        t_threshold=2.0,
-        use_coverage_bonus=False,
-    )
-    reports_dir = _CB_DIR / "results" / bias_spec["module_name"]
-    walkforward = base.build_walkforward(enabled=False)
+
+    # Dispatch on feature_type to set phase-specific parameters
+    if base.feature_type == FeatureType.CONTINUOUS:
+        # CONTINUOUS BINNING DEFAULTS
+        bias_spec = {
+            "module_name": "rsi",
+            "timeframes": [TimeFrame.D],
+            "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10]},
+        }
+        target_col = "log_return_atr"
+        strategy = "long"
+        binning_params = BinningAnalysisConfig(
+            bin_counts=[10, 9, 8, 7, 6, 5, 4, 3],
+            strategy="long",
+            t_threshold=2.0,
+            use_coverage_bonus=False,
+        )
+        reports_dir = _FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous"
+        walkforward = base.build_walkforward(enabled=False)
+
+    elif base.feature_type == FeatureType.RULE_BASED:
+        # RULE-BASED DEFAULTS
+        bias_spec = {
+            "module_name": "rsi_signal",
+            "timeframes": [TimeFrame.D],
+            "params": {
+                "rsi_period": [2, 3, 5, 7],
+                "oversold": list(range(5, 26, 5)),
+                "overbought": list(range(95, 64, -5)),
+                "strategy_mode": "long",
+                "exit_policy": "threshold_or_bars",
+                "exit_bars": 5,
+            },
+        }
+        target_col = "log_return"
+        strategy = "long"
+        binning_params = BinningAnalysisConfig()  # Defaults; rule-based ignores these
+        reports_dir = _FEATURE_RESEARCH_DIR / "in_sample" / "results" / "rule_based"
+        walkforward = base.build_walkforward(test_step=252, num_steps=8, enabled=False)
+
+    else:
+        raise ValueError(f"Unknown feature_type: {base.feature_type}")
+
     return ResearchConfig(
+        feature_type=base.feature_type,
         tickers=base.tickers,
         start=base.start,
         end=base.end,

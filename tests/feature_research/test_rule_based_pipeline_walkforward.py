@@ -8,14 +8,14 @@ from typing import cast
 
 import pandas as pd
 
-from feature_research.in_sample.rule_based.config import RuleBasedResearchConfig
-from feature_research.in_sample.rule_based.pipeline import run_rule_based_eda_pipeline
+from feature_research.in_sample.config import ResearchConfig
+from feature_research.in_sample.pipeline import run_eda_pipeline
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.runner import WalkforwardRunReport
 from utils.core.enums import Ticker, TimeFrame
 
 
-def _build_config(tmp_path: Path, *, walkforward_enabled: bool) -> RuleBasedResearchConfig:
+def _build_config(tmp_path: Path, *, walkforward_enabled: bool) -> ResearchConfig:
     walkforward = WalkforwardResearchConfig(
         train_start=datetime(2020, 1, 1),
         train_end=datetime(2020, 2, 10),
@@ -27,7 +27,7 @@ def _build_config(tmp_path: Path, *, walkforward_enabled: bool) -> RuleBasedRese
         min_fold_samples=10,
         output_root=tmp_path / "shared_results",
     )
-    return RuleBasedResearchConfig(
+    return ResearchConfig(
         tickers=[Ticker.ES],
         start=datetime(2020, 1, 1),
         end=datetime(2020, 4, 29),
@@ -116,7 +116,7 @@ def test_walkforward_enabled_handles_tz_aware_feature_indices(
         lambda report, output_dir, overwrite: output_dir,
     )
 
-    run_rule_based_eda_pipeline(config=config, output_dir=tmp_path / "rule_based_reports")
+    run_eda_pipeline(config=config, output_dir=tmp_path / "rule_based_reports")
 
     walkforward_dir = (
         config.walkforward.output_root / "rule_based" / config.bias_spec["module_name"] / "walkforward"
@@ -183,7 +183,7 @@ def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -
         raising=False,
     )
 
-    run_rule_based_eda_pipeline(config=config, output_dir=tmp_path / "rule_based_reports")
+    run_eda_pipeline(config=config, output_dir=tmp_path / "rule_based_reports")
 
     assert calls == {"runner": 0, "stability": 0, "timeline": 0, "writer": 0}
 
@@ -241,7 +241,7 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
         lambda report, output_dir, overwrite: output_dir,
     )
 
-    run_rule_based_eda_pipeline(config=config, output_dir=output_dir)
+    run_eda_pipeline(config=config, output_dir=output_dir)
 
     walkforward_dir = (
         config.walkforward.output_root / "rule_based" / config.bias_spec["module_name"] / "walkforward"
@@ -259,7 +259,7 @@ def test_run_rule_based_walkforward_pipeline_returns_report_and_writes_artifacts
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.in_sample.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    from feature_research.in_sample.pipeline import run_rule_based_walkforward_pipeline
 
     config = _build_config(tmp_path, walkforward_enabled=True)
 
@@ -317,7 +317,7 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_combos_load(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.in_sample.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    from feature_research.in_sample.pipeline import run_rule_based_walkforward_pipeline
     import pytest
 
     config = _build_config(tmp_path, walkforward_enabled=True)
@@ -356,7 +356,7 @@ def test_run_rule_based_walkforward_pipeline_raises_if_no_folds(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.in_sample.rule_based.pipeline import run_rule_based_walkforward_pipeline
+    from feature_research.in_sample.pipeline import run_rule_based_walkforward_pipeline
     import pytest
 
     config = _build_config(tmp_path, walkforward_enabled=True)

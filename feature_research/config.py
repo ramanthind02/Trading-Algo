@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,13 @@ from utils.core.enums import Ticker, TimeFrame
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parent
 
 RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
+
+
+class FeatureType(str, Enum):
+    """Feature type determines validation path."""
+
+    CONTINUOUS = "continuous"
+    RULE_BASED = "rule_based"
 
 
 @dataclass(frozen=True)
@@ -48,6 +56,7 @@ class BaseResearchConfig:
     use_cache: bool
     populate_cache: bool
     permutation_suite: PermutationSuiteConfig
+    feature_type: FeatureType = FeatureType.CONTINUOUS
     walkforward_test_step: int = 365
     walkforward_num_steps: int = 8
     walkforward_output_root: Path = Path("feature_research/shared_results")

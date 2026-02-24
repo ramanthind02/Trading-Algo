@@ -104,8 +104,8 @@ def test_log_return_ewsd_coverage_matches_atr_when_cache_available() -> None:
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
 
-    from feature_research.in_sample.continuous_binning.config import load_config
-    from feature_research.in_sample.continuous_binning.data_loader import (
+    from feature_research.in_sample.config import load_config
+    from feature_research.in_sample.data_loader import (
         expand_bias_specs,
         load_features_for_combo,
     )

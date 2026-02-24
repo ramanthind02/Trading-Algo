@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 import pandas as pd
-from feature_research.in_sample.continuous_binning.config import BinningAnalysisConfig
+from feature_research.in_sample.config import BinningAnalysisConfig
 from feature_research.walkforward.portfolio_evaluator import (
     build_research_portfolio,
     ensure_portfolio_candle_columns,

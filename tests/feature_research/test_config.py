@@ -1,9 +1,10 @@
+from feature_research.config import FeatureType
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
-from feature_research.in_sample.continuous_binning.config import ResearchConfig, load_config
+from feature_research.in_sample.config import ResearchConfig, load_config
 from feature_research.walkforward.config import (
     WalkforwardResearchConfig,
     WalkforwardSelectionMethod,
@@ -32,7 +33,7 @@ def test_load_config_defaults():
 def test_reports_dir_includes_module_name():
     config = load_config()
     assert config.bias_spec["module_name"] in str(config.reports_dir)
-    assert "continuous_binning" in str(config.reports_dir)
+    assert "continuous" in str(config.reports_dir)
 
 
 def test_load_config_includes_walkforward_defaults() -> None:
@@ -64,6 +65,7 @@ def test_load_config_exposes_weight_layer_algorithm_control() -> None:
 
 def _make_research_config(*, tickers: list[Ticker], target_col: str) -> ResearchConfig:
     return ResearchConfig(
+                feature_type=FeatureType.CONTINUOUS,
         tickers=tickers,
         start=datetime(2000, 1, 1),
         end=datetime(2024, 12, 31),
@@ -114,6 +116,7 @@ def test_research_config_allows_normalized_targets_with_multiple_tickers() -> No
 
 def test_research_config_coerces_top_level_controls_from_strings() -> None:
     walkforward = WalkforwardResearchConfig(
+                feature_type=FeatureType.CONTINUOUS,
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2023, 1, 1),
         selection_method="stable_region",
@@ -121,6 +124,7 @@ def test_research_config_coerces_top_level_controls_from_strings() -> None:
     )
 
     config = ResearchConfig(
+                feature_type=FeatureType.CONTINUOUS,
         tickers=[Ticker.ES],
         start=datetime(2000, 1, 1),
         end=datetime(2024, 12, 31),
@@ -145,6 +149,7 @@ def test_research_config_coerces_top_level_controls_from_strings() -> None:
 
 def test_research_config_rejects_walkforward_selection_method_mismatch() -> None:
     walkforward = WalkforwardResearchConfig(
+                feature_type=FeatureType.CONTINUOUS,
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2023, 1, 1),
         selection_method=WalkforwardSelectionMethod.ENHANCED,
@@ -152,6 +157,7 @@ def test_research_config_rejects_walkforward_selection_method_mismatch() -> None
 
     with pytest.raises(ValueError, match="walkforward_selection_method"):
         ResearchConfig(
+                feature_type=FeatureType.CONTINUOUS,
             tickers=[Ticker.ES],
             start=datetime(2000, 1, 1),
             end=datetime(2024, 12, 31),
@@ -172,6 +178,7 @@ def test_research_config_rejects_walkforward_selection_method_mismatch() -> None
 
 def test_research_config_rejects_weight_layer_algorithm_mismatch() -> None:
     walkforward = WalkforwardResearchConfig(
+                feature_type=FeatureType.CONTINUOUS,
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2023, 1, 1),
         weight_layer_algorithm=WeightLayerAlgorithm.EQUAL_FLAT,
@@ -179,6 +186,7 @@ def test_research_config_rejects_weight_layer_algorithm_mismatch() -> None:
 
     with pytest.raises(ValueError, match="weight_layer_algorithm"):
         ResearchConfig(
+                feature_type=FeatureType.CONTINUOUS,
             tickers=[Ticker.ES],
             start=datetime(2000, 1, 1),
             end=datetime(2024, 12, 31),

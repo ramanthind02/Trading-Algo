@@ -1,5 +1,5 @@
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning.diagnostics import extract_region_metadata
+from feature_selection.validation.binning.diagnostics import extract_region_metadata
 
 
 def _build_metadata_fixture() -> ContinuousBinningModel:

@@ -12,18 +12,18 @@ import pytest
 from matplotlib.figure import Figure
 
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning.diagnostics import (
+from feature_selection.validation.binning.diagnostics import (
     BinningSuccessCriteria,
     RegionMetadata,
 )
-from feature_selection.validators.binning.report import (
+from feature_selection.validation.binning.report import (
     BinningDiagnosticsReport,
     detect_failure_mode,
     display_report_summary,
     generate_binning_report,
     save_report,
 )
-from feature_selection.validators.binning.shape_analysis import (
+from feature_selection.validation.binning.shape_analysis import (
     AdjacencyAnalysis,
     RegionCoverage,
 )

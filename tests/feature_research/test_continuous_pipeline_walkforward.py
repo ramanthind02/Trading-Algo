@@ -9,8 +9,8 @@ from typing import cast
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from feature_research.in_sample.continuous_binning.config import ResearchConfig
-from feature_research.in_sample.continuous_binning.pipeline import run_continuous_eda_pipeline
+from feature_research.in_sample.config import ResearchConfig
+from feature_research.in_sample.pipeline import run_eda_pipeline
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.runner import WalkforwardRunReport
 from utils.core.enums import Ticker, TimeFrame
@@ -143,7 +143,7 @@ def test_walkforward_disabled_skips_shared_runner(monkeypatch, tmp_path: Path) -
         raising=False,
     )
 
-    run_continuous_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
+    run_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
 
     assert calls == {"runner": 0, "stability": 0, "timeline": 0, "writer": 0}
 
@@ -277,7 +277,7 @@ def test_walkforward_enabled_writes_selected_feature_artifacts(
         raising=False,
     )
 
-    run_continuous_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
+    run_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
 
     assert captured_inputs["feature_type"] == "continuous"
     assert captured_inputs["module_name"] == "rsi"
@@ -447,7 +447,7 @@ def test_walkforward_evaluator_uses_bin_count_specific_returns(
         raising=False,
     )
 
-    run_continuous_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
+    run_eda_pipeline(config=config, output_dir=tmp_path / "continuous_reports")
 
     evaluate = cast(object, captured_eval["evaluate"])
     candles_df = cast(pd.DataFrame, captured_eval["candles_df"])
@@ -464,7 +464,7 @@ def test_run_continuous_walkforward_pipeline_returns_report_and_writes_artifacts
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.in_sample.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+    from feature_research.in_sample.pipeline import run_continuous_walkforward_pipeline
 
     config = _build_config(tmp_path, walkforward_enabled=True)
 
@@ -504,7 +504,7 @@ def test_run_continuous_walkforward_pipeline_raises_if_no_combos_load(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.in_sample.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+    from feature_research.in_sample.pipeline import run_continuous_walkforward_pipeline
     import pytest
 
     config = _build_config(tmp_path, walkforward_enabled=True)
@@ -536,7 +536,7 @@ def test_run_continuous_walkforward_pipeline_raises_if_no_folds(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.in_sample.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+    from feature_research.in_sample.pipeline import run_continuous_walkforward_pipeline
     import pytest
 
     config = _build_config(tmp_path, walkforward_enabled=True)

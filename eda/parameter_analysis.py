@@ -23,6 +23,179 @@ from metrics.plotting.parameter_plots import (
 )
 from utils.compute.grid_smoothing import add_smoothed_objective
 
+# Phase 3/4 stable region selection (walkforward algorithm)
+from feature_research.walkforward.stable_region_selection import (
+    StableRegionConfig,
+    StableRegionResult,
+    run_stable_region_selection,
+)
+
+
+def _phase3_label_to_param_tuple(label: str, param_names: List[str]) -> Tuple[Any, ...]:
+    """Parse canonical param label (e.g. 'lookback=5|n_bins=3') to tuple in param_names order."""
+    parts = label.split("|")
+    parsed: Dict[str, Any] = {}
+    for part in parts:
+        if "=" not in part:
+            continue
+        k, v_str = part.split("=", 1)
+        v_str = v_str.strip()
+        try:
+            v: Any = int(v_str)
+        except ValueError:
+            try:
+                v = float(v_str)
+            except ValueError:
+                v = v_str
+        parsed[k.strip()] = v
+    return tuple(parsed.get(name) for name in param_names)
+
+
+def run_phase3_stable_region_selection(
+    results_df: pd.DataFrame,
+    param_names: List[str],
+    metric_col: str,
+    config: Optional[StableRegionConfig] = None,
+    grid_structure: Optional[Dict[str, List]] = None,
+) -> Tuple[StableRegionResult, pd.DataFrame]:
+    """Run Phase 3/4 stable region selection on a results_df (paramK_value + metric column).
+
+    Uses the same algorithm as walkforward: floor (adaptive or relative) → qualifying
+    set → connected components (grid-step adjacency) → filter degenerate → select
+    k_per_region per region, cap at k_max.
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame
+        Grid search results with param1_value … paramN_value and metric_col.
+    param_names : List[str]
+        Human-readable parameter names (same order as paramK_value columns).
+    metric_col : str
+        Column name of the raw objective metric (e.g. 'sortino').
+    config : Optional[StableRegionConfig], optional
+        Algorithm config. If None, uses defaults (floor_method='adaptive',
+        k_per_region=3, k_max=6, min_region_size=2, bin_count_min=0).
+    grid_structure : Optional[Dict[str, List]], optional
+        Param name → ordered list of values per axis for grid-step adjacency.
+        If None, built from results_df unique values.
+
+    Returns
+    -------
+    Tuple[StableRegionResult, pd.DataFrame]
+        StableRegionResult (selected_labels, per_param_detail) and smoothed_df
+        (copy of results with smoothed_* and stability columns).
+    """
+    if config is None:
+        config = StableRegionConfig(
+            floor_method="adaptive",
+            k_per_region=3,
+            k_max=6,
+            min_region_size=2,
+            bin_count_min=0,
+        )
+    n_params = len(param_names)
+    param_cols = [f"param{k}_value" for k in range(1, n_params + 1)]
+    smoothed_df = compute_neighbor_smoothing(results_df, param_names, metric_col)
+    smoothed_metric_col = f"smoothed_{metric_col}"
+
+    # One row per unique param combo (aggregate if duplicates)
+    group_cols = [c for c in param_cols if c in smoothed_df.columns]
+    if not group_cols:
+        raise ValueError("results_df must contain param1_value, ... paramN_value columns")
+    agg_df = (
+        smoothed_df.groupby(group_cols)
+        .agg({metric_col: "first", smoothed_metric_col: "first"})
+        .reset_index()
+    )
+
+    param_grid: List[Dict[str, object]] = []
+    for _, row in agg_df.iterrows():
+        params = {param_names[i]: row[group_cols[i]] for i in range(len(param_names))}
+        param_grid.append(params)
+
+    labels = [
+        "|".join(f"{k}={params[k]}" for k in sorted(params))
+        for params in param_grid
+    ]
+    smoothed_objectives = {
+        lbl: float(agg_df.iloc[i][smoothed_metric_col])
+        for i, lbl in enumerate(labels)
+    }
+    raw_objectives = {
+        lbl: float(agg_df.iloc[i][metric_col])
+        for i, lbl in enumerate(labels)
+    }
+    trade_frequencies = {lbl: 1.0 for lbl in labels}
+
+    if grid_structure is None:
+        grid_structure = {
+            param_names[i]: sorted(agg_df[group_cols[i]].dropna().unique().tolist())
+            for i in range(len(param_names))
+        }
+
+    result = run_stable_region_selection(
+        smoothed_objectives=smoothed_objectives,
+        raw_objectives=raw_objectives,
+        trade_frequencies=trade_frequencies,
+        param_grid=param_grid,
+        config=config,
+        grid_structure=grid_structure,
+    )
+    return result, smoothed_df
+
+
+def build_phase3_selected_mask(
+    result: StableRegionResult,
+    grid_df: pd.DataFrame,
+    param_names: List[str],
+) -> pd.Series:
+    """Build a boolean mask aligned with grid_df: True where param combo is in result.selected_labels."""
+    param_cols = [f"param{k}_value" for k in range(1, len(param_names) + 1)]
+    if not all(c in grid_df.columns for c in param_cols):
+        return pd.Series(False, index=grid_df.index)
+    selected_set = set(result.selected_labels)
+    def row_to_label(row: pd.Series) -> str:
+        params = {param_names[i]: row[param_cols[i]] for i in range(len(param_names))}
+        return "|".join(f"{k}={params[k]}" for k in sorted(params))
+    labels = grid_df.apply(row_to_label, axis=1)
+    return labels.isin(selected_set)
+
+
+def format_phase3_stable_regions_display(
+    result: StableRegionResult,
+    param_names: List[str],
+) -> List[Dict[str, Any]]:
+    """Format Phase 3/4 per_param_detail into a list of stable regions for display.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        Each dict has keys: region_id, region_size, members (list of param tuples),
+        mean_smoothed_objective, member_labels.
+    """
+    detail = result.per_param_detail
+    qualifying = detail.loc[detail["above_floor"] & detail["region_id"].notna()]
+    if qualifying.empty:
+        return []
+    regions: List[Dict[str, Any]] = []
+    for region_id in qualifying["region_id"].dropna().unique():
+        subset = qualifying[qualifying["region_id"] == region_id]
+        size = int(subset["region_size"].iloc[0]) if "region_size" in subset.columns else len(subset)
+        members = [
+            _phase3_label_to_param_tuple(label, param_names)
+            for label in subset["param_label"].tolist()
+        ]
+        mean_smoothed = float(subset["smoothed_objective"].mean())
+        regions.append({
+            "region_id": int(region_id),
+            "region_size": size,
+            "members": members,
+            "member_labels": subset["param_label"].tolist(),
+            "mean_smoothed_objective": mean_smoothed,
+        })
+    return sorted(regions, key=lambda r: -r["mean_smoothed_objective"])
+
+
 def _get_metric_name_from_object(metric_obj: Any) -> str:
     """
     Extract metric name from a metric object for display/plotting purposes.

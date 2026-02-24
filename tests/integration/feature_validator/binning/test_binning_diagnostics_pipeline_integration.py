@@ -11,7 +11,7 @@ import pytest
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning.diagnostics import (
+from feature_selection.validation.binning.diagnostics import (
     BinningSuccessCriteria,
     calculate_coverage,
     detect_region_shape,

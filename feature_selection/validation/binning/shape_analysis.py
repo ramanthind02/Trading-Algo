@@ -8,7 +8,7 @@ from typing import Literal
 
 import pandas as pd
 
-from feature_selection.validators.binning.diagnostics import RegionMetadata
+from feature_selection.validation.binning.diagnostics import RegionMetadata
 
 
 @dataclass(frozen=True)

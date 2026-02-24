@@ -9,7 +9,7 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from feature_selection.base_models.base_model import BinningModelBase
-from feature_selection.validators.binning.diagnostics import RegionMetadata
+from feature_selection.validation.binning.diagnostics import RegionMetadata
 
 matplotlib.use("Agg")
 

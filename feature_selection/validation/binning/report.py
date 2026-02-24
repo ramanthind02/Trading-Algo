@@ -12,21 +12,21 @@ import pandas as pd
 from matplotlib.figure import Figure
 
 from feature_selection.base_models.base_model import BinningModelBase
-from feature_selection.validators.binning.diagnostics import (
+from feature_selection.validation.binning.diagnostics import (
     BinningSuccessCriteria,
     RegionMetadata,
     extract_region_metadata,
     validate_binning_success,
     _require_fitted_model,
 )
-from feature_selection.validators.binning.shape_analysis import (
+from feature_selection.validation.binning.shape_analysis import (
     AdjacencyAnalysis,
     RegionCoverage,
     analyze_multi_region_shapes,
     calculate_region_coverage_breakdown,
     detect_region_adjacency,
 )
-from feature_selection.validators.binning.plots import (
+from feature_selection.validation.binning.plots import (
     create_diagnostic_panel,
     plot_bin_heatmap,
     plot_position_multiplier_curve,

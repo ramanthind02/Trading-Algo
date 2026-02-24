@@ -1,4 +1,9 @@
-"""Data loading and cache management helpers for the continuous binning research pipeline."""
+"""Unified data loading and cache management for both continuous and rule-based research.
+
+Dispatches on feature_type for validation-specific logic:
+  - CONTINUOUS: no additional validation beyond standard checks
+  - RULE_BASED: skips multi-ticker raw return validation (handled at config level)
+"""
 from __future__ import annotations
 
 from itertools import product
@@ -8,9 +13,10 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 if TYPE_CHECKING:
-    from feature_research.in_sample.continuous_binning.config import ResearchConfig
+    from feature_research.in_sample.config import ResearchConfig
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
+from feature_research.config import FeatureType
 from utils.cache.cache_manager import CacheManager
 from utils.core.enums import TimeFrame
 from utils.core.helpers import load_data_multi_ticker
@@ -19,7 +25,18 @@ _UNNORMALIZED_RETURN_COLS: frozenset[str] = frozenset({"log_return", "raw_return
 
 
 def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
-    """Expand a bias_spec with list-valued params into one spec per param combo."""
+    """Expand a bias_spec with list-valued params into one spec per param combo.
+
+    Parameters
+    ----------
+    bias_spec : dict[str, Any]
+        Bias specification with optional list-valued params.
+
+    Returns
+    -------
+    list[dict[str, Any]]
+        List of fully expanded specs, one per parameter combination.
+    """
     params = bias_spec.get("params", {})
     keys = list(params.keys())
     values = [v if isinstance(v, list) else [v] for v in params.values()]
@@ -35,7 +52,18 @@ def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
-    """Load candles for the config universe and normalize to DatetimeIndex."""
+    """Load candles for the config universe and normalize to DatetimeIndex.
+
+    Parameters
+    ----------
+    config : ResearchConfig
+        Research configuration with tickers, dates, and bias_spec.
+
+    Returns
+    -------
+    pd.DataFrame
+        OHLCV data with DatetimeIndex, sorted by datetime.
+    """
     timeframes = config.bias_spec.get("timeframes", [TimeFrame.D])
     raw_timeframe = timeframes[0] if isinstance(timeframes, list) else timeframes
     timeframe = TimeFrame[raw_timeframe] if isinstance(raw_timeframe, str) else raw_timeframe
@@ -66,6 +94,16 @@ def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
 def param_combo_label(combo: dict[str, Any]) -> str:
     """Return a human-readable folder name for a param combo dict.
 
+    Parameters
+    ----------
+    combo : dict[str, Any]
+        Parameter combination mapping.
+
+    Returns
+    -------
+    str
+        Folder-safe label, e.g., "lookback_10__other_5" (sorted by key).
+
     Examples
     --------
     >>> param_combo_label({"lookback": 5})
@@ -82,6 +120,11 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
 
     Safe to call even if cache already exists — ``overwrite_existing=False``
     means only missing entries are computed.
+
+    Parameters
+    ----------
+    config : ResearchConfig
+        Research configuration with populate_cache flag and bias_spec.
     """
     if not config.populate_cache:
         return
@@ -122,22 +165,29 @@ def load_features_for_combo(
 ) -> tuple[pd.Series, pd.Series, str] | None:
     """Extract feature + target Series for a single param combo across all config tickers.
 
-    Returns
-    -------
-    (feature, target, feature_col) or None if extraction fails / returns empty data.
+    Dispatches on feature_type for validation logic.
 
     Parameters
     ----------
+    single_combo_spec : dict[str, Any]
+        Single (non-expanded) bias spec with module_name, params, timeframes.
+    config : ResearchConfig
+        Research configuration with target_col, tickers, feature_type, etc.
     candles_override : pd.DataFrame | None, default=None
-        Optional override candles passed through to
-        ``extract_features_for_bias_node`` for forward-return computation.
-        Expected schema: one row per ticker/timestamp with columns
-        ``datetime``, ``open``, ``high``, ``low``, ``close``, ``ticker``.
-        ``datetime`` values may be tz-naive or tz-aware; they are normalized
-        to UTC by the downstream extractor.
+        Optional override candles passed through to ``extract_features_for_bias_node``
+        for forward-return computation. Expected schema: one row per ticker/timestamp
+        with columns ``datetime``, ``open``, ``high``, ``low``, ``close``, ``ticker``.
 
-    The returned Series are aligned (same index, NaNs dropped) and concatenated
-    across all tickers in ``config.tickers``.
+    Returns
+    -------
+    (feature, target, feature_col) or None
+        Aligned (feature, target) Series and feature column name.
+        Returns None if extraction fails or returns empty data.
+
+    Raises
+    ------
+    ValueError
+        If target data is missing or misaligned.
     """
     features_df, targets_df = extract_features_for_bias_node(
         bias_spec=single_combo_spec,
@@ -179,18 +229,22 @@ def load_features_for_combo(
     if aligned.empty:
         return None
 
-    if target_col_name in _UNNORMALIZED_RETURN_COLS:
-        unique_tickers = (
-            int(features_df["ticker"].nunique())
-            if "ticker" in features_df.columns
-            else len(config.tickers)
-        )
-        if unique_tickers > 1:
-            raise ValueError(
-                f"load_features_for_combo received target_col='{target_col_name}' with "
-                f"{unique_tickers} tickers. Raw return targets must not be mixed "
-                "across tickers. Use 'log_return_ewsd' or 'log_return_atr'."
+    # DISPATCH: Feature-type-specific validation
+    # For CONTINUOUS: all validations are ok
+    # For RULE_BASED: skip multi-ticker raw return check (already checked at config level)
+    if config.feature_type == FeatureType.CONTINUOUS:
+        if target_col_name in _UNNORMALIZED_RETURN_COLS:
+            unique_tickers = (
+                int(features_df["ticker"].nunique())
+                if "ticker" in features_df.columns
+                else len(config.tickers)
             )
+            if unique_tickers > 1:
+                raise ValueError(
+                    f"load_features_for_combo received target_col='{target_col_name}' with "
+                    f"{unique_tickers} tickers. Raw return targets must not be mixed "
+                    "across tickers. Use 'log_return_ewsd' or 'log_return_atr'."
+                )
 
     feature_series = aligned["feature"].copy()
     feature_series.name = feature_col

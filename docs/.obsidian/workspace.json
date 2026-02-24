@@ -11,14 +11,10 @@
             "id": "363c7c083b797ca3",
             "type": "leaf",
             "state": {
-              "type": "markdown",
-              "state": {
-                "file": "library/Feature_selection/stability/grid_search_parameter_stability.md",
-                "mode": "source",
-                "source": false
-              },
+              "type": "empty",
+              "state": {},
               "icon": "lucide-file",
-              "title": "grid_search_parameter_stability"
+              "title": "New tab"
             }
           }
         ]

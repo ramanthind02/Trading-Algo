@@ -17,11 +17,11 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.in_sample.continuous_binning.config import (
+from feature_research.in_sample.config import (
     PermutationSuiteConfig,
     ResearchConfig,
 )
-from feature_research.in_sample.continuous_binning.pipeline import (
+from feature_research.in_sample.pipeline import (
     run_continuous_eda_pipeline,
     run_continuous_permutation_pipeline,
 )

@@ -1,4 +1,4 @@
-from feature_research.in_sample.continuous_binning.config import load_config
+from feature_research.in_sample.config import load_config
 
 
 def test_binning_analysis_config_fields() -> None:

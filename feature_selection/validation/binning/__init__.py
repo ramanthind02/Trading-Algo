@@ -1,6 +1,6 @@
-"""Public binning diagnostics interfaces."""
+"""Public binning diagnostics interfaces (T005-T008)."""
 
-from feature_selection.validators.binning.diagnostics import (
+from .diagnostics import (
     BinningSuccessCriteria,
     RegionMetadata,
     calculate_coverage,
@@ -8,13 +8,13 @@ from feature_selection.validators.binning.diagnostics import (
     extract_region_metadata,
     validate_binning_success,
 )
-from feature_selection.validators.binning.plots import (
+from .plots import (
     create_diagnostic_panel,
     plot_bin_heatmap,
     plot_position_multiplier_curve,
     plot_region_boundaries,
 )
-from feature_selection.validators.binning.report import (
+from .report import (
     BinningDiagnosticsReport,
     detect_failure_mode,
     display_report_summary,
@@ -23,7 +23,7 @@ from feature_selection.validators.binning.report import (
     save_report,
     select_best_regions,
 )
-from feature_selection.validators.binning.shape_analysis import (
+from .shape_analysis import (
     AdjacencyAnalysis,
     RegionCoverage,
     ShapeClassification,

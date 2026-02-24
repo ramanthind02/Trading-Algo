@@ -1,8 +1,8 @@
 import pandas as pd
 import pytest
 
-from feature_selection.validators.binning.diagnostics import RegionMetadata
-from feature_selection.validators.binning.shape_analysis import (
+from feature_selection.validation.binning.diagnostics import RegionMetadata
+from feature_selection.validation.binning.shape_analysis import (
     AdjacencyAnalysis,
     RegionCoverage,
     ShapeClassification,

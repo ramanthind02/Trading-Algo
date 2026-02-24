@@ -6,7 +6,8 @@
 ## Data Splits
 
 - **In-Sample (IS):** 2000–2023 — all screening, permutation testing, and walkforward validation
-- **Strict OOS:** 2024–2025 — untouched until graduation; used only for final confirmation
+- **Walk-Forward (WF):** overlapping windows within IS; rolling or expanding; see [[walkforward]]
+- **Strict OOS:** 2024–2025 — untouched until all WF gates pass; used only for final confirmation
 
 ---
 
@@ -15,24 +16,37 @@
 ```
 IS Data (2000-2023)
 │
-├── TIER 1: IS Screening
-│   ├── Phase 1: EDA ──────────────────── [no gate — informational]
-│   │   └── distributions, decile plots, param grid heatmap
+├── TIER 1: In-Sample (IS)
+│   ├── Phase 1: EDA ──────────────────────────── [no gate — informational]
+│   │   └── distributions, decile plots, param sensitivity heatmap
+│   │       └── rule-based: level stats + transition matrix
 │   │
-│   └── Phase 2: IS Permutation Screen ── [GATE: any param passes S1+S2?]
+│   ├── Phase 2: Binning Analysis ───────────── [continuous only; rule-based skips]
+│   │   └── grid search over bin_counts → single best bin per direction
+│   │
+│   └── Phase 3: IS Permutation Screen ────────── [GATE: any param passes S1+S2?]
 │       └── vector shuffle → pipeline permutation (per param combo)
 │           └── FAIL → feature class rejected (no walkforward)
 │
-└── TIER 2: Walkforward
-    ├── Phase 3: WF Validation ─────────── [GATE: neighborhood stable ≥ min_folds]
-    │   └── rolling folds, neighbor-smoothed metric, stable region ID
+├── TIER 2: Walk-Forward (WF)
+│   ├── Phase 4: WF Validation ────────────────── [GATE: stable neighborhood ≥ min_folds]
+│   │   └── expanding/rolling folds, neighbor-smoothed metric, stable region ID
+│   │       └── FAIL → feature class rejected
+│   │
+│   └── Phase 5: WF Permutation Test ─────────── [GATE: p ≤ α on WF metric]
+│       └── candle shuffle on full WF
+│           └── FAIL → feature class rejected
+│
+└── TIER 3: Out-of-Sample (OOS)
+    ├── Phase 6: OOS Validation ───────────────── [GATE: stable on OOS folds]
+    │   └── expanding/rolling folds on 2024–2025
     │       └── FAIL → feature class rejected
     │
-    ├── Phase 4: WF Permutation Test ───── [GATE: p ≤ α on WF metric]
-    │   └── candle shuffle on full WF
+    ├── Phase 7: OOS Permutation Test ────────── [GATE: p ≤ α on OOS metric]
+    │   └── candle shuffle on OOS period
     │       └── FAIL → feature class rejected
     │
-    └── Phase 5: Graduation ────────────── param selection rule applied → [[vault]]
+    └── Phase 8: Graduation ──────────────────── param selection rule applied → [[vault]]
 ```
 
 ---
@@ -42,18 +56,21 @@ IS Data (2000-2023)
 | Phase | Type | Passes On | Notes |
 |-------|------|-----------|-------|
 | 1 EDA | Diagnostic | — (always) | Researcher inspection only |
-| 2 IS Permutation | **GATE** | Any param combo passes S1 + S2 | Feature-level decision |
-| 3 WF Validation | **GATE** | Stable neighborhood ≥ min\_folds | Param-level; see [[param_stability]] |
-| 4 WF Permutation | **GATE** | p ≤ α on WF metric | Destroys temporal structure |
-| 5 Graduation | Decision | All gates passed | OOS lock broken |
+| 2 Binning (continuous only) | Diagnostic | — (always) | Inform param selection |
+| 3 IS Permutation | **GATE** | Any param combo passes S1 + S2 | Feature-level decision |
+| 4 WF Validation | **GATE** | Stable neighborhood ≥ min\_folds | Param-level; see [[param_stability]] |
+| 5 WF Permutation | **GATE** | p ≤ α on WF metric | Destroys temporal structure |
+| 6 OOS Validation | **GATE** | Stable neighborhood ≥ min\_folds | Same region algorithm as Phase 4 |
+| 7 OOS Permutation | **GATE** | p ≤ α on OOS metric | Confirms Phases 4–5 robustness |
+| 8 Graduation | Decision | All gates passed | OOS lock broken → vault |
 
-> [!note] IS permutation results are DIAGNOSTIC per param combo — they do NOT gate individual params from entering the walkforward. If the feature class has any signal (any param passes), all params enter WF together.
+> [!note] **Feature type**: rule-based features skip Phase 2 (Binning Analysis) — they are already discrete (-1/0/+1). IS permutation results (Phase 3) are DIAGNOSTIC per param combo — if the feature class has any signal (any param passes), all params enter WF together.
 
 ---
 
 ## Pre-Committed Param Selection Rule (Summary)
 
-Applied at Phase 5 graduation. Full spec: [[param_stability]].
+Applied at Phase 8 graduation. Full spec: [[param_stability]].
 
 1. Fit ALL param combos on IS data → compute objective metric
 2. Apply grid-aware neighbor smoothing → `smoothed_objective(P) = mean(P + neighbors)`
@@ -67,22 +84,29 @@ Applied at Phase 5 graduation. Full spec: [[param_stability]].
 
 ## Feature Types
 
-- **Continuous** (RSI, momentum, vol ratios): require binning → see [[continuous_binning]]
-- **Rule-based** (breakouts, regime filters, discrete -1/0/+1): already discrete → see [[rule_based]]
+- **Continuous** (RSI, momentum, vol ratios): require Phase 2 binning analysis → see [[feature_model]]
+- **Rule-based** (breakouts, regime filters, discrete -1/0/+1): skip Phase 2, use fixed 3 levels → see [[feature_model]]
 
-Each type follows distinct validation paths in Phases 1–2. Phases 3–5 are shared.
+Both types follow the same Phases 1, 3–8. Only Phase 2 (Binning Analysis) is type-specific.
 
 ---
 
 ## Related Docs
 
+**Phase 1 (In-Sample):**
 - [[eda]] — Phase 1 EDA detail
-- [[permutation_testing]] — IS + WF permutation test specs
-- [[walkforward]] — Phase 3–4 walkforward implementation
-- [[param_stability]] — Neighbor smoothing, stability ratio, param selection rule
+- [[feature_model]] — Phase 2 binning (continuous) + shared feature interface
+- [[permutation_testing]] — Phase 3 IS permutation test specs
 - [[kfold]] — k-fold cross-validation reference
 - [[cpcv]] — Combinatorial purged CV reference
-- [[base_feature]] — Base feature interface
-- [[continuous_binning]] — Quantile binning pipeline
-- [[rule_based]] — Rule-based feature handling
+
+**Phase 2 (Walk-Forward):**
+- [[walkforward]] — Phases 4–5 walkforward implementation
+- [[param_stability]] — Neighbor smoothing, stable region selection, param selection rule
+
+**Phase 3 (Out-of-Sample):**
+- [[oos_validation]] — Phases 6–8 OOS validation and graduation
+
+**Shared:**
+- [[base_feature]] — Shared target definition and Sharpe formula
 - [[vault]] — Feature persistence after graduation
