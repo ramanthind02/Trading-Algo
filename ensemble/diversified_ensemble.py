@@ -80,6 +80,8 @@ class DiversifiedEnsemble:
         config_path: Optional[str] = None,
         save_path: Optional[str] = None,
         control_file_path: Optional[str] = None,
+        base_models: Optional[Dict[str, Any]] = None,
+        required_columns: Optional[List[str]] = None,
         base_tf: Optional[TimeFrame] = None,
         use_cache: bool = True
     ):
@@ -94,7 +96,9 @@ class DiversifiedEnsemble:
         self.required_columns: List[str] = []
         self.control_file_data: Optional[Dict[str, Any]] = None
         self.base_tf: Optional[TimeFrame] = None  # Will be set from file or parameter
-        
+        # Optional: for base models with members, feature data keyed by model_name (datetime index, member columns)
+        self._member_feature_data: Optional[Dict[str, pd.DataFrame]] = None
+
         # Fitted parameters (set during fit() or load_config())
         self.weights_ = None
         self.exposure_fractions_ = None
@@ -106,23 +110,51 @@ class DiversifiedEnsemble:
         self.n_tickers_ = None
         self.is_fitted_ = False
         
-        # Validate that control_file_path is provided
-        if control_file_path is None:
-            raise ValueError(
-                "control_file_path must be provided. "
-                "This is the unified control file containing base model configs and optional fitted parameters."
-            )
-        
-        # Initialize from control file
-        self._initialize_from_control_file(control_file_path)
-        
-        # Set base_tf from parameter if provided (overrides file value)
-        if base_tf is not None:
+        # Initialize from control file or programmatically from base_models + required_columns
+        if control_file_path is not None:
+            self._initialize_from_control_file(control_file_path)
+            if base_tf is not None:
+                self.base_tf = base_tf
+        else:
+            # Programmatic path: require base_models and required_columns
+            if base_models is None or required_columns is None:
+                raise ValueError(
+                    "Either control_file_path or both base_models and required_columns must be provided."
+                )
+            self.base_models = base_models
+            self.required_columns = list(required_columns)
+            for model_name, bm in self.base_models.items():
+                get_cols = getattr(bm, "get_member_feature_columns", None)
+                cols = list(get_cols()) if get_cols else []
+                if not cols and getattr(bm, "feature_column", None):
+                    cols = [bm.feature_column]
+                for col in cols:
+                    if col:
+                        self.column_to_model[col] = model_name
+            if base_tf is None:
+                raise ValueError("base_tf is required when not using control_file_path.")
             self.base_tf = base_tf
-        
+
         # Load configuration if provided (legacy support)
         if config_path is not None:
             self.load_config(config_path)
+
+    def _bars_per_year_for_base_timeframe(self) -> float:
+        """Return the annualization factor (bars/year) for the ensemble base timeframe."""
+        tf = self.base_tf
+        if tf == TimeFrame.W:
+            return 52.0
+        if tf == TimeFrame.M:
+            return 12.0
+        # Default to daily if unset/unknown (current walkforward path is daily).
+        return 252.0
+
+    def _annualized_member_signal_strength(self, member_signal: pd.Series) -> np.ndarray:
+        """Map per-bar Sharpe-like member outputs to clipped annualized forecast strength."""
+        values = pd.Series(member_signal, copy=False).astype(float)
+        values = values.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        annualized = values.to_numpy() * np.sqrt(self._bars_per_year_for_base_timeframe())
+        return np.clip(annualized, -2.0, 2.0)
     
     def _validate_input_data(
         self,
@@ -857,7 +889,11 @@ class DiversifiedEnsemble:
                 if base_model.is_fitted_:
                     logger.debug(f"Skipping already-fitted model '{model_name}'")
                     continue
-                
+                # Skip fit when base model has members: members are fitted by caller (e.g. walkforward evaluator)
+                if getattr(base_model, "members", None):
+                    logger.debug(f"Skipping fit for model '{model_name}' (members fitted by caller)")
+                    continue
+
                 # Fit base model with filtered candles and aggregated returns
                 # BaseModel.fit() will:
                 # 1. Stream candles from all supported tickers (or use cache if use_cache=True)
@@ -898,6 +934,28 @@ class DiversifiedEnsemble:
                 if is_buy_hold:
                     # Buy_hold is always in market: h_i = 1.0
                     self.model_exposure_fractions_[model_name] = 1.0
+                elif base_model.members and getattr(self, "_member_feature_data", None) and model_name in getattr(
+                    self, "_member_feature_data", {}
+                ):
+                    # Base model with members: use provided feature data to emit member signals and set exposure per member
+                    feat_df = self._member_feature_data[model_name]
+                    try:
+                        member_signals_df = base_model.emit_member_signals(
+                            feature_data=feat_df, strategy=base_model.strategy
+                        )
+                        for member_name in member_signals_df.columns:
+                            full_name = f"{model_name}::{member_name}"
+                            ser = member_signals_df[member_name]
+                            # Exposure fraction is time-in-market; do not shrink it by signal magnitude.
+                            self.model_exposure_fractions_[full_name] = (ser != 0).astype(float).mean()
+                    except Exception as e:
+                        logger.warning(
+                            f"Error computing exposure for model '{model_name}' members: {e}. "
+                            "Using fallback 1/n_bins per member."
+                        )
+                        n_bins = getattr(base_model, "n_bins", 10)
+                        for mname, _ in base_model.members:
+                            self.model_exposure_fractions_[f"{model_name}::{mname}"] = 1.0 / n_bins
                 else:
                     # Generate binary signals for this model across supported tickers only
                     model_signals = []
@@ -1220,7 +1278,64 @@ class DiversifiedEnsemble:
                             f"Supported tickers: {model_ticker_names}. Skipping."
                         )
                         continue
-                    
+
+                    member_feature_data = getattr(self, "_member_feature_data", None) or {}
+                    if base_model.members and member_feature_data.get(model_name) is not None:
+                        # Multi-member base model: use provided feature data and emit one forecast per member
+                        feat_df = member_feature_data[model_name]
+                        ticker_dt_vals = pd.to_datetime(ticker_candles["datetime"], utc=False).dt.floor("s")
+                        ticker_dts_unique = pd.DatetimeIndex(ticker_dt_vals.unique()).sort_values()
+                        reindexed = feat_df.reindex(ticker_dts_unique).dropna(how="all")
+                        if reindexed.empty:
+                            logger.warning(
+                                f"Base model '{model_name}' member feature data has no overlap with ticker '{ticker_name}'."
+                            )
+                            continue
+                        try:
+                            member_signals_df = base_model.emit_member_signals(
+                                feature_data=reindexed, strategy=base_model.strategy
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error emitting member signals for model '{model_name}' ticker '{ticker_name}': {e}",
+                                exc_info=True,
+                            )
+                            continue
+                        for member_name in member_signals_df.columns:
+                            pred_ser = member_signals_df[member_name]
+                            full_name = f"{model_name}::{member_name}"
+                            # Member outputs from continuous binning are per-bar Sharpe-like
+                            # magnitudes. Convert to clipped annualized strength for position
+                            # scaling so stronger members get proportionally larger forecasts.
+                            annualized_strength = self._annualized_member_signal_strength(pred_ser)
+                            h_i = self.model_exposure_fractions_.get(full_name, 0.1)
+                            sqrt_h_i = np.sqrt(max(h_i, 1e-8))
+                            forecast_if_active = self.target_volatility_ / (ticker_vol * sqrt_h_i)
+                            forecast_if_active = min(forecast_if_active, 2.0)
+                            volatility_adjusted_forecast = np.clip(
+                                forecast_if_active * annualized_strength,
+                                -2.0,
+                                2.0,
+                            )
+                            pred_df = pd.DataFrame({
+                                "ticker": ticker_name,
+                                "datetime": pred_ser.index,
+                                "model_name": full_name,
+                                "forecast": volatility_adjusted_forecast,
+                            })
+                            ticker_predictions.append(pred_df)
+                            if return_base_model_predictions:
+                                if full_name not in base_model_predictions_dict:
+                                    base_model_predictions_dict[full_name] = []
+                                base_model_predictions_dict[full_name].append(
+                                    pd.DataFrame({
+                                        "ticker": ticker_name,
+                                        "datetime": pred_ser.index,
+                                        "forecast_score": volatility_adjusted_forecast,
+                                    })
+                                )
+                        continue
+
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
                     # BaseModel.predict() handles feature caching internally (if use_cache=True)
                     pred = base_model.predict(
@@ -1349,11 +1464,8 @@ class DiversifiedEnsemble:
         # This fixes the issue where different tickers have different prediction counts (e.g. ES:1008, NQ:1007)
         # causing the merge in portfolio._apply_risk_management_to_forecasts to fail
         candles_datetime_index = candles_df[['ticker', 'datetime']].copy()
-        candles_datetime_index['datetime'] = pd.to_datetime(candles_datetime_index['datetime'])
-        # Remove microseconds from candles (used to distinguish tickers in multi-ticker DataFrames)
-        candles_datetime_index['datetime'] = candles_datetime_index['datetime'].dt.floor('s')
-        ensemble_result['datetime'] = pd.to_datetime(ensemble_result['datetime'])
-        ensemble_result['datetime'] = ensemble_result['datetime'].dt.floor('s')
+        candles_datetime_index['datetime'] = pd.to_datetime(candles_datetime_index['datetime']).dt.floor('s')
+        ensemble_result['datetime'] = pd.to_datetime(ensemble_result['datetime']).dt.floor('s')
         
         # Right merge: keep all candles datetimes, fill missing forecasts with 0
         ensemble_result = candles_datetime_index.merge(
@@ -1373,8 +1485,7 @@ class DiversifiedEnsemble:
             combined_base_models = {}
             for model_name, model_dfs in base_model_predictions_dict.items():
                 base_model_df = pd.concat(model_dfs, ignore_index=True)
-                base_model_df['datetime'] = pd.to_datetime(base_model_df['datetime'])
-                base_model_df['datetime'] = base_model_df['datetime'].dt.floor('s')
+                base_model_df['datetime'] = pd.to_datetime(base_model_df['datetime']).dt.floor('s')
                 tickers_in_model = base_model_df['ticker'].unique()
                 candles_subset = candles_datetime_index[
                     candles_datetime_index['ticker'].isin(tickers_in_model)

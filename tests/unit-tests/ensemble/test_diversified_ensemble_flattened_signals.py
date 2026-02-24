@@ -207,3 +207,26 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
         # Should raise because legacy schema doesn't have members
         with pytest.raises(ValueError, match="members"):
             validate_control_file(control_file_legacy)
+
+    def test_member_signal_strength_annualizes_and_clips_daily_sharpe_outputs(self):
+        """Continuous member outputs should map to clipped annualized strength."""
+        ensemble = DiversifiedEnsemble(
+            base_models={},
+            required_columns=[],
+            base_tf=TimeFrame.D,
+        )
+        member_output = pd.Series([0.0, 0.05, -0.10, 0.30, np.nan])
+
+        result = ensemble._annualized_member_signal_strength(member_output)
+
+        scale = np.sqrt(252.0)
+        expected = np.array(
+            [
+                0.0,
+                0.05 * scale,
+                -0.10 * scale,
+                2.0,  # clipped from ~4.76
+                0.0,
+            ]
+        )
+        assert np.allclose(result, expected)
