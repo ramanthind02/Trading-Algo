@@ -24,6 +24,10 @@ class InSamplePermutationConfig:
     alpha: float = _DEFAULT_ALPHA
     metric_threshold: float = _DEFAULT_METRIC_THRESHOLD
     permutation_mode_stage2: PermutationModeStage2 = _DEFAULT_PERMUTATION_MODE_STAGE2
+    n_jobs_stage2_reps: int = 1
+    run_stage1: bool = True
+    run_stage2: bool = True
+    run_stage3_walkforward: bool = True  # False in in-sample phase; True in walkforward phase
 
 
 @dataclass(frozen=True)
@@ -36,12 +40,17 @@ class WalkforwardPermutationConfig:
 
 @dataclass(frozen=True)
 class OutOfSamplePermutationConfig:
-    """Out-of-sample objective metric settings."""
+    """Out-of-sample permutation settings.
+
+    When run_oos_permutation is False (e.g. in-sample phase), Phase 3 is skipped
+    and ensemble candidates are Stage 2 passers (or Stage 2 ∩ stable if Stage 3 ran).
+    """
 
     objective_metric: ObjectiveMetricSpec = field(
         default_factory=lambda: ObjectiveMetricSpec(builtin='sharpe'),
     )
     candidate_source: OOSCandidateSource = 'stage2_passers'
+    run_oos_permutation: bool = False
 
 
 @dataclass(frozen=True)
@@ -70,6 +79,10 @@ class PermutationTestConfig:
         random_seed: Optional[int] = None,
         permutation_mode_stage2: PermutationModeStage2 = _DEFAULT_PERMUTATION_MODE_STAGE2,
         min_folds_stable: int = _DEFAULT_MIN_FOLDS_STABLE,
+        n_jobs_stage2_reps: int = 1,
+        run_stage1: bool = True,
+        run_stage2: bool = True,
+        run_stage3_walkforward: bool = True,
         *,
         in_sample: InSamplePermutationConfig | None = None,
         walkforward: WalkforwardPermutationConfig | None = None,
@@ -83,6 +96,8 @@ class PermutationTestConfig:
                 alpha != _DEFAULT_ALPHA,
                 metric_threshold != _DEFAULT_METRIC_THRESHOLD,
                 permutation_mode_stage2 != _DEFAULT_PERMUTATION_MODE_STAGE2,
+                run_stage1 is not True,
+                run_stage2 is not True,
             ),
         ):
             raise ValueError(
@@ -102,11 +117,18 @@ class PermutationTestConfig:
         if out_of_sample is not None and objective_metric is not None:
             raise ValueError('Provide objective_metric through out_of_sample or objective_metric, not both.')
 
+        resolved_out_of_sample = out_of_sample or OutOfSamplePermutationConfig(
+            objective_metric=objective_metric or ObjectiveMetricSpec(builtin='sharpe'),
+        )
         resolved_in_sample = in_sample or InSamplePermutationConfig(
             nreps=nreps,
             alpha=alpha,
             metric_threshold=metric_threshold,
             permutation_mode_stage2=permutation_mode_stage2,
+            n_jobs_stage2_reps=n_jobs_stage2_reps,
+            run_stage1=run_stage1,
+            run_stage2=run_stage2,
+            run_stage3_walkforward=run_stage3_walkforward,
         )
         resolved_walkforward = walkforward or WalkforwardPermutationConfig(
             top_k=top_k,
@@ -144,9 +166,29 @@ class PermutationTestConfig:
         return self.in_sample.permutation_mode_stage2
 
     @property
+    def n_jobs_stage2_reps(self) -> int:
+        return self.in_sample.n_jobs_stage2_reps
+
+    @property
+    def run_stage3_walkforward(self) -> bool:
+        return self.in_sample.run_stage3_walkforward
+
+    @property
+    def run_stage1(self) -> bool:
+        return self.in_sample.run_stage1
+
+    @property
+    def run_stage2(self) -> bool:
+        return self.in_sample.run_stage2
+
+    @property
     def min_folds_stable(self) -> int:
         return self.walkforward.min_folds_stable
 
     @property
     def objective_metric(self) -> ObjectiveMetricSpec:
         return self.out_of_sample.objective_metric
+
+    @property
+    def run_oos_permutation(self) -> bool:
+        return self.out_of_sample.run_oos_permutation

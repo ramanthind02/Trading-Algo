@@ -12,9 +12,9 @@ The `feature_selection.validation` package exposes configuration classes and uti
 
 | Class | Description |
 |-------|-------------|
-| `InSamplePermutationConfig` | Configuration for in-sample permutation testing (Phases 1-3). Includes objective metric, significance level, replicate count, and null type selection. |
+| `InSamplePermutationConfig` | Configuration for in-sample permutation stages (Stage 1/2 execution, replicate count, alpha, stage-2 permutation mode, and stage toggles). |
 | `OutOfSamplePermutationConfig` | Configuration for out-of-sample validation phase. Used after the ensemble is locked. |
-| `PermutationTestConfig` | Base configuration for individual permutation tests. |
+| `PermutationTestConfig` | Composite config for in-sample, walkforward, and OOS permutation phases, with convenience scalar arguments and computed properties. |
 | `WalkforwardPermutationConfig` | Configuration for walkforward stability analysis (Phase 3). |
 | `PermutationReportConfig` | Configuration for generating permutation test reports. |
 
@@ -36,13 +36,14 @@ from feature_selection.validation import (
 
 # Configure the permutation test suite
 config = InSamplePermutationConfig(
-    objective_metric=ObjectiveMetricSpec.SHARPE,
-    significance_level=0.1,
-    replicate_count=500,
+    nreps=500,
+    alpha=0.1,
+    run_stage1=True,
+    run_stage2=False,
 )
 
 # Resolve metric
-metric_fn = resolve_objective_metric(ObjectiveMetricSpec.SHARPE)
+metric_fn = resolve_objective_metric(ObjectiveMetricSpec(builtin="sharpe"))
 ```
 
 ## See Also

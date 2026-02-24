@@ -10,6 +10,7 @@ Entry point for tests and scripts — import ``run_eda_pipeline`` or
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, cast
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
 from feature_research.config import FeatureType
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validation.config import PermutationTestConfig
+from feature_selection.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
 from feature_selection.validation.objective_metrics import resolve_objective_metric
 from feature_selection.validation.orchestration import run_permutation_test_suite
 from feature_research.in_sample.data_loader import (
@@ -37,7 +38,7 @@ from feature_research.in_sample.data_loader import (
     param_combo_label,
     populate_cache_if_needed,
 )
-from feature_research.walkforward.io import write_walkforward_artifacts
+from feature_research.walkforward.io import resolve_walkforward_output_dir, write_walkforward_artifacts
 from feature_research.walkforward.runner import run_walkforward_research
 from feature_research.walkforward.visualization import plot_fold_timeline, plot_selection_stability
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
@@ -92,7 +93,11 @@ def _build_continuous_walkforward_evaluator(
         train_end: pd.Timestamp | None = None,
     ) -> pd.Series:
         combo_data = combo_feature_target[_combo_key(params)]
-        fold_data = combo_data.reindex(_normalize_datetime_index(fold_candles.index)).dropna()
+        fold_index_norm = _normalize_datetime_index(fold_candles.index)
+        combo_index_norm = _normalize_datetime_index(combo_data.index)
+        # reindex() forbids duplicate target labels (multi-ticker folds); select by mask instead.
+        in_fold = combo_index_norm.isin(fold_index_norm)
+        fold_data = combo_data.loc[in_fold].dropna()
         if fold_data.empty:
             return pd.Series(dtype=float)
 
@@ -334,6 +339,7 @@ def run_eda_pipeline(
                 evaluate_param_combo=_build_continuous_walkforward_evaluator(combo_feature_target, config),
                 research_config=config,
                 portfolio_candles_df=portfolio_candles,
+                feature_data_by_combo=combo_feature_target,
             )
             stability_figure, _ = plot_selection_stability(
                 selection_summary_df=walkforward_report.selection_summary_df,
@@ -357,7 +363,7 @@ def run_eda_pipeline(
                     "walkforward_test_step": config.walkforward.test_step,
                     "walkforward_num_steps": config.walkforward.num_steps,
                     "walkforward_top_k": config.walkforward.top_k,
-                    "walkforward_use_enhanced_selection": config.walkforward.use_enhanced_selection,
+                    "walkforward_selection_method": config.walkforward._effective_selection_method(),
                 },
             )
             plt.close(stability_figure)
@@ -459,7 +465,7 @@ def run_eda_pipeline(
                     "walkforward_test_step": config.walkforward.test_step,
                     "walkforward_num_steps": config.walkforward.num_steps,
                     "walkforward_top_k": config.walkforward.top_k,
-                    "walkforward_use_enhanced_selection": config.walkforward.use_enhanced_selection,
+                    "walkforward_selection_method": config.walkforward._effective_selection_method(),
                 },
             )
             plt.close(stability_figure)
@@ -486,8 +492,8 @@ def run_walkforward_pipeline(
     Parameters
     ----------
     config : ResearchConfig
-        Research settings. Set ``config.walkforward.use_enhanced_selection = True``
-        to activate the three-objective enhanced selection algorithm.
+        Research settings. Selection is controlled by ``config.walkforward.selection_method``
+        (top_k, enhanced, or stable_region; default stable_region).
     output_dir : Path
         Created if it does not exist. Not used for artifact output - artifacts
         are written to ``config.walkforward.output_root`` via
@@ -514,10 +520,14 @@ def run_walkforward_pipeline(
     print(f"Tickers : {[t.name for t in config.tickers]}")
     print(f"Period  : {config.start.date()} -> {config.end.date()}")
     print(f"Combos  : {len(expanded)}")
-    print(
-        f"Enhanced selection: {getattr(config.walkforward, 'use_enhanced_selection', False)}"
-    )
+    print(f"Selection method: {config.walkforward._effective_selection_method()}")
     print(f"{'='*64}\n")
+
+    output_dir = resolve_walkforward_output_dir(
+        feature_type=config.feature_type.value,
+        module_name=str(config.bias_spec["module_name"]),
+        root_dir=config.walkforward.output_root,
+    )
 
     # Dispatch on feature_type
     if config.feature_type == FeatureType.CONTINUOUS:
@@ -585,6 +595,8 @@ def run_walkforward_pipeline(
             evaluate_param_combo=_build_continuous_walkforward_evaluator(combo_feature_target, config),
             research_config=config,
             portfolio_candles_df=portfolio_candles,
+            feature_data_by_combo=combo_feature_target,
+            output_dir=output_dir,
         )
 
     elif config.feature_type == FeatureType.RULE_BASED:
@@ -629,6 +641,7 @@ def run_walkforward_pipeline(
             config=config.walkforward,
             param_grid=successful_param_grid,
             evaluate_param_combo=_build_rule_based_walkforward_evaluator(combo_returns),
+            output_dir=output_dir,
         )
 
     else:
@@ -665,7 +678,7 @@ def run_walkforward_pipeline(
             "walkforward_test_step": config.walkforward.test_step,
             "walkforward_num_steps": config.walkforward.num_steps,
             "walkforward_top_k": config.walkforward.top_k,
-            "walkforward_use_enhanced_selection": config.walkforward.use_enhanced_selection,
+            "walkforward_selection_method": config.walkforward._effective_selection_method(),
         },
     )
     plt.close(stability_figure)
@@ -699,13 +712,98 @@ def _build_fold_structure(
     return folds
 
 
+def write_permutation_summary(suite: "PermutationTestSuite", output_dir: Path) -> tuple[Path, Path]:
+    """Write permutation test summary for all param combos to the results folder.
+
+    Writes:
+      - permutation_summary.csv: one row per param combo (stage1/stage2 p-values, pass, metrics).
+      - permutation_summary.md: funnel stats and short human-readable summary.
+
+    Stage 2 is only run for Stage 1 passers (vector shuffle as gate); combos that skipped
+    Stage 2 have stage2_pval and stage2_metric empty in CSV.
+
+    Returns
+    -------
+    tuple[Path, Path]
+        Paths to the written CSV and Markdown files.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, object]] = []
+    for combo_name, s1 in suite.stage1_reports.items():
+        s2 = suite.stage2_reports.get(combo_name)
+        row: dict[str, object] = {
+            "param_combo": combo_name,
+            "stage1_metric": s1.original_metric,
+            "stage1_pval": s1.p_value,
+            "stage1_passed": s1.passed,
+            "stage1_alpha": s1.alpha,
+        }
+        if s2 is not None:
+            row["stage2_metric"] = s2.original_metric
+            row["stage2_pval"] = s2.p_value
+            row["stage2_passed"] = s2.passed
+            row["stage2_mode"] = s2.permutation_mode
+        else:
+            row["stage2_metric"] = None
+            row["stage2_pval"] = None
+            row["stage2_passed"] = False
+            row["stage2_mode"] = "skipped"
+        rows.append(row)
+
+    csv_path = output_dir / "permutation_summary.csv"
+    df = pd.DataFrame(rows)
+    df.to_csv(csv_path, index=False)
+
+    fs = suite.funnel_stats
+    md_lines = [
+        "# In-Sample Permutation Summary",
+        "",
+        f"**Feature:** {suite.feature_name}  |  **Type:** {suite.feature_type}",
+        "",
+        "## Funnel (vector shuffle → pipeline permutation)",
+        "",
+        "| Stage | Tested | Passed |",
+        "|-------|--------|--------|",
+        f"| Stage 1 (vector shuffle) | {fs.total_params} | {fs.stage1_pass} |",
+        f"| Stage 2 (pipeline/candle) | {fs.stage1_pass} | {fs.stage2_pass} |",
+        "",
+        f"**Computational savings (Stage 1 gate):** {fs.computational_savings_pct:.1f}%",
+        "",
+        "## Per-combo metrics and p-values",
+        "",
+        "| param_combo | S1 metric | S1 p-val | S1 pass | S2 metric | S2 p-val | S2 pass |",
+        "|-------------|-----------|----------|--------|-----------|----------|--------|",
+    ]
+    for row in rows:
+        s1_m = row["stage1_metric"]
+        s1_p = row["stage1_pval"]
+        s1_pass = "✓" if row["stage1_passed"] else "✗"
+        s2_m = row.get("stage2_metric")
+        s2_p = row.get("stage2_pval")
+        s2_pass_cell = "✓" if row.get("stage2_passed") else ("—" if s2_m is None and s2_p is None else "✗")
+        s2_m_str = f"{s2_m:.4f}" if s2_m is not None else "—"
+        s2_p_str = f"{s2_p:.4f}" if s2_p is not None else "—"
+        md_lines.append(
+            f"| {row['param_combo']} | {s1_m:.4f} | {s1_p:.4f} | {s1_pass} | {s2_m_str} | {s2_p_str} | {s2_pass_cell} |"
+        )
+    md_lines.extend(["", "Full data: `permutation_summary.csv`", ""])
+    md_path = output_dir / "permutation_summary.md"
+    md_path.write_text("\n".join(md_lines), encoding="utf-8")
+
+    return (csv_path, md_path)
+
+
 def run_permutation_pipeline(
     config: "ResearchConfig",
     output_dir: Path,
 ) -> "PermutationTestSuite":
     """Run the shared permutation suite using the unified research adapter.
 
-    DISPATCHES on feature_type to determine binning model factory and feature name handling.
+    Stage 1 (vector shuffle) runs for all param combos; Stage 2 (pipeline/candle
+    permutation) runs only for Stage 1 passers to save compute.
+
+    DISPATCHES on feature_type to determine binning model factory and param grid
+    (continuous: expand by bin_count).
     """
     if not config.permutation_suite.enabled:
         raise ValueError("Permutation suite is disabled; set config.permutation_suite.enabled=True.")
@@ -718,20 +816,51 @@ def run_permutation_pipeline(
         raise ValueError("No parameter combinations available for permutation suite.")
 
     candles_df = load_candles_for_config(config)
-    seed_feature_data = load_features_for_combo(expanded[0], config, candles_override=candles_df)
+    seed_spec = expanded[0]
+    try:
+        seed_feature_data = load_features_for_combo(seed_spec, config, candles_override=candles_df)
+    except ValueError as e:
+        err_msg = str(e)
+        if "Tickers dropped" in err_msg or "Missing tickers" in err_msg:
+            # Partial cache: only some tickers have data. Fall back to first ticker so permutation can run.
+            single_ticker_config = replace(config, tickers=[config.tickers[0]])
+            print(
+                f"  [permutation] Multi-ticker alignment failed; using single ticker: {single_ticker_config.tickers[0].name}"
+            )
+            candles_df = load_candles_for_config(single_ticker_config)
+            config = single_ticker_config
+            seed_feature_data = load_features_for_combo(seed_spec, config, candles_override=candles_df)
+        else:
+            raise
     if seed_feature_data is None:
         raise ValueError("Unable to load feature/target data. Ensure cache and candles are available.")
 
     _, target, feature_col = seed_feature_data
-    param_grid = [single_spec["params"] for single_spec in expanded]
     module_name = config.bias_spec["module_name"]
     timeframe = _normalize_timeframe(config.bias_spec)
 
+    # Param grid: for CONTINUOUS expand by bin_count; for RULE_BASED use bias params only
+    if config.feature_type == FeatureType.CONTINUOUS:
+        param_grid = [
+            combo_params
+            for single_spec in expanded
+            for combo_params in _expand_params_with_bin_count(
+                dict(single_spec["params"]),
+                config.binning_params.bin_counts,
+            )
+        ]
+    else:
+        param_grid = [single_spec["params"] for single_spec in expanded]
+
+    # Feature extraction uses only bias params (no bin_count) so cache key is correct
+    _bias_only_keys = frozenset(config.bias_spec.get("params", {}).keys())
+
     def extractor_func(df: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
+        bias_params = {k: v for k, v in params.items() if k in _bias_only_keys}
         single_spec = {
             "module_name": module_name,
             "timeframes": [timeframe],
-            "params": params,
+            "params": bias_params,
         }
         loaded = load_features_for_combo(single_spec, config, candles_override=df)
         if loaded is None:
@@ -747,7 +876,14 @@ def run_permutation_pipeline(
         random_seed=config.permutation_suite.random_seed,
         permutation_mode_stage2=config.permutation_suite.permutation_mode_stage2,
         min_folds_stable=config.permutation_suite.min_folds_stable,
-        objective_metric=config.permutation_suite.objective_metric,
+        n_jobs_stage2_reps=config.permutation_suite.n_jobs_stage2_reps,
+        run_stage1=config.permutation_suite.run_stage1,
+        run_stage2=config.permutation_suite.run_stage2,
+        run_stage3_walkforward=False,
+        out_of_sample=OutOfSamplePermutationConfig(
+            objective_metric=config.permutation_suite.objective_metric,
+            run_oos_permutation=False,
+        ),
     )
     objective_func = resolve_objective_metric(config.permutation_suite.objective_metric)
     fold_structure = _build_fold_structure(
@@ -758,15 +894,30 @@ def run_permutation_pipeline(
 
     # Dispatch on feature_type for binning model factory
     if config.feature_type == FeatureType.CONTINUOUS:
-        binning_model_factory = lambda _params: ContinuousBinningModel(
-            bin_counts=config.binning_params.bin_counts,
-            use_coverage_bonus=config.binning_params.use_coverage_bonus,
-            coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
-            max_coverage_bonus=config.binning_params.max_coverage_bonus,
-        )
+        bp = config.binning_params
+
+        def binning_model_factory(params: dict[str, Any]) -> ContinuousBinningModel:
+            bin_count = int(cast(int, params.get("bin_count", bp.bin_counts[0])))
+            return ContinuousBinningModel(
+                n_bins=bin_count,
+                bin_counts=[bin_count],
+                selection_metric=bp.selection_metric,
+                strategy=bp.strategy,
+                metric_threshold=bp.metric_threshold,
+                t_threshold=bp.t_threshold,
+                min_region_width=bp.min_region_width,
+                shrinkage_k=bp.shrinkage_k,
+                long_clip_min=bp.long_clip_min,
+                long_clip_max=bp.long_clip_max,
+                short_clip_min=bp.short_clip_min,
+                short_clip_max=bp.short_clip_max,
+                use_coverage_bonus=bp.use_coverage_bonus,
+                coverage_bonus_per_10pct=bp.coverage_bonus_per_10pct,
+                max_coverage_bonus=bp.max_coverage_bonus,
+            )
     else:
-        # RULE_BASED: placeholder factory (not used in rule-based permutation pipeline)
-        binning_model_factory = lambda _params: None
+        def binning_model_factory(_params: dict[str, Any]) -> None:
+            return None
 
     return run_permutation_test_suite(
         candles_df=candles_df,
