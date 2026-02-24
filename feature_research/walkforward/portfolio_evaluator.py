@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -12,8 +12,15 @@ from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from feature_research.walkforward.metrics import resolve_objective_metric
+from feature_selection.base_models.continuous_binning import ContinuousBinningModel
+from feature_selection.base_models.feature_base_model import BaseModel
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.helpers import build_feature_column_name
+
+
+def _combo_key(params: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
+    """Convert params dict to hashable sorted tuple for use as dict key."""
+    return tuple(sorted(params.items(), key=lambda item: item[0]))
 
 
 @dataclass(frozen=True)
@@ -22,6 +29,8 @@ class FoldPortfolioResult:
     oos_portfolio_sharpe: float
     oos_portfolio_returns: pd.Series
     n_params_selected: int
+    per_signal_oos_sharpe: dict[str, float] | None = None
+    per_signal_oos_returns: dict[str, pd.Series] | None = None
 
 
 def _normalize_strategy(strategy: str) -> str:
@@ -57,6 +66,34 @@ def ensure_portfolio_candle_columns(
             lambda value: _normalize_timeframe(value) if not isinstance(value, TimeFrame) else value
         )
     return normalized
+
+
+def _calculate_oos_returns_from_positions(
+    positions_df: pd.DataFrame,
+    candles_df: pd.DataFrame,
+    *,
+    series_name: str,
+) -> pd.Series:
+    """Convert ticker-level position predictions into realized returns using candles."""
+    required_columns = {"ticker", "datetime", "position_fraction"}
+    missing_columns = required_columns - set(positions_df.columns)
+    if missing_columns:
+        raise ValueError(
+            f"positions_df is missing required columns for return calculation: {sorted(missing_columns)}"
+        )
+
+    from ensemble.portfolio_tester import calculate_strategy_returns_from_positions
+
+    returns = calculate_strategy_returns_from_positions(
+        positions_df=positions_df,
+        candles_df=candles_df,
+    )
+    if not isinstance(returns.index, pd.DatetimeIndex):
+        normalized_index = pd.to_datetime(returns.index, utc=False)
+        returns.index = pd.DatetimeIndex(normalized_index)
+    if getattr(returns.index, "tz", None) is not None:
+        returns.index = returns.index.tz_localize(None)
+    return returns.sort_index().rename(series_name)
 
 
 def _build_control_file_payload(
@@ -163,6 +200,135 @@ def build_research_portfolio(
     )
 
 
+def _build_one_base_model_with_members(
+    selected_params: list[dict[str, Any]],
+    binning_config: Any,
+    tickers: list[Ticker],
+    trading_timeframe: TimeFrame,
+    module_name: str,
+    feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame],
+    train_index: pd.DatetimeIndex,
+    test_index: pd.DatetimeIndex,
+    train_target: pd.Series,
+) -> tuple[BaseModel, pd.DataFrame, pd.DataFrame]:
+    """Build one BaseModel with one member per selected param and train/test feature DataFrames."""
+    strategy = _normalize_strategy(str(binning_config.strategy))
+    train_parts: dict[str, pd.Series] = {}
+    test_parts: dict[str, pd.Series] = {}
+    feature_columns: list[str] = []
+    for params in selected_params:
+        key = _combo_key(params)
+        if key not in feature_data_by_combo:
+            continue
+        df = feature_data_by_combo[key]
+        if "feature" not in df.columns:
+            continue
+        feature_params = {k: v for k, v in params.items() if k != "bin_count"}
+        feature_column = build_feature_column_name(
+            module=module_name,
+            feature="signal",
+            tf=trading_timeframe,
+            params=feature_params,
+        )
+        ser = df["feature"].copy()
+        ser.index = pd.DatetimeIndex(pd.to_datetime(ser.index)).floor("s")
+        ser_unique = (
+            ser.groupby(level=0).first()
+            if ser.index.duplicated().any()
+            else ser
+        )
+        train_parts[feature_column] = ser_unique.reindex(train_index).dropna()
+        test_parts[feature_column] = ser_unique.reindex(test_index).dropna()
+        feature_columns.append(feature_column)
+    if not feature_columns:
+        raise ValueError("No feature data found for any selected param in feature_data_by_combo")
+    train_features_df = pd.DataFrame(train_parts)
+    test_features_df = pd.DataFrame(test_parts)
+
+    first_params = selected_params[0]
+    first_feature_params = {k: v for k, v in first_params.items() if k != "bin_count"}
+    first_feature_column = build_feature_column_name(
+        module=module_name,
+        feature="signal",
+        tf=trading_timeframe,
+        params=first_feature_params,
+    )
+    bin_count = int(first_params.get("bin_count", getattr(binning_config, "bin_counts", [10])[0]))
+    first_binning = ContinuousBinningModel(
+        n_bins=bin_count,
+        bin_counts=[bin_count],
+        selection_metric=getattr(binning_config, "selection_metric", "sharpe"),
+        strategy=strategy,
+        metric_threshold=getattr(binning_config, "metric_threshold", 0.0),
+        t_threshold=getattr(binning_config, "t_threshold", 2.0),
+        min_region_width=getattr(binning_config, "min_region_width", 2),
+        shrinkage_k=getattr(binning_config, "shrinkage_k", 20.0),
+        long_clip_min=getattr(binning_config, "long_clip_min", 0.5),
+        long_clip_max=getattr(binning_config, "long_clip_max", 2.0),
+        short_clip_min=getattr(binning_config, "short_clip_min", 0.5),
+        short_clip_max=getattr(binning_config, "short_clip_max", 2.0),
+        use_coverage_bonus=getattr(binning_config, "use_coverage_bonus", False),
+        coverage_bonus_per_10pct=getattr(binning_config, "coverage_bonus_per_10pct", 0.02),
+        max_coverage_bonus=getattr(binning_config, "max_coverage_bonus", 0.2),
+    )
+    bias_node_spec = {
+        "module_name": module_name,
+        "timeframes": [trading_timeframe],
+        "params": first_feature_params,
+    }
+    feature_config = {
+        "bias_node_spec": bias_node_spec,
+        "model_type": "continuous_binning",
+        "constructor_params": {},
+        "strategy": strategy,
+    }
+    base_model = BaseModel(
+        feature_config=feature_config,
+        tickers=list(tickers),
+        binning_model=first_binning,
+        use_cache=False,
+    )
+    base_model.feature_column = first_feature_column
+    first_ser = train_features_df[first_feature_column].dropna()
+    first_target_aligned = train_target.reindex(first_ser.index).dropna()
+    first_ser = first_ser.reindex(first_target_aligned.index).dropna()
+    first_binning.fit(first_ser, first_target_aligned)
+
+    for i, params in enumerate(selected_params[1:], start=1):
+        feature_params = {k: v for k, v in params.items() if k != "bin_count"}
+        feature_column = build_feature_column_name(
+            module=module_name,
+            feature="signal",
+            tf=trading_timeframe,
+            params=feature_params,
+        )
+        bin_count = int(params.get("bin_count", getattr(binning_config, "bin_counts", [10])[0]))
+        member_binning = ContinuousBinningModel(
+            n_bins=bin_count,
+            bin_counts=[bin_count],
+            selection_metric=getattr(binning_config, "selection_metric", "sharpe"),
+            strategy=strategy,
+            metric_threshold=getattr(binning_config, "metric_threshold", 0.0),
+            t_threshold=getattr(binning_config, "t_threshold", 2.0),
+            min_region_width=getattr(binning_config, "min_region_width", 2),
+            shrinkage_k=getattr(binning_config, "shrinkage_k", 20.0),
+            long_clip_min=getattr(binning_config, "long_clip_min", 0.5),
+            long_clip_max=getattr(binning_config, "long_clip_max", 2.0),
+            short_clip_min=getattr(binning_config, "short_clip_min", 0.5),
+            short_clip_max=getattr(binning_config, "short_clip_max", 2.0),
+            use_coverage_bonus=getattr(binning_config, "use_coverage_bonus", False),
+            coverage_bonus_per_10pct=getattr(binning_config, "coverage_bonus_per_10pct", 0.02),
+            max_coverage_bonus=getattr(binning_config, "max_coverage_bonus", 0.2),
+        )
+        ser = train_features_df[feature_column].dropna()
+        target_aligned = train_target.reindex(ser.index).dropna()
+        ser = ser.reindex(target_aligned.index).dropna()
+        member_binning.fit(ser, target_aligned)
+        base_model.add_member(feature_column, member_binning, feature_column=feature_column)
+
+    return base_model, train_features_df, test_features_df
+
+
 def evaluate_fold_portfolio(
     train_candles: pd.DataFrame,
     test_candles: pd.DataFrame,
@@ -175,12 +341,101 @@ def evaluate_fold_portfolio(
     module_name: str = "rsi",
     objective_metric_name: str = "sharpe",
     weight_layer_config: WeightLayerConfig | None = None,
+    feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
 ) -> FoldPortfolioResult:
     timeframe = _normalize_timeframe(trading_timeframe)
     train_ready = ensure_portfolio_candle_columns(train_candles, timeframe)
     test_ready = ensure_portfolio_candle_columns(test_candles, timeframe)
     if train_ready.empty or test_ready.empty:
         raise ValueError("train_candles and test_candles must contain rows")
+
+    train_dt = pd.to_datetime(train_ready["datetime"], utc=False)
+    test_dt = pd.to_datetime(test_ready["datetime"], utc=False)
+    train_index_unique = pd.DatetimeIndex(train_dt.unique()).sort_values()
+    test_index_unique = pd.DatetimeIndex(test_dt.unique()).sort_values()
+    # target_series may have duplicate index (multi-ticker); reindex requires unique index on the caller
+    target_unique = (
+        target_series.groupby(level=0).first()
+        if target_series.index.duplicated().any()
+        else target_series
+    )
+    train_target = target_unique.reindex(train_index_unique)
+    metric = resolve_objective_metric(objective_metric_name)
+    per_signal_oos_sharpe: dict[str, float] | None = None
+    per_signal_oos_returns: dict[str, pd.Series] | None = None
+
+    if feature_data_by_combo and len(selected_params) > 0:
+        base_model, train_features_df, test_features_df = _build_one_base_model_with_members(
+            selected_params=selected_params,
+            binning_config=binning_config,
+            tickers=tickers,
+            trading_timeframe=timeframe,
+            module_name=module_name,
+            feature_data_by_combo=feature_data_by_combo,
+            train_index=train_index_unique,
+            test_index=test_index_unique,
+            train_target=train_target,
+        )
+        model_name = base_model.feature_column or "ensemble"
+        required_columns = base_model.get_member_feature_columns()
+        ensemble = DiversifiedEnsemble(
+            target_volatility=target_volatility,
+            base_models={model_name: base_model},
+            required_columns=required_columns,
+            base_tf=timeframe,
+        )
+        ensemble._member_feature_data = {model_name: train_features_df}
+        weight_layer = (
+            WeightLayer(config=weight_layer_config) if weight_layer_config is not None else None
+        )
+        portfolio = Portfolio(
+            ensembles=[ensemble],
+            trading_timeframe=timeframe,
+            target_volatility=target_volatility,
+            weight_layer=weight_layer,
+        )
+        portfolio.fit_from_candles(train_ready, target_data=train_target)
+        ensemble._member_feature_data = {model_name: test_features_df}
+        predictions = portfolio.predict_from_candles(
+            test_ready, return_base_model_predictions=True
+        )
+        portfolio_predictions = (
+            predictions["portfolio"] if isinstance(predictions, dict) else predictions
+        )
+        if portfolio_predictions.empty:
+            raise ValueError("Portfolio produced no predictions for test fold")
+        oos_returns = _calculate_oos_returns_from_positions(
+            portfolio_predictions,
+            test_ready,
+            series_name="portfolio_returns",
+        )
+        active_returns = oos_returns[oos_returns != 0.0]
+        oos_sharpe = float(metric(active_returns)) if not active_returns.empty else float("nan")
+        base_models = (predictions or {}).get("base_models", {})
+        if base_models:
+            per_signal_oos_sharpe = {}
+            per_signal_oos_returns = {}
+            for sig_name, pos_df in base_models.items():
+                if pos_df is None or pos_df.empty or "position_fraction" not in pos_df.columns:
+                    continue
+                ret = _calculate_oos_returns_from_positions(
+                    pos_df,
+                    test_ready,
+                    series_name="returns",
+                )
+                ar = ret[ret != 0.0]
+                per_signal_oos_sharpe[sig_name] = (
+                    float(metric(ar)) if not ar.empty else float("nan")
+                )
+                per_signal_oos_returns[sig_name] = ret
+        return FoldPortfolioResult(
+            fold_id=-1,
+            oos_portfolio_sharpe=oos_sharpe,
+            oos_portfolio_returns=oos_returns,
+            n_params_selected=len(selected_params),
+            per_signal_oos_sharpe=per_signal_oos_sharpe,
+            per_signal_oos_returns=per_signal_oos_returns if base_models else None,
+        )
 
     portfolio = build_research_portfolio(
         selected_params=selected_params,
@@ -191,32 +446,20 @@ def evaluate_fold_portfolio(
         module_name=module_name,
         weight_layer_config=weight_layer_config,
     )
-
-    train_index = pd.DatetimeIndex(pd.to_datetime(train_ready["datetime"], utc=False))
-    test_index = pd.DatetimeIndex(pd.to_datetime(test_ready["datetime"], utc=False))
-    train_target = target_series.reindex(train_index)
     portfolio.fit_from_candles(train_ready, target_data=train_target)
-
     predictions = portfolio.predict_from_candles(test_ready)
     portfolio_predictions = (
         predictions["portfolio"] if isinstance(predictions, dict) else predictions
     )
     if portfolio_predictions.empty:
         raise ValueError("Portfolio produced no predictions for test fold")
-
-    positions = (
-        portfolio_predictions.groupby("datetime")["position_fraction"].mean()
-        if "datetime" in portfolio_predictions.columns
-        else pd.Series(0.0, index=test_index)
+    oos_returns = _calculate_oos_returns_from_positions(
+        portfolio_predictions,
+        test_ready,
+        series_name="portfolio_returns",
     )
-    test_target = target_series.reindex(test_index)
-    aligned = pd.DataFrame({"position": positions, "target": test_target}).dropna()
-    oos_returns = (aligned["position"] * aligned["target"]).rename("portfolio_returns")
-
     active_returns = oos_returns[oos_returns != 0.0]
-    metric = resolve_objective_metric(objective_metric_name)
     oos_sharpe = float(metric(active_returns)) if not active_returns.empty else float("nan")
-
     return FoldPortfolioResult(
         fold_id=-1,
         oos_portfolio_sharpe=oos_sharpe,
