@@ -9,6 +9,21 @@ import pytest
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 
 
+def test_fit_raises_when_bin_counts_empty() -> None:
+    """Fit with empty bin_counts raises ValueError (no bin counts to evaluate)."""
+    np.random.seed(42)
+    feature = pd.Series(np.random.randn(100), name="f")
+    target = pd.Series(np.random.randn(100) * 0.01, name="t")
+
+    model = ContinuousBinningModel(
+        n_bins=5,
+        bin_counts=[],  # Explicit empty list
+        strategy="long",
+    )
+    with pytest.raises(ValueError, match="No bin counts to evaluate"):
+        model.fit(feature, target)
+
+
 def test_grid_search_selects_best_bin_count() -> None:
     """Test that grid search over bin_counts selects winning n_bins."""
     np.random.seed(42)

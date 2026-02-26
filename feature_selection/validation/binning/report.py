@@ -179,7 +179,6 @@ class BinningDiagnosticsReport:
     coverage_breakdown: list[RegionCoverage]
     total_coverage_pct: float
     adjacency_analysis: AdjacencyAnalysis
-    diagnostic_plots: dict[str, Figure]
     timestamp: str
 
 
@@ -190,7 +189,7 @@ def generate_binning_report(
     strategy: str = "long",
     max_regions: int = 1,
     direction_filter: Literal["long", "short", "both"] = "both",
-) -> BinningDiagnosticsReport:
+) -> tuple[BinningDiagnosticsReport, dict[str, Figure]]:
     """Orchestrate all diagnostic steps and return comprehensive report.
 
     Args:
@@ -235,7 +234,7 @@ def generate_binning_report(
 
     timestamp = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
-    return BinningDiagnosticsReport(
+    report = BinningDiagnosticsReport(
         feature_column=feature_column,
         parameter_combo=parameter_combo,
         success_verdict=success_verdict,
@@ -246,9 +245,10 @@ def generate_binning_report(
         coverage_breakdown=coverage_breakdown,
         total_coverage_pct=total_coverage_pct,
         adjacency_analysis=adjacency_analysis,
-        diagnostic_plots=diagnostic_plots,
         timestamp=timestamp,
     )
+
+    return report, diagnostic_plots
 
 
 def _extract_parameter_combo(model: BinningModelBase) -> dict[str, object]:
@@ -304,11 +304,16 @@ def detect_failure_mode(
     return "insufficient_edge"
 
 
-def save_report(report: BinningDiagnosticsReport, output_dir: str) -> str:
+def save_report(
+    report: BinningDiagnosticsReport,
+    diagnostic_plots: dict[str, Figure],
+    output_dir: str,
+) -> str:
     """Save report to JSON (metadata) and PNG (plots).
 
     Args:
         report: Binning diagnostics report
+        diagnostic_plots: Mapping of plot name to Figure (not stored in the report dataclass)
         output_dir: Directory to save report and plots
 
     Returns:
@@ -319,7 +324,7 @@ def save_report(report: BinningDiagnosticsReport, output_dir: str) -> str:
     plots_dir.mkdir(parents=True, exist_ok=True)
 
     plot_paths: dict[str, str] = {}
-    for plot_name, fig in report.diagnostic_plots.items():
+    for plot_name, fig in diagnostic_plots.items():
         plot_filename = f"{plot_name}_{report.feature_column}.png"
         plot_path = plots_dir / plot_filename
         fig.savefig(str(plot_path), dpi=150, bbox_inches="tight")

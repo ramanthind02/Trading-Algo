@@ -373,7 +373,6 @@ def _write_summary_markdown(
             f"- **Actual test coverage**: through {pd.Timestamp(last_test_end).date()} (last fold test_end). Config period_end may be later; re-run with data through that date to extend coverage."
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _write_summary_html(

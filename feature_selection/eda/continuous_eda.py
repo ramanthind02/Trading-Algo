@@ -48,20 +48,19 @@ def compute_decile_analysis(
     )
 
     actual_n_bins = len(bin_edges) - 1
-    if actual_n_bins != n_bins:
+    if actual_n_bins <= 0:
         raise ValueError(
-            f"n_bins ({n_bins}) requested but only {actual_n_bins} distinct quantile bins "
-            f"could be formed (duplicate quantile boundaries). "
-            f"Reduce n_bins or use a feature with more distinct values."
+            f"Unable to form any quantile bins from feature with {len(aligned)} non-null samples."
         )
 
     grp_stats = aligned.groupby("bin")["t"].agg(["mean", "std", "count"])
 
-    mean_return = np.full(n_bins, np.nan)
-    volatility = np.full(n_bins, np.nan)
-    sharpe = np.full(n_bins, np.nan)
-    t_stat = np.full(n_bins, np.nan)
-    sample_count = np.zeros(n_bins, dtype=int)
+    n_effective_bins = actual_n_bins
+    mean_return = np.full(n_effective_bins, np.nan)
+    volatility = np.full(n_effective_bins, np.nan)
+    sharpe = np.full(n_effective_bins, np.nan)
+    t_stat = np.full(n_effective_bins, np.nan)
+    sample_count = np.zeros(n_effective_bins, dtype=int)
 
     for i in grp_stats.index:
         idx_i = int(i)
@@ -99,7 +98,7 @@ def compute_decile_analysis(
 def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnostics:
     """Compute normality diagnostics for a feature series.
 
-    Uses Shapiro-Wilk for n <= 5000, Anderson-Darling otherwise.
+    Uses Shapiro-Wilk for n <= 5000, D'Agostino K^2 test otherwise.
     """
     clean = feature.dropna().values
     skewness = float(stats.skew(clean))
@@ -108,9 +107,7 @@ def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnost
     if len(clean) <= 5000:
         stat, p_value = stats.shapiro(clean)
     else:
-        result = stats.anderson(clean, dist="norm")
-        stat = float(result.statistic)
-        p_value = 0.051 if stat < result.critical_values[2] else 0.01
+        stat, p_value = stats.normaltest(clean)
 
     return DistributionDiagnostics(
         skewness=skewness,

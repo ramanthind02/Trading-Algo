@@ -149,10 +149,16 @@ class ContinuousBinningModel(BinningModelBase):
             raise ValueError(msg)
 
         # Grid search over bin counts
-        best_result = None
+        original_n_bins = self.n_bins
+        best_result: dict[str, object] | None = None
+
         for n in self.bin_counts:
-            self.n_bins = n
-            bins = self._create_bins(df["feature"], df["target"])
+            try:
+                self.n_bins = n
+                bins = self._create_bins(df["feature"], df["target"])
+            finally:
+                # Ensure n_bins is not left in a partial state if _create_bins raises.
+                self.n_bins = original_n_bins
             df_copy = df.copy()
             df_copy["bin"] = bins
             ordered_bins = sorted(df_copy["bin"].unique())
@@ -201,7 +207,7 @@ class ContinuousBinningModel(BinningModelBase):
             else:  # long_short
                 score = max(long_t_stat, -short_t_stat)
 
-            if best_result is None or score > best_result["score"]:
+            if best_result is None or score > best_result["score"]:  # type: ignore[index]
                 best_result = {
                     "n_bins": n,
                     "score": score,
@@ -214,6 +220,11 @@ class ContinuousBinningModel(BinningModelBase):
                     "short_sharpe": short_sharpe,
                 }
 
+        if best_result is None:
+            raise ValueError(
+                "No bin counts to evaluate. Provide at least one value in bin_counts."
+            )
+
         # Reject long-only fit when no profitable long bin exists
         if self.strategy == "long" and best_result["best_long_bin"] is None:
             raise ValueError(
@@ -221,7 +232,7 @@ class ContinuousBinningModel(BinningModelBase):
             )
 
         # Set fitted state from best result
-        self.n_bins = best_result["n_bins"]
+        self.n_bins = int(best_result["n_bins"])
         df["bin"] = best_result["bins"]
         self.bin_edges_ = self._extract_bin_edges(df, best_result["ordered_bins"])
         self.bin_stats_ = best_result["bin_stats"]

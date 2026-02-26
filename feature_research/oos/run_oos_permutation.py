@@ -1,4 +1,4 @@
-"""OOS permutation test (vector-shuffle only, single fold from config.oos_window).
+"""OOS permutation test (vector-shuffle or candle-shuffle, single fold from config.oos_window).
 
 Reuses shared permutation null logic from permutation_core and shared data loading
 from run_walkforward_permutation._load_research_data.
@@ -9,6 +9,7 @@ Usage:
 
 Config: uses load_config(); config.oos_window required. nreps, seed, alpha, n_jobs
 from config.in_sample_permutation or config.permutation_suite.
+When in_sample_permutation.run_stage1 is False, candle_shuffle runs instead of vector_shuffle.
 """
 from __future__ import annotations
 
@@ -37,21 +38,19 @@ if _repo_root is not None and str(_repo_root) not in sys.path:
 
 from feature_research.config import FeatureType
 from feature_research.in_sample.config import load_config
+from feature_research.in_sample.data_loader import load_candles_for_config
 from feature_research.walkforward.io import resolve_walkforward_output_dir
-from feature_research.walkforward.permutation_core import (
-    _compute_fixed_oos_signal_by_fold,
-    run_vector_shuffle_null,
-)
+from feature_research.walkforward.permutation_core import run_return_shuffle_null
 from feature_research.walkforward.metrics import resolve_objective_metric
-from feature_research.walkforward.permutation_helpers import (
-    aggregate_oos_metric_from_report,
-    two_unit_masks_from_fold_rows,
-)
+from feature_research.walkforward.permutation_helpers import aggregate_oos_metric_from_report
 from feature_research.walkforward.runner import (
     build_fold_rows_from_explicit_specs,
     run_walkforward_research,
 )
-from feature_research.walkforward.run_walkforward_permutation import _load_research_data
+from feature_research.walkforward.run_walkforward_permutation import (
+    _load_research_data,
+    run_candle_shuffle_null,
+)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -62,7 +61,7 @@ def _parse_args() -> argparse.Namespace:
         "--nreps",
         type=int,
         default=None,
-        help="Number of replicates (default from config.in_sample_permutation.nreps).",
+        help="Number of replicates (default from config: nreps_stage1 for vector_shuffle, nreps_stage2 for candle_shuffle).",
     )
     parser.add_argument(
         "--seed",
@@ -73,7 +72,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--n-jobs",
         type=int,
-        default=None,
+        default=8,
         help="Parallel jobs for vector-shuffle replicates (default from config or 1). -1 = all CPUs.",
     )
     parser.add_argument(
@@ -95,13 +94,26 @@ def main() -> int:
     perm_cfg = getattr(config, "in_sample_permutation", None) or getattr(
         config, "permutation_suite", None
     )
-    nreps = args.nreps if args.nreps is not None else (getattr(perm_cfg, "nreps", 100))
     random_seed = args.seed if args.seed is not None else getattr(perm_cfg, "random_seed", 42)
     alpha = getattr(perm_cfg, "alpha", 0.05)
     n_jobs = (
         args.n_jobs
         if args.n_jobs is not None
         else getattr(perm_cfg, "n_jobs_walkforward_reps", 1)
+    )
+    # When config says run_stage1=False, skip vector shuffle and run candle shuffle (stage 2) only.
+    run_stage1 = getattr(perm_cfg, "run_stage1", True)
+    effective_mode: str = "candle_shuffle" if not run_stage1 else "vector_shuffle"
+    if effective_mode != "vector_shuffle":
+        print("Config run_stage1=False: running candle_shuffle instead of vector_shuffle.")
+    nreps = (
+        args.nreps
+        if args.nreps is not None
+        else (
+            getattr(perm_cfg, "nreps_stage1", 200)
+            if effective_mode == "vector_shuffle"
+            else getattr(perm_cfg, "nreps_stage2", 100)
+        )
     )
 
     oos = config.oos_window
@@ -137,7 +149,15 @@ def main() -> int:
         else (str(getattr(wf_config, "objective_metric_name", "sharpe")) if wf_config else "sharpe")
     )
     module_name = str(getattr(config, "bias_spec", {}).get("module_name", "rsi"))
-    feature_type = "continuous" if feature_data_by_combo is not None else "rule_based"
+    _ft = getattr(config, "feature_type", None)
+    feature_type = (
+        _ft.value if isinstance(_ft, FeatureType) else
+        ("continuous" if feature_data_by_combo is not None else "rule_based")
+    )
+
+    # Portfolio simulation requires full OHLCV candles; reference_candles has only close.
+    if portfolio_candles_df is None:
+        portfolio_candles_df = load_candles_for_config(config_oos)
 
     print("Original (unpermuted) OOS run...")
     report0 = run_walkforward_research(
@@ -155,38 +175,38 @@ def main() -> int:
         fold_rows_override=fold_rows,
     )
     metric_fn = resolve_objective_metric(objective_metric_name)
+    # Use same statistic as permutation replicates (aggregate or per-fold mean) for valid p-value.
     original_metric = aggregate_oos_metric_from_report(
         report0, treat_no_selection_as_zero=True, metric_fn=metric_fn
     )
     print(f"  Original aggregate OOS metric ({objective_metric_name}): {original_metric:.4f}")
 
-    unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
-    fixed_oos_signal_by_fold = None
-    if feature_data_by_combo is not None:
-        fixed_oos_signal_by_fold = _compute_fixed_oos_signal_by_fold(
-            fold_rows=fold_rows,
-            selection_summary_df=report0.selection_summary_df,
-            reference_target=reference_target,
-            research_config=config,
-            feature_data_by_combo=feature_data_by_combo,
+    agg_returns = getattr(report0, "aggregate_oos_returns", None)
+    if effective_mode == "vector_shuffle":
+        if agg_returns is None or agg_returns.dropna().empty:
+            print("Error: no aggregate OOS returns from walkforward run; cannot build null.")
+            return 1
+        print(f"Running vector shuffle null (nreps={nreps})...")
+        null_metrics = run_return_shuffle_null(
+            aggregate_oos_returns=agg_returns,
+            nreps=nreps,
+            random_seed=random_seed,
+            objective_metric_name=objective_metric_name,
+            n_jobs=n_jobs,
         )
-
-    null_metrics = run_vector_shuffle_null(
-        reference_candles=reference_candles,
-        reference_target=reference_target,
-        fold_rows=fold_rows,
-        unit1_mask=unit1_mask,
-        unit2_mask=unit2_mask,
-        nreps=nreps,
-        random_seed=random_seed,
-        initial_report=report0,
-        research_config=config,
-        feature_data_by_combo=feature_data_by_combo,
-        portfolio_candles_df=portfolio_candles_df,
-        n_jobs=n_jobs,
-        fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-        objective_metric_name=objective_metric_name,
-    )
+    else:
+        print(f"Running candle shuffle null (nreps={nreps})...")
+        null_metrics = run_candle_shuffle_null(
+            config=config_oos,
+            reference_candles=reference_candles,
+            reference_target=reference_target,
+            param_grid=param_grid,
+            fold_rows=fold_rows,
+            nreps=nreps,
+            random_seed=random_seed,
+            objective_metric_name=objective_metric_name,
+            n_jobs=n_jobs,
+        )
 
     n_ge = int((null_metrics >= original_metric).sum())
     p_value = float(1 + n_ge) / float(nreps + 1)
@@ -207,7 +227,7 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     report = {
-        "mode": "vector_shuffle",
+        "mode": effective_mode,
         "nreps": nreps,
         "random_seed": random_seed,
         "alpha": alpha,
@@ -220,7 +240,7 @@ def main() -> int:
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     np.save(out_dir / "null_distribution.npy", null_metrics)
 
-    print("\nOOS permutation (vector_shuffle)")
+    print(f"\nOOS permutation ({effective_mode})")
     print(f"  nreps={nreps}  alpha={alpha}")
     print(f"  Original metric: {original_metric:.4f}  Critical: {critical_value:.4f}")
     print(f"  p-value: {p_value:.4f}  Passed: {passed}")

@@ -6,6 +6,14 @@ Foundation: Timothy Masters, *Core Algorithms* (bar permutation chapter).
 
 ---
 
+## Null Hypothesis
+
+> H₀: The strategy's observed metric is consistent with what a random temporal ordering of the market's bar-structure would produce.
+
+The shuffle preserves the **marginal distributions** of bar shapes and gap sizes (by gap type) and the **overall trend** (first open = last close). It destroys serial autocorrelation, momentum/mean-reversion structure, volatility clumping, and the feature-to-target temporal alignment. A feature that cannot beat this null has no exploitable predictive structure beyond what is implied by the market's raw statistical properties in any random ordering.
+
+---
+
 ## Design Invariants (Both Variants)
 
 | Invariant | Description |

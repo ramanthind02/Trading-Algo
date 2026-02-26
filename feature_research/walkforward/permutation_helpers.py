@@ -104,9 +104,15 @@ def aggregate_oos_metric_from_report(
 
     When metric_fn is provided and report has non-empty aggregate_oos_returns,
     returns metric_fn(aggregate_oos_returns) (one metric over all OOS folds).
-    Otherwise uses mean of per-fold OOS portfolio metric. Folds with no
-    selected params or missing/error are treated as 0 when
+    Otherwise uses mean of per-fold OOS portfolio Sharpe (fallback). Folds with
+    no selected params or missing/error are treated as 0 when
     treat_no_selection_as_zero is True (required for a well-defined null).
+
+    For permutation testing, the original metric must be computed with this
+    same function so that the test statistic is consistent: both the original
+    and all replicates use either the aggregate statistic or the per-fold mean
+    fallback. Mixing aggregate for the original with per-fold mean for the
+    null distribution would invalidate the p-value.
 
     Parameters
     ----------
@@ -125,14 +131,15 @@ def aggregate_oos_metric_from_report(
         Single scalar for this replicate (aggregate or mean fold).
     """
     agg_returns = getattr(report, "aggregate_oos_returns", None)
+    portfolio_results_df = getattr(report, "portfolio_results_df", None)
     if metric_fn is not None and agg_returns is not None and not agg_returns.empty:
         clean = agg_returns.dropna()
         if clean.empty:
             return 0.0
         val = metric_fn(clean)
-        return float(val) if np.isfinite(val) else 0.0
+        out = float(val) if np.isfinite(val) else 0.0
+        return out
 
-    portfolio_results_df = getattr(report, "portfolio_results_df", None)
     if portfolio_results_df is None or portfolio_results_df.empty:
         return 0.0
     df = portfolio_results_df
@@ -143,4 +150,5 @@ def aggregate_oos_metric_from_report(
         sharpes = sharpes.copy()
         sharpes.loc[no_sel] = 0.0
         sharpes = sharpes.fillna(0.0)
-    return float(sharpes.mean())
+    fallback_mean = float(sharpes.mean())
+    return fallback_mean

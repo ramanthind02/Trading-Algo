@@ -8,7 +8,11 @@ from feature_selection.base_models.base_model import BinningModelBase
 
 
 class RuleBasedModel(BinningModelBase):
-    """Rule-based model with per-level statistics and multipliers."""
+    """Rule-based model with per-level statistics and multipliers.
+
+    Constructor accepts bin_counts, use_coverage_bonus, coverage_bonus_per_10pct
+    for API consistency; they are ignored (always 3 bins: -1, 0, 1).
+    """
 
     model_type = "rule_based"
 

@@ -59,7 +59,7 @@ _repo_root = _find_repo_root(Path(__file__).resolve())
 if _repo_root is not None and str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from feature_research.config import PermutationSuiteConfig
+from feature_research.config import PermutationResearchConfig
 from feature_research.in_sample.config import load_config
 from feature_research.pipeline import run_permutation_pipeline
 
@@ -86,7 +86,7 @@ def _run_with_reps(
         )
     perm_suite = replace(
         config.in_sample_permutation,
-        nreps=config_reps,
+        nreps_stage2=config_reps,
         n_jobs_stage2_reps=n_jobs_stage2_reps,
     )
     config = replace(config, in_sample_permutation=perm_suite)

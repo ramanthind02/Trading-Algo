@@ -22,7 +22,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ensemble.diversified_ensemble import DiversifiedEnsemble
-from feature_selection.base_models import ContinuousBinningModel, DecisionTreeBinningModel
+from feature_selection.base_models import ContinuousBinningModel
 
 
 class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
@@ -129,10 +129,9 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_base_model_save_to_feature_list_short_strategy(self):
         """Test saving a base model with short strategy."""
         # Create a base model with short strategy
-        model = DecisionTreeBinningModel(
+        model = ContinuousBinningModel(
             n_bins=5,
             selection_metric='sortino',
-            min_samples_leaf_pct=0.05,
             strategy='short'
         )
         
@@ -153,7 +152,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         model_config = control_file['base_models'][0]
         self.assertEqual(model_config['name'], 'momentum_signal_D_lookback_20_short')  # Auto-generated
         self.assertEqual(model_config['strategy'], 'short')
-        self.assertEqual(model_config['model_type'], 'decision_tree_binning')
+        self.assertEqual(model_config['model_type'], 'continuous_binning')
         self.assertFalse(control_file['metadata']['is_fit'])
     
     def test_base_model_save_to_existing_feature_list(self):
@@ -168,7 +167,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         )
         
         # Save second model to same file
-        model2 = DecisionTreeBinningModel(n_bins=5, strategy='long')
+        model2 = ContinuousBinningModel(n_bins=5, strategy='long')
         feature_series2 = pd.Series(self.feature_data['momentum_signal_D_lookback_20'], name='momentum_signal_D_lookback_20')
         model2.fit(feature_series2, self.y)
         model2.save_to_feature_list(
@@ -237,7 +236,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             tickers=['ES']
         )
         
-        model2 = DecisionTreeBinningModel(n_bins=5, strategy='long')
+        model2 = ContinuousBinningModel(n_bins=5, strategy='long')
         feature_series2 = pd.Series(self.feature_data['momentum_signal_D_lookback_20'], name='momentum_signal_D_lookback_20')
         model2.fit(feature_series2, self.y)
         model2.save_to_feature_list(
@@ -469,7 +468,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             tickers=['ES', 'NQ']
         )
         
-        model2 = DecisionTreeBinningModel(n_bins=5, strategy='long')
+        model2 = ContinuousBinningModel(n_bins=5, strategy='long')
         feature_series2 = pd.Series(self.feature_data['momentum_signal_D_lookback_20'], name='momentum_signal_D_lookback_20')
         model2.fit(feature_series2, self.y)
         model2.save_to_feature_list(
@@ -599,7 +598,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         self.assertEqual(control_file['base_models'][0]['name'], 'rsi_signal_D_lookback_14_long')
         
         # Test short strategy
-        model_short = DecisionTreeBinningModel(n_bins=5, strategy='short')
+        model_short = ContinuousBinningModel(n_bins=5, strategy='short')
         feature_series2 = pd.Series(self.feature_data['momentum_signal_D_lookback_20'], name='momentum_signal_D_lookback_20')
         model_short.fit(feature_series2, self.y)
         model_short.save_to_feature_list(filepath=self.control_file_path)
@@ -677,7 +676,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         # This demonstrates that we can add base models to control files without fitted params
         feature_config2 = {
             'name': 'momentum_signal_D_lookback_20_long',
-            'model_type': 'decision_tree_binning',
+            'model_type': 'continuous_binning',
             'feature_column': 'momentum_signal_D_lookback_20',
             'strategy': 'long',
             'constructor_params': {
@@ -724,7 +723,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             tickers=['ES']
         )
         
-        model2 = DecisionTreeBinningModel(n_bins=5, strategy='long')
+        model2 = ContinuousBinningModel(n_bins=5, strategy='long')
         feature_series2 = pd.Series(self.feature_data['momentum_signal_D_lookback_20'], name='momentum_signal_D_lookback_20')
         model2.fit(feature_series2, self.y)
         model2.save_to_feature_list(
@@ -808,7 +807,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             tickers=['ES']
         )
         
-        model2 = DecisionTreeBinningModel(n_bins=5, strategy='long')
+        model2 = ContinuousBinningModel(n_bins=5, strategy='long')
         feature_series2 = pd.Series(self.feature_data['momentum_signal_D_lookback_20'], name='momentum_signal_D_lookback_20')
         model2.fit(feature_series2, self.y)
         model2.save_to_feature_list(

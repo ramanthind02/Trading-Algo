@@ -24,6 +24,7 @@ from feature_research.walkforward.portfolio_evaluator import (
 )
 from feature_research.walkforward.runner import (
     _parse_top_k_param_labels,
+    _resolve_feature_type,
     run_portfolio_simulation,
 )
 from utils.core.enums import TimeFrame
@@ -89,6 +90,7 @@ def _compute_fixed_oos_signal_by_fold(
         train_target = target_unique.reindex(train_index_unique).dropna()
 
         try:
+            feature_type = _resolve_feature_type(research_config)
             base_model, _train_df, test_features_df = _build_one_base_model_with_members(
                 selected_params=selected_params,
                 binning_config=binning_config,
@@ -99,6 +101,7 @@ def _compute_fixed_oos_signal_by_fold(
                 train_index=train_index_unique,
                 test_index=test_index_unique,
                 train_target=train_target,
+                feature_type=feature_type,
             )
         except Exception:
             continue
@@ -269,6 +272,72 @@ def _one_vector_shuffle_rep(
     return aggregate_oos_metric_from_report(
         minimal_report, treat_no_selection_as_zero=True, metric_fn=metric_fn
     )
+
+
+def _one_return_shuffle_rep(
+    seed: int,
+    oos_values: np.ndarray,
+    index_values: np.ndarray,
+    objective_metric_name: str,
+) -> float:
+    """One return-shuffle null replicate. Module-level for joblib pickling when n_jobs > 1."""
+    rng = np.random.default_rng(seed)
+    shuffled = pd.Series(rng.permutation(oos_values), index=pd.DatetimeIndex(index_values))
+    metric_fn = resolve_objective_metric(objective_metric_name)
+    val = metric_fn(shuffled)
+    return float(val) if np.isfinite(val) else 0.0
+
+
+def run_return_shuffle_null(
+    aggregate_oos_returns: pd.Series,
+    nreps: int,
+    random_seed: int | None,
+    objective_metric_name: str = "sharpe",
+    n_jobs: int = 1,
+) -> np.ndarray:
+    """Null distribution by shuffling pre-computed aggregate OOS returns.
+
+    No refit, no signal computation. Works for both rule-based and continuous features.
+    Each replicate randomly reorders the OOS return values and applies the objective metric.
+    The null hypothesis: the temporal ordering of OOS returns does not matter — any
+    arrangement of the same return magnitudes would produce this metric.
+
+    Parameters
+    ----------
+    aggregate_oos_returns : pd.Series
+        Concatenated OOS returns from the original walkforward run (report0.aggregate_oos_returns).
+    nreps : int
+        Number of null replicates.
+    random_seed : int or None
+        Seed for reproducibility.
+    objective_metric_name : str
+        Metric to evaluate on each shuffled series.
+    n_jobs : int
+        Parallel jobs (1 = sequential; -1 = all CPUs; joblib loky backend).
+    """
+    clean = aggregate_oos_returns.dropna()
+    oos_values = clean.values.copy()
+    index_values = clean.index.values.copy()
+    rng = np.random.default_rng(random_seed)
+    seeds = [int(rng.integers(0, 2**31)) for _ in range(nreps)]
+
+    if n_jobs == 1:
+        null_metrics = np.empty(nreps, dtype=float)
+        for i in tqdm(range(nreps), desc="Vector shuffle (return shuffle)", unit="rep"):
+            null_metrics[i] = _one_return_shuffle_rep(
+                seeds[i], oos_values, index_values, objective_metric_name
+            )
+        return null_metrics
+
+    from multiprocessing import cpu_count
+    from joblib import Parallel, delayed
+
+    n_jobs_actual = cpu_count() if n_jobs == -1 else min(n_jobs, cpu_count())
+    results = Parallel(n_jobs=n_jobs_actual, backend="loky")(
+        delayed(_one_return_shuffle_rep)(seed, oos_values, index_values, objective_metric_name)
+        for seed in seeds
+    )
+    return np.array(results, dtype=float)
 
 
 def run_vector_shuffle_null(

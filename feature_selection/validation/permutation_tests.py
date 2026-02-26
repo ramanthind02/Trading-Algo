@@ -236,7 +236,10 @@ def _stage2_continuous_combo_rep(
                 shuffled_values, index=orig.index, name=orig.name
             )
         else:
-            assert shuffled_candles is not None
+            if shuffled_candles is None:
+                raise ValueError(
+                    "shuffled_candles must be provided when permutation_mode='candle_shuffle'."
+                )
             shuffled_feature = item.bias_node_extractor(shuffled_candles).reindex(
                 target.index
             )
@@ -299,12 +302,6 @@ def _run_one_rep_continuous(
             permutation_mode,
         )
         results[cname] = (metric, no_trade)
-    # #region agent log
-    _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
-    _items = list(results.items())[:3]
-    _log.write('{"hypothesisId":"H2","location":"permutation_tests.py:_run_one_rep_continuous","message":"worker result sample","data":{"rep_index":rep_index,"first_combos_metrics":{c: float(m) for c, (m, _) in _items}},"timestamp":0}\n')
-    _log.close()
-    # #endregion
     return (rep_index, results)
 
 
@@ -321,12 +318,6 @@ def _build_pipeline_report(
 ) -> PipelinePermutationReport:
     n_null_ge_original = int((null_metrics >= original_metric).sum())
     p_value = float(1 + n_null_ge_original) / float(nreps + 1)
-    # #region agent log
-    import json
-    _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
-    _log.write(json.dumps({"hypothesisId":"H1,H3","location":"permutation_tests.py:_build_pipeline_report","message":"report inputs","data":{"param_combo":param_combo,"original_metric":original_metric,"null_min":float(null_metrics.min()),"null_max":float(null_metrics.max()),"null_id":id(null_metrics),"n_ge":n_null_ge_original,"p_value":p_value},"timestamp":0}) + "\n")
-    _log.close()
-    # #endregion
     critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
     passed = bool(original_metric > critical_value)
     return PipelinePermutationReport(
@@ -342,28 +333,6 @@ def _build_pipeline_report(
         nreps=nreps,
         no_trade_permutations=no_trade_permutations,
     )
-
-
-@contextlib.contextmanager
-def _joblib_tqdm(total: int, desc: str, unit: str = "rep"):
-    """Context manager that patches joblib to update a tqdm progress bar as batches complete."""
-    pbar = tqdm(total=total, desc=desc, unit=unit)
-    _tqdm_ref: list[Optional[tqdm]] = [pbar]
-
-    class _TqdmBatchCallback(joblib.parallel.BatchCompletionCallBack):
-        def _dispatch_new(self) -> None:
-            super()._dispatch_new()
-            if _tqdm_ref[0] is not None:
-                _tqdm_ref[0].update(n=self.batch_size)
-
-    old_cb = joblib.parallel.BatchCompletionCallBack
-    joblib.parallel.BatchCompletionCallBack = _TqdmBatchCallback
-    try:
-        yield pbar
-    finally:
-        joblib.parallel.BatchCompletionCallBack = old_cb
-        _tqdm_ref[0] = None
-        pbar.close()
 
 
 def _run_pipeline_permutation_continuous_batch(
@@ -410,7 +379,9 @@ def _run_pipeline_permutation_continuous_batch(
     for item in items:
         original_feature = item.bias_node_extractor(candles_df)
         original_features[item.param_combo] = original_feature
-        original_signals, original_fit_failed = _fit_and_predict(item.binning_model, original_feature, target)
+        original_signals, original_fit_failed = _fit_and_predict(
+            item.binning_model, original_feature, target
+        )
         if original_fit_failed:
             original_metrics[item.param_combo] = 0.0
         else:
@@ -419,13 +390,6 @@ def _run_pipeline_permutation_continuous_batch(
             )
         null_metrics_by_combo[item.param_combo] = np.empty(nreps, dtype=float)
         no_trade_counts[item.param_combo] = 0
-
-    # #region agent log
-    _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
-    _combo_names = list(null_metrics_by_combo.keys())[:3]
-    _log.write('{"hypothesisId":"H1","location":"permutation_tests.py:init_null","message":"null_metrics_by_combo array ids","data":{"combo_ids":{c: id(null_metrics_by_combo[c]) for c in _combo_names},"n_combos":len(null_metrics_by_combo)},"timestamp":0}\n')
-    _log.close()
-    # #endregion
 
     prepared_shufflers: object = None
     if permutation_mode == 'candle_shuffle':
@@ -445,32 +409,26 @@ def _run_pipeline_permutation_continuous_batch(
         stage2_label = (
             "Stage 2 (candle shuffle)" if permutation_mode == 'candle_shuffle' else "Stage 2 (feature shuffle)"
         )
-        with _joblib_tqdm(nreps, desc=stage2_label, unit="rep"):
-            rep_results = Parallel(n_jobs=n_jobs_reps, backend="loky")(
-                delayed(_run_one_rep_continuous)(
-                    i,
-                    int(seeds[i]),
-                    candles_prepared,
-                    prepared_shufflers,
-                    items_by_combo,
-                    target,
-                    objective_func,
-                    permutation_mode,
-                    original_features,
-                )
-                for i in range(nreps)
+        _ = stage2_label  # retained for potential external logging
+        rep_results = Parallel(n_jobs=n_jobs_reps, backend="loky")(
+            delayed(_run_one_rep_continuous)(
+                i,
+                int(seeds[i]),
+                candles_prepared,
+                prepared_shufflers,
+                items_by_combo,
+                target,
+                objective_func,
+                permutation_mode,
+                original_features,
             )
+            for i in range(nreps)
+        )
         for rep_index, results in sorted(rep_results, key=lambda x: x[0]):
             for combo_name, (metric, no_trade) in results.items():
                 null_metrics_by_combo[combo_name][rep_index] = metric
                 if no_trade:
                     no_trade_counts[combo_name] += 1
-        # #region agent log
-        _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
-        _samples = list(null_metrics_by_combo.items())[:2]
-        _log.write('{"hypothesisId":"H2,H4","location":"permutation_tests.py:after_parallel_merge","message":"null sample per combo","data":{"samples":{c: {"id": id(arr), "first3": arr.tolist()[:3], "mean": float(arr.mean())} for c, arr in _samples}},"timestamp":0}\n')
-        _log.close()
-        # #endregion
     else:
         stage2_label = (
             "Stage 2 (candle shuffle)" if permutation_mode == 'candle_shuffle' else "Stage 2 (feature shuffle)"
@@ -478,7 +436,10 @@ def _run_pipeline_permutation_continuous_batch(
         for i in tqdm(range(nreps), desc=stage2_label, unit="rep"):
             shuffled_candles_rep: pd.DataFrame | None = None
             if permutation_mode == 'candle_shuffle':
-                assert prepared_shufflers is not None
+                if prepared_shufflers is None:
+                    raise ValueError(
+                        "prepared_shufflers must be initialised when permutation_mode='candle_shuffle'."
+                    )
                 shuffled_candles_rep = _permute_candles_with_seed(
                     candles_prepared, int(seeds[i]), prepared_shufflers
                 )
@@ -497,7 +458,10 @@ def _run_pipeline_permutation_continuous_batch(
                             name=original_feature.name,
                         )
                     else:
-                        assert shuffled_candles_rep is not None
+                        if shuffled_candles_rep is None:
+                            raise ValueError(
+                                "shuffled_candles_rep must be available when permutation_mode='candle_shuffle'."
+                            )
                         shuffled_feature = item.bias_node_extractor(shuffled_candles_rep).reindex(target.index)
 
                     signals, fit_failed = _fit_and_predict(item.binning_model, shuffled_feature, target)
@@ -514,12 +478,6 @@ def _run_pipeline_permutation_continuous_batch(
                     null_metrics_by_combo[combo_name][i] = 0.0
                     no_trade_counts[combo_name] += 1
 
-        # #region agent log
-        _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
-        _samples = list(null_metrics_by_combo.items())[:2]
-        _log.write('{"hypothesisId":"H2,H4","location":"permutation_tests.py:after_seq_merge","message":"null sample per combo","data":{"samples":{c: {"id": id(arr), "first3": arr.tolist()[:3], "mean": float(arr.mean())} for c, arr in _samples}},"timestamp":0}\n')
-        _log.close()
-        # #endregion
 
     return {
         combo_name: _build_pipeline_report(

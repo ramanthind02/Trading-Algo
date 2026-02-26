@@ -49,10 +49,9 @@ if TYPE_CHECKING:
 # Hardcoded vault root - always at project root
 VAULT_ROOT: str = 'vault'
 
-# Default ensemble directory (set automatically when create_ensemble_directory is called)
+# Default ensemble directory/tickers (set by create_ensemble_directory). Use only for
+# CLI/interactive defaults; in library code prefer passing ensemble_dir explicitly.
 _DEFAULT_ENSEMBLE_DIR: Optional[str] = None
-
-# Default ensemble tickers (set automatically when create_ensemble_directory is called)
 _DEFAULT_ENSEMBLE_TICKERS: Optional[List[Ticker]] = None
 
 
@@ -786,26 +785,15 @@ def load_feature_base_models(
     feature_file = ensemble_path / 'features' / f"{feature_column}.json"
     
     if not feature_file.exists():
-        # Provide helpful error message with debugging info
-        import warnings
         cwd = Path.cwd()
-        tried_paths = [
-            Path(ensemble_dir),
-            cwd / ensemble_dir,
-            cwd.parent / ensemble_dir,
-            Path(__file__).parent.parent / ensemble_dir
-        ]
-        warnings.warn(
+        raise FileNotFoundError(
             f"Feature file not found: {feature_file}\n"
             f"  Feature column: {feature_column}\n"
-            f"  Ensemble dir provided: {ensemble_dir}\n"
-            f"  Resolved ensemble path: {ensemble_path}\n"
-            f"  Current working directory: {cwd}\n"
-            f"  Tried paths: {[str(p) for p in tried_paths]}\n"
-            f"  File should be at: {ensemble_path / 'features' / f'{feature_column}.json'}",
-            UserWarning
+            f"  Ensemble dir: {ensemble_dir}\n"
+            f"  Resolved path: {ensemble_path}\n"
+            f"  CWD: {cwd}\n"
+            f"  Expected: {ensemble_path / 'features' / f'{feature_column}.json'}"
         )
-        return {}
     
     with open(feature_file, 'r') as f:
         feature_config = json.load(f)

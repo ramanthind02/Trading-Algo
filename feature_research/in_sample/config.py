@@ -25,7 +25,7 @@ from feature_research.config import (
     FeatureType,
     OOSWindowConfig,
     ParamSensitivityConfig,
-    PermutationSuiteConfig,
+    PermutationResearchConfig,
     load_config as load_base_config,
 )
 from feature_research.walkforward.config import (
@@ -39,10 +39,10 @@ from utils.core.enums import Ticker
 IN_SAMPLE_OBJECTIVE_METRIC_PRESETS = OBJECTIVE_METRIC_PRESETS
 
 
-def _default_permutation_from_global() -> PermutationSuiteConfig:
+def _default_permutation_from_global() -> PermutationResearchConfig:
     """Build permutation config from GlobalResearchDefaults so tests/defaults stay aligned."""
     g = GlobalResearchDefaults()
-    return PermutationSuiteConfig(
+    return PermutationResearchConfig(
         OBJECTIVE_METRIC_PRESETS[g.objective_metric_key],
         g.top_k,
         g.min_folds_stable,
@@ -55,7 +55,7 @@ __all__ = [
     "FeatureType",
     "IN_SAMPLE_OBJECTIVE_METRIC_PRESETS",
     "ParamSensitivityConfig",
-    "PermutationSuiteConfig",
+    "PermutationResearchConfig",
     "ResearchConfig",
     "WalkforwardResearchConfig",
     "load_config",
@@ -98,7 +98,7 @@ class ResearchConfig:
     weight_layer_algorithm : WeightLayerAlgorithm | str
         Weight layer method. Must match ``walkforward.weight_layer_algorithm``.
         Accepts string values for convenience.
-    in_sample_permutation : PermutationSuiteConfig
+    in_sample_permutation : PermutationResearchConfig
         In-sample permutation settings (if enabled).
     binning_params : BinningAnalysisConfig
         Binning hyperparameters. Only used for CONTINUOUS; rule-based uses fixed 3 levels.
@@ -128,7 +128,7 @@ class ResearchConfig:
     weight_layer_algorithm: WeightLayerAlgorithm | str = (
         WeightLayerAlgorithm.INVERSE_CORRELATION
     )
-    in_sample_permutation: PermutationSuiteConfig = field(
+    in_sample_permutation: PermutationResearchConfig = field(
         default_factory=lambda: _default_permutation_from_global()
     )
     binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)
@@ -143,7 +143,7 @@ class ResearchConfig:
     oos_window: OOSWindowConfig | None = None
 
     @property
-    def permutation_suite(self) -> PermutationSuiteConfig:
+    def permutation_suite(self) -> PermutationResearchConfig:
         """Backward-compatible alias for in-sample permutation settings."""
         return self.in_sample_permutation
 

@@ -134,9 +134,6 @@ class PermutationTestConfig:
             top_k=top_k,
             min_folds_stable=min_folds_stable,
         )
-        resolved_out_of_sample = out_of_sample or OutOfSamplePermutationConfig(
-            objective_metric=objective_metric or ObjectiveMetricSpec(builtin='sharpe'),
-        )
         resolved_report = report or PermutationReportConfig()
 
         object.__setattr__(self, 'in_sample', resolved_in_sample)
@@ -192,3 +189,14 @@ class PermutationTestConfig:
     @property
     def run_oos_permutation(self) -> bool:
         return self.out_of_sample.run_oos_permutation
+
+
+@dataclass(frozen=True)
+class ValidationConfig:
+    """Legacy validation config for tests; full pipeline uses PermutationTestConfig."""
+
+    feature_type: Literal["continuous", "rule_based"]
+    n_permutations: int = 1000
+    confidence_level: float = 0.95
+    min_sharpe_threshold: float = 0.5
+    random_seed: Optional[int] = None

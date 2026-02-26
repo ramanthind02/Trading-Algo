@@ -63,16 +63,25 @@ Replicate Phase 5 (WF Permutation) on out-of-sample data.
 For each feature/param combo that passed Phase 6:
 
 1. **Fit on original OOS data** → compute objective metric (`Sharpe`, `Sortino`, etc.)
-2. **Shuffle candles** N times (default N=500) → refit → recompute metric
+2. **Shuffle** N times (default N=500) → recompute metric per replicate
 3. **Null distribution** → metrics from all shuffled runs
 4. **p-value** = fraction of shuffled metrics ≥ original
 5. **Gate**: p ≤ α (default α=0.05)
 
-### Why Candle Shuffle?
+The shuffle method differs by feature type:
 
-- Preserves first/last OHLC anchors + intra-bar structure
-- Destroys temporal order of trend/volatility clusters
-- OOS period is short (1–2 years), so permutation power is reduced compared to IS (20+ years)
+**Continuous features — candle shuffle (default):**
+- Shuffle only the OOS candles (params are fixed; IS data is not re-shuffled)
+- Feature recomputed from shuffled OOS stream
+- Preserves first/last OHLC anchors + intra-bar structure; destroys temporal order
+
+**Rule-based features — target return shuffle:**
+- Keep the feature vector intact (rule outputs are serially correlated; shuffling them is unnatural)
+- Shuffle the OOS return column; apply fixed params to produce strategy returns
+- Score = 0 if the metric falls below the absolute minimum threshold
+- Cheaper than candle shuffle; preserves the feature's natural serial structure
+
+**Key constraint:** params are already fixed (selected during IS/WF phases). Shuffling IS data is a no-op here — only the OOS evaluation period is shuffled. See [[permutation_testing]] "What to Shuffle" section for the general principle.
 
 ### Pass Criterion
 
@@ -126,7 +135,8 @@ Feature is now approved for live deployment.
 | Data | 20–23 years (2000–2023) | Full IS period, rolling folds | 1–2 years (2024–2025) |
 | Sample size | Large (high power) | Medium (per-fold) | Small (low power) |
 | Gate | p ≤ 0.10 (coarse filter) | p ≤ 0.05 (strict filter) | p ≤ 0.05 (out-of-sample validation) |
-| Shuffle method | Vector + candle | Candle (full WF) | Candle (fresh data) |
+| Shuffle method (continuous) | Vector shuffle (S1) + candle shuffle (S2, stable region only) | S1: OOS return shuffle → S2: IS return shuffle (full grid) → S3: candle shuffle (stable region) | Candle (OOS only; params fixed) |
+| Shuffle method (rule-based) | Vector shuffle (S1) + target return shuffle (S2, IS_val holdout) | Same 3 sub-stages as continuous | Target return shuffle (OOS returns; params fixed) |
 | Purpose | Screen for basic signal | Confirm temporal stability | Confirm generalization |
 
 **All three gates must pass** for graduation.

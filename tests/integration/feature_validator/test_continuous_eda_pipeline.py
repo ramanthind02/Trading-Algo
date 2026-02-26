@@ -18,7 +18,7 @@ import pytest
 matplotlib.use("Agg")
 
 from feature_research.in_sample.config import (
-    PermutationSuiteConfig,
+    PermutationResearchConfig,
     ResearchConfig,
 )
 from feature_research.pipeline import (
@@ -178,7 +178,7 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
-            in_sample_permutation=PermutationSuiteConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+            in_sample_permutation=PermutationResearchConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
         )
 
         try:

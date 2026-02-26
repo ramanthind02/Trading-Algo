@@ -25,7 +25,12 @@ IS Data (2000-2023)
 │   │   └── grid search over bin_counts → single best bin per direction
 │   │
 │   └── Phase 3: IS Permutation Screen ────────── [GATE: any param passes S1+S2?]
-│       └── vector shuffle → pipeline permutation (per param combo)
+│       ├── Stage 1: vector shuffle (all params)
+│       ├── Stage 3: IS stability / neighbor smoothing (all params) → stable region
+│       ├── Researcher review: manually restrict to stable neighbourhood (5–10 params)
+│       └── Stage 2: pipeline permutation (stable region only)
+│             continuous: candle shuffle or raw feature shuffle + refit
+│             rule-based: target return shuffle + IS_val holdout evaluation
 │           └── FAIL → feature class rejected (no walkforward)
 │
 ├── TIER 2: Walk-Forward (WF)
@@ -33,9 +38,11 @@ IS Data (2000-2023)
 │   │   └── expanding/rolling folds, neighbor-smoothed metric, stable region ID
 │   │       └── FAIL → feature class rejected
 │   │
-│   └── Phase 5: WF Permutation Test ─────────── [GATE: p ≤ α on WF metric]
-│       └── candle shuffle on full WF
-│           └── FAIL → feature class rejected
+│   └── Phase 5: WF Permutation Test ─────────── [GATE: p ≤ α; all 3 sub-stages must pass]
+│       ├── Sub-stage 1: OOS return shuffle (cheap; early stopping gate)
+│       ├── Sub-stage 2: IS return shuffle, full grid, real OOS (medium)
+│       └── Sub-stage 3: candle shuffle full WF period, stable region only (expensive)
+│           └── FAIL (any sub-stage) → feature class rejected
 │
 └── TIER 3: Out-of-Sample (OOS)
     ├── Phase 6: OOS Validation ───────────────── [GATE: stable on OOS folds]
@@ -57,9 +64,9 @@ IS Data (2000-2023)
 |-------|------|-----------|-------|
 | 1 EDA | Diagnostic | — (always) | Researcher inspection only |
 | 2 Binning (continuous only) | Diagnostic | — (always) | Inform param selection |
-| 3 IS Permutation | **GATE** | Any param combo passes S1 + S2 | Feature-level decision |
+| 3 IS Permutation | **GATE** | Any param combo passes S1 + S2 | Order: S1 → S3 (stability) → researcher review → S2 (stable region only) |
 | 4 WF Validation | **GATE** | Stable neighborhood ≥ min\_folds | Param-level; see [[param_stability]] |
-| 5 WF Permutation | **GATE** | p ≤ α on WF metric | Destroys temporal structure |
+| 5 WF Permutation | **GATE** | p ≤ α on WF metric (all 3 sub-stages) | S1: OOS return shuffle → S2: IS return shuffle (full grid) → S3: candle shuffle (stable region) |
 | 6 OOS Validation | **GATE** | Stable neighborhood ≥ min\_folds | Same region algorithm as Phase 4 |
 | 7 OOS Permutation | **GATE** | p ≤ α on OOS metric | Confirms Phases 4–5 robustness |
 | 8 Graduation | Decision | All gates passed | OOS lock broken → vault |

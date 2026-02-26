@@ -56,6 +56,12 @@ def test_load_config_includes_walkforward_defaults() -> None:
     assert config.walkforward.output_root == Path("feature_research/shared_results")
 
 
+def test_load_config_enables_per_fold_tearsheets_for_oos() -> None:
+    config = load_config()
+
+    assert config.walkforward.output_per_fold_tearsheets is True
+
+
 def test_load_config_exposes_walkforward_selection_control() -> None:
     config = load_config()
 

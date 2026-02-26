@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence, cast
 import pandas as pd
 
 from ensemble.weight_layer import WeightLayerConfig
+from feature_research.config import FeatureType
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.metrics import resolve_objective_metric
 from utils.core.enums import Ticker
@@ -65,6 +66,16 @@ def _empty_portfolio_results_df() -> pd.DataFrame:
     return pd.DataFrame(
         columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
     )
+
+
+def _resolve_feature_type(research_config: object) -> FeatureType:
+    """Resolve FeatureType from research config; accept enum or string."""
+    raw = getattr(research_config, "feature_type", FeatureType.CONTINUOUS)
+    if isinstance(raw, FeatureType):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        return FeatureType(raw.strip().lower())
+    return FeatureType.CONTINUOUS
 
 
 def _coerce_param_value(value: str) -> object:
@@ -171,6 +182,7 @@ def run_portfolio_simulation(
         all_datetimes = all_datetimes.tz_localize(None)
 
     typed_research_config = cast(_ResearchConfigLike, research_config)
+    feature_type = _resolve_feature_type(research_config)
     trading_timeframes = cast(
         Sequence[object],
         typed_research_config.bias_spec.get("timeframes", [None]),
@@ -252,6 +264,7 @@ def run_portfolio_simulation(
                 weight_layer_config=weight_layer_config,
                 member_prediction_mode=member_prediction_mode,
                 feature_data_by_combo=feature_data_by_combo,
+                feature_type=feature_type,
             )
             rows.append(
                 {
@@ -286,6 +299,7 @@ def run_portfolio_simulation(
                             weight_layer_config=weight_layer_config,
                             member_prediction_mode=member_prediction_mode,
                             feature_data_by_combo=feature_data_by_combo,
+                            feature_type=feature_type,
                         )
                         generate_tearsheet(
                             strategy_returns=train_result.oos_portfolio_returns,
@@ -337,38 +351,6 @@ def run_portfolio_simulation(
     if collected_oos_returns:
         walkforward_portfolio_returns = pd.concat(collected_oos_returns, axis=0).sort_index()
         aggregate_oos_returns = walkforward_portfolio_returns
-        # #region agent log
-        try:
-            _wf = walkforward_portfolio_returns
-            _n = len(_wf)
-            _dup = _wf.index.duplicated().sum()
-            _zero = (_wf == 0.0).sum()
-            _rule = feature_data_by_combo is None
-            with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
-                import json
-                _f.write(
-                    json.dumps(
-                        {
-                            "hypothesisId": "A,C,D",
-                            "location": "runner.run_portfolio_simulation",
-                            "message": "before generate_tearsheet",
-                            "data": {
-                                "rule_based": _rule,
-                                "returns_n": _n,
-                                "duplicate_index_count": int(_dup),
-                                "pct_returns_zero": float(_zero) / _n if _n else 0,
-                                "index_min": str(_wf.index.min()) if _n else None,
-                                "index_max": str(_wf.index.max()) if _n else None,
-                            },
-                            "timestamp": __import__("time").time() * 1000,
-                        },
-                        default=str,
-                    )
-                    + "\n"
-                )
-        except Exception:  # noqa: S110
-            pass
-        # #endregion
         if tearsheets_dir is not None and _tearsheet_available:
             try:
                 tearsheets_dir.mkdir(parents=True, exist_ok=True)
@@ -382,28 +364,6 @@ def run_portfolio_simulation(
                 strategy_for_tearsheet = walkforward_portfolio_returns.reindex(
                     baseline_returns.index, fill_value=0.0
                 )
-                # #region agent log
-                try:
-                    _n = len(strategy_for_tearsheet)
-                    _z = (strategy_for_tearsheet == 0.0).sum()
-                    with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
-                        import json
-                        _f.write(
-                            json.dumps(
-                                {
-                                    "hypothesisId": "align_baseline",
-                                    "location": "runner.run_portfolio_simulation",
-                                    "message": "after baseline align",
-                                    "data": {"strategy_n": _n, "pct_zero": float(_z) / _n if _n else 0},
-                                    "timestamp": __import__("time").time() * 1000,
-                                },
-                                default=str,
-                            )
-                            + "\n"
-                        )
-                except Exception:  # noqa: S110
-                    pass
-                # #endregion
                 generate_tearsheet(
                     strategy_returns=strategy_for_tearsheet,
                     baseline_returns=baseline_returns,
@@ -460,6 +420,7 @@ def _run_oracle_baseline(
         all_datetimes = all_datetimes.tz_localize(None)
 
     typed_research_config = cast(_ResearchConfigLike, research_config)
+    feature_type = _resolve_feature_type(research_config)
     trading_timeframes = cast(
         Sequence[object],
         typed_research_config.bias_spec.get("timeframes", [None]),
@@ -534,6 +495,7 @@ def _run_oracle_baseline(
                 weight_layer_config=weight_layer_config,
                 member_prediction_mode=member_prediction_mode,
                 feature_data_by_combo=feature_data_by_combo,
+                feature_type=feature_type,
             )
             oracle_rows.append(
                 {

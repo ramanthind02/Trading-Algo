@@ -63,36 +63,83 @@ A feature passes Phase 3 if its **stable region** (neighborhood-consistent param
 
 ## Phase 4 — Walk-Forward Permutation Test
 
-**Purpose:** confirm the WF Sharpe is not explained by spurious correlations or overfitting to the param search process.
+**Purpose:** Confirm the WF Sharpe is not explained by spurious correlations or overfitting to the param search process. Three sub-stages in escalating cost and null strength; early stopping applies (fail sub-stage N → skip N+1).
 
-### Method: Two-Region Shuffle
+---
 
-Shuffling globally across all data would break temporal structure and create an unrealistic null. Instead, features are shuffled independently within two temporal regions:
+### Sub-stage 1 — OOS Return Shuffle
 
-```
-Region 1: [train_start, train_end)   ← initial training window shuffled as unit
-Region 2: [train_end, data_end)      ← all remaining data shuffled as unit
-```
+**What:** For each replicate, shuffle only the OOS fold returns. Feature signals and selected params are fixed.
 
-This prevents information leakage between regions while preserving the walkforward structure.
+**Null:** The strategy's OOS performance is consistent with randomly ordered returns of the same distribution — no genuine alignment between signals and OOS future returns.
 
-### Procedure
-
-1. Run full WF (Phase 3) on **real data** → observe aggregate Sharpe `S_obs`
+**Procedure:**
+1. Run full WF on real data → observe aggregate OOS Sharpe `S_obs`
 2. Repeat N = 500 times:
-   - Shuffle features within each of the two regions independently
-   - Run full Phase 3 WF on shuffled data → `S_perm_i`
-3. Compute p-value: `p = fraction of S_perm_i ≥ S_obs`
-4. **Gate:** p ≤ α = 0.05 to pass
+   - For each fold: shuffle that fold's OOS return series in place; IS data and signals unchanged
+   - Compute aggregate OOS metric across all folds → `S_perm_i`
+3. `p = fraction of S_perm_i ≥ S_obs`; **Gate:** p ≤ α = 0.05
+
+**Cost:** Cheapest — no refitting, no feature recomputation. Early stopping: if this fails, skip sub-stages 2 and 3.
+
+---
+
+### Sub-stage 2 — IS Return Shuffle (Full Grid)
+
+**What:** For each replicate, shuffle IS fold returns; OOS fold returns remain real. Run the full stability algorithm on shuffled IS data → select params → evaluate on real OOS.
+
+**Null:** IS fitting on completely random data can identify params that generalise to real OOS returns — i.e., IS fitting provides no genuine signal for OOS prediction.
+
+**Procedure:**
+1. Repeat N = 500 times:
+   - For each fold: shuffle that fold's IS return series in place; OOS returns unchanged
+   - Run stability algorithm on shuffled IS → select best-region params (or score = 0 if no stable region / no params clear absolute metric threshold)
+   - Evaluate selected params on real OOS fold → record fold metric
+   - Aggregate across folds → `S_perm_i`
+2. `p = fraction of S_perm_i ≥ S_obs`; **Gate:** p ≤ α = 0.05
+
+> [!important] **Do not restrict the param grid for this sub-stage.** If you restrict to the known stable region, the stability algorithm running on shuffled IS data will still select from within that neighbourhood — and all those params are similar, so the null distribution is inflated. The full grid is required so that random IS fitting can select from anywhere in param space, producing a realistic null of "what does random IS fitting actually pick."
+
+**Cost:** Medium — stability algorithm runs per replicate but no bar reconstruction. Apply absolute metric threshold (e.g. Sharpe ≥ 0.1) before floor-based selection to prevent spurious stable regions near zero.
+
+---
+
+### Sub-stage 3 — Candle Shuffle (Full WF Period)
+
+**What:** Shuffle the full WF candle series as one pool; recompute the feature from scratch; run the complete walkforward procedure on the shuffled stream.
+
+**Null:** The strategy's observed WF performance is consistent with a completely random market — the entire pipeline (price dynamics → feature → IS fitting → OOS evaluation) could have produced this result by chance from any randomly ordered market with the same bar-structure statistics.
+
+**Procedure:**
+1. Run full WF on real data → observe `S_obs` (same as sub-stage 1)
+2. Repeat N = 500 times:
+   - Shuffle the full WF candle series using [[candle_permutation]] algorithm
+   - Fold boundaries are preserved **by position** (bar count), not calendar date
+   - Feature recomputed from scratch on the shuffled stream
+   - Full Phase 3 WF runs on shuffled data → stability algorithm → OOS eval → `S_perm_i`
+3. `p = fraction of S_perm_i ≥ S_obs`; **Gate:** p ≤ α = 0.05
+
+> [!note] Run sub-stage 3 on the **stable region only** (3–10 params identified in Phase 3), not the full param grid. The stable region restriction is appropriate here because the candle shuffle already tests the strongest null (random market); restricting the param space does not inflate the null as it would in sub-stage 2.
 
 > [!warning] Compute cost
-> N=500 full WF runs — each run refits all param combos across all folds. Parallelise across permutations (`n_jobs=-1`) using existing `PermutationEngine` infrastructure.
+> N=500 full WF runs with candle reconstruction and full param grid per fold. Parallelise across permutations (`n_jobs=-1`) using existing `PermutationEngine` infrastructure. Restricting to the stable region dramatically reduces per-replicate cost.
 
-### Interpreting the Result
+---
 
-- `p ≤ 0.05`: WF Sharpe is unlikely under the null of no predictive signal → feature passes Phase 4
-- `p > 0.05`: observed WF performance is consistent with chance → feature rejected
-- Phase 4 failure after Phase 3 pass signals that param search inflated apparent performance (selection bias)
+### Null Hierarchy Summary
+
+| Sub-stage | OOS returns | IS data | Feature | Cost | Tests |
+|---|---|---|---|---|---|
+| 1 — OOS return shuffle | Shuffled | Real | Fixed (real) | Cheap | Is OOS performance genuine given fixed strategy? |
+| 2 — IS return shuffle | Real | Shuffled | Fixed (real, applied to shuffled IS) | Medium | Does IS fitting genuinely identify predictive params? |
+| 3 — Candle shuffle | Shuffled (via candle reconstruct) | Shuffled (via candle reconstruct) | Recomputed from scratch | Expensive | Could a random market produce this result end-to-end? |
+
+### Interpreting the Results
+
+- All three sub-stages pass (p ≤ 0.05): strong evidence of genuine signal at every level
+- Sub-stage 1 fails: OOS returns not aligned with signals — feature may be noise or regime-specific
+- Sub-stage 2 fails after sub-stage 1 passes: IS fitting does not reliably identify predictive params (selection bias or overfitting to IS noise)
+- Sub-stage 3 fails after 1–2 pass: price process structure may be exploitable but fragile to market-regime changes
 
 ---
 

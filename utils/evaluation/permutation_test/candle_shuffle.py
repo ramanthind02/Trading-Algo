@@ -539,18 +539,18 @@ def permute_walk_forward(
         raise ValueError("DataFrame must have 'datetime' column")
     out["datetime"] = pd.to_datetime(out["datetime"])
     rng = np.random.default_rng(random_seed)
+    ohlc_cols = ["open", "high", "low", "close"]
     for i, (start_ts, end_ts) in enumerate(train_windows):
         mask = (out["datetime"] >= start_ts) & (out["datetime"] < end_ts)
         indices = np.where(mask)[0]
         if len(indices) < 2:
             continue
-        window_slice = out.loc[indices].copy()
+        window_slice = out.iloc[indices].copy()
         prepared = _prepare_candle_shuffle(window_slice, permute_start_idx=0)
         seed = int(rng.integers(0, 2**31)) if random_seed is not None else None
         shuffled = prepared.permute_with_seed(seed)
-        out.loc[indices, ["open", "high", "low", "close"]] = shuffled[
-            ["open", "high", "low", "close"]
-        ].values
+        col_locs = out.columns.get_indexer(ohlc_cols)
+        out.iloc[indices, col_locs] = shuffled[ohlc_cols].values
     return out
 
 

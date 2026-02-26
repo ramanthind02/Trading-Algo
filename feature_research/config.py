@@ -68,7 +68,7 @@ class GlobalResearchDefaults:
     """
 
     objective_metric_key: str = "t_stat"  # key in OBJECTIVE_METRIC_PRESETS
-    top_k: int = 5
+    top_k: int = 1  # load_config() uses this; keep aligned so effective default is 1
     min_folds_stable: int = 1
     fold_years: int = 1
     train_window_years: float = 15.0
@@ -88,6 +88,18 @@ class OOSWindowConfig:
     train_end: datetime
     test_start: datetime
     test_end: datetime
+
+    def __post_init__(self) -> None:
+        if self.train_end >= self.test_start:
+            raise ValueError(
+                "OOSWindowConfig: train_end must be before test_start "
+                f"(got train_end={self.train_end!s}, test_start={self.test_start!s})."
+            )
+        if self.test_start >= self.test_end:
+            raise ValueError(
+                "OOSWindowConfig: test_start must be before test_end "
+                f"(got test_start={self.test_start!s}, test_end={self.test_end!s})."
+            )
 
 
 def compute_first_fold_bounds(
@@ -143,8 +155,9 @@ class PermutationResearchConfig:
     fold_years: int
     # Permutation-only
     enabled: bool = False
-    nreps: int = 1000
-    alpha: float = 0.05
+    nreps_stage1: int = 1000   # vector shuffle (cheaper per rep; 1000 default) 
+    nreps_stage2: int = 100   # candle shuffle (expensive)
+    alpha: float = 0.1
     metric_threshold: float = 0.0
     random_seed: int | None = 42
     permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
@@ -153,10 +166,6 @@ class PermutationResearchConfig:
     run_stage2: bool = False
     # OOS
     candidate_source: OOSCandidateSource = "stage2_passers"
-
-
-# Backward-compatible alias (in_sample and pipeline use this type name).
-PermutationSuiteConfig = PermutationResearchConfig
 
 
 @dataclass(frozen=True)
@@ -250,7 +259,7 @@ class BinningAnalysisConfig:
     short_clip_min: float = 0.5
     short_clip_max: float = 2.0
     bin_index_min: int = 0
-    bin_index_max: int | None = 0
+    bin_index_max: int | None = None
 
     def __post_init__(self) -> None:
         if self.bin_index_min < 0:
@@ -423,7 +432,7 @@ def load_config() -> BaseResearchConfig:
         Ticker.RTY,
     ]
     start = datetime(2000, 1, 1)
-    end = datetime(2023, 12, 30)
+    end = datetime(2025, 12, 30)
     use_cache = True
     populate_cache = True
 
@@ -434,7 +443,7 @@ def load_config() -> BaseResearchConfig:
         top_k=1,
         min_folds_stable=1,
         fold_years=1,
-        train_window_years=15.0,
+        train_window_years=17.0,
         test_window_years=1.0,
         num_steps=8,
         selection_method=WalkforwardSelectionMethod.TOP_K,
@@ -460,7 +469,7 @@ def load_config() -> BaseResearchConfig:
     # OOS: single fold with explicit train/test dates (e.g. train 2007–2023, test 2024–2025).
     # Set to None to disable OOS.
     oos_window = OOSWindowConfig(
-        train_start=datetime(2007, 1, 1),
+        train_start=datetime(2009, 1, 1),
         train_end=datetime(2023, 12, 30),
         test_start=datetime(2024, 1, 1),
         test_end=datetime(2025, 12, 31),

@@ -7,6 +7,7 @@ feature selection and ensemble training.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional
 
@@ -14,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from feature_selection.validation.objective_metrics import metric_calmar, metric_profit_factor
+from feature_selection.base_models.utils import build_member_model_name
 
 
 class BinningModelBase(ABC):
@@ -51,7 +53,6 @@ class BinningModelBase(ABC):
         self.short_clip_max = short_clip_max
 
         self.feature_column: Optional[str] = None
-        self.normalization_data_ = None
 
         self.bin_edges_: Optional[List[float]] = None
         self.bin_stats_: Dict[int, Dict[str, float]] = {}
@@ -130,6 +131,10 @@ class BinningModelBase(ABC):
     def _create_bins(self, feature_data: pd.Series, target_data: pd.Series) -> pd.Series:
         """Create integer bin assignments for feature_data."""
 
+    def assign_bins(self, feature_data: pd.Series) -> pd.Series:
+        """Public API: assign bin indices for feature_data using fitted bin edges."""
+        return self._assign_bins(feature_data)
+
     def _assign_bins(self, feature_data: pd.Series) -> pd.Series:
         """Assign bins during prediction using fitted bin edges."""
         if self.bin_edges_ is None or len(self.bin_edges_) == 0:
@@ -154,12 +159,15 @@ class BinningModelBase(ABC):
         # For binary/discrete signals (e.g., 0/1 rule-based features), without epsilon
         # both values map to the same digitize index, causing all predictions to have
         # the same multiplier. The epsilon ensures proper bin boundary separation.
+        # Need n_bins+1 edges so digitize returns 1..n_bins for the n_bins bins;
+        # _predict_bin_key(bin_idx) = bin_idx - 1 then gives 0..n_bins-1.
         eps = 1e-9
+        first_bin_min = float(df.loc[df["bin"] == ordered_bins[0], "feature"].min()) - eps
         maxima = [
             float(df.loc[df["bin"] == bin_idx, "feature"].max()) + eps
-            for bin_idx in ordered_bins[:-1]
+            for bin_idx in ordered_bins
         ]
-        return maxima
+        return [first_bin_min] + maxima
 
     def _calculate_sortino(self, returns: pd.Series) -> float:
         downside = returns[returns < 0]
@@ -286,6 +294,9 @@ class BinningModelBase(ABC):
         if self.model_type != "continuous_binning":
             return ordered_bins
         if not self.significant_regions_:
+            logging.getLogger(__name__).warning(
+                "No significant regions; all bins filtered out. Caller will have no active bins."
+            )
             return []
 
         region_bins = {
@@ -307,7 +318,7 @@ class BinningModelBase(ABC):
         long_short_mults: Dict[int, float] = {}
 
         for bin_idx in ordered_bins:
-            # Rule-based level 0 is always flat.
+            # For rule-based models, raw feature value 0 (neutral) maps to bin_idx=1 — always flat.
             if self.model_type == "rule_based" and bin_idx == 1:
                 continue
 
@@ -389,7 +400,6 @@ class BinningModelBase(ABC):
         self._reset_fitted_state()
 
         self.feature_column = feature_data.name
-        self.normalization_data_ = normalization_data
         self._training_feature_data = feature_data.copy()
 
         df = pd.DataFrame({"feature": feature_data, "target": target_data}).dropna()
@@ -560,8 +570,6 @@ class BinningModelBase(ABC):
                 "feature_column not set. Call fit() with a named pd.Series first, "
                 "or ensure the Series has a name attribute (e.g., df['column_name'])."
             )
-
-        from feature_selection.base_models.feature_base_model import build_member_model_name
 
         base_model_name = f"{self.feature_column}_{self.strategy}"
         return build_member_model_name(base_model_name, member_identity)

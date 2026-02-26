@@ -81,6 +81,11 @@ def _unique_sorted_datetime_index(index: pd.Index) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(unique_vals).sort_values()
 
 
+def _default_rolling_window(feature: pd.Series) -> int:
+    """Default EDA rolling window from feature length; clamped to [20, 252]."""
+    return max(20, min(252, len(feature) // 4))
+
+
 def _normalize_series_datetime_index(series: pd.Series) -> pd.Series:
     """Normalize series datetime index to timezone-naive UTC."""
     if not isinstance(series.index, pd.DatetimeIndex):
@@ -156,7 +161,7 @@ def _build_continuous_walkforward_evaluator(
         if "selected_bin" in params:
             # 3D grid: force signal to the requested bin
             requested_bin = int(cast(int, params["selected_bin"]))
-            bin_assignments = model._assign_bins(fold_data["feature"])
+            bin_assignments = model.assign_bins(fold_data["feature"])
             signal = (bin_assignments == requested_bin).astype(float)
             series = _normalize_series_datetime_index(signal.mul(fold_data["target"]))
             return (series, {"selected_long_bin": requested_bin})
@@ -390,7 +395,7 @@ def run_eda_pipeline(
             target = paired["target"]
             timestamps = pd.DatetimeIndex(feature.index)
 
-            rolling_window = max(20, min(252, len(feature) // 4))
+            rolling_window = _default_rolling_window(feature)
 
             metadata = EDAMetadata(
                 feature_name=feature_col,
@@ -433,6 +438,7 @@ def run_eda_pipeline(
                     }
                 )
                 successful_param_grid.append(combo_params)
+            # Reference index is set from the first successful combo; ensure param grid order or data range is consistent.
             if reference_index is None:
                 reference_index = _normalize_datetime_index(target.index)
                 reference_target_series = normalized_target.reindex(reference_index)
@@ -631,7 +637,7 @@ def run_eda_pipeline(
 
             feature, target, feature_col = combo_store[label]
             timestamps = pd.DatetimeIndex(feature.index)
-            rolling_window = max(20, min(252, len(feature) // 4))
+            rolling_window = _default_rolling_window(feature)
 
             metadata = EDAMetadata(
                 feature_name=feature_col,
@@ -895,11 +901,20 @@ def run_walkforward_pipeline(
         if not successful_param_grid or reference_index is None:
             raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
 
-        reference_target = (
-            reference_target_series
-            if reference_target_series is not None
-            else pd.Series(0.0, index=reference_index, name="walkforward_target")
-        )
+        # Warn if loaded data ends before config.end so 2025 (or later) can be included
+        data_end = pd.Timestamp(reference_index.max()).normalize()
+        config_end = pd.Timestamp(config.end).normalize()
+        if data_end < config_end:
+            print(
+                f"\n  [WARNING] Loaded data ends {data_end.date()}; config.end is {config_end.date()}. "
+                "Last fold will not include 2025. To extend: ensure raw OHLC in data/ohlc_data has "
+                "dates through config.end and run with populate_cache=True once to refresh the cache.\n"
+            )
+
+        if reference_target_series is None:
+            reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+        else:
+            reference_target = reference_target_series.fillna(0.0).rename("walkforward_target")
         reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
         # Portfolio simulation and tearsheets need real multi-ticker OHLCV candles.
         portfolio_candles_df = load_candles_for_config(config)
@@ -1075,6 +1090,7 @@ def run_oos_pipeline(config: "ResearchConfig") -> "WalkforwardRunReport":
         )
     elif config.feature_type == FeatureType.RULE_BASED:
         combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
+        combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
         successful_param_grid = []
         reference_index = None
 
@@ -1092,16 +1108,22 @@ def run_oos_pipeline(config: "ResearchConfig") -> "WalkforwardRunReport":
                 continue
             feature = paired["feature"]
             target = paired["target"]
-            combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
+            normalized_feature = _normalize_series_datetime_index(feature)
+            normalized_target = _normalize_series_datetime_index(target)
+            combo_returns[_combo_key(combo)] = normalized_feature.mul(normalized_target)
+            combo_feature_target[_combo_key(combo)] = pd.DataFrame(
+                {"feature": normalized_feature, "target": normalized_target}
+            )
             successful_param_grid.append(dict(combo))
             if reference_index is None:
-                reference_index = _unique_sorted_datetime_index(target.index)
+                reference_index = _unique_sorted_datetime_index(normalized_target.index)
             print(f"  [{label}] loaded n={len(feature):,}")
 
         if not successful_param_grid or reference_index is None:
             raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
         reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
         reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
+        portfolio_candles = load_candles_for_config(config_oos)
         fold_rows = build_fold_rows_from_explicit_specs(
             reference_index,
             [(oos.train_start, oos.train_end, oos.test_start, oos.test_end)],
@@ -1119,6 +1141,9 @@ def run_oos_pipeline(config: "ResearchConfig") -> "WalkforwardRunReport":
             config=config.walkforward,
             param_grid=successful_param_grid,
             evaluate_param_combo=_build_rule_based_walkforward_evaluator(combo_returns),
+            research_config=config,
+            portfolio_candles_df=portfolio_candles,
+            feature_data_by_combo=combo_feature_target,
             output_dir=output_dir,
             fold_rows_override=fold_rows,
         )
@@ -1358,7 +1383,7 @@ def run_permutation_pipeline(
         return feature.rename(feature_name)
 
     permutation_config = PermutationTestConfig(
-        nreps=config.in_sample_permutation.nreps,
+        nreps=config.in_sample_permutation.nreps_stage2,
         alpha=config.in_sample_permutation.alpha,
         metric_threshold=config.in_sample_permutation.metric_threshold,
         top_k=config.in_sample_permutation.top_k,

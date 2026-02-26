@@ -22,7 +22,7 @@ from unittest.mock import Mock, patch
 
 from utils.core.enums import Direction, TimeFrame, Ticker
 from feature_selection.base_models.feature_base_model import BaseModel
-from feature_selection.base_models import ContinuousBinningModel, DecisionTreeBinningModel
+from feature_selection.base_models import ContinuousBinningModel
 from ensemble.vault_manager import (
     generate_model_id,
     create_ensemble_directory,

@@ -11,12 +11,16 @@ import pandas as pd
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
+from feature_research.config import FeatureType
 from feature_research.walkforward.metrics import resolve_objective_metric
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.base_models.rule_based import RuleBasedModel
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.helpers import build_feature_column_name
+
+# RuleBasedModel has exactly 3 bins (-1, 0, 1 -> indices 0, 1, 2).
+RULE_BASED_BIN_COUNT: int = 3
 
 
 # Param keys that belong to the binning model only; never pass to the bias node (e.g. RSI).
@@ -113,11 +117,12 @@ def _build_control_file_payload(
     tickers: list[Ticker],
     trading_timeframe: TimeFrame,
     module_name: str,
+    feature_type: FeatureType,
 ) -> dict[str, Any]:
     strategy = _normalize_strategy(str(binning_config.strategy))
     model_configs: list[dict[str, Any]] = []
     ticker_names = [ticker.name for ticker in tickers]
-    is_rule_based = "signal" in module_name.lower()
+    is_rule_based = feature_type == FeatureType.RULE_BASED
     for params in selected_params:
         feature_params = {k: v for k, v in params.items() if k not in BINNING_ONLY_PARAM_KEYS}
         feature_column = build_feature_column_name(
@@ -126,17 +131,16 @@ def _build_control_file_payload(
             tf=trading_timeframe,
             params=feature_params,
         )
-        bin_count = int(params.get("bin_count", binning_config.bin_counts[0]))
-        bin_index_max_val = getattr(binning_config, "bin_index_max", None)
-        # For rule-based signals (e.g., "rsi_signal"), do NOT restrict bin_index_max.
-        # Rule-based discrete signals need to select the best bin across the full range,
-        # not just bin 0. The "signal" suffix in module name indicates a rule-based node.
-        if "signal" in module_name.lower():
-            bin_index_max_val = None
-        start = max(0, getattr(binning_config, "bin_index_min", 0))
-        end = (bin_index_max_val + 1) if bin_index_max_val is not None else bin_count
-        end = min(bin_count, end)
-        member_indices = range(start, end)
+        if is_rule_based:
+            bin_count = RULE_BASED_BIN_COUNT
+            member_indices = range(0, RULE_BASED_BIN_COUNT)
+        else:
+            bin_count = int(params.get("bin_count", binning_config.bin_counts[0]))
+            bin_index_max_val = getattr(binning_config, "bin_index_max", None)
+            start = max(0, getattr(binning_config, "bin_index_min", 0))
+            end = (bin_index_max_val + 1) if bin_index_max_val is not None else bin_count
+            end = min(bin_count, end)
+            member_indices = range(start, end)
         model_name = f"{feature_column}_{strategy}"
         members = [
             {
@@ -147,6 +151,37 @@ def _build_control_file_payload(
             }
             for i in member_indices
         ]
+        if is_rule_based:
+            constructor_params = {
+                "selection_metric": binning_config.selection_metric,
+                "strategy": strategy,
+                "metric_threshold": binning_config.metric_threshold,
+                "shrinkage_k": binning_config.shrinkage_k,
+                "long_clip_min": binning_config.long_clip_min,
+                "long_clip_max": binning_config.long_clip_max,
+                "short_clip_min": binning_config.short_clip_min,
+                "short_clip_max": binning_config.short_clip_max,
+            }
+        else:
+            constructor_params = {
+                "n_bins": bin_count,
+                "bin_counts": [bin_count],
+                "selection_metric": binning_config.selection_metric,
+                "strategy": strategy,
+                "metric_threshold": binning_config.metric_threshold,
+                "t_threshold": binning_config.t_threshold,
+                "min_region_width": binning_config.min_region_width,
+                "shrinkage_k": binning_config.shrinkage_k,
+                "long_clip_min": binning_config.long_clip_min,
+                "long_clip_max": binning_config.long_clip_max,
+                "short_clip_min": binning_config.short_clip_min,
+                "short_clip_max": binning_config.short_clip_max,
+                "use_coverage_bonus": binning_config.use_coverage_bonus,
+                "coverage_bonus_per_10pct": binning_config.coverage_bonus_per_10pct,
+                "max_coverage_bonus": binning_config.max_coverage_bonus,
+                "bin_index_min": getattr(binning_config, "bin_index_min", 0),
+                "bin_index_max": getattr(binning_config, "bin_index_max", None),
+            }
         model_configs.append(
             {
                 "name": model_name,
@@ -155,24 +190,11 @@ def _build_control_file_payload(
                 "strategy": strategy,
                 "tickers": ticker_names,
                 "members": members,
-                "constructor_params": {
-                    "n_bins": bin_count,
-                    "bin_counts": [bin_count],
-                    "selection_metric": binning_config.selection_metric,
-                    "strategy": strategy,
-                    "metric_threshold": binning_config.metric_threshold,
-                    "t_threshold": binning_config.t_threshold,
-                    "min_region_width": binning_config.min_region_width,
-                    "shrinkage_k": binning_config.shrinkage_k,
-                    "long_clip_min": binning_config.long_clip_min,
-                    "long_clip_max": binning_config.long_clip_max,
-                    "short_clip_min": binning_config.short_clip_min,
-                    "short_clip_max": binning_config.short_clip_max,
-                    "use_coverage_bonus": binning_config.use_coverage_bonus,
-                    "coverage_bonus_per_10pct": binning_config.coverage_bonus_per_10pct,
-                    "max_coverage_bonus": binning_config.max_coverage_bonus,
-                    "bin_index_min": getattr(binning_config, "bin_index_min", 0),
-                    "bin_index_max": getattr(binning_config, "bin_index_max", None),
+                "constructor_params": constructor_params,
+                "bias_node_spec": {
+                    "module_name": module_name,
+                    "timeframes": [trading_timeframe.name],
+                    "params": feature_params,
                 },
             }
         )
@@ -193,6 +215,7 @@ def build_research_portfolio(
     module_name: str = "rsi",
     weight_layer_config: WeightLayerConfig | None = None,
     member_prediction_mode: str | None = None,
+    feature_type: FeatureType = FeatureType.CONTINUOUS,
 ) -> Portfolio:
     timeframe = _normalize_timeframe(trading_timeframe)
     control_payload = _build_control_file_payload(
@@ -201,6 +224,7 @@ def build_research_portfolio(
         tickers=tickers,
         trading_timeframe=timeframe,
         module_name=module_name,
+        feature_type=feature_type,
     )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as handle:
@@ -236,10 +260,11 @@ def _build_one_base_model_with_members(
     train_index: pd.DatetimeIndex,
     test_index: pd.DatetimeIndex,
     train_target: pd.Series,
+    feature_type: FeatureType,
 ) -> tuple[BaseModel, pd.DataFrame, pd.DataFrame]:
     """Build one BaseModel with one member per selected param and train/test feature DataFrames."""
     strategy = _normalize_strategy(str(binning_config.strategy))
-    is_rule_based = "signal" in module_name.lower()
+    is_rule_based = feature_type == FeatureType.RULE_BASED
     train_parts: dict[str, pd.Series] = {}
     test_parts: dict[str, pd.Series] = {}
     feature_columns: list[str] = []
@@ -281,12 +306,12 @@ def _build_one_base_model_with_members(
         tf=trading_timeframe,
         params=first_feature_params,
     )
-    bin_count = int(first_params.get("bin_count", getattr(binning_config, "bin_counts", [10])[0]))
-    # For rule-based signals (e.g., "rsi_signal"), do NOT restrict bin_index_max.
-    # Rule-based discrete signals need to select the best bin across the full range.
-    bin_index_max_val = getattr(binning_config, "bin_index_max", None)
-    if "signal" in module_name.lower():
-        bin_index_max_val = None
+    bin_count = (
+        RULE_BASED_BIN_COUNT
+        if is_rule_based
+        else int(first_params.get("bin_count", getattr(binning_config, "bin_counts", [10])[0]))
+    )
+    bin_index_max_val = None if is_rule_based else getattr(binning_config, "bin_index_max", None)
     if is_rule_based:
         first_binning = RuleBasedModel(
             selection_metric=getattr(binning_config, "selection_metric", "sharpe"),
@@ -352,11 +377,12 @@ def _build_one_base_model_with_members(
             tf=trading_timeframe,
             params=feature_params,
         )
-        bin_count = int(params.get("bin_count", getattr(binning_config, "bin_counts", [10])[0]))
-        # For rule-based signals (e.g., "rsi_signal"), do NOT restrict bin_index_max.
-        bin_index_max_val = getattr(binning_config, "bin_index_max", None)
-        if "signal" in module_name.lower():
-            bin_index_max_val = None
+        bin_count = (
+            RULE_BASED_BIN_COUNT
+            if is_rule_based
+            else int(params.get("bin_count", getattr(binning_config, "bin_counts", [10])[0]))
+        )
+        bin_index_max_val = None if is_rule_based else getattr(binning_config, "bin_index_max", None)
         if is_rule_based:
             member_binning = RuleBasedModel(
                 selection_metric=getattr(binning_config, "selection_metric", "sharpe"),
@@ -411,6 +437,7 @@ def evaluate_fold_portfolio(
     weight_layer_config: WeightLayerConfig | None = None,
     member_prediction_mode: str | None = None,
     feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
+    feature_type: FeatureType = FeatureType.CONTINUOUS,
 ) -> FoldPortfolioResult:
     timeframe = _normalize_timeframe(trading_timeframe)
     train_ready = ensure_portfolio_candle_columns(train_candles, timeframe)
@@ -444,6 +471,7 @@ def evaluate_fold_portfolio(
             train_index=train_index_unique,
             test_index=test_index_unique,
             train_target=train_target,
+            feature_type=feature_type,
         )
         model_name = base_model.feature_column or "ensemble"
         required_columns = base_model.get_member_feature_columns()
@@ -481,31 +509,6 @@ def evaluate_fold_portfolio(
         )
         active_returns = oos_returns[oos_returns != 0.0]
         oos_sharpe = float(metric(active_returns)) if not active_returns.empty else float("nan")
-        # #region agent log
-        try:
-            _path = "continuous"
-            _pos_n = len(portfolio_predictions)
-            _pos_zero = (portfolio_predictions["position_fraction"] == 0).sum() if "position_fraction" in portfolio_predictions.columns else 0
-            _ret_n = len(oos_returns)
-            _ret_zero = (oos_returns == 0.0).sum()
-            with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
-                import json
-                _f.write(
-                    json.dumps(
-                        {
-                            "hypothesisId": "A,B,E",
-                            "location": "portfolio_evaluator.evaluate_fold_portfolio(continuous)",
-                            "message": "oos returns continuous path",
-                            "data": {"path": _path, "positions_n": _pos_n, "pct_position_zero": float(_pos_zero) / _pos_n if _pos_n else 0, "returns_n": _ret_n, "pct_returns_zero": float(_ret_zero) / _ret_n if _ret_n else 0},
-                            "timestamp": __import__("time").time() * 1000,
-                        },
-                        default=str,
-                    )
-                    + "\n"
-                )
-        except Exception:  # noqa: S110
-            pass
-        # #endregion
         base_models = (predictions or {}).get("base_models", {})
         if base_models:
             per_signal_oos_sharpe = {}
@@ -541,6 +544,7 @@ def evaluate_fold_portfolio(
         module_name=module_name,
         weight_layer_config=weight_layer_config,
         member_prediction_mode=member_prediction_mode,
+        feature_type=feature_type,
     )
     portfolio.fit_from_candles(train_ready, target_data=train_target)
     predictions = portfolio.predict_from_candles(test_ready)
@@ -556,31 +560,6 @@ def evaluate_fold_portfolio(
     )
     active_returns = oos_returns[oos_returns != 0.0]
     oos_sharpe = float(metric(active_returns)) if not active_returns.empty else float("nan")
-    # #region agent log
-    try:
-        _path = "rule_based"
-        _pos_n = len(portfolio_predictions)
-        _pos_zero = (portfolio_predictions["position_fraction"] == 0).sum() if "position_fraction" in portfolio_predictions.columns else 0
-        _ret_n = len(oos_returns)
-        _ret_zero = (oos_returns == 0.0).sum()
-        with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
-            import json
-            _f.write(
-                json.dumps(
-                    {
-                        "hypothesisId": "A,B,E",
-                        "location": "portfolio_evaluator.evaluate_fold_portfolio(rule_based)",
-                        "message": "oos returns rule_based path",
-                        "data": {"path": _path, "positions_n": _pos_n, "pct_position_zero": float(_pos_zero) / _pos_n if _pos_n else 0, "returns_n": _ret_n, "pct_returns_zero": float(_ret_zero) / _ret_n if _ret_n else 0},
-                        "timestamp": __import__("time").time() * 1000,
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
-    except Exception:  # noqa: S110
-        pass
-    # #endregion
     return FoldPortfolioResult(
         fold_id=-1,
         oos_portfolio_sharpe=oos_sharpe,

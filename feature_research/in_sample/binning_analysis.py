@@ -132,7 +132,7 @@ def run_binning_analysis_pipeline(
             t_threshold=t_threshold,
             min_region_width=min_region_width,
         )
-        report = generate_binning_report(
+        report, diagnostic_plots = generate_binning_report(
             model=model,
             feature_data=feature,
             criteria=criteria,
@@ -142,7 +142,7 @@ def run_binning_analysis_pipeline(
         )
 
         combo_output_dir = output_dir / label
-        report_path = save_report(report, str(combo_output_dir))
+        report_path = save_report(report, diagnostic_plots, str(combo_output_dir))
         results[label] = Path(report_path)
 
     return results

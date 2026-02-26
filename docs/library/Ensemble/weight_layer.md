@@ -1,6 +1,8 @@
 # Weight Layer
 
 > **Role:** Receives per-model vol-scaled forecasts from one or more DiversifiedEnsembles → combines into a single `forecast_score` per ticker → applies FDM.
+>
+> **Defaults:** FDM cap is **2.0** (per project spec). Use `WeightLayerConfig(fdm_max=...)` or `WeightLayer(..., fdm_max=...)` to override.
 
 ```
 Base Models → DiversifiedEnsemble → WeightLayer → Portfolio → PositionSizer
