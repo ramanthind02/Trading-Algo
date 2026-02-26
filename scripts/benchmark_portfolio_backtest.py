@@ -2,12 +2,11 @@
 """
 Benchmark the Cython-optimized portfolio backtest with real data and vault ensembles.
 
-Runs the same flow as research/portfolio_test.ipynb:
-- Load 8 ensembles from vault (refit=True)
-- Load train (2000–2020) and test (2020–2024) candles for ES, NQ, YM, RTY
-- Fit portfolio on train, predict (basic + granular) and compute returns on test
-
-Reports Cython availability and timings for load, fit, predict, and returns.
+Uses portfolio_research config (tickers, ensemble_dirs, train/test dates from
+portfolio_research.config.load_config()), sharing a single source of truth with
+python portfolio_research/run_portfolio_test.py. Fit portfolio on train, predict
+(basic + granular) and compute returns on test; reports Cython availability and
+timings for load, fit, predict, and returns.
 
 Usage:
     source venv/bin/activate
@@ -17,7 +16,6 @@ Usage:
 
 import argparse
 import cProfile
-import os
 import pstats
 import sys
 import time
@@ -25,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 # Ensure project root is on path
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -34,8 +33,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 from ensemble.portfolio import Portfolio  # noqa: E402
 from ensemble.portfolio_tester import PortfolioTester  # noqa: E402
 from ensemble.vault_manager import load_ensemble_from_vault  # noqa: E402
-from utils.enums import TimeFrame, Ticker  # noqa: E402
-from utils import helpers  # noqa: E402
+from ensemble.weight_layer import WeightLayer  # noqa: E402
+from portfolio_research.config import load_config  # noqa: E402
+from utils.core.helpers import load_data_multi_ticker  # noqa: E402
 
 
 def _cython_status() -> dict[str, bool]:
@@ -43,59 +43,97 @@ def _cython_status() -> dict[str, bool]:
     stats_available = False
     nodes_available = False
     try:
-        import utils.fast_stats as fs  # noqa: F401
+        import utils.compute.fast_stats as fs  # noqa: F401
         stats_available = getattr(fs, "CYTHON_AVAILABLE", False)
     except Exception:
         pass
     try:
-        import utils.fast_nodes as fn  # noqa: F401
+        import utils.compute.fast_nodes as fn  # noqa: F401
         nodes_available = getattr(fn, "CYTHON_NODES_AVAILABLE", False)
     except Exception:
         pass
     return {"fast_stats (cython_optimized)": stats_available, "fast_nodes (cython_nodes)": nodes_available}
 
 
-def _load_ensembles(target_vol: float) -> list:
-    """Load the same 8 vault ensembles as in portfolio_test.ipynb."""
-    dirs = [
-        "vault/D/buy_hold_long",
-        "vault/D/rsi_bias_lookback_2_long",
-        "vault/D/indices_momentum_long",
-        "vault/D/rsi_regime_long",
-        "vault/D/rsi_regime_short",
-        "vault/D/cum_rsi_2_long",
-        "vault/D/rsi_5_long",
-        "vault/D/ultimate_c_2_3_3 _long",
-    ]
-    return [
-        load_ensemble_from_vault(d, refit=True, target_volatility=target_vol)
-        for d in dirs
-    ]
+def _slice_candles_by_date(
+    candles: pd.DataFrame,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> pd.DataFrame:
+    """Return rows where start <= datetime <= end (inclusive)."""
+    if candles.empty:
+        return candles
+    dt = pd.to_datetime(candles["datetime"], utc=False)
+    if getattr(dt.dt, "tz", None) is not None:
+        dt = dt.dt.tz_localize(None)
+    mask = (dt >= start) & (dt <= end)
+    return candles.loc[mask].copy()
 
 
-def _load_data() -> tuple:
-    """Load train (2000–2020) and test (2020–2024) candles for ES, NQ, YM, RTY."""
-    tickers = [Ticker.ES, Ticker.NQ, Ticker.YM, Ticker.RTY]
-    train_candles = helpers.load_data_multi_ticker(
-        tickers=tickers,
-        timeframe=TimeFrame.D,
-        start=datetime(2000, 1, 1),
-        end=datetime(2020, 1, 1),
-        use_millisecond_offset=True,
+def _load_data_from_config(config) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load train and test candles using portfolio_research config walkforward bounds."""
+    wf_train_start, wf_train_end, wf_test_start, wf_test_end = (
+        config.walkforward_train_test_bounds()
     )
-    test_candles = helpers.load_data_multi_ticker(
-        tickers=tickers,
-        timeframe=TimeFrame.D,
-        start=datetime(2020, 1, 1),
-        end=datetime(2024, 1, 1),
-        use_millisecond_offset=True,
+    start_ts = pd.Timestamp(wf_train_start)
+    end_ts = pd.Timestamp(wf_test_end)
+    full = load_data_multi_ticker(
+        tickers=config.tickers,
+        timeframe=config.timeframe,
+        start=datetime(start_ts.year, start_ts.month, start_ts.day),
+        end=datetime(end_ts.year, end_ts.month, end_ts.day),
+    )
+    train_candles = _slice_candles_by_date(
+        full, pd.Timestamp(wf_train_start), pd.Timestamp(wf_train_end)
+    )
+    test_candles = _slice_candles_by_date(
+        full, pd.Timestamp(wf_test_start), pd.Timestamp(wf_test_end)
     )
     return train_candles, test_candles
 
 
+def _load_ensembles_from_config(config) -> list:
+    """Load vault ensembles from config.ensemble_dirs; enable cache if config.use_cache."""
+    def _enable_cache(ensemble):
+        ensemble.use_cache = config.use_cache
+        for model in getattr(ensemble, "base_models", {}).values():
+            setattr(model, "use_cache", config.use_cache)
+        return ensemble
+
+    return [
+        _enable_cache(
+            load_ensemble_from_vault(
+                path,
+                refit=True,
+                target_volatility=config.target_volatility,
+            )
+        )
+        for path in config.ensemble_dirs.values()
+    ]
+
+
+def _build_portfolio_and_tester(config, ensembles: list) -> tuple:
+    """Build Portfolio and PortfolioTester from config (same as run_portfolio_test)."""
+    weight_layer = WeightLayer(
+        weight_method=config.weight_layer_method,
+        **dict(config.weight_layer_kwargs),
+    )
+    portfolio = Portfolio(
+        ensembles=ensembles,
+        trading_timeframe=config.timeframe,
+        target_volatility=config.target_volatility,
+        max_position_pct=config.max_position_pct,
+        weight_layer=weight_layer,
+        use_cache=config.use_cache,
+    )
+    tester = PortfolioTester(portfolio=portfolio, baseline_mode=config.baseline_mode)
+    return portfolio, tester
+
+
 def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
     """Run full pipeline and report timings."""
-    target_vol = 0.15
+    config = load_config()
+    n_ensembles = len(config.ensemble_dirs)
 
     # Cython status
     cython = _cython_status()
@@ -106,36 +144,24 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
 
     # Load ensembles
     t0 = time.perf_counter()
-    ensembles = _load_ensembles(target_vol)
+    ensembles = _load_ensembles_from_config(config)
     t_load_ensembles = time.perf_counter() - t0
     print(f"Loaded {len(ensembles)} ensembles in {t_load_ensembles:.2f}s")
 
     # Load data
     t0 = time.perf_counter()
-    train_candles, test_candles = _load_data()
+    train_candles, test_candles = _load_data_from_config(config)
     t_load_data = time.perf_counter() - t0
     print(f"Loaded train: {len(train_candles)} candles, test: {len(test_candles)} candles in {t_load_data:.2f}s")
     print()
 
     # Build portfolio and tester
-    portfolio = Portfolio(
-        ensembles=ensembles,
-        trading_timeframe=TimeFrame.D,
-        target_volatility=target_vol,
-        max_position_pct=2.5,
-    )
-    tester = PortfolioTester(portfolio=portfolio, baseline_mode="equal_weight")
+    portfolio, tester = _build_portfolio_and_tester(config, ensembles)
 
     # Warmup: one full fit + predict to clear one-off overhead (e.g. imports)
     print("Warmup...")
     for _ in range(warmup):
-        _p = Portfolio(
-            ensembles=ensembles,
-            trading_timeframe=TimeFrame.D,
-            target_volatility=target_vol,
-            max_position_pct=2.5,
-        )
-        _t = PortfolioTester(portfolio=_p, baseline_mode="equal_weight")
+        _p, _t = _build_portfolio_and_tester(config, ensembles)
         _t.fit(train_candles)
         _t.predict(train_candles)
     print("Warmup done.\n")
@@ -148,14 +174,7 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
     baseline_returns_times: list[float] = []
 
     for _ in range(runs):
-        # New portfolio/tester per fit so cache doesn’t skip work
-        portfolio = Portfolio(
-            ensembles=ensembles,
-            trading_timeframe=TimeFrame.D,
-            target_volatility=target_vol,
-            max_position_pct=2.5,
-        )
-        tester = PortfolioTester(portfolio=portfolio, baseline_mode="equal_weight")
+        portfolio, tester = _build_portfolio_and_tester(config, ensembles)
         t0 = time.perf_counter()
         tester.fit(train_candles)
         fit_times.append(time.perf_counter() - t0)
@@ -192,7 +211,7 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
     base_mean, base_std = _mean_and_std(baseline_returns_times)
 
     print("=" * 60)
-    print("Benchmark summary (real data, 8 vault ensembles)")
+    print(f"Benchmark summary (real data, {n_ensembles} vault ensembles from portfolio_research config)")
     print("=" * 60)
     print(f"  Load ensembles:     {t_load_ensembles:>8.2f}s  (1 run)")
     print(f"  Load data:         {t_load_data:>8.2f}s  (1 run)")
@@ -206,31 +225,25 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
     print(f"  Core pipeline (fit + predict + returns): ~{total_core:.2f}s")
     print()
     print("Sequential ensemble execution (no joblib) for Cython-friendly pipeline.")
-    print("To enable Cython: python utils/setup_cython.py build_ext --inplace")
+    print("To enable Cython: python utils/compute/cython/setup_cython.py build_ext --inplace")
     print("Re-run this script and compare timings (fit/predict benefit most).")
 
 
 def run_profile_mode() -> None:
     """Run one fit+predict under cProfile and print top hotspots (cumtime)."""
-    target_vol = 0.15
+    config = load_config()
     cython = _cython_status()
     print("Cython extensions:")
     for name, available in cython.items():
         print(f"  {name}: {'✓' if available else '✗ (pure Python)'}")
     print()
-    print("Loading ensembles and data...")
+    print("Loading ensembles and data (from portfolio_research config)...")
     t0 = time.perf_counter()
-    ensembles = _load_ensembles(target_vol)
-    train_candles, test_candles = _load_data()
+    ensembles = _load_ensembles_from_config(config)
+    train_candles, test_candles = _load_data_from_config(config)
     print(f"Loaded in {time.perf_counter() - t0:.2f}s\n")
 
-    portfolio = Portfolio(
-        ensembles=ensembles,
-        trading_timeframe=TimeFrame.D,
-        target_volatility=target_vol,
-        max_position_pct=2.5,
-    )
-    tester = PortfolioTester(portfolio=portfolio, baseline_mode="equal_weight")
+    portfolio, tester = _build_portfolio_and_tester(config, ensembles)
 
     def _target() -> None:
         tester.fit(train_candles)
@@ -254,7 +267,7 @@ def run_profile_mode() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Benchmark portfolio backtest with real data and vault ensembles."
+        description="Benchmark portfolio backtest with real data and vault ensembles (config from portfolio_research)."
     )
     parser.add_argument(
         "--profile",

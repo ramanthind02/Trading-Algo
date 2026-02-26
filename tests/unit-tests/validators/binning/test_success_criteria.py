@@ -1,7 +1,7 @@
 import pytest
 
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning.diagnostics import (
+from feature_selection.validation.binning.diagnostics import (
     BinningSuccessCriteria,
     validate_binning_success,
 )

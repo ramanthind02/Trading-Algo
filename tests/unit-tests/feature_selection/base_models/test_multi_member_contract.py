@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 
 from feature_selection.base_models.feature_base_model import BaseModel, build_member_model_name
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel as QuantileBinningModel
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 class TestBuildMemberModelName:

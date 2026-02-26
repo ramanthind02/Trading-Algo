@@ -10,7 +10,7 @@ Date: 2025-01-XX
 
 from __future__ import annotations
 
-from typing import Optional, List, TYPE_CHECKING
+from typing import Any, List, Optional, TYPE_CHECKING, Union
 from itertools import combinations
 import pandas as pd
 import numpy as np
@@ -759,6 +759,7 @@ def plot_parameter_sensitivity_with_stability(
     stability_threshold: float = 0.8,
     title: Optional[str] = None,
     show_plot: bool = True,
+    phase3_selected_mask: Optional[Union[pd.Series, np.ndarray]] = None,
 ) -> go.Figure:
     """
     1D parameter sensitivity with raw + smoothed lines and shaded stable regions.
@@ -781,6 +782,9 @@ def plot_parameter_sensitivity_with_stability(
         Plot title.
     show_plot : bool
         Whether to call ``fig.show()``.
+    phase3_selected_mask : pd.Series or np.ndarray, optional
+        Boolean mask aligned with *df* (same index/length). When provided,
+        points where True are drawn as "Phase 3/4 selected" markers.
 
     Returns
     -------
@@ -868,6 +872,27 @@ def plot_parameter_sensitivity_with_stability(
         # Derive contiguous stable runs from stability_ratio directly
         _add_inline_stable_shading(fig, plot_df, x_col, stability_threshold)
 
+    # Phase 3/4 selected overlay
+    if phase3_selected_mask is not None:
+        if isinstance(phase3_selected_mask, np.ndarray):
+            mask_series = pd.Series(phase3_selected_mask, index=df.index)
+        else:
+            mask_series = phase3_selected_mask
+        sel = mask_series.reindex(plot_df.index).fillna(False)
+        if sel.any():
+            sub = plot_df.loc[sel]
+            fig.add_trace(
+                go.Scatter(
+                    x=sub[x_col],
+                    y=sub[smoothed_col] if smoothed_col in sub.columns else sub[metric],
+                    mode="markers",
+                    name="Phase 3/4 selected",
+                    marker=dict(symbol="star", size=14, color="gold", line=dict(width=1, color="darkorange")),
+                    hovertemplate=f"<b>{param_name}</b>: %{{x}}<br>Phase 3/4 selected<extra></extra>",
+                ),
+                secondary_y=False,
+            )
+
     if title is None:
         title = f"Parameter Sensitivity with Stability: {param_name}"
 
@@ -932,6 +957,7 @@ def plot_2d_stability_heatmap(
     enable_controls: bool = True,
     title: Optional[str] = None,
     show_plot: bool = True,
+    phase3_selected_mask: Optional[Union[pd.Series, np.ndarray]] = None,
 ) -> go.Figure:
     """
     2D heatmap explorer with selectable base layers and optional overlays.
@@ -1052,6 +1078,21 @@ def plot_2d_stability_heatmap(
     contour_idx: Optional[int] = None
     region_indices: List[int] = []
 
+    # Reference pivot so region scatter uses same x/y labels as heatmap (avoids misaligned overlays)
+    _ref_pivot = working_df.pivot_table(
+        index="param1_value", columns="param2_value", values=resolved_layers[0][1],
+    ).sort_index(axis=0).sort_index(axis=1)
+
+    def _axis_label(val: object, candidates: Any) -> str:
+        """Match val to a pivot index/column value and return its string form."""
+        for c in candidates:
+            if c == val:
+                return str(c)
+            if isinstance(c, (int, float)) and isinstance(val, (int, float)):
+                if abs(float(c) - float(val)) < 1e-9:
+                    return str(c)
+        return str(val)
+
     # Stability ratio contour overlay (optional visibility)
     if "stability_ratio" in working_df.columns:
         pivot_sr = working_df.pivot_table(
@@ -1077,11 +1118,17 @@ def plot_2d_stability_heatmap(
         ))
         contour_idx = len(fig.data) - 1
 
-    # Stable region markers overlay
+    # Stable region markers overlay (use heatmap's axis labels so overlay aligns)
     if stable_regions:
         for region in stable_regions:
-            xs = [str(combo[1]) for combo in region.param_combinations]
-            ys = [str(combo[0]) for combo in region.param_combinations]
+            xs = [
+                _axis_label(combo[1], _ref_pivot.columns)
+                for combo in region.param_combinations
+            ]
+            ys = [
+                _axis_label(combo[0], _ref_pivot.index)
+                for combo in region.param_combinations
+            ]
             fig.add_trace(go.Scatter(
                 x=xs, y=ys,
                 mode="markers",
@@ -1102,6 +1149,26 @@ def plot_2d_stability_heatmap(
             ))
             region_indices.append(len(fig.data) - 1)
 
+    # Phase 3/4 selected overlay
+    phase3_idx: Optional[int] = None
+    if phase3_selected_mask is not None:
+        if isinstance(phase3_selected_mask, np.ndarray):
+            mask_series = pd.Series(phase3_selected_mask, index=df.index)
+        else:
+            mask_series = phase3_selected_mask
+        sel = mask_series.reindex(working_df.index).fillna(False)
+        if sel.any():
+            sub = working_df.loc[sel]
+            fig.add_trace(go.Scatter(
+                x=[str(v) for v in sub["param2_value"]],
+                y=[str(v) for v in sub["param1_value"]],
+                mode="markers",
+                name="Phase 3/4 selected",
+                marker=dict(symbol="star", size=14, color="gold", line=dict(width=1.5, color="darkorange")),
+                hovertemplate=f"<b>{param1}</b>: %{{y}}<br><b>{param2}</b>: %{{x}}<br>Phase 3/4 selected<extra></extra>",
+            ))
+            phase3_idx = len(fig.data) - 1
+
     if enable_controls:
         total = len(fig.data)
 
@@ -1113,6 +1180,8 @@ def plot_2d_stability_heatmap(
             if region_indices:
                 for idx in region_indices:
                     vis[idx] = regions_on
+            if phase3_idx is not None:
+                vis[phase3_idx] = True
             return vis
 
         layer_buttons = []

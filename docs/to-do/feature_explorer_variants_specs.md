@@ -240,7 +240,7 @@ Under the null that price history is random (candle permutation), the rule-based
 ### Steps (conceptual)
 
 1. Define criterion (e.g. primary metric on OOS or full period).
-2. For each permutation replicate: permute candles (e.g. [BarPermute](utils/permutation_test/permute_bars.py)) → for selected param tuple(s), create bias node → extract features from **permuted** candles → compute forward returns from same permuted data → compute criterion.
+2. For each permutation replicate: permute candles (e.g. [BarPermute](utils/evaluation/permutation_test/permute_bars.py)) → for selected param tuple(s), create bias node → extract features from **permuted** candles → compute forward returns from same permuted data → compute criterion.
 3. Build null distribution; compare observed criterion to get p-value.
 
 ### Options
@@ -250,7 +250,7 @@ Under the null that price history is random (candle permutation), the rule-based
 
 ### Gap
 
-[extract_features_with_forward_returns](feature_extraction/feature_extractor.py) does not accept a candles DataFrame; it loads via `helpers.load_data_multi_ticker`. The spec states that an API to **extract features (and forward returns) from a provided candles DataFrame** is required for this test. Design (e.g. `extract_features_from_candles(module_name, params, candles_df, target_col=...)`) can be outlined without implementing. Implementation may be deferred. [permute_bars](utils/permutation_test/permute_bars.py) and related infra are the source of permuted bars; how they are passed into the extractor is TBD.
+[extract_features_with_forward_returns](feature_extraction/feature_extractor.py) does not accept a candles DataFrame; it loads via `helpers.load_data_multi_ticker`. The spec states that an API to **extract features (and forward returns) from a provided candles DataFrame** is required for this test. Design (e.g. `extract_features_from_candles(module_name, params, candles_df, target_col=...)`) can be outlined without implementing. Implementation may be deferred. [permute_bars](utils/evaluation/permutation_test/permute_bars.py) and related infra are the source of permuted bars; how they are passed into the extractor is TBD.
 
 ---
 

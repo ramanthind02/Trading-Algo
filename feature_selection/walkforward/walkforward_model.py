@@ -16,6 +16,8 @@ Author: Trading Research Team
 Date: 2025-10-24
 """
 
+from __future__ import annotations
+
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Callable, Any
@@ -377,8 +379,9 @@ class WalkForwardModel(BinningModelBase):
             # Predict on test data
             test_signals = self.base_model.predict(X_test, strategy=strategy)
             
-            # Get OOS returns for selected signals
-            oos_returns = y_test[test_signals == 1]
+            # Get OOS returns for active (non-zero) signals with multiplier scaling
+            active_mask = test_signals != 0
+            oos_returns = (y_test * test_signals)[active_mask]
             
             # Only include if sufficient samples
             if len(oos_returns) >= self.min_test_samples:
@@ -439,7 +442,7 @@ class WalkForwardModel(BinningModelBase):
 def generate_rolling_windows(
     df: pd.DataFrame,
     window_size: int,
-    step_size: int = None,
+    step_size: int | None = None,
     min_samples: int = 100
 ) -> List[Dict[str, Any]]:
     """
@@ -635,7 +638,7 @@ def apply_function_to_rolling_windows(
     df: pd.DataFrame,
     func: Callable,
     window_size: int,
-    step_size: int = None,
+    step_size: int | None = None,
     columns: List[str] = None,
     min_samples: int = 100,
     verbose: bool = False

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from utils.enums import TimeFrame
-from feature_research.rule_based.data_loader import expand_bias_specs, param_combo_label
+from utils.core.enums import TimeFrame
+from feature_research.in_sample.data_loader import (
+    expand_bias_specs,
+    param_combo_label,
+)
 
 
 def test_expand_bias_specs_single_param():

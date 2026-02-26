@@ -12,18 +12,18 @@ import pytest
 from matplotlib.figure import Figure
 
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning.diagnostics import (
+from feature_selection.validation.binning.diagnostics import (
     BinningSuccessCriteria,
     RegionMetadata,
 )
-from feature_selection.validators.binning.report import (
+from feature_selection.validation.binning.report import (
     BinningDiagnosticsReport,
     detect_failure_mode,
     display_report_summary,
     generate_binning_report,
     save_report,
 )
-from feature_selection.validators.binning.shape_analysis import (
+from feature_selection.validation.binning.shape_analysis import (
     AdjacencyAnalysis,
     RegionCoverage,
 )
@@ -150,7 +150,6 @@ def _build_synthetic_report(
     ]
     coverage = _mock_coverage_breakdown()
     adjacency = _mock_adjacency_analysis()
-    plots = _mock_diagnostic_plots()
 
     return BinningDiagnosticsReport(
         feature_column="rsi_signal_D_lookback_14",
@@ -163,7 +162,6 @@ def _build_synthetic_report(
         coverage_breakdown=coverage,
         total_coverage_pct=35.0,
         adjacency_analysis=adjacency,
-        diagnostic_plots=plots,
         timestamp="2026-02-16T12:00:00",
     )
 
@@ -183,35 +181,35 @@ class TestGenerateBinningReport:
 
         with (
             patch(
-                "feature_selection.validators.binning.report.analyze_multi_region_shapes",
+                "feature_selection.validation.binning.report.analyze_multi_region_shapes",
                 return_value=_mock_shape_summary(),
             ),
             patch(
-                "feature_selection.validators.binning.report.calculate_region_coverage_breakdown",
+                "feature_selection.validation.binning.report.calculate_region_coverage_breakdown",
                 return_value=_mock_coverage_breakdown(),
             ),
             patch(
-                "feature_selection.validators.binning.report.detect_region_adjacency",
+                "feature_selection.validation.binning.report.detect_region_adjacency",
                 return_value=_mock_adjacency_analysis(),
             ),
             patch(
-                "feature_selection.validators.binning.report.plot_bin_heatmap",
+                "feature_selection.validation.binning.report.plot_bin_heatmap",
                 return_value=_mock_diagnostic_plots()["heatmap"],
             ),
             patch(
-                "feature_selection.validators.binning.report.plot_region_boundaries",
+                "feature_selection.validation.binning.report.plot_region_boundaries",
                 return_value=_mock_diagnostic_plots()["boundaries"],
             ),
             patch(
-                "feature_selection.validators.binning.report.plot_position_multiplier_curve",
+                "feature_selection.validation.binning.report.plot_position_multiplier_curve",
                 return_value=_mock_diagnostic_plots()["multiplier_curve"],
             ),
             patch(
-                "feature_selection.validators.binning.report.create_diagnostic_panel",
+                "feature_selection.validation.binning.report.create_diagnostic_panel",
                 return_value=_mock_diagnostic_plots()["panel"],
             ),
         ):
-            report = generate_binning_report(model, feature_data, criteria, strategy="long")
+            report, _ = generate_binning_report(model, feature_data, criteria, strategy="long")
 
         assert report.success_verdict is True
         assert report.failure_mode == "none"
@@ -226,35 +224,35 @@ class TestGenerateBinningReport:
 
         with (
             patch(
-                "feature_selection.validators.binning.report.analyze_multi_region_shapes",
+                "feature_selection.validation.binning.report.analyze_multi_region_shapes",
                 return_value={},
             ),
             patch(
-                "feature_selection.validators.binning.report.calculate_region_coverage_breakdown",
+                "feature_selection.validation.binning.report.calculate_region_coverage_breakdown",
                 return_value=[],
             ),
             patch(
-                "feature_selection.validators.binning.report.detect_region_adjacency",
+                "feature_selection.validation.binning.report.detect_region_adjacency",
                 return_value=AdjacencyAnalysis(gap_sizes=[], is_connected=True, isolation_score=0.0),
             ),
             patch(
-                "feature_selection.validators.binning.report.plot_bin_heatmap",
+                "feature_selection.validation.binning.report.plot_bin_heatmap",
                 return_value=_mock_diagnostic_plots()["heatmap"],
             ),
             patch(
-                "feature_selection.validators.binning.report.plot_region_boundaries",
+                "feature_selection.validation.binning.report.plot_region_boundaries",
                 return_value=_mock_diagnostic_plots()["boundaries"],
             ),
             patch(
-                "feature_selection.validators.binning.report.plot_position_multiplier_curve",
+                "feature_selection.validation.binning.report.plot_position_multiplier_curve",
                 return_value=_mock_diagnostic_plots()["multiplier_curve"],
             ),
             patch(
-                "feature_selection.validators.binning.report.create_diagnostic_panel",
+                "feature_selection.validation.binning.report.create_diagnostic_panel",
                 return_value=_mock_diagnostic_plots()["panel"],
             ),
         ):
-            report = generate_binning_report(model, feature_data, criteria)
+            report, _ = generate_binning_report(model, feature_data, criteria)
 
         assert report.success_verdict is False
         assert report.failure_mode == "no_regions"
@@ -309,7 +307,6 @@ class TestReportDataclass:
         assert isinstance(report.coverage_breakdown, list)
         assert isinstance(report.total_coverage_pct, float)
         assert isinstance(report.adjacency_analysis, AdjacencyAnalysis)
-        assert isinstance(report.diagnostic_plots, dict)
         assert isinstance(report.timestamp, str)
 
     def test_report_is_frozen(self) -> None:
@@ -334,8 +331,9 @@ class TestSaveReport:
     def test_save_report_creates_json(self) -> None:
         """save_report creates a JSON file at expected path."""
         report = _build_synthetic_report()
+        plots = _mock_diagnostic_plots()
         with tempfile.TemporaryDirectory() as tmpdir:
-            result_path = save_report(report, tmpdir)
+            result_path = save_report(report, plots, tmpdir)
             assert result_path.endswith(".json")
             from pathlib import Path
             assert Path(result_path).exists()
@@ -343,8 +341,9 @@ class TestSaveReport:
     def test_save_report_json_fields(self) -> None:
         """Saved JSON contains all non-Figure fields with correct values."""
         report = _build_synthetic_report()
+        plots = _mock_diagnostic_plots()
         with tempfile.TemporaryDirectory() as tmpdir:
-            result_path = save_report(report, tmpdir)
+            result_path = save_report(report, plots, tmpdir)
             with open(result_path) as f:
                 data = json.load(f)
 
@@ -373,8 +372,9 @@ class TestSaveReport:
     def test_save_report_creates_plot_files(self) -> None:
         """Plot PNG files are saved alongside JSON."""
         report = _build_synthetic_report()
+        plots = _mock_diagnostic_plots()
         with tempfile.TemporaryDirectory() as tmpdir:
-            save_report(report, tmpdir)
+            save_report(report, plots, tmpdir)
             from pathlib import Path
             plots_dir = Path(tmpdir) / report.feature_column / "plots"
             assert plots_dir.exists()

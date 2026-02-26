@@ -69,10 +69,10 @@ class DetrendedRSI(BiasNode):
 
 ### Option 2: Direct RSI Calculation
 
-Reuse RSI calculation logic directly using `utils.rsi_helpers`:
+Reuse RSI calculation logic directly using `utils.compute.rsi_helpers`:
 
 ```python
-from utils.rsi_helpers import compute_rsi_initial, update_rsi
+from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
 
 class DetrendedRSI(BiasNode):
     def __init__(self, ticker, tf, rsi_lookback=14, sma_period=50):
@@ -144,8 +144,8 @@ You'll need to maintain:
 ```python
 from typing import List
 import numpy as np
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 from nodes.rsi import RSI  # Reuse existing RSI
 

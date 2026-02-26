@@ -21,7 +21,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, Optional, Tuple, List, Any
 import copy
-import utils.helpers as helpers
+import utils.core.helpers as helpers
 from datetime import datetime as dt
 from metrics.plotting.decile_plots import plot_decile_analysis, plot_2bin_analysis, plot_uniform_binning
 from metrics.plotting.distribution import plot_feature_distribution, plot_feature_timeseries
@@ -45,7 +45,7 @@ from metrics.plotting.parameter_plots import (
     plot_3d_parameter_interactive,
     plot_4d_parameter_interactive,
 )
-from utils.permutation_test.permutation_engine import (
+from utils.evaluation.permutation_test.permutation_engine import (
     PermutationEngine,
     FeaturePermutationStrategy
 )

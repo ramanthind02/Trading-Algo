@@ -15,19 +15,26 @@ Key responsibilities:
 
 Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 """
+from __future__ import annotations
 
 import logging
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 import numpy as np
 import pandas as pd
 
-from utils.enums import TimeFrame
-from utils.fast_volatility import compute_ewsd_annualized_from_closes
+from utils.core.enums import TimeFrame
+from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
+from .ensemble_utils import normalize_candles_datetime_column, normalize_ticker_key
 from .weight_layer import BaseWeightLayer, WeightLayer
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure datetime is only a column; delegate to shared helper."""
+    return normalize_candles_datetime_column(candles_df)
 
 
 class Portfolio:
@@ -157,7 +164,7 @@ class Portfolio:
             # Create default inverse correlation WeightLayer
             self.weight_layer = WeightLayer(
                 weight_method='inverse_correlation',
-                fdm_max=2.5
+                fdm_max=2.0
             )
         else:
             self.weight_layer = weight_layer
@@ -202,7 +209,7 @@ class Portfolio:
     def _validate_sector_allocation_node(
         self,
         node: Dict[str, Any],
-        seen_tickers: set[str],
+        seen_tickers: Set[str],
         node_path: str,
     ) -> None:
         """Validate node schema recursively before resolution."""
@@ -614,7 +621,8 @@ class Portfolio:
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
             Should contain candles for the trading_timeframe of this portfolio
         target_data : pd.Series, optional
-            Target values (returns) for training. If None, ensembles must be pre-fitted.
+            Optional return series passed to WeightLayer.fit(returns=...) for
+            downside-risk weighting methods. If None, ensembles must be pre-fitted.
         start_date : datetime, optional
             Start date for cached data. If None, inferred from candles_df.
         end_date : datetime, optional
@@ -705,7 +713,12 @@ class Portfolio:
                     self.instruments_ = sorted(tf_candles['ticker'].unique().tolist())
             
             # Fit WeightLayer (calculates weights and FDM from forecast correlations)
-            self._fit_weight_layer(tf_candles, start_date=start_date, end_date=end_date)
+            self._fit_weight_layer(
+                tf_candles,
+                target_data=target_data,
+                start_date=start_date,
+                end_date=end_date,
+            )
         
         self.is_fitted_ = True
         
@@ -1059,7 +1072,7 @@ class Portfolio:
         if candles_df.empty or 'ticker' not in candles_df.columns or 'close' not in candles_df.columns:
             return volatility_dict
 
-        df = candles_df.copy()
+        df = _normalize_candles_datetime_column(candles_df)
         df['datetime'] = pd.to_datetime(df['datetime'])
 
         for ticker_name, ticker_candles in df.groupby('ticker'):
@@ -1116,6 +1129,8 @@ class Portfolio:
         """
         returns_dict: Dict[str, pd.Series] = {}
         date_ranges_dict = {}  # Store date ranges for logging
+
+        candles_df = _normalize_candles_datetime_column(candles_df)
         
         for ticker in candles_df['ticker'].unique():
             ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
@@ -1228,21 +1243,13 @@ class Portfolio:
 
     @staticmethod
     def _normalize_ticker_key(ticker: object) -> str:
-        """
-        Normalize a ticker identifier (enum, string, etc.) to a string key.
-
-        Keeps ticker handling consistent across IDM calculations without
-        changing any external behavior.
-        """
-        if hasattr(ticker, "name"):
-            return str(getattr(ticker, "name"))
-        if hasattr(ticker, "value"):
-            return str(getattr(ticker, "value"))
-        return str(ticker)
+        """Normalize ticker to string key; delegate to shared helper."""
+        return normalize_ticker_key(ticker)
     
     def _fit_weight_layer(
         self,
         candles_df: pd.DataFrame,
+        target_data: Optional[pd.Series] = None,
         start_date=None,
         end_date=None
     ) -> None:
@@ -1256,10 +1263,10 @@ class Portfolio:
         ----------
         candles_df : pd.DataFrame
             Candles DataFrame for generating forecasts
+        target_data : pd.Series, optional
+            Return series passed to WeightLayer.fit(returns=...) for methods
+            that use returns (e.g., downside-risk weighting).
         """
-        print("\n" + "=" * 60)
-        print("Fitting WeightLayer...")
-        print("=" * 60)
         logger.info("=" * 60)
         logger.info("Fitting WeightLayer...")
         logger.info("=" * 60)
@@ -1365,10 +1372,7 @@ class Portfolio:
                 )
         
         if len(forecast_vectors) == 0:
-            error_msg = "No forecast vectors collected. Cannot fit WeightLayer."
-            print(f"✗ {error_msg}")
-            logger.error(error_msg)
-            print("=" * 60 + "\n")
+            logger.error("No forecast vectors collected. Cannot fit WeightLayer.")
             return
         
         # Build signals DataFrame for weight calculation
@@ -1399,10 +1403,7 @@ class Portfolio:
                 )
             
             if not combined_signals_dict:
-                error_msg = "No signals collected after aggregation. Cannot fit WeightLayer."
-                print(f"✗ {error_msg}")
-                logger.error(error_msg)
-                print("=" * 60 + "\n")
+                logger.error("No signals collected after aggregation. Cannot fit WeightLayer.")
                 return
             
             logger.info(f"\nFinding common datetime index across {len(combined_signals_dict)} model(s)...")
@@ -1427,14 +1428,11 @@ class Portfolio:
             common_index = candles_datetimes
             
             if len(common_index) < 2:
-                error_msg = (
-                    f"Insufficient datetime index for WeightLayer fitting. "
-                    f"Common index length: {len(common_index)} "
-                    f"(need at least 2)"
+                logger.error(
+                    "Insufficient datetime index for WeightLayer fitting. "
+                    "Common index length: %s (need at least 2)",
+                    len(common_index),
                 )
-                print(f"✗ {error_msg}")
-                logger.error(error_msg)
-                print("=" * 60 + "\n")
                 return
             
             logger.info(f"Using common datetime index: {len(common_index)} datetimes")
@@ -1487,41 +1485,34 @@ class Portfolio:
                         f"\n  Mean models per ticker: {summary.get('mean_models_per_ticker', 0):.1f}"
                     )
                     
-                    # Show per-ticker FDM
+                    # Show per-ticker FDM and per-model weights
                     tickers_info = diag.get('tickers', {})
                     if tickers_info:
-                        success_msg += f"\n  Per-ticker FDM:"
+                        success_msg += f"\n  Per-ticker FDM and weights:"
                         for ticker, ticker_info in sorted(tickers_info.items()):
                             fdm_val = ticker_info.get('fdm', 1.0)
                             n_models = ticker_info.get('n_models', 0)
                             success_msg += f"\n    {ticker}: FDM={fdm_val:.4f} ({n_models} model(s))"
+                            weights = ticker_info.get('weights')
+                            if weights and isinstance(weights, dict):
+                                valid = {k: v for k, v in weights.items() if v is not None and not pd.isna(v)}
+                                if valid:
+                                    for model_name, w in sorted(valid.items(), key=lambda x: (-x[1], x[0])):
+                                        success_msg += f"\n      {model_name}: {float(w):.4f}"
                     
-                    print(success_msg)
                     logger.info(success_msg)
                 except Exception as e:
-                    error_msg = f"✗ Error fitting WeightLayer: {e}"
-                    print(error_msg)
-                    print(f"  Exception type: {type(e).__name__}")
-                    import traceback
-                    print(f"  Traceback:\n{traceback.format_exc()}")
-                    logger.error(
-                        f"✗ Error fitting WeightLayer: {e}",
-                        exc_info=True
-                    )
+                    logger.error("Error fitting WeightLayer: %s", e, exc_info=True)
                     # WeightLayer will remain unfitted
             else:
-                error_msg = (
-                    f"Insufficient data for WeightLayer fitting: "
-                    f"{len(signals_df)} samples (need >= 2), {len(signals_df.columns)} models (need >= 1)"
+                logger.error(
+                    "Insufficient data for WeightLayer fitting: %s samples (need >= 2), %s models (need >= 1)",
+                    len(signals_df),
+                    len(signals_df.columns),
                 )
-                print(f"✗ {error_msg}")
-                logger.error(error_msg)
         else:
-            error_msg = "No signals collected. Cannot fit WeightLayer."
-            print(f"✗ {error_msg}")
-            logger.error(error_msg)
+            logger.error("No signals collected. Cannot fit WeightLayer.")
         
-        print("=" * 60 + "\n")
         logger.info("=" * 60)
     
     def _align_forecasts_with_candles(
@@ -1554,28 +1545,13 @@ class Portfolio:
             combined_forecasts['datetime'] = pd.to_datetime(combined_forecasts['datetime'])
             return combined_forecasts[['ticker', 'datetime', 'forecast_score']]
         
-        # Fallback: datetime not in combined_forecasts, merge with candles
-        # Group candles by ticker and get unique datetimes
-        # For each ticker, assign forecast_score to all its datetimes
-        results = []
-        for ticker in combined_forecasts['ticker'].unique():
-            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
-            ticker_forecast = combined_forecasts[combined_forecasts['ticker'] == ticker]
-            
-            if len(ticker_forecast) > 0:
-                forecast_score = ticker_forecast.iloc[0]['forecast_score']
-            else:
-                forecast_score = 0.0
-            
-            # Assign same forecast_score to all datetimes for this ticker
-            for _, row in ticker_candles.iterrows():
-                results.append({
-                    'ticker': ticker,
-                    'datetime': pd.to_datetime(row['datetime']),
-                    'forecast_score': forecast_score
-                })
-        
-        return pd.DataFrame(results)
+        # Fallback: datetime not in combined_forecasts; broadcast forecast_score per ticker over candle datetimes
+        ticker_scores = combined_forecasts.groupby('ticker', as_index=False)['forecast_score'].first()
+        candles_subset = candles_df[['ticker', 'datetime']].copy()
+        candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime'])
+        merged = candles_subset.merge(ticker_scores, on='ticker', how='left')
+        merged['forecast_score'] = merged['forecast_score'].fillna(0.0)
+        return merged[['ticker', 'datetime', 'forecast_score']]
     
     def _aggregate_ensembles_fallback(
         self,
@@ -1643,17 +1619,11 @@ class Portfolio:
         pd.DataFrame
             Position fractions with columns: ticker, datetime, forecast_score, position_fraction
         """
-        # Prepare forecasts DataFrame with normalized datetime
+        # Normalize to bar granularity for (datetime, ticker) merge
         forecasts_clean = forecasts_df[['ticker', 'datetime', 'forecast_score']].copy()
-        forecasts_clean['datetime'] = pd.to_datetime(forecasts_clean['datetime'])
-        # Remove microseconds (used to distinguish tickers in multi-ticker DataFrames)
-        forecasts_clean['datetime'] = forecasts_clean['datetime'].dt.floor('s')
-        
-        # Prepare candles subset with normalized datetime
+        forecasts_clean['datetime'] = pd.to_datetime(forecasts_clean['datetime']).dt.floor('s')
         candles_subset = candles_df[['ticker', 'datetime']].copy()
-        candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime'])
-        # Remove microseconds (used to distinguish tickers in multi-ticker DataFrames)
-        candles_subset['datetime'] = candles_subset['datetime'].dt.floor('s')
+        candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime']).dt.floor('s')
         
         # Vectorized merge on (ticker, datetime) - O(n+m) complexity
         result = candles_subset.merge(

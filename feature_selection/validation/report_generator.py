@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 import csv
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Literal, Union
 
@@ -25,6 +25,7 @@ from feature_selection.validation.reports import (
     VectorShuffleReport,
     WalkforwardStabilityReport,
 )
+from feature_selection.validation.stability_analysis import compute_jaccard_overlap
 
 
 def plot_null_distribution(
@@ -146,12 +147,7 @@ def plot_walkforward_stability(
         for i in range(len(fold_results) - 1):
             a = set(fold_results[i].top_k_params)
             b = set(fold_results[i + 1].top_k_params)
-            if not a and not b:
-                ov = 1.0
-            elif not a or not b:
-                ov = 0.0
-            else:
-                ov = len(a & b) / max(len(a), len(b))
+            ov = compute_jaccard_overlap(a, b)
             overlap_vals.append(ov)
             pair_labels.append(f'{fold_results[i].fold_id}->{fold_results[i+1].fold_id}')
 
@@ -271,7 +267,7 @@ def _suite_to_json_dict(suite: PermutationTestSuite) -> dict:
     return {
         'feature_name': suite.feature_name,
         'feature_type': suite.feature_type,
-        'timestamp': datetime.utcnow().isoformat(),
+        'timestamp': datetime.now(tz=timezone.utc).isoformat(),
         'stage1_reports': {k: _report_to_dict(v) for k, v in suite.stage1_reports.items()},
         'stage2_reports': {k: _report_to_dict(v) for k, v in suite.stage2_reports.items()},
         'stage3': {
@@ -495,5 +491,5 @@ def generate_permutation_reports(
         stage2_plots=stage2_plots,
         stage3_plot=stage3_plot,
         funnel_plot=funnel_plot,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(tz=timezone.utc),
     )

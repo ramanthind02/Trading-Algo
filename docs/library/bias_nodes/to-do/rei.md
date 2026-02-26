@@ -131,8 +131,8 @@ You need to maintain:
 ```python
 from typing import List
 import numpy as np
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

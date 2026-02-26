@@ -12,10 +12,10 @@ from typing import List
 import numpy as np
 from numba import njit
 from collections import deque
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame, Bias
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame, Bias
 from nodes import BiasNode
-from utils.cython_nodes import compute_ma_from_deque
+from utils.compute.cython.cython_nodes import compute_ma_from_deque
 
 
 # ============================================================================

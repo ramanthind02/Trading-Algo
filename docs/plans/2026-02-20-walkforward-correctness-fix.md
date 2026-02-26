@@ -16,7 +16,7 @@
 
 ### Context: The Exact Bug Location
 
-[feature_research/continuous_binning/pipeline.py:92-117](../../feature_research/continuous_binning/pipeline.py#L92-L117)
+[feature_research/in_sample/continuous_binning/pipeline.py:92-117](../../feature_research/in_sample/continuous_binning/pipeline.py#L92-L117)
 
 `_build_bin_count_specific_returns` fits `ContinuousBinningModel` on `feature` and `target` which span the entire IS period (e.g., 2000–2023). `_build_walkforward_evaluator` returns a closure:
 
@@ -49,8 +49,8 @@ def test_evaluate_param_combo_does_not_use_future_data():
     """
     import numpy as np
     import pandas as pd
-    from feature_research.continuous_binning.config import load_config
-    from feature_research.continuous_binning.pipeline import _build_fold_aware_evaluator
+    from feature_research.in_sample.continuous_binning.config import load_config
+    from feature_research.in_sample.continuous_binning.pipeline import _build_fold_aware_evaluator
 
     np.random.seed(42)
     dates = pd.date_range("2000-01-01", periods=200, freq="B")
@@ -105,7 +105,7 @@ Expected: `ImportError` (function doesn't exist yet) or `AttributeError`.
 ### Task 2: Replace `_build_walkforward_evaluator` with a fold-aware evaluator
 
 **Files:**
-- Modify: `feature_research/continuous_binning/pipeline.py`
+- Modify: `feature_research/in_sample/continuous_binning/pipeline.py`
 
 **Context:** The new evaluator must:
 1. Accept a pre-computed `feature` and `target` series (full IS period, read-only — still computed from cache once)
@@ -297,7 +297,7 @@ The enhanced_selection evaluator will then fit on full training_data (correct).
 **Step 8: Commit**
 
 ```bash
-git add feature_research/continuous_binning/pipeline.py \
+git add feature_research/in_sample/continuous_binning/pipeline.py \
         feature_research/walkforward/runner.py \
         tests/feature_research/walkforward/test_runner.py
 git commit -m "fix(walkforward): refit binning model per fold to eliminate IS data leakage"
@@ -311,8 +311,8 @@ git commit -m "fix(walkforward): refit binning model per fold to eliminate IS da
 
 ```python
 # In a notebook or quick script:
-from feature_research.continuous_binning.config import load_config
-from feature_research.continuous_binning.pipeline import run_continuous_walkforward_pipeline
+from feature_research.in_sample.continuous_binning.config import load_config
+from feature_research.in_sample.continuous_binning.pipeline import run_continuous_walkforward_pipeline
 from pathlib import Path
 import dataclasses
 

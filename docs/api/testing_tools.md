@@ -1,6 +1,6 @@
 # testing_tools
 
-> **Path:** `utils/permutation_test/`, `utils/robustness_test/`, `utils/prop_firm_simulator/`, `plotting/`  
+> **Path:** `utils/evaluation/permutation_test/`, `utils/evaluation/robustness_test/`, `utils/simulation/prop_firm_simulator/`, `plotting/`  
 > **Status:** Draft  
 > **Last updated:** 2026-02-13
 
@@ -9,7 +9,7 @@ This document covers the research/testing APIs for significance testing, resampl
 
 ## Public API policy (what we document)
 This doc includes:
-- Re-exports in `utils/permutation_test/__init__.py`, `utils/robustness_test/__init__.py`, and `utils/prop_firm_simulator/__init__.py`
+- Re-exports in `utils/evaluation/permutation_test/__init__.py`, `utils/evaluation/robustness_test/__init__.py`, and `utils/simulation/prop_firm_simulator/__init__.py`
 - Public top-level functions/classes in `plotting/robustness.py` and `plotting/prop_firm.py`
 - Public methods required to call those classes effectively
 
@@ -22,8 +22,8 @@ Skipped unless needed for understanding:
 import numpy as np
 import pandas as pd
 
-from utils.enums import ResamplingMethod
-from utils.robustness_test import robustness_test
+from utils.core.enums import ResamplingMethod
+from utils.evaluation.robustness_test import robustness_test
 
 idx = pd.date_range("2024-01-01", periods=252, freq="B")
 returns = pd.Series(np.random.default_rng(7).normal(0.0005, 0.01, 252), index=idx)
@@ -40,7 +40,7 @@ print(stats["p_value"])
 ```
 
 ```python
-from utils.prop_firm_simulator import (
+from utils.simulation.prop_firm_simulator import (
     PropFirmChallengeSimulator,
     SimulationConfig,
     SimulationMethod,
@@ -82,7 +82,7 @@ print(stats.pass_probability)
 
 ## Public API reference
 
-### `utils.permutation_test`
+### `utils.evaluation.permutation_test`
 
 `PermutationStrategy`  
 Type: abstract class  
@@ -182,7 +182,7 @@ Behavior: Backward-compatible bar shuffle, walk-forward-safe window shuffling, a
 
 Examples
 ```python
-from utils.permutation_test import run_permutation_test
+from utils.evaluation.permutation_test import run_permutation_test
 
 def mean_signal_edge(df, feature):
     return float((df[feature] * df["target"]).mean())
@@ -198,7 +198,7 @@ out = run_permutation_test(
 )
 ```
 
-### `utils.robustness_test`
+### `utils.evaluation.robustness_test`
 
 `ResamplingStrategy`, `MonteCarloStrategy`, `BootstrapStrategy`, `BlockBootstrapStrategy`  
 Type: abstract class + classes  
@@ -229,7 +229,7 @@ Notes / Constraints
 - P-value is one-sided and conditioned on sign of original cumulative return.
 - Seeds use `base_seed + iteration`; default base seed is `42` when not supplied.
 
-### `utils.prop_firm_simulator`
+### `utils.simulation.prop_firm_simulator`
 
 `SimulationMethod`  
 Type: enum  
@@ -313,7 +313,7 @@ Behavior: Aggregate and print simulation outcomes (pass rate, cost, resets, fail
 
 Examples
 ```python
-from utils.prop_firm_simulator import print_statistics
+from utils.simulation.prop_firm_simulator import print_statistics
 print_statistics(stats, verbose=True)
 ```
 
@@ -360,7 +360,7 @@ def plot_cost_analysis(results: list[ChallengeResult], stats: SimulationStatisti
 Behavior: Cost histogram + reset-count histogram with expected-value markers.
 
 ## Internal but required
-- `BarPermutationStrategy` relies on `utils.permutation_test.permute_bars._extract_features_from_bars(...)`; this is currently a compatibility placeholder returning requested feature columns and ATR defaults.
+- `BarPermutationStrategy` relies on `utils.evaluation.permutation_test.permute_bars._extract_features_from_bars(...)`; this is currently a compatibility placeholder returning requested feature columns and ATR defaults.
 - `PropFirmChallengeSimulator` uses `metrics.risk.drawdown.check_drawdown_breach(...)` for rule enforcement; challenge pass/fail semantics depend on that function's reason labels.
 
 ## Errors & logging
@@ -384,4 +384,4 @@ Behavior: Cost histogram + reset-count histogram with expected-value markers.
 ## Open questions
 Q1: Should deterministic behavior for `PermutationEngine` with `random_seed=None` be standardized (for example by adopting an explicit default base seed) to match robustness/simulator defaults?
 
-Q2: Should the compatibility placeholder in `utils.permutation_test.permute_bars._extract_features_from_bars(...)` remain public-facing, or be replaced with a required feature-extraction callback contract?
+Q2: Should the compatibility placeholder in `utils.evaluation.permutation_test.permute_bars._extract_features_from_bars(...)` remain public-facing, or be replaced with a required feature-extraction callback contract?

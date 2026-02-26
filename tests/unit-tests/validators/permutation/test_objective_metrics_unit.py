@@ -15,6 +15,7 @@ from feature_selection.validation.objective_metrics import (
     metric_profit_factor,
     metric_sharpe,
     metric_sortino,
+    metric_t_stat,
     resolve_objective_metric,
 )
 
@@ -71,7 +72,7 @@ def test_invalid_callable_path_format_raises() -> None:
 
 def test_invalid_builtin_name_raises_with_supported_names() -> None:
     """Invalid builtin names return an explicit supported-name error."""
-    with pytest.raises(ValueError, match='Supported builtins: always_zero, calmar, profit_factor, sharpe, sortino'):
+    with pytest.raises(ValueError, match='Supported builtins: always_zero, calmar, profit_factor, sharpe, sortino, t_stat'):
         ObjectiveMetricSpec(builtin=cast(BuiltinMetricName, 'not_a_metric'))
 
 
@@ -86,6 +87,9 @@ def test_invalid_builtin_name_raises_with_supported_names() -> None:
         (metric_sortino, pd.Series([0.0, 0.0, 0.0]), 0.0),
         (metric_calmar, pd.Series([0.01, 0.01, 0.01]), float('inf')),
         (metric_calmar, pd.Series([0.0, 0.0, 0.0]), 0.0),
+        (metric_t_stat, pd.Series([0.01, 0.01, 0.01]), float('inf')),
+        (metric_t_stat, pd.Series([-0.01, -0.01, -0.01]), float('-inf')),
+        (metric_t_stat, pd.Series([0.0, 0.0, 0.0]), 0.0),
         (metric_profit_factor, pd.Series([0.01, 0.01, 0.01]), float('inf')),
         (metric_profit_factor, pd.Series([0.0, 0.0, 0.0]), 0.0),
     ),

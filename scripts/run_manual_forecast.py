@@ -16,8 +16,8 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from deployment.test_forecast_server import TestForecastServer
-from utils.enums import TimeFrame
-from utils.logger import get_logger
+from utils.core.enums import TimeFrame
+from utils.core.logger import get_logger
 
 logger = get_logger(__name__)
 

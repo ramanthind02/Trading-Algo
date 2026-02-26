@@ -56,7 +56,7 @@ git commit -m "feat: add enum-backed walkforward method and weighting config"
 ### Task 2: Expose researcher controls in continuous-binning config
 
 **Files:**
-- Modify: `feature_research/continuous_binning/config.py`
+- Modify: `feature_research/in_sample/continuous_binning/config.py`
 - Test: `tests/feature_research/test_config.py`
 
 **Step 1: Write the failing test**
@@ -85,7 +85,7 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add tests/feature_research/test_config.py feature_research/continuous_binning/config.py
+git add tests/feature_research/test_config.py feature_research/in_sample/continuous_binning/config.py
 git commit -m "feat: expose selection and weight-layer controls in research config"
 ```
 

@@ -8,7 +8,11 @@ from feature_selection.base_models.base_model import BinningModelBase
 
 
 class RuleBasedModel(BinningModelBase):
-    """Rule-based model with per-level statistics and multipliers."""
+    """Rule-based model with per-level statistics and multipliers.
+
+    Constructor accepts bin_counts, use_coverage_bonus, coverage_bonus_per_10pct
+    for API consistency; they are ignored (always 3 bins: -1, 0, 1).
+    """
 
     model_type = "rule_based"
 
@@ -71,6 +75,10 @@ class RuleBasedModel(BinningModelBase):
                 f"rule_based expects feature values in {{-1, 0, 1}}; got {bad_values}"
             )
         return feature_data.map(mapping).astype(int)
+
+    def _predict_bin_key(self, bin_idx: int) -> int:
+        """Rule-based uses 0-based bin indices from _assign_bins; no conversion."""
+        return bin_idx
 
     def __repr__(self) -> str:
         fitted = "fitted" if self.is_fitted_ else "unfitted"

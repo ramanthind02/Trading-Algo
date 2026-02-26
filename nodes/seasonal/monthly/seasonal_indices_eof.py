@@ -7,8 +7,8 @@ and exit. Outputs 1 (long), 0 (flat). Exits when price dips below SMA200.
 
 from typing import List
 import numpy as np
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

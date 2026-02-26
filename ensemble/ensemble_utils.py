@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
+import utils.core.helpers as helpers
 from feature_selection.base_models import (
     BaseModel,
     ContinuousBinningModel,
@@ -28,7 +28,39 @@ try:
     from feature_selection.base_models import TwoBinBinningModel
 except ImportError:  # pragma: no cover - optional model
     TwoBinBinningModel = None
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
+
+
+def normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure 'datetime' exists only as a column so sort_values('datetime') is unambiguous."""
+    df = candles_df.copy()
+    index_has_datetime = (
+        getattr(df.index, "name", None) == "datetime"
+        or (
+            isinstance(df.index, pd.MultiIndex)
+            and "datetime" in df.index.names
+        )
+    )
+    if not index_has_datetime:
+        return df
+    if "datetime" in df.columns:
+        df = df.reset_index(drop=True)
+    else:
+        df = df.reset_index()
+        if df.columns.duplicated().any():
+            df = df.loc[:, ~df.columns.duplicated(keep="first")]
+    return df
+
+
+def normalize_ticker_key(ticker_val: object) -> str:
+    """Normalize ticker identifiers (enum, string, or object with name/value) to a string key."""
+    if hasattr(ticker_val, "name"):
+        return str(getattr(ticker_val, "name"))
+    if hasattr(ticker_val, "value"):
+        return str(getattr(ticker_val, "value"))
+    if isinstance(ticker_val, str):
+        return ticker_val.replace("Ticker.", "")
+    return str(ticker_val)
 
 
 def parse_control_file(filepath: str) -> Dict[str, Any]:
@@ -134,11 +166,11 @@ def validate_control_file(control_file: Dict[str, Any]) -> None:
         if missing_ensemble_keys:
             raise ValueError(f"fitted_ensemble missing required keys: {missing_ensemble_keys}")
     
-    # If is_fit=False, fitted params should not be present
+    # If is_fit=False, fitted params must be absent (do not accept empty dict or null)
     if not is_fit:
-        if 'fitted_base_models' in control_file and control_file['fitted_base_models']:
+        if 'fitted_base_models' in control_file:
             raise ValueError("Control file with is_fit=False should not contain 'fitted_base_models'")
-        if 'fitted_ensemble' in control_file and control_file['fitted_ensemble']:
+        if 'fitted_ensemble' in control_file:
             raise ValueError("Control file with is_fit=False should not contain 'fitted_ensemble'")
 
 
@@ -356,16 +388,22 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
         raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
     
     # Validate model_type
+    model_type = config['model_type']
     valid_model_types = [
         'continuous_binning',
         'decision_tree_binning',
         'two_bin_binning',
-        'uniform_binning',
         'rule_based',
     ]
-    if config['model_type'] not in valid_model_types:
+    if model_type == 'uniform_binning':
         raise ValueError(
-            f"{prefix}Invalid model_type: {config['model_type']}. "
+            f"{prefix}Invalid model_type: 'uniform_binning'. "
+            f"Uniform binning is not supported in this repository; "
+            f"use 'continuous_binning' or 'two_bin_binning' instead."
+        )
+    if model_type not in valid_model_types:
+        raise ValueError(
+            f"{prefix}Invalid model_type: {model_type}. "
             f"Must be one of: {valid_model_types}"
         )
     
@@ -381,23 +419,13 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
     if not isinstance(config['constructor_params'], dict):
         raise ValueError(f"{prefix}constructor_params must be a dictionary")
     
-    # Validate members (multi-member schema requirement)
-    if 'members' not in config:
-        raise ValueError(f"{prefix}Multi-member schema requires 'members' array")
-    
-    if not isinstance(config['members'], list):
-        raise ValueError(f"{prefix}Multi-member schema requires 'members' to be a list")
-    
-    if len(config['members']) == 0:
-        raise ValueError(f"{prefix}Multi-member schema requires non-empty 'members' array")
-
     # Validate multi-member schema: require 'members' array
     if 'members' not in config:
         raise ValueError(
             f"{prefix}Multi-member schema requires 'members' array. "
             f"Legacy single-model schemas are not accepted."
         )
-
+    
     # Validate members is a non-empty list
     members = config['members']
     if not isinstance(members, list):

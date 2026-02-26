@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Optional
 
 import pandas as pd
 
@@ -56,6 +56,9 @@ class StableRegionConfig:
     min_region_size : int
         Connected components smaller than this are treated as isolated spikes
         and discarded.
+
+    Use ``StableRegionConfig.aggressive()`` for a stricter preset (smaller
+    adaptive_sigma_multiplier, smaller k_max) when running selection experiments.
     """
 
     floor_method: str = "adaptive"
@@ -81,6 +84,11 @@ class StableRegionConfig:
             raise ValueError("k_max must be >= 1")
         if self.min_region_size < 1:
             raise ValueError("min_region_size must be >= 1")
+
+    @classmethod
+    def aggressive(cls) -> "StableRegionConfig":
+        """Preset for more aggressive selection: smaller sigma, fewer params (for experiments)."""
+        return cls(adaptive_sigma_multiplier=0.5, k_max=3, k_per_region=2, min_region_size=2)
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +168,63 @@ def _build_grid_adjacency(
     return adjacency
 
 
+def _build_grid_adjacency_from_structure(
+    param_grid: list[dict[str, object]],
+    grid_structure: Mapping[str, list],
+) -> dict[str, list[str]]:
+    """Build 1-step axis-aligned adjacency from explicit grid structure.
+
+    Two param combos are adjacent iff they differ in exactly one key present
+    in grid_structure and the two values are consecutive in that key's
+    ordered list (by index). Keys in param_grid not in grid_structure are
+    ignored for adjacency.
+
+    Returns
+    -------
+    dict mapping canonical_label → list[canonical_label of neighbours]
+    """
+    labels = [_canonical_param_label(p) for p in param_grid]
+    label_to_params: dict[str, dict[str, object]] = dict(zip(labels, param_grid))
+    adjacency: dict[str, list[str]] = {label: [] for label in labels}
+
+    axes = [k for k in sorted(grid_structure.keys()) if grid_structure.get(k)]
+    if not axes:
+        return adjacency
+
+    # Value -> index for each axis (for O(1) consecutive check)
+    value_to_index: dict[str, dict[object, int]] = {}
+    for ax in axes:
+        values = list(grid_structure[ax])
+        value_to_index[ax] = {v: i for i, v in enumerate(values)}
+
+    for i, label_a in enumerate(labels):
+        params_a = label_to_params[label_a]
+        for label_b in labels[i + 1 :]:
+            params_b = label_to_params[label_b]
+            diff_axis: Optional[str] = None
+            for ax in axes:
+                val_a = params_a.get(ax)
+                val_b = params_b.get(ax)
+                if val_a != val_b:
+                    if diff_axis is not None:
+                        diff_axis = None
+                        break
+                    idx_a = value_to_index.get(ax, {}).get(val_a)
+                    idx_b = value_to_index.get(ax, {}).get(val_b)
+                    if idx_a is None or idx_b is None:
+                        diff_axis = None
+                        break
+                    if abs(idx_a - idx_b) != 1:
+                        diff_axis = None
+                        break
+                    diff_axis = ax
+            if diff_axis is not None:
+                adjacency[label_a].append(label_b)
+                adjacency[label_b].append(label_a)
+
+    return adjacency
+
+
 # ---------------------------------------------------------------------------
 # Connected components
 # ---------------------------------------------------------------------------
@@ -206,6 +271,9 @@ def run_stable_region_selection(
     trade_frequencies: Mapping[str, float],
     param_grid: list[dict[str, object]],
     config: StableRegionConfig,
+    grid_structure: Optional[Mapping[str, list]] = None,
+    strategy: Optional[str] = None,
+    objective_metric_name: str = "",
 ) -> StableRegionResult:
     """Select param combos from stable regions of the smoothed performance landscape.
 
@@ -221,6 +289,15 @@ def run_stable_region_selection(
         All param combinations evaluated this fold.
     config : StableRegionConfig
         Pre-committed algorithm configuration.
+    grid_structure : Optional[Mapping[str, list]], optional
+        If provided, param name → ordered list of values per axis. Adjacency
+        is then "one grid step" (consecutive index in that list). If None,
+        adjacency uses value difference == 1 (unit-step) for backward compatibility.
+    strategy : str, optional
+        When "long" and objective_metric_name is "t_stat", only params with
+        smoothed_objective > 0 are considered (long-only filter).
+    objective_metric_name : str, optional
+        Used with strategy for long-only t_stat filter.
 
     Returns
     -------
@@ -228,7 +305,10 @@ def run_stable_region_selection(
         Selected labels and per-param diagnostic detail.
     """
     all_labels = [_canonical_param_label(p) for p in param_grid]
-    adjacency = _build_grid_adjacency(param_grid)
+    if grid_structure is not None:
+        adjacency = _build_grid_adjacency_from_structure(param_grid, grid_structure)
+    else:
+        adjacency = _build_grid_adjacency(param_grid)
 
     # -----------------------------------------------------------------------
     # Step 1: Hard filters
@@ -249,6 +329,12 @@ def run_stable_region_selection(
         passed_hard[label] = not (fails_tf or fails_bin)
 
     surviving = [label for label in all_labels if passed_hard[label]]
+    # Long-only + t_stat: exclude params with non-positive objective
+    if strategy == "long" and objective_metric_name == "t_stat":
+        surviving = [
+            label for label in surviving
+            if smoothed_objectives.get(label, float("-inf")) > 0
+        ]
 
     # -----------------------------------------------------------------------
     # Step 2: Relative floor computation (from surviving only)

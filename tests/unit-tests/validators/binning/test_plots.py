@@ -11,8 +11,8 @@ import pytest
 from matplotlib.figure import Figure
 
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning.diagnostics import RegionMetadata
-from feature_selection.validators.binning.plots import (
+from feature_selection.validation.binning.diagnostics import RegionMetadata
+from feature_selection.validation.binning.plots import (
     create_diagnostic_panel,
     plot_bin_heatmap,
     plot_position_multiplier_curve,

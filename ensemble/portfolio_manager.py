@@ -20,7 +20,7 @@ from typing import Dict, Optional
 import pandas as pd
 
 from execution.position_sizer import PositionSizer
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 from .portfolio import Portfolio
 
 logger = logging.getLogger(__name__)

@@ -50,9 +50,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
-from utils.enums import TimeFrame, Ticker
-from utils.models import Candle
+import utils.core.helpers as helpers
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.models import Candle
 
 
 def _expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -87,6 +87,27 @@ def _normalize_ticker_str(ticker: object) -> str:
     return str(ticker)
 
 
+def _normalize_ticker_series(series: pd.Series) -> pd.Series:
+    """
+    Normalize a ticker column to strings without per-row apply().
+
+    One type check then a single pass; avoids the apply/map_array overhead
+    that dominated Stage 2 profile (millions of callbacks).
+    """
+    if series.empty:
+        return series
+    first = series.iloc[0]
+    if hasattr(first, "name"):
+        return pd.Series(
+            [x.name for x in series],
+            index=series.index,
+            dtype=str,
+        )
+    if isinstance(first, str):
+        return series
+    return series.astype(str)
+
+
 def _ensure_utc_datetime_index(values: object) -> pd.DatetimeIndex:
     """
     Convert arbitrary datetime-like values to a UTC-normalized DatetimeIndex.
@@ -111,7 +132,10 @@ def _prepare_candles_override(
     tickers: List[Ticker],
     use_millisecond_offset: bool,
 ) -> pd.DataFrame:
-    """Validate and normalize override candles for forward-return computation."""
+    """Validate and normalize override candles for forward-return computation.
+
+    Primary key is (datetime, ticker). use_millisecond_offset is ignored (no offset).
+    """
     required_columns = {"datetime", "open", "high", "low", "close", "ticker"}
     missing_columns = sorted(required_columns.difference(candles_override.columns))
     if missing_columns:
@@ -122,7 +146,7 @@ def _prepare_candles_override(
 
     normalized = candles_override.copy()
     normalized["datetime"] = _ensure_utc_datetime_index(normalized["datetime"])
-    normalized["ticker"] = normalized["ticker"].apply(_normalize_ticker_str)
+    normalized["ticker"] = _normalize_ticker_series(normalized["ticker"])
 
     requested_tickers = [_normalize_ticker_str(ticker) for ticker in tickers]
     requested_set = set(requested_tickers)
@@ -142,20 +166,23 @@ def _prepare_candles_override(
             f"{unexpected_tickers}. Requested tickers: {sorted(requested_set)}"
         )
 
-    if use_millisecond_offset and len(requested_tickers) > 1:
-        ticker_offset_map = {
-            ticker_name: pd.Timedelta(milliseconds=ticker_idx)
-            for ticker_idx, ticker_name in enumerate(requested_tickers)
-        }
-        normalized["datetime"] = normalized["datetime"] + normalized["ticker"].map(ticker_offset_map)
-
+    # Primary key is (datetime, ticker); no millisecond offset applied
     return normalized
+
+
+def _safe_log_return(close: pd.Series, open_: pd.Series) -> pd.Series:
+    """Log return where close/open > 0 and finite; otherwise NaN. Avoids RuntimeWarning from log(0)."""
+    ratio = close / open_
+    valid = (ratio > 0) & np.isfinite(ratio)
+    out = pd.Series(np.nan, index=ratio.index, dtype=float)
+    out.loc[valid] = np.log(ratio.loc[valid])
+    return out
 
 
 def _compute_targets(price_df: pd.DataFrame, atr_col: Optional[str] = None, ewsd_col: Optional[str] = None) -> pd.DataFrame:
     """Compute target columns from price data."""
     raw_return = (price_df['close'] / price_df['open']) - 1
-    log_return = np.log(price_df['close'] / price_df['open'])
+    log_return = _safe_log_return(price_df['close'], price_df['open'])
     
     log_return_atr = log_return.copy()
     if atr_col and atr_col in price_df.columns:
@@ -244,7 +271,7 @@ def compute_forward_returns(
         
         # Calculate intraday returns: return[t] = close[t] / open[t] - 1
         # This represents the return from open[t] to close[t] (during day t)
-        ticker_candles['log_return'] = np.log(ticker_candles['close'] / ticker_candles['open'])
+        ticker_candles['log_return'] = _safe_log_return(ticker_candles['close'], ticker_candles['open'])
         ticker_candles['raw_return'] = (ticker_candles['close'] / ticker_candles['open']) - 1
         
         # Shift returns forward by 1 period so Feature[t] predicts Return[t+1]
@@ -385,7 +412,7 @@ def compute_forward_returns(
         ticker_targets = pd.DataFrame(target_dict, index=target_index)
         targets_list.append(ticker_targets)
     
-    # Concatenate all tickers' targets (preserves index with offsets)
+    # Concatenate all tickers' targets (keyed by (datetime, ticker))
     targets_df = pd.concat(targets_list, axis=0).sort_index()
     
     return targets_df
@@ -398,24 +425,28 @@ def _extract_features_single_ticker(
     start: datetime,
     end: datetime,
     timeframes: List[TimeFrame],
-    use_cache: bool = False
+    use_cache: bool = False,
+    price_df_override: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single ticker.
-    
-    This is a pure function that handles feature extraction for one ticker.
-    Used internally by extract_features() to process each ticker separately.
 
     Parameters
     ----------
     use_cache : bool, default=False
         If True, load features from BiasNodeCache instead of streaming candles.
-        This provides ~50-100x speedup for large datasets.
-        Cache must be pre-populated using CacheManager.populate_cache().
+    price_df_override : pd.DataFrame | None, default=None
+        When provided, use this as price data instead of load_data and do not use
+        cache (used for permutation so features are computed from shuffled candles).
     """
-    # Load price data
-    price_df = helpers.load_data(ticker, TimeFrame.D, start=start, end=end)
-    price_df.set_index('datetime', inplace=True)
+    if price_df_override is not None:
+        price_df = price_df_override.copy()
+        if price_df.index.name != 'datetime' and 'datetime' in price_df.columns:
+            price_df = price_df.set_index('datetime')
+        use_cache = False  # Must stream from override so features reflect shuffled data
+    else:
+        price_df = helpers.load_data(ticker, TimeFrame.D, start=start, end=end)
+        price_df.set_index('datetime', inplace=True)
     # Ensure timezone is UTC (may already be timezone-aware)
     if price_df.index.tz is None:
         price_df.index = price_df.index.tz_localize('UTC')
@@ -461,7 +492,7 @@ def _extract_features_single_ticker(
 
     # CACHED PATH: Load from BiasNodeCache (fast)
     if use_cache:
-        from utils.bias_node_cache import BiasNodeCache, CacheMissError
+        from utils.cache.bias_node_cache import BiasNodeCache, CacheMissError
 
         for bias_node, orig_params, orig_tf in bias_node_info:
             # Get params from bias node, falling back to original params if node doesn't have them
@@ -557,7 +588,7 @@ def _extract_features_single_ticker(
     
     # Compute intraday returns: Return[t] = (close[t]/open[t] - 1)
     # This is the return DURING day t (from open to close)
-    intraday_log_return = np.log(price_df['close'] / price_df['open'])
+    intraday_log_return = _safe_log_return(price_df['close'], price_df['open'])
     intraday_raw_return = (price_df['close'] / price_df['open']) - 1
     
     # Shift returns forward by 1 period so Return[t+1] aligns with Feature[t]
@@ -623,7 +654,8 @@ def extract_features(
     end: datetime = None,
     timeframes: List[TimeFrame] = None,
     use_millisecond_offset: bool = True,
-    use_cache: bool = False
+    use_cache: bool = False,
+    candles_override: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single bias node with parameter grid exploration.
@@ -647,7 +679,7 @@ def extract_features(
     timeframes : List[TimeFrame], optional
         Timeframes to use. Defaults to [TimeFrame.D]
     use_millisecond_offset : bool, default=True
-        For multi-ticker: add millisecond offsets to avoid duplicate indices
+        Deprecated. Ignored. Primary key is (datetime, ticker).
         
     Returns
     -------
@@ -701,6 +733,18 @@ def extract_features(
     else:
         tickers = ticker
     
+    # Build per-ticker override when provided (for permutation: features from shuffled candles)
+    override_by_ticker: Dict[Ticker, pd.DataFrame] = {}
+    if candles_override is not None and not candles_override.empty and 'ticker' in candles_override.columns:
+        for t in tickers:
+            ticker_str = getattr(t, 'name', str(t))
+            mask = candles_override['ticker'].astype(str) == ticker_str
+            if mask.any():
+                slice_df = candles_override.loc[mask].drop(columns=['ticker'], errors='ignore')
+                if 'datetime' in slice_df.columns:
+                    slice_df = slice_df.set_index('datetime')
+                override_by_ticker[t] = slice_df
+
     # Single ticker path
     if len(tickers) == 1:
         features_df, targets_df = _extract_features_single_ticker(
@@ -710,7 +754,8 @@ def extract_features(
             start=start,
             end=end,
             timeframes=timeframes,
-            use_cache=use_cache
+            use_cache=use_cache if not override_by_ticker else False,
+            price_df_override=override_by_ticker.get(tickers[0]),
         )
         
         # Add ticker column for identification
@@ -723,8 +768,7 @@ def extract_features(
     all_features_dfs = []
     all_targets_dfs = []
     
-    for ticker_idx, single_ticker in enumerate(tickers):
-        # Extract features for this ticker
+    for single_ticker in tickers:
         ticker_features_df, ticker_targets_df = _extract_features_single_ticker(
             module_name=module_name,
             params=params,
@@ -732,15 +776,12 @@ def extract_features(
             start=start,
             end=end,
             timeframes=timeframes,
-            use_cache=use_cache
+            use_cache=use_cache if single_ticker not in override_by_ticker else False,
+            price_df_override=override_by_ticker.get(single_ticker),
         )
         
-        # Add millisecond offset to avoid duplicate datetime indices
-        if use_millisecond_offset and ticker_idx > 0:
-            offset = pd.Timedelta(milliseconds=ticker_idx)
-            ticker_features_df.index = ticker_features_df.index + offset
-            ticker_targets_df.index = ticker_targets_df.index + offset
-        
+        # Primary key is (datetime, ticker); no millisecond offset
+
         # Add ticker column for identification
         ticker_features_df['ticker'] = single_ticker.name
         ticker_targets_df['ticker'] = single_ticker.name
@@ -802,7 +843,7 @@ def extract_features_with_forward_returns(
     timeframes : List[TimeFrame], optional
         Timeframes to use. Defaults to [TimeFrame.D]
     use_millisecond_offset : bool, default=True
-        For multi-ticker: add millisecond offsets to avoid duplicate indices
+        Deprecated. Ignored. Primary key is (datetime, ticker).
     target_col : str, default='log_return'
         Target column to use. Options:
         - 'raw_return': (close[t+1]/open[t+1]) - 1, shifted forward by 1 period
@@ -813,9 +854,7 @@ def extract_features_with_forward_returns(
         Optional candle dataframe override. When provided, this dataframe is used
         for forward-return computation instead of loading candles internally.
         Required columns: ``datetime``, ``open``, ``high``, ``low``, ``close``, ``ticker``.
-        ``datetime`` is normalized to UTC and, when ``use_millisecond_offset=True``
-        in multi-ticker mode, per-ticker millisecond offsets are applied using the
-        same ticker-order semantics as the feature extraction path.
+        Primary key is (datetime, ticker); datetime is bar time (no offset).
         
     Returns
     -------
@@ -858,6 +897,7 @@ def extract_features_with_forward_returns(
         tickers = ticker
     
     # Load candles to compute forward returns
+    have_candles_override = candles_override is not None
     candles_df = candles_override
     if candles_df is None:
         candles_df = helpers.load_data_multi_ticker(
@@ -873,42 +913,38 @@ def extract_features_with_forward_returns(
             tickers=tickers,
             use_millisecond_offset=use_millisecond_offset,
         )
-    
+
+    # When using shuffled candles (permutation), features must come from override too (no cache)
+    extract_kw: Dict[str, Any] = {
+        "ticker": ticker,
+        "start": start,
+        "end": end,
+        "timeframes": timeframes,
+        "use_millisecond_offset": use_millisecond_offset,
+        "use_cache": use_cache and not have_candles_override,
+        "candles_override": candles_df if have_candles_override else None,
+    }
+
     # STEP 1: Extract features - ALWAYS include ATR and EWSD for volatility scaling
     # Extract main module features
     main_features_df, _ = extract_features(
         module_name=module_name,
         params=params,
-        ticker=ticker,
-        start=start,
-        end=end,
-        timeframes=timeframes,
-        use_millisecond_offset=use_millisecond_offset,
-        use_cache=use_cache
+        **extract_kw,
     )
-    
+
     # Extract ATR features (mandatory for volatility scaling)
     atr_features_df, _ = extract_features(
         module_name='atr',
         params={'period': 252},
-        ticker=ticker,
-        start=start,
-        end=end,
-        timeframes=timeframes,
-        use_millisecond_offset=use_millisecond_offset,
-        use_cache=use_cache
+        **extract_kw,
     )
-    
+
     # Extract EWSD features (mandatory for volatility scaling)
     ewsd_features_df, _ = extract_features(
         module_name='ewsd',
         params={},  # Use default parameters
-        ticker=ticker,
-        start=start,
-        end=end,
-        timeframes=timeframes,
-        use_millisecond_offset=use_millisecond_offset,
-        use_cache=use_cache
+        **extract_kw,
     )
     
     # Combine all features: main + ATR + EWSD
@@ -922,9 +958,7 @@ def extract_features_with_forward_returns(
     
     for df in [main_features_df, atr_features_df, ewsd_features_df]:
         if 'ticker' in df.columns:
-            df['ticker'] = df['ticker'].apply(
-                lambda x: x.name if hasattr(x, 'name') else str(x)
-            )
+            df['ticker'] = _normalize_ticker_series(df['ticker'])
     
     # Select columns to merge (exclude ticker from ATR/EWSD to avoid duplication)
     atr_cols = [col for col in atr_features_df.columns if col != 'ticker']
@@ -992,15 +1026,11 @@ def extract_features_with_forward_returns(
     features_df = features_df.copy()
     targets_df = targets_df.copy()
     
-    # Ensure ticker columns are strings
+    # Ensure ticker columns are strings (vectorized to avoid millions of apply callbacks)
     if 'ticker' in features_df.columns:
-        features_df['ticker'] = features_df['ticker'].apply(
-            lambda x: x.name if hasattr(x, 'name') else str(x)
-        )
+        features_df['ticker'] = _normalize_ticker_series(features_df['ticker'])
     if 'ticker' in targets_df.columns:
-        targets_df['ticker'] = targets_df['ticker'].apply(
-            lambda x: x.name if hasattr(x, 'name') else str(x)
-        )
+        targets_df['ticker'] = _normalize_ticker_series(targets_df['ticker'])
     
     # Create a merge key: use index + ticker (if present) for reliable alignment
     # Ensure index has a name for consistent reset_index behavior
@@ -1034,23 +1064,18 @@ def extract_features_with_forward_returns(
             )
     
     if 'ticker' in features_df.columns and 'ticker' in targets_df.columns:
-        # Multi-ticker case: merge on both index and ticker
-        # Merge on datetime index and ticker (inner join = only matching rows)
+        # Multi-ticker: merge on composite key (datetime, ticker)
         merged = pd.merge(
             features_for_merge,
-            targets_for_merge[[datetime_col, 'ticker']],  # Only merge keys from targets
+            targets_for_merge[[datetime_col, 'ticker']],
             on=[datetime_col, 'ticker'],
-            how='inner',  # Only keep rows that exist in both
+            how='inner',
             suffixes=('', '_target')
         )
-        
-        # Set datetime back as index
         if datetime_col in merged.columns:
             merged = merged.set_index(datetime_col)
-        
-        # Drop the duplicate ticker column if created
         merged = merged.drop(columns=[col for col in merged.columns if col.endswith('_target')])
-        
+
         # Get aligned features (all columns except target columns)
         target_cols = ['raw_return', 'log_return', 'log_return_atr', 'log_return_ewsd']
         feature_cols = [col for col in merged.columns if col not in target_cols]
@@ -1099,10 +1124,8 @@ def extract_features_with_forward_returns(
     if len(features_df_aligned) == 0:
         raise ValueError(
             "No matching rows found between features and targets after alignment. "
-            "This may indicate:\n"
-            "  1. Index mismatch (check millisecond offsets)\n"
-            "  2. Ticker mismatch (check ticker column values)\n"
-            f"  Features shape: {features_df.shape}, Targets shape: {targets_df.shape}"
+            "Ensure (datetime, ticker) keys align; check ticker column values and date ranges. "
+            f"Features shape: {features_df.shape}, Targets shape: {targets_df.shape}"
         )
     
     if len(features_df_aligned) != len(targets_aligned):
@@ -1185,13 +1208,8 @@ def prepare_candles_and_targets_for_basemodel(
     
     # Merge on datetime (and ticker if present) to get only candles with forward returns
     if 'ticker' in candles_for_merge.columns and 'ticker' in targets_for_merge.columns:
-        # Normalize ticker columns
-        candles_for_merge['ticker'] = candles_for_merge['ticker'].apply(
-            lambda x: x.name if hasattr(x, 'name') else str(x)
-        )
-        targets_for_merge['ticker'] = targets_for_merge['ticker'].apply(
-            lambda x: x.name if hasattr(x, 'name') else str(x)
-        )
+        candles_for_merge['ticker'] = _normalize_ticker_series(candles_for_merge['ticker'])
+        targets_for_merge['ticker'] = _normalize_ticker_series(targets_for_merge['ticker'])
         
         candles_filtered = pd.merge(
             candles_for_merge,
@@ -1284,7 +1302,7 @@ def extract_features_for_bias_node(
     end : datetime, optional
         End date. Defaults to datetime.now()
     use_millisecond_offset : bool, default=True
-        For multi-ticker: add millisecond offsets to avoid duplicate indices
+        Deprecated. Ignored. Primary key is (datetime, ticker).
     target_col : str, default='log_return'
         Target column to use. Options:
         - 'raw_return': (close[t+1]/open[t+1]) - 1, shifted forward by 1 period

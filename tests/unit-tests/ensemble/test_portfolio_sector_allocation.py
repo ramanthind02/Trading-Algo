@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _ENSEMBLE_DIR = _REPO_ROOT / "ensemble"
 _ENSEMBLE_PKG = types.ModuleType("ensemble")
 _ENSEMBLE_PKG.__path__ = [str(_ENSEMBLE_DIR)]

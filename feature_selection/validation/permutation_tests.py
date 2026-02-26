@@ -9,11 +9,16 @@ T014 — Pipeline Permutation: Full-pipeline test that either shuffles raw
 """
 from __future__ import annotations
 
+import contextlib
 import copy
+from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
 import numpy as np
 import pandas as pd
+import joblib.parallel
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.validation.reports import (
@@ -62,7 +67,7 @@ def run_vector_shuffle_test(
         and pass/fail verdict.
 
     References:
-        docs/library/Feature_selection/Permutation Testing/in-sample_pt.md §1
+        docs/library/Feature_selection/Phase_1_IS/permutation_testing.md (Stage 1)
     """
     rng = np.random.default_rng(random_seed)
 
@@ -89,7 +94,9 @@ def run_vector_shuffle_test(
         else:
             null_metrics[i] = 0.0
 
-    p_value = float((null_metrics >= original_metric).mean())
+    # Inclusive p-value: count original as one of the null sample (min p = 1/(nreps+1))
+    n_null_ge_original = int((null_metrics >= original_metric).sum())
+    p_value = float(1 + n_null_ge_original) / float(nreps + 1)
     critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
     passed = bool(original_metric > critical_value)
 
@@ -134,13 +141,23 @@ def _fit_and_predict(
     target: pd.Series,
     strategy: str = 'long',
 ) -> tuple[pd.Series, bool]:
-    """Fit a deep-copy of binning_model then predict signals.
+    """Fit a copy of binning_model then predict signals.
+
+    Uses clone() when available (faster than deepcopy); otherwise falls back
+    to copy.deepcopy for implementations that do not define clone().
 
     Returns:
         (signals, fit_failed) — fit_failed=True means an exception was raised;
         signals is all-zeros in that case.
     """
-    model_copy = copy.deepcopy(binning_model)
+    clone_fn = getattr(binning_model, "clone", None)
+    if callable(clone_fn):
+        try:
+            model_copy = clone_fn()
+        except TypeError:
+            model_copy = copy.deepcopy(binning_model)
+    else:
+        model_copy = copy.deepcopy(binning_model)
     try:
         aligned_target = target.reindex(feature.index).dropna()
         aligned_feature = feature.reindex(aligned_target.index).dropna()
@@ -166,6 +183,390 @@ def _prepare_candles_for_shuffler(candles_df: pd.DataFrame) -> pd.DataFrame:
             df['datetime'] = candles_df.index
             return df
     return candles_df
+
+
+def _permute_candles_with_seed(
+    candles_prepared: pd.DataFrame,
+    seed: int,
+    prepared_shufflers: object,
+) -> pd.DataFrame:
+    """Permute candles with seed; when multi-ticker, shuffle each ticker independently.
+
+    prepared_shufflers is either a single prepared shuffler (one ticker or no
+    ticker column) or a dict[str, prepared] keyed by ticker. Per-ticker shuffling
+    ensures one ticker's bars do not influence another's when re-extracting bias nodes.
+    """
+    if isinstance(prepared_shufflers, dict):
+        parts = [
+            prepared_shufflers[ticker].permute_with_seed(seed)
+            for ticker in sorted(prepared_shufflers)
+        ]
+        out = pd.concat(parts, axis=0, ignore_index=True)
+        if "datetime" in out.columns and "ticker" in out.columns:
+            out = out.sort_values(["datetime", "ticker"]).reset_index(drop=True)
+        return out
+    return prepared_shufflers.permute_with_seed(seed)
+
+
+@dataclass(frozen=True)
+class _ContinuousPermutationBatchItem:
+    """Internal Stage-2 continuous permutation batch input."""
+
+    param_combo: str
+    bias_node_extractor: Callable[[pd.DataFrame], pd.Series]
+    binning_model: BinningModelBase
+
+
+def _stage2_continuous_combo_rep(
+    combo_name: str,
+    item: _ContinuousPermutationBatchItem,
+    shuffled_candles: pd.DataFrame | None,
+    seed: int,
+    original_features: dict[str, pd.Series],
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    permutation_mode: Literal['feature_shuffle', 'candle_shuffle'],
+) -> tuple[str, float, bool]:
+    """Run one combo for one rep. Returns (combo_name, null_metric, no_trade)."""
+    try:
+        if permutation_mode == 'feature_shuffle':
+            orig = original_features[combo_name]
+            shuffled_values = np.random.default_rng(seed).permutation(orig.values.copy())
+            shuffled_feature = pd.Series(
+                shuffled_values, index=orig.index, name=orig.name
+            )
+        else:
+            if shuffled_candles is None:
+                raise ValueError(
+                    "shuffled_candles must be provided when permutation_mode='candle_shuffle'."
+                )
+            shuffled_feature = item.bias_node_extractor(shuffled_candles).reindex(
+                target.index
+            )
+        signals, fit_failed = _fit_and_predict(
+            item.binning_model, shuffled_feature, target
+        )
+        if fit_failed:
+            return (combo_name, 0.0, True)
+        metric, is_no_trade = _compute_metric_from_signals(
+            signals, target, objective_func
+        )
+        return (combo_name, metric, is_no_trade)
+    except Exception:
+        return (combo_name, 0.0, True)
+
+
+@dataclass(frozen=True)
+class _RuleBasedPermutationBatchItem:
+    """Internal Stage-2 rule-based permutation batch input."""
+
+    param_combo: str
+    rule_extractor: Callable[[pd.DataFrame], pd.Series]
+
+
+def _derive_permutation_seeds(nreps: int, random_seed: Optional[int]) -> np.ndarray:
+    rng = np.random.default_rng(random_seed)
+    return rng.integers(0, 2 ** 31, size=nreps)
+
+
+def _run_one_rep_continuous(
+    rep_index: int,
+    seed: int,
+    candles_prepared: pd.DataFrame,
+    prepared_shufflers: object,
+    items_by_combo: dict[str, _ContinuousPermutationBatchItem],
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    permutation_mode: Literal['feature_shuffle', 'candle_shuffle'],
+    original_features: dict[str, pd.Series],
+) -> tuple[int, dict[str, tuple[float, bool]]]:
+    """Run a single Stage-2 rep; returns (rep_index, {combo_name: (metric, no_trade)}).
+
+    Used by joblib for rep-level multiprocessing (no GIL).
+    """
+    shuffled_candles: pd.DataFrame | None = None
+    if permutation_mode == 'candle_shuffle':
+        shuffled_candles = _permute_candles_with_seed(
+            candles_prepared, seed, prepared_shufflers
+        )
+    results: dict[str, tuple[float, bool]] = {}
+    for combo_name, item in items_by_combo.items():
+        cname, metric, no_trade = _stage2_continuous_combo_rep(
+            combo_name,
+            item,
+            shuffled_candles,
+            seed,
+            original_features,
+            target,
+            objective_func,
+            permutation_mode,
+        )
+        results[cname] = (metric, no_trade)
+    return (rep_index, results)
+
+
+def _build_pipeline_report(
+    *,
+    param_combo: str,
+    feature_type: Literal['continuous', 'rule_based'],
+    permutation_mode: Literal['feature_shuffle', 'candle_shuffle'],
+    original_metric: float,
+    null_metrics: np.ndarray,
+    alpha: float,
+    nreps: int,
+    no_trade_permutations: int,
+) -> PipelinePermutationReport:
+    n_null_ge_original = int((null_metrics >= original_metric).sum())
+    p_value = float(1 + n_null_ge_original) / float(nreps + 1)
+    critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
+    passed = bool(original_metric > critical_value)
+    return PipelinePermutationReport(
+        param_combo=param_combo,
+        feature_type=feature_type,
+        permutation_mode=permutation_mode,
+        original_metric=original_metric,
+        null_distribution=null_metrics,
+        critical_value=critical_value,
+        p_value=p_value,
+        passed=passed,
+        alpha=alpha,
+        nreps=nreps,
+        no_trade_permutations=no_trade_permutations,
+    )
+
+
+def _run_pipeline_permutation_continuous_batch(
+    *,
+    candles_df: pd.DataFrame,
+    items: list[_ContinuousPermutationBatchItem],
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    permutation_mode: Literal['feature_shuffle', 'candle_shuffle'] = 'candle_shuffle',
+    metric_threshold: float = 0.0,
+    nreps: int = 1000,
+    alpha: float = 0.10,
+    random_seed: Optional[int] = None,
+    n_jobs_reps: int = 1,
+) -> dict[str, PipelinePermutationReport]:
+    """Internal batch Stage-2 runner; one shuffled candle stream per rep shared across all passers.
+
+    Candle shuffle is source of truth (canonical implementation in
+    utils.evaluation.permutation_test.candle_shuffle).
+    Docs: permutation_testing.md (Stage 2), candle_permutation.md (invariants).
+
+    n_jobs_reps > 1: reps in parallel (joblib/loky, true multiprocessing, no GIL).
+    """
+    _ = metric_threshold  # Reserved for parity with public API.
+
+    if permutation_mode not in ('feature_shuffle', 'candle_shuffle'):
+        raise ValueError(
+            f"Unknown permutation_mode: {permutation_mode!r}. "
+            "Use 'feature_shuffle' or 'candle_shuffle'."
+        )
+
+    if not items:
+        return {}
+
+    seeds = _derive_permutation_seeds(nreps, random_seed)
+    candles_prepared = _prepare_candles_for_shuffler(candles_df)
+
+    original_features: dict[str, pd.Series] = {}
+    original_metrics: dict[str, float] = {}
+    null_metrics_by_combo: dict[str, np.ndarray] = {}
+    no_trade_counts: dict[str, int] = {}
+    items_by_combo = {item.param_combo: item for item in items}
+
+    for item in items:
+        original_feature = item.bias_node_extractor(candles_df)
+        original_features[item.param_combo] = original_feature
+        original_signals, original_fit_failed = _fit_and_predict(
+            item.binning_model, original_feature, target
+        )
+        if original_fit_failed:
+            original_metrics[item.param_combo] = 0.0
+        else:
+            original_metrics[item.param_combo], _ = _compute_metric_from_signals(
+                original_signals, target, objective_func
+            )
+        null_metrics_by_combo[item.param_combo] = np.empty(nreps, dtype=float)
+        no_trade_counts[item.param_combo] = 0
+
+    prepared_shufflers: object = None
+    if permutation_mode == 'candle_shuffle':
+        from utils.evaluation.permutation_test.candle_shuffle import _prepare_candle_shuffle
+
+        if "ticker" in candles_prepared.columns and candles_prepared["ticker"].nunique() > 1:
+            prepared_shufflers = {
+                ticker: _prepare_candle_shuffle(
+                    candles_prepared[candles_prepared["ticker"] == ticker].copy()
+                )
+                for ticker in candles_prepared["ticker"].unique()
+            }
+        else:
+            prepared_shufflers = _prepare_candle_shuffle(candles_prepared)
+
+    if n_jobs_reps > 1:
+        stage2_label = (
+            "Stage 2 (candle shuffle)" if permutation_mode == 'candle_shuffle' else "Stage 2 (feature shuffle)"
+        )
+        _ = stage2_label  # retained for potential external logging
+        rep_results = Parallel(n_jobs=n_jobs_reps, backend="loky")(
+            delayed(_run_one_rep_continuous)(
+                i,
+                int(seeds[i]),
+                candles_prepared,
+                prepared_shufflers,
+                items_by_combo,
+                target,
+                objective_func,
+                permutation_mode,
+                original_features,
+            )
+            for i in range(nreps)
+        )
+        for rep_index, results in sorted(rep_results, key=lambda x: x[0]):
+            for combo_name, (metric, no_trade) in results.items():
+                null_metrics_by_combo[combo_name][rep_index] = metric
+                if no_trade:
+                    no_trade_counts[combo_name] += 1
+    else:
+        stage2_label = (
+            "Stage 2 (candle shuffle)" if permutation_mode == 'candle_shuffle' else "Stage 2 (feature shuffle)"
+        )
+        for i in tqdm(range(nreps), desc=stage2_label, unit="rep"):
+            shuffled_candles_rep: pd.DataFrame | None = None
+            if permutation_mode == 'candle_shuffle':
+                if prepared_shufflers is None:
+                    raise ValueError(
+                        "prepared_shufflers must be initialised when permutation_mode='candle_shuffle'."
+                    )
+                shuffled_candles_rep = _permute_candles_with_seed(
+                    candles_prepared, int(seeds[i]), prepared_shufflers
+                )
+            seed_i = int(seeds[i])
+
+            for combo_name, item in items_by_combo.items():
+                try:
+                    if permutation_mode == 'feature_shuffle':
+                        original_feature = original_features[combo_name]
+                        shuffled_values = np.random.default_rng(seed_i).permutation(
+                            original_feature.values.copy()
+                        )
+                        shuffled_feature = pd.Series(
+                            shuffled_values,
+                            index=original_feature.index,
+                            name=original_feature.name,
+                        )
+                    else:
+                        if shuffled_candles_rep is None:
+                            raise ValueError(
+                                "shuffled_candles_rep must be available when permutation_mode='candle_shuffle'."
+                            )
+                        shuffled_feature = item.bias_node_extractor(shuffled_candles_rep).reindex(target.index)
+
+                    signals, fit_failed = _fit_and_predict(item.binning_model, shuffled_feature, target)
+                    if fit_failed:
+                        null_metrics_by_combo[combo_name][i] = 0.0
+                        no_trade_counts[combo_name] += 1
+                        continue
+
+                    metric, is_no_trade = _compute_metric_from_signals(signals, target, objective_func)
+                    null_metrics_by_combo[combo_name][i] = metric
+                    if is_no_trade:
+                        no_trade_counts[combo_name] += 1
+                except Exception:
+                    null_metrics_by_combo[combo_name][i] = 0.0
+                    no_trade_counts[combo_name] += 1
+
+
+    return {
+        combo_name: _build_pipeline_report(
+            param_combo=combo_name,
+            feature_type='continuous',
+            permutation_mode=permutation_mode,
+            original_metric=original_metrics[combo_name],
+            null_metrics=null_metrics_by_combo[combo_name],
+            alpha=alpha,
+            nreps=nreps,
+            no_trade_permutations=no_trade_counts[combo_name],
+        )
+        for combo_name in items_by_combo
+    }
+
+
+def _run_pipeline_permutation_rule_based_batch(
+    *,
+    candles_df: pd.DataFrame,
+    items: list[_RuleBasedPermutationBatchItem],
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    metric_threshold: float = 0.0,
+    nreps: int = 1000,
+    alpha: float = 0.10,
+    random_seed: Optional[int] = None,
+) -> dict[str, PipelinePermutationReport]:
+    """Internal batch Stage-2 runner for rule-based features (candle shuffle only)."""
+    _ = metric_threshold  # Reserved for parity with public API.
+
+    if not items:
+        return {}
+
+    from utils.evaluation.permutation_test.candle_shuffle import _prepare_candle_shuffle
+
+    seeds = _derive_permutation_seeds(nreps, random_seed)
+    candles_prepared = _prepare_candles_for_shuffler(candles_df)
+    if "ticker" in candles_prepared.columns and candles_prepared["ticker"].nunique() > 1:
+        prepared_shufflers: object = {
+            ticker: _prepare_candle_shuffle(
+                candles_prepared[candles_prepared["ticker"] == ticker].copy()
+            )
+            for ticker in candles_prepared["ticker"].unique()
+        }
+    else:
+        prepared_shufflers = _prepare_candle_shuffle(candles_prepared)
+
+    original_metrics: dict[str, float] = {}
+    null_metrics_by_combo: dict[str, np.ndarray] = {}
+    no_trade_counts: dict[str, int] = {}
+    items_by_combo = {item.param_combo: item for item in items}
+
+    for item in items:
+        original_rule = item.rule_extractor(candles_df)
+        original_metric, _ = _compute_metric_from_signals(original_rule, target, objective_func)
+        original_metrics[item.param_combo] = original_metric
+        null_metrics_by_combo[item.param_combo] = np.empty(nreps, dtype=float)
+        no_trade_counts[item.param_combo] = 0
+
+    for i in tqdm(range(nreps), desc="Stage 2 (candle shuffle)", unit="rep"):
+        shuffled_candles = _permute_candles_with_seed(
+            candles_prepared, int(seeds[i]), prepared_shufflers
+        )
+        for combo_name, item in items_by_combo.items():
+            try:
+                shuffled_rule = item.rule_extractor(shuffled_candles).reindex(target.index)
+                metric, is_no_trade = _compute_metric_from_signals(
+                    shuffled_rule, target, objective_func
+                )
+                null_metrics_by_combo[combo_name][i] = metric
+                if is_no_trade:
+                    no_trade_counts[combo_name] += 1
+            except Exception:
+                null_metrics_by_combo[combo_name][i] = 0.0
+                no_trade_counts[combo_name] += 1
+
+    return {
+        combo_name: _build_pipeline_report(
+            param_combo=combo_name,
+            feature_type='rule_based',
+            permutation_mode='candle_shuffle',
+            original_metric=original_metrics[combo_name],
+            null_metrics=null_metrics_by_combo[combo_name],
+            alpha=alpha,
+            nreps=nreps,
+            no_trade_permutations=no_trade_counts[combo_name],
+        )
+        for combo_name in items_by_combo
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -216,100 +617,27 @@ def run_pipeline_permutation_continuous(
         PipelinePermutationReport with feature_type='continuous'.
 
     References:
-        docs/library/Feature_selection/Permutation Testing/in-sample_pt.md §2
+        docs/library/Feature_selection/Phase_1_IS/permutation_testing.md (Stage 2)
+        docs/library/Feature_selection/Phase_1_IS/candle_permutation.md (candle mode invariants)
     """
-    rng = np.random.default_rng(random_seed)
-    seeds = rng.integers(0, 2 ** 31, size=nreps)
-
-    candles_prepared = _prepare_candles_for_shuffler(candles_df)
-
-    # --- Original metric via full pipeline ---
-    original_feature = bias_node_extractor(candles_df)
-    original_signals, original_fit_failed = _fit_and_predict(
-        binning_model, original_feature, target
-    )
-    if original_fit_failed:
-        original_metric = 0.0
-    else:
-        original_metric, _ = _compute_metric_from_signals(
-            original_signals, target, objective_func
-        )
-
-    null_metrics = np.empty(nreps, dtype=float)
-    no_trade_permutations = 0
-
-    if permutation_mode == 'feature_shuffle':
-        raw_feature_values = original_feature.values.copy()
-
-        for i in range(nreps):
-            local_rng = np.random.default_rng(int(seeds[i]))
-            shuffled_values = local_rng.permutation(raw_feature_values)
-            shuffled_feature = pd.Series(
-                shuffled_values,
-                index=original_feature.index,
-                name=original_feature.name,
+    reports = _run_pipeline_permutation_continuous_batch(
+        candles_df=candles_df,
+        items=[
+            _ContinuousPermutationBatchItem(
+                param_combo=param_combo,
+                bias_node_extractor=bias_node_extractor,
+                binning_model=binning_model,
             )
-            signals, fit_failed = _fit_and_predict(binning_model, shuffled_feature, target)
-            if fit_failed:
-                null_metrics[i] = 0.0
-                no_trade_permutations += 1
-            else:
-                metric, is_no_trade = _compute_metric_from_signals(
-                    signals, target, objective_func
-                )
-                null_metrics[i] = metric
-                if is_no_trade:
-                    no_trade_permutations += 1
-
-    elif permutation_mode == 'candle_shuffle':
-        from utils.permutation_test.candle_shuffle import CandleShuffler
-
-        for i in range(nreps):
-            try:
-                shuffler = CandleShuffler(candles_prepared, random_seed=int(seeds[i]))
-                shuffled_candles = shuffler.permute()
-                shuffled_feature = bias_node_extractor(shuffled_candles)
-                shuffled_feature = shuffled_feature.reindex(target.index)
-                signals, fit_failed = _fit_and_predict(
-                    binning_model, shuffled_feature, target
-                )
-                if fit_failed:
-                    null_metrics[i] = 0.0
-                    no_trade_permutations += 1
-                else:
-                    metric, is_no_trade = _compute_metric_from_signals(
-                        signals, target, objective_func
-                    )
-                    null_metrics[i] = metric
-                    if is_no_trade:
-                        no_trade_permutations += 1
-            except Exception:
-                null_metrics[i] = 0.0
-                no_trade_permutations += 1
-
-    else:
-        raise ValueError(
-            f"Unknown permutation_mode: {permutation_mode!r}. "
-            "Use 'feature_shuffle' or 'candle_shuffle'."
-        )
-
-    p_value = float((null_metrics >= original_metric).mean())
-    critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
-    passed = bool(original_metric > critical_value)
-
-    return PipelinePermutationReport(
-        param_combo=param_combo,
-        feature_type='continuous',
+        ],
+        target=target,
+        objective_func=objective_func,
         permutation_mode=permutation_mode,
-        original_metric=original_metric,
-        null_distribution=null_metrics,
-        critical_value=critical_value,
-        p_value=p_value,
-        passed=passed,
-        alpha=alpha,
+        metric_threshold=metric_threshold,
         nreps=nreps,
-        no_trade_permutations=no_trade_permutations,
+        alpha=alpha,
+        random_seed=random_seed,
     )
+    return reports[param_combo]
 
 
 # ---------------------------------------------------------------------------
@@ -350,54 +678,20 @@ def run_pipeline_permutation_rule_based(
         permutation_mode='candle_shuffle'.
 
     References:
-        docs/library/Feature_selection/Permutation Testing/in-sample_pt.md §2
+        docs/library/Feature_selection/Phase_1_IS/permutation_testing.md (Stage 2)
+        docs/library/Feature_selection/Phase_1_IS/candle_permutation.md
     """
-    from utils.permutation_test.candle_shuffle import CandleShuffler
-
-    rng = np.random.default_rng(random_seed)
-    seeds = rng.integers(0, 2 ** 31, size=nreps)
-
-    candles_prepared = _prepare_candles_for_shuffler(candles_df)
-
-    original_rule = rule_extractor(candles_df)
-    original_metric, _ = _compute_metric_from_signals(original_rule, target, objective_func)
-
-    null_metrics = np.empty(nreps, dtype=float)
-    no_trade_permutations = 0
-
-    for i in range(nreps):
-        try:
-            shuffler = CandleShuffler(candles_prepared, random_seed=int(seeds[i]))
-            shuffled_candles = shuffler.permute()
-            shuffled_rule = rule_extractor(shuffled_candles)
-            shuffled_rule = shuffled_rule.reindex(target.index)
-            metric, is_no_trade = _compute_metric_from_signals(
-                shuffled_rule, target, objective_func
-            )
-            null_metrics[i] = metric
-            if is_no_trade:
-                no_trade_permutations += 1
-        except Exception:
-            null_metrics[i] = 0.0
-            no_trade_permutations += 1
-
-    p_value = float((null_metrics >= original_metric).mean())
-    critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
-    passed = bool(original_metric > critical_value)
-
-    return PipelinePermutationReport(
-        param_combo=param_combo,
-        feature_type='rule_based',
-        permutation_mode='candle_shuffle',
-        original_metric=original_metric,
-        null_distribution=null_metrics,
-        critical_value=critical_value,
-        p_value=p_value,
-        passed=passed,
-        alpha=alpha,
+    reports = _run_pipeline_permutation_rule_based_batch(
+        candles_df=candles_df,
+        items=[_RuleBasedPermutationBatchItem(param_combo=param_combo, rule_extractor=rule_extractor)],
+        target=target,
+        objective_func=objective_func,
+        metric_threshold=metric_threshold,
         nreps=nreps,
-        no_trade_permutations=no_trade_permutations,
+        alpha=alpha,
+        random_seed=random_seed,
     )
+    return reports[param_combo]
 
 
 # ---------------------------------------------------------------------------

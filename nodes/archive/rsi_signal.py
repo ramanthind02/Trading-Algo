@@ -1,9 +1,9 @@
 from typing import List, Optional
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame, Bias
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame, Bias
 from nodes import BiasNode
 from nodes.rsi import RSI
-from utils.cython_nodes import compute_ma_from_deque
+from utils.compute.cython.cython_nodes import compute_ma_from_deque
 from collections import deque
 import numpy as np
 

@@ -17,10 +17,10 @@ from zoneinfo import ZoneInfo
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logger import get_logger
-from utils.enums import TimeFrame, Ticker
-from utils.models import Candle
-import utils.helpers as helpers
+from utils.core.logger import get_logger
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.models import Candle
+import utils.core.helpers as helpers
 from deployment.mt5_data_connector import ForecastMT5DataConnector
 from deployment.telegram_notifier import TelegramNotifier
 from ensemble.portfolio import Portfolio

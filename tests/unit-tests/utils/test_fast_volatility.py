@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from utils.fast_volatility import compute_ewsd_annualized_from_closes
+from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 from ensemble.portfolio_tester import (
     calculate_log_returns_from_candles,
     calculate_baseline_returns,

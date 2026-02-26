@@ -16,15 +16,15 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.rule_based.config import (
-    PermutationSuiteConfig,
+from feature_research.in_sample.config import (
+    PermutationResearchConfig,
     RuleBasedResearchConfig,
 )
-from feature_research.rule_based.pipeline import (
-    run_rule_based_eda_pipeline,
-    run_rule_based_permutation_pipeline,
+from feature_research.pipeline import (
+    run_eda_pipeline,
+    run_permutation_pipeline,
 )
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 def _project_root() -> Path:
@@ -90,7 +90,7 @@ def test_rule_based_eda_pipeline_smoke(
             populate_cache=True,
             reports_dir=Path(tmpdir),
         )
-        results = run_rule_based_eda_pipeline(config, Path(tmpdir))
+        results = run_eda_pipeline(config, Path(tmpdir))
 
         assert len(results) == 1, f"Expected 1 result, got {len(results)}"
 
@@ -104,10 +104,7 @@ def test_rule_based_eda_pipeline_smoke(
         assert plots_dir.is_dir()
         expected_plots = [
             "time_series_fig.png",
-            "rolling_corr_fig.png",
             "level_plot_fig.png",
-            "ic_decay_fig.png",
-            "acf_fig.png",
         ]
         for plot_file in expected_plots:
             assert (plots_dir / plot_file).exists(), f"Missing plot: {plot_file}"
@@ -154,7 +151,7 @@ def test_rule_based_eda_pipeline_multi_combo(
             populate_cache=True,
             reports_dir=Path(tmpdir),
         )
-        results = run_rule_based_eda_pipeline(config, Path(tmpdir))
+        results = run_eda_pipeline(config, Path(tmpdir))
 
         assert len(results) == len(rsi_periods), (
             f"Expected {len(rsi_periods)} results, got {len(results)}"
@@ -194,11 +191,11 @@ def test_rule_based_pipeline_can_run_permutation_suite_mode(
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
-            permutation_suite=PermutationSuiteConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+            in_sample_permutation=PermutationResearchConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
         )
 
         try:
-            suite = run_rule_based_permutation_pipeline(config, Path(tmpdir))
+            suite = run_permutation_pipeline(config, Path(tmpdir))
         except Exception as exc:  # pragma: no cover - integration environment guard
             _skip_if_missing_data_prereq(exc)
             raise

@@ -20,9 +20,9 @@
 | **feature_extraction** | `feature_extraction/` | Feature extraction plus forward-return target alignment | [data_pipeline.md](data_pipeline.md) |
 | **eda** | `eda/` | Feature exploration and parameter sensitivity tooling | [data_pipeline.md](data_pipeline.md) |
 | **research** | `research/` | Research orchestration helpers for node and model evaluation | [data_pipeline.md](data_pipeline.md) |
-| **utils.permutation_test** | `utils/permutation_test/` | Feature/bar permutation engines and walkforward-safe strategies | [testing_tools.md](testing_tools.md) |
-| **utils.prop_firm_simulator** | `utils/prop_firm_simulator/` | Prop-firm challenge simulation and statistics contracts | [testing_tools.md](testing_tools.md) |
-| **utils.robustness_test** | `utils/robustness_test/` | Monte Carlo/bootstrap/block-bootstrap robustness analysis | [testing_tools.md](testing_tools.md) |
+| **utils.evaluation.permutation_test** | `utils/evaluation/permutation_test/` | Feature/bar permutation engines and walkforward-safe strategies | [testing_tools.md](testing_tools.md) |
+| **utils.simulation.prop_firm_simulator** | `utils/simulation/prop_firm_simulator/` | Prop-firm challenge simulation and statistics contracts | [testing_tools.md](testing_tools.md) |
+| **utils.evaluation.robustness_test** | `utils/evaluation/robustness_test/` | Monte Carlo/bootstrap/block-bootstrap robustness analysis | [testing_tools.md](testing_tools.md) |
 | **plotting** | `plotting/` | Visualization helpers for robustness and prop-firm simulations | [testing_tools.md](testing_tools.md) |
 
 ## Key Entrypoints (`scripts/`)
@@ -31,7 +31,7 @@
 |--------|---------|
 | `scripts/tws_live_forecast.py` | Live/paper forecast loop via Interactive Brokers TWS with optional notifications |
 | `scripts/run_manual_forecast.py` | Manual forecast execution and JSON output for selected tickers/timeframes |
-| `scripts/benchmark_portfolio_backtest.py` | End-to-end portfolio backtest benchmark using vault/control artifacts |
+| `scripts/benchmark_portfolio_backtest.py` | End-to-end portfolio backtest benchmark (config from portfolio_research) |
 | `scripts/demo_forecast_pipeline.py` | Demonstrates full forecast stack from base model to position sizing |
 | `scripts/demo_ib_data_fetch.py` | Interactive Brokers data fetch and streaming demonstrations |
 | `scripts/demo_prop_firm_simulator.py` | Demonstrates prop-firm simulation workflow and outputs |
@@ -43,14 +43,14 @@ Key symbols imported across package boundaries:
 
 | Symbol | Defined In | Used By |
 |--------|-----------|---------|
-| `Ticker` | `utils.enums` | `data_cleaning`, `deployment`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes`, `research` |
-| `TimeFrame` | `utils.enums` | `data_cleaning`, `deployment`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes`, `research` |
-| `helpers` | `utils.helpers` | `deployment`, `eda`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes`, `research` |
-| `Candle` | `utils.models` | `deployment`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes` |
-| `CacheMissError` | `utils.bias_node_cache` | `feature_extraction`, `feature_selection`, `nodes` |
-| `BiasNodeCache` | `utils.bias_node_cache` | `feature_extraction`, `nodes` |
-| `PermutationEngine` | `utils.permutation_test.permutation_engine` | `eda`, `feature_selection` |
-| `FeaturePermutationStrategy` | `utils.permutation_test.permutation_engine` | `eda`, `feature_selection` |
+| `Ticker` | `utils.core.enums` | `data_cleaning`, `deployment`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes`, `research` |
+| `TimeFrame` | `utils.core.enums` | `data_cleaning`, `deployment`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes`, `research` |
+| `helpers` | `utils.core.helpers` | `deployment`, `eda`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes`, `research` |
+| `Candle` | `utils.core.models` | `deployment`, `ensemble`, `feature_extraction`, `feature_selection`, `nodes` |
+| `CacheMissError` | `utils.cache.bias_node_cache` | `feature_extraction`, `feature_selection`, `nodes` |
+| `BiasNodeCache` | `utils.cache.bias_node_cache` | `feature_extraction`, `nodes` |
+| `PermutationEngine` | `utils.evaluation.permutation_test.permutation_engine` | `eda`, `feature_selection` |
+| `FeaturePermutationStrategy` | `utils.evaluation.permutation_test.permutation_engine` | `eda`, `feature_selection` |
 | `Portfolio` | `ensemble.portfolio` | `deployment`, `feature_selection` |
 | `PortfolioTester` | `ensemble.portfolio_tester` | `feature_selection` |
 | `PositionSizer` | `execution.position_sizer` | `ensemble` |
@@ -59,7 +59,7 @@ Key symbols imported across package boundaries:
 | `BaseModel` / `ContinuousBinningModel` / `RuleBasedModel` / `TwoBinBinningModel` | `feature_selection.base_models` | `ensemble`, `research`, `deployment` |
 | `OSFeatureSelector` | `feature_selection.os_feature_selector` | `deployment` |
 | `extract_features_for_bias_node` | `feature_extraction.feature_extractor` | `research` |
-| `get_logger` | `utils.logger` | `deployment`, `feature_extraction` |
+| `get_logger` | `utils.core.logger` | `deployment`, `feature_extraction` |
 
 ## Doc Targets (10 groups)
 

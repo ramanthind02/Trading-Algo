@@ -23,10 +23,11 @@ def test_defaults_are_deterministic() -> None:
     )
 
     assert config.enabled is False
-    assert config.test_step == 365
-    assert config.num_steps == 8
-    assert config.top_k == 3
-    assert config.objective_metric_name == "sortino"
+    assert config.test_step == 730
+    assert config.num_steps == 4
+    assert config.top_k == 5
+    assert config.objective_metric_name == "t_stat"
+    assert config.selection_method == WalkforwardSelectionMethod.STABLE_REGION
     assert config.min_fold_samples == 10
     assert config.output_root == Path("feature_research/shared_results")
 
@@ -65,14 +66,14 @@ def test_validation_bounds(kwargs: dict[str, object], expected_message: str) -> 
         WalkforwardResearchConfig(**all_kwargs)
 
 
-def test_config_enhanced_selection_defaults() -> None:
+def test_config_selection_method_defaults() -> None:
     config = WalkforwardResearchConfig(
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2015, 1, 1),
     )
 
-    assert config.use_enhanced_selection is False
-    assert config.trade_freq_min == pytest.approx(0.05)
+    assert config.selection_method == WalkforwardSelectionMethod.STABLE_REGION
+    assert config.trade_freq_min == pytest.approx(0.01)
 
 
 def test_config_rejects_invalid_trade_freq_min() -> None:

@@ -24,7 +24,7 @@ import pandas as pd
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.grid_smoothing import add_smoothed_objective
+from utils.compute.grid_smoothing import add_smoothed_objective
 
 
 class TestWorkedExample2D(unittest.TestCase):
@@ -279,6 +279,41 @@ class TestNonUniformGrid(unittest.TestCase):
         # Mean of [1.0, 2.0] = 1.5
         row = result[result["x"] == 5]
         self.assertAlmostEqual(row["avg_objective"].iloc[0], 1.5)
+
+
+class TestSelfWeight(unittest.TestCase):
+    """self_weight gives less aggressive smoothing (param value weighted more)."""
+
+    def test_self_weight_default_unchanged(self):
+        """Default self_weight=1.0 preserves original equal-weight mean."""
+        df = pd.DataFrame({
+            "x": [1, 2, 3],
+            "obj": [10.0, 20.0, 30.0],
+        })
+        result = add_smoothed_objective(df, ["x"], "obj")
+        # x=2: mean(20, 10, 30) = 20.0
+        self.assertAlmostEqual(result[result["x"] == 2]["avg_objective"].iloc[0], 20.0)
+
+    def test_self_weight_reduces_smoothing(self):
+        """self_weight=2.0 weights center more: (2*20 + 10 + 30) / 4 = 20.0 (unchanged for symmetric), but interior (2) stays 20."""
+        df = pd.DataFrame({
+            "x": [1, 2, 3],
+            "obj": [10.0, 20.0, 30.0],
+        })
+        result = add_smoothed_objective(df, ["x"], "obj", self_weight=2.0)
+        # x=2: (2*20 + 10 + 30) / (2+2) = 80/4 = 20.0
+        self.assertAlmostEqual(result[result["x"] == 2]["avg_objective"].iloc[0], 20.0)
+        # x=1: (2*10 + 20) / (2+1) = 40/3 ≈ 13.333
+        self.assertAlmostEqual(result[result["x"] == 1]["avg_objective"].iloc[0], 40.0 / 3.0)
+        # x=3: (2*30 + 20) / (2+1) = 80/3 ≈ 26.667
+        self.assertAlmostEqual(result[result["x"] == 3]["avg_objective"].iloc[0], 80.0 / 3.0)
+
+    def test_self_weight_invalid_raises(self):
+        df = pd.DataFrame({"x": [1], "obj": [1.0]})
+        with self.assertRaises(ValueError):
+            add_smoothed_objective(df, ["x"], "obj", self_weight=0.0)
+        with self.assertRaises(ValueError):
+            add_smoothed_objective(df, ["x"], "obj", self_weight=-1.0)
 
 
 class TestValidation(unittest.TestCase):

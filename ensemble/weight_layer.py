@@ -264,8 +264,8 @@ class BaseWeightLayer(ABC):
 
     Parameters
     ----------
-    fdm_max : float, default=2.5
-        Maximum FDM value (Carver's recommendation)
+    fdm_max : float, default=2.0
+        Maximum FDM value (per project spec)
 
     Attributes
     ----------
@@ -283,7 +283,7 @@ class BaseWeightLayer(ABC):
         Name of the weighting strategy (set by subclasses)
     """
 
-    def __init__(self, fdm_max: float = 2.5) -> None:
+    def __init__(self, fdm_max: float = 2.0) -> None:
         self.fdm_max = fdm_max
 
         # Fitted attributes (per-ticker storage)
@@ -450,6 +450,8 @@ class BaseWeightLayer(ABC):
                 ticker_returns = returns  # pass the full series; subclasses align by index
 
             # --- Delegate weight calculation to subclass ---
+            # Expose current ticker to subclasses that need per-ticker state
+            self._current_ticker_for_group_returns = str(ticker)
             ticker_weights = self._fit_ticker_weights(
                 ticker_signals, ticker_forecast_vectors, ticker_returns
             )
@@ -517,7 +519,7 @@ class BaseWeightLayer(ABC):
 
         Formula:
             FDM = sqrt(1 / (mean_corr + epsilon))
-            Capped at fdm_max (typically 2.5)
+            Capped at fdm_max (default 2.0 per spec)
 
         Parameters
         ----------
@@ -852,7 +854,11 @@ def _extract_group_assignments(
     dict mapping model_name → group_id (string)
     """
     if group_method == "feature_family":
-        return {name: name.split("_")[0] for name in model_names}
+        # Support "feature::member" names: use left part then first token before _
+        def _family_id(name: str) -> str:
+            left = name.split("::")[0].strip() if "::" in name else name
+            return left.split("_")[0] if "_" in left else left
+        return {name: _family_id(name) for name in model_names}
 
     # correlation_clustering: hierarchical Ward on full-period correlation
     from scipy.cluster.hierarchy import linkage as _scipy_linkage, fcluster
@@ -1051,8 +1057,8 @@ class InverseCorrelationWeightLayer(BaseWeightLayer):
 
     Parameters
     ----------
-    fdm_max : float, default=2.5
-        Maximum FDM value
+    fdm_max : float, default=2.0
+        Maximum FDM value (per spec)
     """
 
     @property
@@ -1243,6 +1249,8 @@ class DownsideHRPGroupedWeightLayer(BaseWeightLayer):
         cfg = config or WeightLayerConfig()
         super().__init__(fdm_max=cfg.fdm_max)
         self._wl_config = cfg
+        # Per-ticker storage for group return streams used in FDM override
+        self._group_returns_map: Dict[str, pd.DataFrame] = {}
 
     @property
     def weight_method(self) -> str:
@@ -1274,6 +1282,12 @@ class DownsideHRPGroupedWeightLayer(BaseWeightLayer):
             equal_w = 1.0 / len(model_names)
             return pd.Series({m: equal_w for m in model_names})
 
+        # Store group returns for this ticker so _calculate_fdm can use group-level
+        # downside correlation instead of individual forecasts.
+        ticker_key = getattr(self, "_current_ticker_for_group_returns", None)
+        if isinstance(ticker_key, str):
+            self._group_returns_map[ticker_key] = group_returns_df
+
         semi_cov = _compute_downside_semi_covariance(
             group_returns_df, shrinkage=self._wl_config.shrinkage
         )
@@ -1300,9 +1314,11 @@ class DownsideHRPGroupedWeightLayer(BaseWeightLayer):
         ticker: Optional[str] = None,
     ) -> float:
         """Override: FDM from group-level downside correlation, not individual forecasts."""
-        # Retrieve stored group returns for this ticker (set during _fit_ticker_weights via fit)
-        # Fallback to parent FDM if group data not available
-        group_returns = getattr(self, f"_group_returns_{ticker}", None)
+        # Retrieve stored group returns for this ticker (set during _fit_ticker_weights via fit).
+        # Fallback to parent FDM if group data not available.
+        group_returns: Optional[pd.DataFrame] = None
+        if ticker is not None and hasattr(self, "_group_returns_map"):
+            group_returns = self._group_returns_map.get(ticker)
         if group_returns is None or not isinstance(group_returns, pd.DataFrame):
             return super()._calculate_fdm(forecast_vectors, ticker)
 
@@ -1379,7 +1395,7 @@ class DownsideHRPFlatWeightLayer(BaseWeightLayer):
 
 def WeightLayer(
     weight_method: str = 'inverse_correlation',
-    fdm_max: float = 2.5,
+    fdm_max: float = 2.0,
     config: Optional['WeightLayerConfig'] = None,
     **kwargs,
 ) -> BaseWeightLayer:
@@ -1390,8 +1406,9 @@ def WeightLayer(
     ----------
     weight_method : str, default='inverse_correlation'
         Ignored when ``config`` is provided.
-    fdm_max : float, default=2.5
-        FDM cap. Ignored when ``config`` is provided (use config.fdm_max).
+    fdm_max : float, default=2.0
+        FDM cap (per spec). Used when ``config`` is None. When ``config`` is
+        provided, use config.fdm_max instead.
     config : WeightLayerConfig, optional
         When provided, ``config.weighting_method`` takes precedence over
         ``weight_method``.
@@ -1427,10 +1444,13 @@ def WeightLayer(
         )
     cls = _REGISTRY[method]
     if method == 'inverse_correlation':
-        # backward-compat: use fdm_max from arg if no config
         effective_fdm_max = config.fdm_max if config is not None else fdm_max
         return cls(fdm_max=effective_fdm_max)
-    return cls(config=config)
+    # For other methods, pass config so fdm_max is respected when caller passes it
+    effective_config = config if config is not None else WeightLayerConfig(
+        weighting_method=method, fdm_max=fdm_max
+    )
+    return cls(config=effective_config)
 
 
 __all__ = [

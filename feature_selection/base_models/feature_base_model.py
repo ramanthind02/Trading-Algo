@@ -8,34 +8,98 @@ Author: Trading Research Team
 Date: 2025-01-07
 """
 
+from __future__ import annotations
+
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple, Union
+from typing import Optional
 from dataclasses import dataclass
 import logging
 
-from utils.enums import Ticker, TimeFrame
-from utils.models import Candle
-from utils import helpers
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core import helpers
 from feature_selection.base_models.base_model import BinningModelBase
+from feature_selection.base_models.utils import build_member_model_name
 
 logger = logging.getLogger(__name__)
 
 
-def build_member_model_name(base_model_name: str, member_identity: str) -> str:
-    """Build deterministic model names for flattened multi-member outputs."""
-    if member_identity:
-        return f"{base_model_name}::{member_identity}"
-    return base_model_name
+def _align_feature_and_target(
+    feature_data: pd.Series,
+    target_data: pd.Series,
+    *,
+    rule_based: bool = False,
+    min_aligned: int = 20,
+) -> tuple[pd.Series, pd.Series]:
+    """Align feature and target by datetime index; fallback to base-datetime matching if needed.
+
+    Returns (feature_data, aligned_target) both on a common index with at least min_aligned
+    non-NaN target values. Raises ValueError if alignment fails or insufficient data.
+    """
+    aligned_target = target_data.reindex(feature_data.index)
+    n_aligned = aligned_target.notna().sum()
+    n_features = len(feature_data)
+    alignment_ratio = n_aligned / n_features if n_features > 0 else 0.0
+
+    all_nan = aligned_target.isna().all()
+    if hasattr(all_nan, "all"):
+        all_nan = bool(all_nan)
+    if (all_nan or alignment_ratio < 0.5) and len(target_data) > 0:
+        def to_base_datetime(dt: datetime | pd.Timestamp) -> pd.Timestamp:
+            if isinstance(dt, pd.Timestamp):
+                return dt.replace(microsecond=0)
+            return pd.to_datetime(dt).replace(microsecond=0)
+
+        feature_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in feature_data.index])
+        target_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in target_data.index])
+        feature_by_base = pd.Series(feature_data.values, index=feature_base_index)
+        feature_by_base = feature_by_base.groupby(feature_by_base.index).mean()
+        target_by_base = pd.Series(target_data.values, index=target_base_index)
+        target_by_base = target_by_base.groupby(target_by_base.index).mean()
+        common_base_dt = feature_by_base.index.intersection(target_by_base.index)
+
+        if len(common_base_dt) == 0:
+            raise ValueError(
+                "Cannot align feature and target data. "
+                f"Feature index range: {feature_data.index.min()} to {feature_data.index.max()}, "
+                f"Target index range: {target_data.index.min()} to {target_data.index.max()}. "
+                "No overlapping base datetimes found."
+            )
+        feature_data = feature_by_base.reindex(common_base_dt)
+        if rule_based:
+            feature_data = feature_data.round().clip(-1, 1).fillna(0).astype(int)
+        aligned_target = target_by_base.reindex(common_base_dt)
+
+        final_alignment_ratio = aligned_target.notna().sum() / len(feature_data) if len(feature_data) > 0 else 0.0
+        if final_alignment_ratio < 0.8:
+            logger.warning(
+                "Poor alignment after base datetime matching: %s aligned. "
+                "Feature range: %s to %s, Target range: %s to %s, Common datetimes: %s",
+                f"{final_alignment_ratio:.1%}",
+                feature_data.index.min(),
+                feature_data.index.max(),
+                target_by_base.index.min(),
+                target_by_base.index.max(),
+                len(common_base_dt),
+            )
+
+    final_n_aligned = aligned_target.notna().sum()
+    if final_n_aligned < min_aligned:
+        raise ValueError(
+            f"Insufficient aligned data: {final_n_aligned} samples aligned out of {len(feature_data)} features. "
+            "This suggests a datetime alignment issue between features and returns."
+        )
+    return (feature_data, aligned_target)
 
 
 @dataclass(frozen=True)
 class BiasNodeSpec:
     """Immutable specification for bias node creation."""
     module_name: str
-    timeframes: List[TimeFrame]
-    params: Dict[str, Any]
+    timeframes: list[TimeFrame]
+    params: dict[str, object]
 
 
 class BaseModel:
@@ -58,7 +122,7 @@ class BaseModel:
     
     Parameters
     ----------
-    bias_node_spec : Dict[str, Any]
+    bias_node_spec : dict[str, object]
         Specification for bias nodes: {
             'module_name': str,
             'timeframes': [TimeFrame],
@@ -77,8 +141,8 @@ class BaseModel:
     
     def __init__(
         self,
-        feature_config: Dict[str, Any],
-        tickers: Union[Ticker, List[Ticker]],
+        feature_config: dict[str, object],
+        tickers: Ticker | list[Ticker],
         binning_model: Optional[BinningModelBase] = None,
         use_cache: bool = True
     ):
@@ -89,7 +153,7 @@ class BaseModel:
         
         Parameters
         ----------
-        feature_config : Dict[str, Any]
+        feature_config : dict[str, object]
             Feature configuration from control file, including:
             - bias_node_spec: {
                 'module_name': str,
@@ -140,13 +204,15 @@ class BaseModel:
             model_type = feature_config.get('model_type', 'QuantileBinningModel')
             constructor_params = feature_config.get('constructor_params', {})
 
-            if model_type == 'QuantileBinningModel':
+            if model_type in ('QuantileBinningModel', 'ContinuousBinningModel'):
                 self.binning_model = ContinuousBinningModel(**constructor_params)
             elif model_type == 'RuleBasedBinningModel':
                 self.binning_model = RuleBasedModel(**constructor_params)
             else:
-                # Default to ContinuousBinningModel
-                self.binning_model = ContinuousBinningModel()
+                raise ValueError(
+                    f"Unknown model_type: {model_type!r}. "
+                    "Expected 'QuantileBinningModel', 'ContinuousBinningModel', or 'RuleBasedBinningModel'."
+                )
         else:
             self.binning_model = binning_model
         
@@ -155,7 +221,7 @@ class BaseModel:
         
         # Create bias nodes internally - one per ticker and timeframe
         # Key: (ticker, timeframe) tuple
-        self.bias_nodes: Dict[Tuple[Ticker, TimeFrame], Any] = {}
+        self.bias_nodes: dict[tuple[Ticker, TimeFrame], object] = {}
         
         # Extract single values from lists in params (BaseModel doesn't do grid expansion)
         # If params contain lists, extract first value (for compatibility with extract_features_for_bias_node)
@@ -187,27 +253,56 @@ class BaseModel:
         
         # Track feature values as candles are added
         # Maps datetime -> feature value
-        self._feature_values: Dict[Any, float] = {}
-        self._feature_datetimes: List[Any] = []
+        self._feature_values: dict[datetime, float] = {}
+        self._feature_datetimes: list[datetime] = []
         
         # Multi-member container: list of (member_name, binning_model) tuples
         # Each member is an independent binning model that can be fitted on the same features
-        self.members: List[Tuple[str, BinningModelBase]] = []
-    
-    def add_member(self, name: str, binning_model: BinningModelBase) -> None:
+        self.members: list[tuple[str, BinningModelBase]] = []
+        # Optional: member_name -> feature_column for per-member feature columns (DataFrame input)
+        self._member_feature_columns: dict[str, str] = {}
+
+    def add_member(
+        self,
+        name: str,
+        binning_model: BinningModelBase,
+        feature_column: Optional[str] = None,
+    ) -> None:
         """
         Add a member model to this base model.
-        
+
         Parameters
         ----------
         name : str
             Unique identifier for this member
         binning_model : BinningModelBase
             The binning model instance to add as a member
+        feature_column : str, optional
+            Feature column name for this member. When provided, emit_member_signals(feature_data=pd.DataFrame)
+            will use feature_data[feature_column] for this member. If None, the member uses the primary
+            feature (single Series or first column) when feature_data is provided.
         """
         self.members.append((name, binning_model))
-    
-    def __getattr__(self, name: str) -> Any:
+        if feature_column is not None:
+            self._member_feature_columns[name] = feature_column
+
+    def get_member_feature_columns(self) -> List[str]:
+        """
+        Return the list of feature column names used by members (for ensemble required_columns).
+
+        Returns the primary feature_column if set, plus each member's feature_column when
+        provided via add_member(..., feature_column=...). Deduplicated and order-preserving.
+        """
+        columns: List[str] = []
+        if self.feature_column:
+            columns.append(self.feature_column)
+        for _name, _bm in self.members:
+            col = self._member_feature_columns.get(_name)
+            if col and col not in columns:
+                columns.append(col)
+        return columns
+
+    def __getattr__(self, name: str) -> object:
         """
         Delegate attribute access to binning_model for compatibility.
         
@@ -267,8 +362,8 @@ class BaseModel:
         """
         Extract feature from tracked bias node outputs.
         
-        For multi-ticker models, aggregates feature values across tickers by base datetime
-        (removing millisecond offsets) using mean aggregation.
+        For multi-ticker models, aggregates feature values across tickers by bar datetime
+        (primary key (datetime, ticker)) using mean aggregation.
         
         Returns feature values in the order candles were added.
         The feature column name is standardized using build_feature_column_name().
@@ -489,87 +584,12 @@ class BaseModel:
             # Ensure feature_data has the name
             feature_data.name = self.feature_column
         
-        # Align feature and target data
-        # Both should have datetime index
-        # For multi-ticker models, both feature_data and target_data should have the same datetimes
-        # (since returns are calculated from the same candles used for features)
-        # Use reindex to align by exact datetime matching (preserves all samples)
-        aligned_target = target_data.reindex(feature_data.index)
-        
-        # Check alignment quality
-        n_aligned = aligned_target.notna().sum()
-        n_features = len(feature_data)
-        alignment_ratio = n_aligned / n_features if n_features > 0 else 0.0
-        
-        # If alignment resulted in all NaN or very poor alignment, try aligning by base datetime
-        # This is a fallback for when datetimes don't match exactly
-        # Use .all().all() to handle both Series and DataFrame cases
-        all_nan = aligned_target.isna().all()
-        if hasattr(all_nan, 'all'):
-            all_nan = all_nan.all()
-        if (all_nan or alignment_ratio < 0.5) and len(target_data) > 0:
-            # Use the same method as BaseModel.get_feature() for consistency
-            # BaseModel.get_feature() uses: base_dt = dt.replace(microsecond=0)
-            # We'll use the same approach here
-            
-            # Convert indices to base datetime (remove microseconds) to match get_feature() behavior
-            def to_base_datetime(dt):
-                """Convert datetime to base datetime (remove microseconds) - matches get_feature() behavior."""
-                if isinstance(dt, pd.Timestamp):
-                    return dt.replace(microsecond=0)
-                else:
-                    return pd.to_datetime(dt).replace(microsecond=0)
-            
-            # Create base datetime indices (matching get_feature() behavior)
-            feature_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in feature_data.index])
-            target_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in target_data.index])
-            
-            # Create mapping from base datetime to feature values
-            feature_by_base = pd.Series(feature_data.values, index=feature_base_index)
-            # Group by base datetime and take mean if multiple values per base datetime
-            feature_by_base = feature_by_base.groupby(feature_by_base.index).mean()
-            
-            # Align target to base datetimes
-            target_by_base = pd.Series(target_data.values, index=target_base_index)
-            target_by_base = target_by_base.groupby(target_by_base.index).mean()  # Use mean to match feature aggregation
-            
-            # Find common base datetimes
-            common_base_dt = feature_by_base.index.intersection(target_by_base.index)
-            
-            if len(common_base_dt) == 0:
-                raise ValueError(
-                    f"Cannot align feature and target data. "
-                    f"Feature index range: {feature_data.index.min()} to {feature_data.index.max()}, "
-                    f"Target index range: {target_data.index.min()} to {target_data.index.max()}. "
-                    f"No overlapping base datetimes found."
-                )
-            
-            # Reindex both to common base datetimes
-            feature_data = feature_by_base.reindex(common_base_dt)
-            aligned_target = target_by_base.reindex(common_base_dt)
-            
-            # Validate alignment after base datetime matching
-            final_alignment_ratio = aligned_target.notna().sum() / len(feature_data) if len(feature_data) > 0 else 0.0
-            if final_alignment_ratio < 0.8:
-                logger = logging.getLogger(__name__)
-                logger.warning(
-                    f"Poor alignment after base datetime matching: {final_alignment_ratio:.1%} aligned. "
-                    f"Feature range: {feature_data.index.min()} to {feature_data.index.max()}, "
-                    f"Target range: {target_by_base.index.min()} to {target_by_base.index.max()}, "
-                    f"Common datetimes: {len(common_base_dt)}"
-                )
-        
-        # Final validation: ensure we have enough aligned data
-        final_n_aligned = aligned_target.notna().sum()
-        if final_n_aligned < 20:
-            raise ValueError(
-                f"Insufficient aligned data: {final_n_aligned} samples aligned out of {len(feature_data)} features. "
-                f"This suggests a datetime alignment issue between features and returns."
-            )
-        
-        # Fit binning model
+        # Align feature and target data (shared logic with vectorized_fit)
+        is_rule_based = getattr(self.binning_model, "model_type", None) == "rule_based"
+        feature_data, aligned_target = _align_feature_and_target(
+            feature_data, target_data, rule_based=is_rule_based
+        )
         self.binning_model.fit(feature_data, aligned_target)
-
         return self
 
     def vectorized_fit(
@@ -606,7 +626,7 @@ class BaseModel:
         CacheMissError
             If cache is not available for any bias node
         """
-        from utils.bias_node_cache import CacheMissError
+        from utils.cache.bias_node_cache import CacheMissError
 
         # Convert target_data to Series if it's a DataFrame
         if isinstance(target_data, pd.DataFrame):
@@ -685,74 +705,23 @@ class BaseModel:
             feature_data = combined.groupby(combined.index).mean()
 
         feature_data.name = column_name
+        # Rule-based expects discrete {-1, 0, 1}; mean() across tickers produces fractions
+        if getattr(self.binning_model, "model_type", None) == "rule_based":
+            feature_data = feature_data.round().clip(-1, 1).fillna(0).astype(int)
 
-        # Align feature and target data
-        aligned_target = target_data.reindex(feature_data.index)
+        # Ensure unique index for reindex (multi-ticker target_data can have duplicate datetimes)
+        if target_data.index.duplicated().any():
+            target_data = target_data.groupby(level=0).mean()
+        if feature_data.index.duplicated().any():
+            feature_data = feature_data.groupby(feature_data.index).mean()
 
-        # Check alignment quality
-        n_aligned = aligned_target.notna().sum()
-        n_features = len(feature_data)
-        alignment_ratio = n_aligned / n_features if n_features > 0 else 0.0
-
-        # If alignment resulted in all NaN or very poor alignment, try aligning by base datetime
-        # Use hasattr to handle both Series and DataFrame cases
-        all_nan = aligned_target.isna().all()
-        if hasattr(all_nan, 'all'):
-            all_nan = all_nan.all()
-        if (all_nan or alignment_ratio < 0.5) and len(target_data) > 0:
-            def to_base_datetime(dt):
-                """Convert datetime to base datetime (remove microseconds)."""
-                if isinstance(dt, pd.Timestamp):
-                    return dt.replace(microsecond=0)
-                else:
-                    return pd.to_datetime(dt).replace(microsecond=0)
-
-            feature_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in feature_data.index])
-            target_base_index = pd.DatetimeIndex([to_base_datetime(dt) for dt in target_data.index])
-
-            feature_by_base = pd.Series(feature_data.values, index=feature_base_index)
-            feature_by_base = feature_by_base.groupby(feature_by_base.index).mean()
-
-            target_by_base = pd.Series(target_data.values, index=target_base_index)
-            target_by_base = target_by_base.groupby(target_by_base.index).mean()
-
-            common_base_dt = feature_by_base.index.intersection(target_by_base.index)
-
-            if len(common_base_dt) == 0:
-                raise ValueError(
-                    f"Cannot align feature and target data. "
-                    f"Feature index range: {feature_data.index.min()} to {feature_data.index.max()}, "
-                    f"Target index range: {target_data.index.min()} to {target_data.index.max()}. "
-                    f"No overlapping base datetimes found."
-                )
-
-            feature_data = feature_by_base.reindex(common_base_dt)
-            aligned_target = target_by_base.reindex(common_base_dt)
-
-            final_alignment_ratio = aligned_target.notna().sum() / len(feature_data) if len(feature_data) > 0 else 0.0
-            if final_alignment_ratio < 0.8:
-                logger.warning(
-                    f"Poor alignment after base datetime matching: {final_alignment_ratio:.1%} aligned. "
-                    f"Feature range: {feature_data.index.min()} to {feature_data.index.max()}, "
-                    f"Target range: {target_by_base.index.min()} to {target_by_base.index.max()}, "
-                    f"Common datetimes: {len(common_base_dt)}"
-                )
-
-        # Final validation
-        final_n_aligned = aligned_target.notna().sum()
-        if final_n_aligned < 20:
-            raise ValueError(
-                f"Insufficient aligned data: {final_n_aligned} samples aligned out of {len(feature_data)} features. "
-                f"This suggests a datetime alignment issue between features and returns."
-            )
-
-        # Ensure feature_data has a name (required by RuleBasedBinningModel.fit and others)
+        is_rule_based = getattr(self.binning_model, "model_type", None) == "rule_based"
+        feature_data, aligned_target = _align_feature_and_target(
+            feature_data, target_data, rule_based=is_rule_based
+        )
         if feature_data.name is None:
             feature_data.name = column_name
-
-        # Fit binning model
         self.binning_model.fit(feature_data, aligned_target)
-
         return self
 
     def predict(
@@ -896,19 +865,25 @@ class BaseModel:
         # Create Series with feature values for input datetimes
         input_feature_data = pd.Series(feature_values, index=pd.DatetimeIndex(feature_index))
         
-        # Drop NaN values before prediction (bias nodes should always return values)
+        # NaN handling: for rule-based, 0 means neutral; filling NaN with 0 would inject fake signals.
+        # For continuous binning, fillna(0) is acceptable. For rule-based, drop NaN rows.
+        is_rule_based = getattr(self.binning_model, "model_type", None) == "rule_based"
         has_nan = input_feature_data.isna().any()
-        if hasattr(has_nan, 'any'):
-            has_nan = has_nan.any()
+        if hasattr(has_nan, "any"):
+            has_nan = bool(has_nan)
         if has_nan:
             logger = logging.getLogger(__name__)
             logger.warning(
                 f"BaseModel.predict() has {input_feature_data.isna().sum()} NaN values out of {len(input_feature_data)}. "
                 f"This indicates bias nodes are not processing all candles correctly."
             )
-            # For now, fill NaN with 0 (or could drop them)
-            input_feature_data = input_feature_data.fillna(0.0)
-        
+            if is_rule_based:
+                input_feature_data = input_feature_data.dropna()
+                if input_feature_data.empty:
+                    return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+            else:
+                input_feature_data = input_feature_data.fillna(0.0)
+
         # Predict with binning model
         predictions = self.binning_model.predict(input_feature_data, strategy=strategy)
 
@@ -942,7 +917,7 @@ class BaseModel:
         pd.Series
             Predictions indexed by candle datetimes
         """
-        from utils.bias_node_cache import CacheMissError
+        from utils.cache.bias_node_cache import CacheMissError
 
         # Infer date range from candles_df if not provided
         if start_date is None:
@@ -1005,16 +980,23 @@ class BaseModel:
             combined = pd.concat(all_features)
             feature_data = combined.groupby(combined.index).mean()
 
-        # Handle NaN values
+        # NaN handling: for rule-based, 0 means neutral; filling NaN with 0 would inject fake signals.
+        # For continuous binning, fillna(0) is acceptable. For rule-based, drop NaN rows.
+        is_rule_based = getattr(self.binning_model, "model_type", None) == "rule_based"
         has_nan = feature_data.isna().any()
-        if hasattr(has_nan, 'any'):
-            has_nan = has_nan.any()
+        if hasattr(has_nan, "any"):
+            has_nan = bool(has_nan)
         if has_nan:
             logger.warning(
                 f"BaseModel.vectorized_predict() has {feature_data.isna().sum()} NaN values. "
-                f"Filling with 0.0."
+                f"{'Dropping NaNs (rule-based).' if is_rule_based else 'Filling with 0.0.'}"
             )
-            feature_data = feature_data.fillna(0.0)
+            if is_rule_based:
+                feature_data = feature_data.dropna()
+                if feature_data.empty:
+                    return pd.Series(dtype=float, index=pd.DatetimeIndex([]))
+            else:
+                feature_data = feature_data.fillna(0.0)
 
         # Predict with binning model
         predictions = self.binning_model.predict(feature_data, strategy=strategy)
@@ -1023,23 +1005,29 @@ class BaseModel:
 
     def emit_member_signals(
         self,
-        feature_data: Optional[pd.Series] = None,
-        strategy: str = "long"
+        feature_data: Optional[Union[pd.Series, pd.DataFrame]] = None,
+        strategy: str = "long",
     ) -> pd.DataFrame:
         """
         Emit flattened member-level signal outputs.
-        
+
         For each member in self.members, generates predictions and combines them
         into a DataFrame with member names as columns.
-        
+
+        When feature_data is a DataFrame, each member uses its own feature column
+        when set via add_member(..., feature_column=...); otherwise the first
+        column or primary feature_column is used. When feature_data is a Series,
+        it is used for all members (or for the primary model when no members).
+
         Parameters
         ----------
-        feature_data : pd.Series, optional
-            Feature data for prediction. If not provided, uses the training feature data
-            from the primary binning model (for backward compatibility).
+        feature_data : pd.Series or pd.DataFrame, optional
+            Feature data for prediction. If DataFrame, columns should match
+            member feature columns (or primary). If not provided, uses the
+            training feature data from the primary binning model (backward compat).
         strategy : str, default='long'
             Strategy to use: 'long', 'short', or 'long_short'
-            
+
         Returns
         -------
         pd.DataFrame
@@ -1052,31 +1040,61 @@ class BaseModel:
                     "No members defined and no feature_data provided. "
                     "Either add members or provide feature_data."
                 )
-            predictions_df = pd.DataFrame({
-                self.feature_column or "default": self.binning_model.predict(feature_data, strategy=strategy)
-            })
+            series = (
+                feature_data.iloc[:, 0]
+                if isinstance(feature_data, pd.DataFrame) and not feature_data.empty
+                else feature_data
+            )
+            if not isinstance(series, pd.Series):
+                series = pd.Series(feature_data) if hasattr(feature_data, "__len__") else feature_data
+            predictions_df = pd.DataFrame(
+                {
+                    self.feature_column or "default": self.binning_model.predict(
+                        series, strategy=strategy
+                    )
+                }
+            )
             return predictions_df
-        
+
         member_signals: Dict[str, pd.Series] = {}
-        
+
         for member_name, binning_model in self.members:
             if not binning_model.is_fitted_:
                 logger.warning(f"Member {member_name} is not fitted, skipping")
                 continue
-            
+
             if feature_data is not None:
-                signal = binning_model.predict(feature_data, strategy=strategy)
-            elif hasattr(binning_model, '_training_feature_data'):
+                if isinstance(feature_data, pd.DataFrame):
+                    col = self._member_feature_columns.get(
+                        member_name, self.feature_column
+                    )
+                    if col is not None and col in feature_data.columns:
+                        series = feature_data[col]
+                    elif len(feature_data.columns) > 0:
+                        series = feature_data.iloc[:, 0]
+                    else:
+                        logger.warning(
+                            f"Member {member_name}: no feature column in DataFrame, skipping"
+                        )
+                        continue
+                else:
+                    series = feature_data
+                signal = binning_model.predict(series, strategy=strategy)
+            elif hasattr(binning_model, "_training_feature_data"):
                 signal = binning_model.get_fitted_vector(strategy=strategy)
             else:
-                logger.warning(f"Member {member_name} has no training data, skipping")
+                logger.warning(
+                    f"Member {member_name} has no training data, skipping"
+                )
                 continue
-            
+
             member_signals[member_name] = signal
-        
+
         if not member_signals:
-            raise ValueError("No valid member signals to emit. Ensure members are fitted.")
-        
+            raise ValueError(
+                "No valid member signals to emit. Ensure members are fitted."
+            )
+
         return pd.DataFrame(member_signals)
 
     def save_to_vault(
@@ -1113,7 +1131,7 @@ class BaseModel:
         """
         # Import here to avoid circular dependency
         from ensemble.vault_manager import add_feature_to_ensemble
-        from utils.enums import Ticker
+        from utils.core.enums import Ticker
         
         # Generate feature_column from bias_node_spec if not set (for unfitted models)
         if self.feature_column is None:

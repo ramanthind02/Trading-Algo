@@ -15,21 +15,27 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-import utils.helpers as helpers
-from utils.enums import TimeFrame, Ticker
-from utils.models import Candle
-from .ensemble_utils import filter_dataframe_by_timeframe
+import utils.core.helpers as helpers
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.models import Candle
+from .ensemble_utils import (
+    filter_dataframe_by_timeframe,
+    normalize_candles_datetime_column,
+    normalize_ticker_key,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def _normalize_ticker_name(ticker_val: object) -> str:
-    """Normalize ticker identifiers (enum, string, etc.) to a bare ticker name string."""
-    if isinstance(ticker_val, Ticker):
-        return ticker_val.name
-    if isinstance(ticker_val, str):
-        return ticker_val.replace("Ticker.", "")
-    return getattr(ticker_val, "name", str(ticker_val))
+    """Normalize ticker identifiers; delegate to shared helper."""
+    return normalize_ticker_key(ticker_val)
+
+
+def _normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure datetime is only a column; delegate to shared helper."""
+    return normalize_candles_datetime_column(candles_df)
+
 
 class DiversifiedEnsemble:
     """
@@ -80,13 +86,19 @@ class DiversifiedEnsemble:
         config_path: Optional[str] = None,
         save_path: Optional[str] = None,
         control_file_path: Optional[str] = None,
+        base_models: Optional[Dict[str, Any]] = None,
+        required_columns: Optional[List[str]] = None,
         base_tf: Optional[TimeFrame] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        member_forecast_scaling_mode: str = "sharpe_weighted",
     ):
         self.target_volatility = target_volatility
         self.instrument_weights = instrument_weights
         self.save_path = save_path
         self.use_cache = use_cache
+        self.member_forecast_scaling_mode = self._normalize_member_forecast_scaling_mode(
+            member_forecast_scaling_mode
+        )
         
         # Base model ownership
         self.base_models: Dict[str, Any] = {}  # Dict[str, BaseModel]
@@ -94,7 +106,9 @@ class DiversifiedEnsemble:
         self.required_columns: List[str] = []
         self.control_file_data: Optional[Dict[str, Any]] = None
         self.base_tf: Optional[TimeFrame] = None  # Will be set from file or parameter
-        
+        # Optional: for base models with members, feature data keyed by model_name (datetime index, member columns)
+        self._member_feature_data: Optional[Dict[str, pd.DataFrame]] = None
+
         # Fitted parameters (set during fit() or load_config())
         self.weights_ = None
         self.exposure_fractions_ = None
@@ -106,23 +120,79 @@ class DiversifiedEnsemble:
         self.n_tickers_ = None
         self.is_fitted_ = False
         
-        # Validate that control_file_path is provided
-        if control_file_path is None:
-            raise ValueError(
-                "control_file_path must be provided. "
-                "This is the unified control file containing base model configs and optional fitted parameters."
-            )
-        
-        # Initialize from control file
-        self._initialize_from_control_file(control_file_path)
-        
-        # Set base_tf from parameter if provided (overrides file value)
-        if base_tf is not None:
+        # Initialize from control file or programmatically from base_models + required_columns
+        if control_file_path is not None:
+            self._initialize_from_control_file(control_file_path)
+            if base_tf is not None:
+                self.base_tf = base_tf
+        else:
+            # Programmatic path: require base_models and required_columns
+            if base_models is None or required_columns is None:
+                raise ValueError(
+                    "Either control_file_path or both base_models and required_columns must be provided."
+                )
+            self.base_models = base_models
+            self.required_columns = list(required_columns)
+            for model_name, bm in self.base_models.items():
+                get_cols = getattr(bm, "get_member_feature_columns", None)
+                cols = list(get_cols()) if get_cols else []
+                if not cols and getattr(bm, "feature_column", None):
+                    cols = [bm.feature_column]
+                for col in cols:
+                    if col:
+                        self.column_to_model[col] = model_name
+            if base_tf is None:
+                raise ValueError("base_tf is required when not using control_file_path.")
             self.base_tf = base_tf
-        
+
         # Load configuration if provided (legacy support)
         if config_path is not None:
             self.load_config(config_path)
+
+    def _bars_per_year_for_base_timeframe(self) -> float:
+        """Return the annualization factor (bars/year) for the ensemble base timeframe."""
+        tf = self.base_tf
+        if tf == TimeFrame.W:
+            return 52.0
+        if tf == TimeFrame.M:
+            return 12.0
+        # Default to daily if unset/unknown (current walkforward path is daily).
+        return 252.0
+
+    def _normalize_member_forecast_scaling_mode(self, mode: object) -> str:
+        valid_modes = {"binary", "sharpe_weighted"}
+        if not isinstance(mode, str):
+            raise ValueError(
+                "member_forecast_scaling_mode must be one of "
+                f"{sorted(valid_modes)}, got {type(mode)}"
+            )
+        normalized = mode.strip().lower()
+        if normalized not in valid_modes:
+            raise ValueError(
+                "member_forecast_scaling_mode must be one of "
+                f"{sorted(valid_modes)}, got '{mode}'"
+            )
+        return normalized
+
+    def _annualized_member_signal_strength(self, member_signal: pd.Series) -> np.ndarray:
+        """Map per-bar Sharpe-like member outputs to clipped annualized forecast strength."""
+        values = pd.Series(member_signal, copy=False).astype(float)
+        values = values.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        annualized = values.to_numpy() * np.sqrt(self._bars_per_year_for_base_timeframe())
+        return np.clip(annualized, -2.0, 2.0)
+
+    def _member_signal_strength(self, member_signal: pd.Series) -> np.ndarray:
+        """Convert member outputs to forecast strength according to configured mode."""
+        values = pd.Series(member_signal, copy=False).astype(float)
+        values = values.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        if self.member_forecast_scaling_mode == "binary":
+            return np.sign(values.to_numpy())
+        if self.member_forecast_scaling_mode == "sharpe_weighted":
+            return self._annualized_member_signal_strength(values)
+        raise ValueError(
+            "Unsupported member_forecast_scaling_mode "
+            f"'{self.member_forecast_scaling_mode}'"
+        )
     
     def _validate_input_data(
         self,
@@ -851,20 +921,29 @@ class DiversifiedEnsemble:
         
         # Fit each base model ONCE with all candles (not per ticker)
         # BaseModel.fit() handles multi-ticker aggregation internally
+        at_least_one_fit_viable = False
         for model_name, base_model in self.base_models.items():
             try:
                 # Skip if already fitted (e.g., loaded from vault with fitted params)
                 if base_model.is_fitted_:
                     logger.debug(f"Skipping already-fitted model '{model_name}'")
+                    at_least_one_fit_viable = True
                     continue
-                
+                # Skip fit only when base model has members AND all are pre-fitted by caller (e.g. walkforward continuous path)
+                members = getattr(base_model, "members", None)
+                if members and all(getattr(bm, "is_fitted_", False) for _, bm in members):
+                    logger.debug(f"Skipping fit for model '{model_name}' (members fitted by caller)")
+                    at_least_one_fit_viable = True
+                    continue
+
                 # Fit base model with filtered candles and aggregated returns
                 # BaseModel.fit() will:
                 # 1. Stream candles from all supported tickers (or use cache if use_cache=True)
                 # 2. Extract features and aggregate by base datetime (mean)
                 # 3. Align aggregated returns with aggregated features
                 base_model.fit(filtered_candles, aggregated_returns, start_date, end_date)
-                
+                at_least_one_fit_viable = True
+
                 # Debug: Log fitting results
                 if base_model.binning_model.is_fitted_:
                     bin_stats = base_model.binning_model.bin_stats_
@@ -880,6 +959,12 @@ class DiversifiedEnsemble:
                     f"Error fitting base model '{model_name}': {e}",
                     exc_info=True
                 )
+
+        if not at_least_one_fit_viable:
+            raise RuntimeError(
+                "Ensemble fitting failed: no base model could be fitted or was already fitted. "
+                "Check logs for per-model errors."
+            )
         
         # Calculate model exposure fractions from actual binary signals (empirical)
         # This accounts for non-uniform binning where bins may have different sample counts
@@ -898,6 +983,28 @@ class DiversifiedEnsemble:
                 if is_buy_hold:
                     # Buy_hold is always in market: h_i = 1.0
                     self.model_exposure_fractions_[model_name] = 1.0
+                elif base_model.members and getattr(self, "_member_feature_data", None) and model_name in getattr(
+                    self, "_member_feature_data", {}
+                ):
+                    # Base model with members: use provided feature data to emit member signals and set exposure per member
+                    feat_df = self._member_feature_data[model_name]
+                    try:
+                        member_signals_df = base_model.emit_member_signals(
+                            feature_data=feat_df, strategy=base_model.strategy
+                        )
+                        for member_name in member_signals_df.columns:
+                            full_name = f"{model_name}::{member_name}"
+                            ser = member_signals_df[member_name]
+                            # Exposure fraction is time-in-market; do not shrink it by signal magnitude.
+                            self.model_exposure_fractions_[full_name] = (ser != 0).astype(float).mean()
+                    except Exception as e:
+                        logger.warning(
+                            f"Error computing exposure for model '{model_name}' members: {e}. "
+                            "Using fallback 1/n_bins per member."
+                        )
+                        n_bins = getattr(base_model, "n_bins", 10)
+                        for mname, _ in base_model.members:
+                            self.model_exposure_fractions_[f"{model_name}::{mname}"] = 1.0 / n_bins
                 else:
                     # Generate binary signals for this model across supported tickers only
                     model_signals = []
@@ -946,12 +1053,10 @@ class DiversifiedEnsemble:
         # Set target volatility if not already set
         if self.target_volatility_ is None:
             self.target_volatility_ = self.target_volatility
-        
-        # After fitting base models, we still need to fit the ensemble weights
-        # This requires computing binary signals from all base models
-        # For now, mark as fitted - full ensemble fitting can be done via the regular fit() method
+
+        # Only mark fitted when at least one model is viable (already ensured by at_least_one_fit_viable above)
         self.is_fitted_ = True
-        
+
         return self
     
     def _calculate_aligned_returns_from_candles(
@@ -988,8 +1093,8 @@ class DiversifiedEnsemble:
         if candles_df.empty:
             return pd.Series(dtype=float, name='returns')
         
-        # Ensure datetime is datetime type
-        candles_df = candles_df.copy()
+        # Ensure datetime is only a column (not also an index level) to avoid ambiguous sort_values
+        candles_df = _normalize_candles_datetime_column(candles_df)
         candles_df['datetime'] = pd.to_datetime(candles_df['datetime'])
         
         # Group by ticker and calculate returns with forward shift
@@ -1048,85 +1153,58 @@ class DiversifiedEnsemble:
         candles_df: pd.DataFrame
     ) -> Dict[str, float]:
         """
-        Calculate blended volatility from EWSD bias nodes per ticker.
-        
-        Creates EWSD (Exponentially Weighted Standard Deviation) nodes for each ticker
-        and streams candles to build up volatility estimates. EWSD nodes implement
-        Carver's blended volatility:
-        - 70% EWMA-32 (short-run estimate)
-        - 30% long-run historical average
+        Calculate blended volatility from close prices using a fast, array-based EWSD approximation.
+
+        Matches Portfolio's vectorized approach: group by ticker, compute EWSD from closes,
+        with fallback to simple annualized std on failure.
         
         Parameters
         ----------
         candles_df : pd.DataFrame
-            Candles DataFrame with columns: datetime, ticker, open, high, low, close, volume, timeframe
+            Candles DataFrame with columns: datetime, ticker, close
             
         Returns
         -------
         Dict[str, float]
             Mapping from ticker to annualized blended volatility (as decimal, not percentage)
         """
-        from utils.enums import Ticker, TimeFrame
-        from nodes.ewsd import EWSDNode
-        from utils.models import Candle
-        
-        volatility_dict = {}
-        
-        # Group by ticker
-        for ticker_name in candles_df['ticker'].unique():
-            ticker_candles = candles_df[candles_df['ticker'] == ticker_name].copy()
+        from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
+
+        volatility_dict: Dict[str, float] = {}
+        if candles_df.empty or 'ticker' not in candles_df.columns or 'close' not in candles_df.columns:
+            return volatility_dict
+
+        df = _normalize_candles_datetime_column(candles_df)
+        df['datetime'] = pd.to_datetime(df['datetime'])
+
+        for ticker_name, ticker_candles in df.groupby('ticker'):
             ticker_candles = ticker_candles.sort_values('datetime')
-            
-            if len(ticker_candles) == 0:
-                volatility_dict[ticker_name] = 0.20  # Default fallback
-                continue
-            
-            # Convert ticker name to Ticker enum
-            try:
-                if isinstance(ticker_name, str):
-                    # Handle both 'ES' and 'Ticker.ES' formats
-                    ticker_str = ticker_name.replace('Ticker.', '') if 'Ticker.' in ticker_name else ticker_name
-                    ticker = Ticker[ticker_str]
-                else:
-                    ticker = ticker_name
-            except (KeyError, AttributeError):
-                logger.warning(f"Unknown ticker '{ticker_name}', using default volatility")
+            closes = ticker_candles['close'].to_numpy(dtype=np.float64)
+            if closes.size < 2:
                 volatility_dict[ticker_name] = 0.20
                 continue
-            
-            # Create EWSD node for this ticker
-            ewsd_node = EWSDNode(
-                ticker=ticker,
-                tf=TimeFrame.D,  # Use daily timeframe for volatility calculation
-                lambda_short=0.06061,  # 32-day span
-                long_run_window=2520,  # 10 years (2520 trading days)
-                blend_short_weight=0.7,
-                blend_long_weight=0.3
-            )
-            
-            # Stream all candles to build up EWSD state
-            ewsd_value = None
-            for _, row in ticker_candles.iterrows():
-                candle = Candle.from_row(row)
-                ewsd_output = ewsd_node.add_candle(candle)
-                if ewsd_output and len(ewsd_output) >= 2:
-                    # ewsd_output[1] is annual_pct (in percentage)
-                    # Convert to decimal
-                    ewsd_value = ewsd_output[1] / 100.0
-            
-            # Use latest EWSD value or fallback
-            if ewsd_value is None or np.isnan(ewsd_value):
-                ticker_candles['returns'] = ticker_candles['close'].pct_change()
-                daily_vol = ticker_candles['returns'].std()
-                annual_vol = daily_vol * np.sqrt(252)  # Annualize
-                ewsd_value = annual_vol if not np.isnan(annual_vol) else 0.20
+            try:
+                vol = compute_ewsd_annualized_from_closes(closes)
+            except Exception as exc:
                 logger.warning(
-                    f"EWSD calculation failed for ticker '{ticker_name}'. "
-                    f"Using simple volatility calculation as fallback."
+                    "Error computing EWSD volatility for ticker '%s': %s. "
+                    "Falling back to simple annualized std.",
+                    ticker_name,
+                    exc,
                 )
-            
-            volatility_dict[ticker_name] = ewsd_value
-        
+                vol = np.nan
+            if not np.isfinite(vol) or vol <= 0.0:
+                ticker_candles = ticker_candles.copy()
+                ticker_candles['returns'] = ticker_candles['close'].pct_change()
+                daily_vol = float(ticker_candles['returns'].std())
+                annual_vol = daily_vol * np.sqrt(252.0)
+                vol = annual_vol if np.isfinite(annual_vol) and annual_vol > 0.0 else 0.20
+                logger.warning(
+                    "EWSD produced invalid value for ticker '%s'. Using simple volatility fallback.",
+                    ticker_name,
+                )
+            volatility_dict[ticker_name] = float(vol)
+
         return volatility_dict
     
     def predict_from_candles(
@@ -1178,6 +1256,9 @@ class DiversifiedEnsemble:
                 "Call fit_from_candles() or fit() first."
             )
         
+        # Ensure 'datetime' is only a column (not also an index level) so merge/groupby are unambiguous
+        candles_df = _normalize_candles_datetime_column(candles_df)
+        
         # Calculate or use provided volatility
         if volatility is None:
             volatility = self._calculate_volatility_from_candles(candles_df)
@@ -1220,7 +1301,64 @@ class DiversifiedEnsemble:
                             f"Supported tickers: {model_ticker_names}. Skipping."
                         )
                         continue
-                    
+
+                    member_feature_data = getattr(self, "_member_feature_data", None) or {}
+                    if base_model.members and member_feature_data.get(model_name) is not None:
+                        # Multi-member base model: use provided feature data and emit one forecast per member
+                        feat_df = member_feature_data[model_name]
+                        ticker_dt_vals = pd.to_datetime(ticker_candles["datetime"], utc=False).dt.floor("s")
+                        ticker_dts_unique = pd.DatetimeIndex(ticker_dt_vals.unique()).sort_values()
+                        reindexed = feat_df.reindex(ticker_dts_unique).dropna(how="all")
+                        if reindexed.empty:
+                            logger.warning(
+                                f"Base model '{model_name}' member feature data has no overlap with ticker '{ticker_name}'."
+                            )
+                            continue
+                        try:
+                            member_signals_df = base_model.emit_member_signals(
+                                feature_data=reindexed, strategy=base_model.strategy
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Error emitting member signals for model '{model_name}' ticker '{ticker_name}': {e}",
+                                exc_info=True,
+                            )
+                            continue
+                        for member_name in member_signals_df.columns:
+                            pred_ser = member_signals_df[member_name]
+                            full_name = f"{model_name}::{member_name}"
+                            # Member outputs from continuous binning are per-bar Sharpe-like
+                            # magnitudes. Convert to clipped annualized strength for position
+                            # scaling so stronger members get proportionally larger forecasts.
+                            strength = self._member_signal_strength(pred_ser)
+                            h_i = self.model_exposure_fractions_.get(full_name, 0.1)
+                            sqrt_h_i = np.sqrt(max(h_i, 1e-8))
+                            forecast_if_active = self.target_volatility_ / (ticker_vol * sqrt_h_i)
+                            forecast_if_active = min(forecast_if_active, 2.0)
+                            volatility_adjusted_forecast = np.clip(
+                                forecast_if_active * strength,
+                                -2.0,
+                                2.0,
+                            )
+                            pred_df = pd.DataFrame({
+                                "ticker": ticker_name,
+                                "datetime": pred_ser.index,
+                                "model_name": full_name,
+                                "forecast": volatility_adjusted_forecast,
+                            })
+                            ticker_predictions.append(pred_df)
+                            if return_base_model_predictions:
+                                if full_name not in base_model_predictions_dict:
+                                    base_model_predictions_dict[full_name] = []
+                                base_model_predictions_dict[full_name].append(
+                                    pd.DataFrame({
+                                        "ticker": ticker_name,
+                                        "datetime": pred_ser.index,
+                                        "forecast_score": volatility_adjusted_forecast,
+                                    })
+                                )
+                        continue
+
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
                     # BaseModel.predict() handles feature caching internally (if use_cache=True)
                     pred = base_model.predict(
@@ -1348,12 +1486,9 @@ class DiversifiedEnsemble:
         # CRITICAL FIX: Align predictions to candles' datetime index to ensure all tickers have same rows
         # This fixes the issue where different tickers have different prediction counts (e.g. ES:1008, NQ:1007)
         # causing the merge in portfolio._apply_risk_management_to_forecasts to fail
-        candles_datetime_index = candles_df[['ticker', 'datetime']].copy()
-        candles_datetime_index['datetime'] = pd.to_datetime(candles_datetime_index['datetime'])
-        # Remove microseconds from candles (used to distinguish tickers in multi-ticker DataFrames)
-        candles_datetime_index['datetime'] = candles_datetime_index['datetime'].dt.floor('s')
-        ensemble_result['datetime'] = pd.to_datetime(ensemble_result['datetime'])
-        ensemble_result['datetime'] = ensemble_result['datetime'].dt.floor('s')
+        candles_datetime_index = candles_df.reset_index(drop=True)[['ticker', 'datetime']].copy()
+        candles_datetime_index['datetime'] = pd.to_datetime(candles_datetime_index['datetime']).dt.floor('s')
+        ensemble_result['datetime'] = pd.to_datetime(ensemble_result['datetime']).dt.floor('s')
         
         # Right merge: keep all candles datetimes, fill missing forecasts with 0
         ensemble_result = candles_datetime_index.merge(
@@ -1370,11 +1505,10 @@ class DiversifiedEnsemble:
             # Do NOT merge with full candles_datetime_index: that would add rows for unsupported
             # tickers (e.g. TLT for indices models) with 0, and the weight layer would then
             # count that model for every ticker. Align only to candles for this model's tickers.
-            combined_base_models = {}
+            combined_base_models: Dict[str, pd.DataFrame] = {}
             for model_name, model_dfs in base_model_predictions_dict.items():
                 base_model_df = pd.concat(model_dfs, ignore_index=True)
-                base_model_df['datetime'] = pd.to_datetime(base_model_df['datetime'])
-                base_model_df['datetime'] = base_model_df['datetime'].dt.floor('s')
+                base_model_df['datetime'] = pd.to_datetime(base_model_df['datetime']).dt.floor('s')
                 tickers_in_model = base_model_df['ticker'].unique()
                 candles_subset = candles_datetime_index[
                     candles_datetime_index['ticker'].isin(tickers_in_model)
@@ -1387,12 +1521,12 @@ class DiversifiedEnsemble:
                 base_model_df['forecast_score'] = base_model_df['forecast_score'].fillna(0.0)
                 base_model_df = base_model_df[['ticker', 'datetime', 'forecast_score']]
                 combined_base_models[model_name] = base_model_df
-        
-        return {
+
+            return {
                 'ensemble': ensemble_result,
-                'base_models': combined_base_models
+                'base_models': combined_base_models,
             }
-        
+
         return ensemble_result
     
     def predict(
@@ -1544,57 +1678,54 @@ class DiversifiedEnsemble:
         # Step 2: Combine binary signals into DataFrame
         binary_df = pd.DataFrame(binary_signals, index=X_filtered.index)
 
-        # Step 3: Calculate per-model forecasts
+        # Step 3: Calculate per-model forecasts (vectorized)
         # Formula: F_i = (tau / (sigma * sqrt(h_i))) * X_i
         # Note: Instrument weights are applied at Portfolio layer, not here
-        results = []
+        n_rows = len(X_filtered)
+        model_names = self.feature_names_
 
-        for row_idx in range(len(X_filtered)):
-            tick = ticker.iloc[row_idx] if hasattr(ticker, 'iloc') else ticker[row_idx]
+        ticker_vals = ticker.values if hasattr(ticker, 'values') else np.asarray(ticker)
+        if vol_dict is not None:
+            vol_arr = np.array([vol_dict.get(t) for t in ticker_vals], dtype=float)
+            if np.any(np.isnan(vol_arr)):
+                missing = ticker_vals[np.where(np.isnan(vol_arr))[0][0]]
+                raise ValueError(f"Missing volatility for ticker: {missing}")
+        else:
+            vol_arr = np.asarray(volatility, dtype=float).reshape(-1)
+            if vol_arr.size != n_rows:
+                vol_arr = vol_arr[:n_rows] if vol_arr.size >= n_rows else np.resize(vol_arr, n_rows)
+        vol_arr = np.maximum(vol_arr, 1e-8)
 
-            # Get volatility for this sample
-            if vol_dict is not None:
-                vol = vol_dict.get(tick)
-                if vol is None:
-                    raise ValueError(f"Missing volatility for ticker: {tick}")
-            else:
-                vol = volatility.iloc[row_idx] if hasattr(volatility, 'iloc') else volatility[row_idx]
+        sqrt_h = np.array(
+            [np.sqrt(max(self.model_exposure_fractions_.get(m, 0.1), 1e-8)) for m in model_names],
+            dtype=float,
+        )
+        # (n_rows, n_models): forecast if signal=1, then cap at 2.0
+        forecast_if_active = self.target_volatility_ / (vol_arr[:, np.newaxis] * sqrt_h[np.newaxis, :])
+        forecast_if_active = np.minimum(forecast_if_active, 2.0)
 
-            # Ensure volatility is positive
-            vol = max(vol, 1e-8)
+        signals = binary_df[model_names].astype(float).fillna(0).values
+        forecasts = forecast_if_active * signals
 
-            # Calculate forecast for each base model
-            for model_name in self.feature_names_:
-                X_i = binary_df.iloc[row_idx, binary_df.columns.get_loc(model_name)]
-                signal = int(X_i)
+        ticker_flat = np.repeat(ticker_vals, len(model_names))
+        model_flat = np.tile(model_names, n_rows)
+        forecast_flat = forecasts.ravel()
+        signal_flat = signals.ravel().astype(int)
 
-                # Get exposure fraction from model_exposure_fractions_
-                h_i = self.model_exposure_fractions_.get(model_name, 0.1)
-                sqrt_h_i = np.sqrt(max(h_i, 1e-8))
-
-                # Calculate volatility-adjusted forecast
-                # This is the forecast assuming signal=1
-                # Note: Instrument weights are applied at Portfolio layer, not here
-                forecast_if_active = self.target_volatility_ / (vol * sqrt_h_i)
-                
-                # Cap forecast at 2.0 (per spec: max position is 2.0)
-                forecast_if_active = min(forecast_if_active, 2.0)
-
-                # Apply signal: 0 if inactive, forecast_if_active if active
-                forecast = forecast_if_active if signal == 1 else 0.0
-
-                results.append({
-                    'ticker': tick,
-                    'model_name': model_name,
-                    'forecast': forecast,
-                    'signal': signal
-                })
-
-        return pd.DataFrame(results)
+        return pd.DataFrame({
+            'ticker': ticker_flat,
+            'model_name': model_flat,
+            'forecast': forecast_flat,
+            'signal': signal_flat,
+        })
     
     def save_config(self, filepath: Optional[str] = None) -> str:
         """
         Save fitted parameters to a JSON configuration file.
+
+        .. note::
+            Legacy API. Prefer :meth:`save_control_file` for full ensemble state
+            (base models + fitted params) in the unified control-file schema.
         
         Parameters
         ----------
@@ -1650,6 +1781,10 @@ class DiversifiedEnsemble:
     def load_config(self, filepath: str) -> 'DiversifiedEnsemble':
         """
         Load fitted parameters from a JSON configuration file.
+
+        .. note::
+            Legacy API. Prefer loading from a control file via the constructor
+            (control_file_path=...) or :meth:`load_control_file` for full state.
         
         Parameters
         ----------

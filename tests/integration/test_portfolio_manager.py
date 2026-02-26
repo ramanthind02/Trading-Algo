@@ -8,7 +8,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 from ensemble.portfolio_manager import PortfolioManager
 from ensemble.portfolio import Portfolio
 from ensemble.diversified_ensemble import DiversifiedEnsemble

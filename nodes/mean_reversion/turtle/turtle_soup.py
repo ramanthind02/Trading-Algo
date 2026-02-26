@@ -13,8 +13,8 @@ from typing import List
 
 from nodes import BiasNode
 from nodes.turtle import TurtleTrading
-from utils.enums import TimeFrame, Ticker
-from utils.models import Candle
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.models import Candle
 
 
 class TurtleSoup(BiasNode):

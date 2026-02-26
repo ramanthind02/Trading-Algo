@@ -12,7 +12,7 @@ The key insight: Stage 1 finds stable params cheaply; Stage 2 evaluates their co
 
 **Prerequisite:** `2026-02-20-walkforward-correctness-fix.md` must be implemented first.
 
-**Tech Stack:** `ensemble/portfolio.py`, `ensemble/diversified_ensemble.py`, `feature_selection/base_models/continuous_binning.py`, `feature_research/continuous_binning/pipeline.py`, `feature_research/walkforward/runner.py`
+**Tech Stack:** `ensemble/portfolio.py`, `ensemble/diversified_ensemble.py`, `feature_selection/base_models/continuous_binning.py`, `feature_research/in_sample/continuous_binning/pipeline.py`, `feature_research/walkforward/runner.py`
 
 ---
 
@@ -55,7 +55,7 @@ from unittest.mock import patch
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 
 
 def _make_mock_candles(tickers, n=300):
@@ -141,7 +141,7 @@ import pandas as pd
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 @dataclass(frozen=True)
@@ -233,8 +233,8 @@ def build_research_portfolio(
 ```python
 def test_build_research_portfolio_creates_portfolio_with_correct_models():
     from feature_research.walkforward.portfolio_evaluator import build_research_portfolio
-    from feature_research.continuous_binning.config import BinningAnalysisConfig
-    from utils.enums import TimeFrame, Ticker
+    from feature_research.in_sample.continuous_binning.config import BinningAnalysisConfig
+    from utils.core.enums import TimeFrame, Ticker
 
     binning_config = BinningAnalysisConfig(bin_counts=[5], strategy="long")
     params = [{"lookback": 5, "bin_count": 5}, {"lookback": 7, "bin_count": 5}]
@@ -393,8 +393,8 @@ def test_evaluate_fold_portfolio_returns_valid_sharpe():
         pytest.skip("Cache data not available")
 
     from feature_research.walkforward.portfolio_evaluator import evaluate_fold_portfolio
-    from feature_research.continuous_binning.config import load_config, BinningAnalysisConfig
-    from feature_research.continuous_binning.data_loader import load_candles_for_config
+    from feature_research.in_sample.continuous_binning.config import load_config, BinningAnalysisConfig
+    from feature_research.in_sample.continuous_binning.data_loader import load_candles_for_config
 
     config = load_config()
     candles = load_candles_for_config(config)
@@ -403,7 +403,7 @@ def test_evaluate_fold_portfolio_returns_valid_sharpe():
     if "volume" not in candles.columns:
         candles["volume"] = 0.0
     if "timeframe" not in candles.columns:
-        from utils.enums import TimeFrame
+        from utils.core.enums import TimeFrame
         candles["timeframe"] = TimeFrame.D
 
     # Split candles into train (before 2016) and test (2016-2018)
@@ -414,7 +414,7 @@ def test_evaluate_fold_portfolio_returns_valid_sharpe():
     ]
 
     # Load target series (vol-normalized returns)
-    from feature_research.continuous_binning.data_loader import load_features_for_combo, expand_bias_specs
+    from feature_research.in_sample.continuous_binning.data_loader import load_features_for_combo, expand_bias_specs
     single_spec = expand_bias_specs(config.bias_spec)[0]
     data = load_features_for_combo(single_spec, config)
     assert data is not None
@@ -696,4 +696,4 @@ The `build_research_portfolio` function currently hard-codes `rsi_signal_D_lookb
 ```
 {module}_{feature}_{timeframe}_{param}_{value}
 ```
-Use `utils.helpers.parse_feature_column_name` / `format_feature_column_name` to generate these dynamically from the bias spec.
+Use `utils.core.helpers.parse_feature_column_name` / `format_feature_column_name` to generate these dynamically from the bias spec.

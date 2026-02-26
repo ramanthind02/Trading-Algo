@@ -19,7 +19,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ensemble.diversified_ensemble import DiversifiedEnsemble
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 
 class TestDiversifiedEnsemble(unittest.TestCase):
@@ -81,7 +81,10 @@ class TestDiversifiedEnsemble(unittest.TestCase):
                 'constructor_params': {
                     'n_bins': 3,
                     'selection_metric': 'sortino'
-                }
+                },
+                'members': [
+                    {'member_name': 'default', 'params': {'n_bins': 3, 'selection_metric': 'sortino'}}
+                ],
             })
         
         control_file = {

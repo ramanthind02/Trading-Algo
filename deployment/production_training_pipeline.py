@@ -15,8 +15,8 @@ from typing import Dict, List, Tuple, Optional
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from utils.logger import get_logger
-from utils.enums import TimeFrame, Ticker
+from utils.core.logger import get_logger
+from utils.core.enums import TimeFrame, Ticker
 from feature_selection.os_feature_selector import OSFeatureSelector
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.ensemble_utils import save_control_file
@@ -191,9 +191,9 @@ class ProductionTrainingPipeline:
         
         # Use bias nodes directly instead of MLManager for batch feature extraction
         # This avoids the complexity of MLManager's multi-timeframe architecture
-        from utils.helpers import create_bias_node
-        from utils.models import Candle
-        import utils.helpers as helpers
+        from utils.core.helpers import create_bias_node
+        from utils.core.models import Candle
+        import utils.core.helpers as helpers
         
         # Create bias nodes for feature extraction
         rsi_node = create_bias_node('rsi', ticker, timeframe, {'lookback': 14})

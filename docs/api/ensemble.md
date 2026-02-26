@@ -26,7 +26,7 @@ Private helpers prefixed with `_` are omitted unless required to understand the 
 ```python
 from ensemble import DiversifiedEnsemble, Portfolio, PortfolioManager, WeightLayer
 from execution import PositionSizer, ContractSpec
-from utils.enums import TimeFrame
+from utils.core.enums import TimeFrame
 
 # 1) Load/construct ensemble from a unified control file
 ensemble = DiversifiedEnsemble(
@@ -38,7 +38,7 @@ ensemble = DiversifiedEnsemble(
 portfolio = Portfolio(
     ensembles=[ensemble],
     trading_timeframe=TimeFrame.D,
-    weight_layer=WeightLayer(weight_method="inverse_correlation", fdm_max=2.5),
+    weight_layer=WeightLayer(weight_method="inverse_correlation", fdm_max=2.0),
     max_position_pct=2.0,
 )
 portfolio.fit_from_candles(candles_df, target_data=returns_series)
@@ -52,6 +52,11 @@ manager = PortfolioManager(portfolios={TimeFrame.D: portfolio}, position_sizer=s
 
 positions_or_contracts = manager.predict(candles_df)
 ```
+
+## Serialization
+
+- **Canonical:** Use control files (`save_control_file` / load via `control_file_path` or `load_control_file`) for full ensemble state (base models + fitted params).
+- **Legacy:** `save_config` / `load_config` persist only fitted weights and metadata; prefer control files for new code.
 
 ## Data contracts
 
@@ -69,6 +74,7 @@ Input(s):
   - When `is_fit=True`, required keys: `fitted_base_models`, `fitted_ensemble`
 
 Output(s):
+- `DiversifiedEnsemble.predict_from_candles(..., return_base_model_predictions=False)`: `pd.DataFrame` with `ticker, datetime, forecast_score`. With `return_base_model_predictions=True`: `dict` with keys `'ensemble'` (DataFrame) and `'base_models'` (dict of DataFrames).
 - `DiversifiedEnsemble.predict(...)`: per-model forecast rows with `ticker, model_name, forecast, signal`
 - `WeightLayer.combine(...)`: ticker(+optional datetime)-level `forecast_score`
 - `Portfolio.predict(...)`: `ticker, forecast_score, position_fraction`

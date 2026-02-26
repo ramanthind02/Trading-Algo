@@ -18,14 +18,14 @@ Date: 2025-10-23
 """
 
 from nodes import BiasNode
-from utils.models import Candle
-from utils.enums import Bias, Ticker, TimeFrame
+from utils.core.models import Candle
+from utils.core.enums import Bias, Ticker, TimeFrame
 from typing import List, Optional
 import numpy as np
 from collections import deque
 
 try:
-    from utils.fast_nodes import CYTHON_NODES_AVAILABLE, compute_stddev_sample_fast
+    from utils.compute.fast_nodes import CYTHON_NODES_AVAILABLE, compute_stddev_sample_fast
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
     compute_stddev_sample_fast = None  # type: ignore[assignment]

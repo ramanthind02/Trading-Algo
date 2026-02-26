@@ -12,7 +12,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Dict, Any, Tuple, Optional
 
-from utils.enums import ResamplingMethod
+from utils.core.enums import ResamplingMethod
 
 
 def plot_robustness_curves(

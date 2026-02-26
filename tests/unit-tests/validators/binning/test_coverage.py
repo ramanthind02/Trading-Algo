@@ -1,6 +1,6 @@
 import pandas as pd
 
-from feature_selection.validators.binning.diagnostics import RegionMetadata, calculate_coverage
+from feature_selection.validation.binning.diagnostics import RegionMetadata, calculate_coverage
 
 
 def test_calculate_coverage_rsi() -> None:

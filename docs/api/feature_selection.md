@@ -147,8 +147,8 @@ Public symbols:
 - `apply_function_to_rolling_windows(...)`
 
 Cross-package import surface:
-- Canonical exports are re-imported by `utils/walkforward.py` for backward compatibility.
-- `utils.walkforward.generate_walkforward_splits(...)` is deprecated; prefer `WalkForwardSplitter` directly.
+- Canonical exports are re-imported by `utils/evaluation/walkforward.py` for backward compatibility.
+- `utils.evaluation.walkforward.generate_walkforward_splits(...)` is deprecated; prefer `WalkForwardSplitter` directly.
 
 ### Walk-forward research config and metrics
 Type: dataclass/function  
@@ -170,12 +170,13 @@ class WalkforwardResearchConfig:
     enabled: bool = False
     test_step: int = 252
     num_steps: int = 8
-    top_k: int = 3
+    top_k: int = 5
     objective_metric_name: str = "sortino"
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
-    use_enhanced_selection: bool = False
-    trade_freq_min: float = 0.05
+    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.STABLE_REGION
+    stable_region: object = None  # StableRegionConfig | None
+    trade_freq_min: float = 0.01
 ```
 
 Description: frozen configuration contract for walk-forward feature-research runs, including fold geometry, objective metric selection, and output location.
@@ -194,6 +195,7 @@ Supported metric names:
 - `"sharpe"`: `mean(returns) / std(returns, ddof=0)`
 - `"sortino"`: `mean(returns) / std(returns[returns < 0], ddof=0)`
 - `"mean_return"`: `mean(returns)`
+ - `"t_stat"`: `mean(returns) / (std(returns, ddof=0) / sqrt(n_valid))`
 
 Degenerate-input behavior:
 - Returns `0.0` fallback when the computed metric would be undefined (`NaN`), including empty/all-`NaN` return series, zero-variance Sharpe denominator, and missing/zero downside deviation for Sortino.
@@ -355,7 +357,7 @@ Output-file contract (exact filenames):
 Table schema contract (exact columns):
 - `folds.csv`: `fold_id`, `train_start`, `train_end`, `test_start`, `test_end`, `train_samples`, `test_samples`
 - `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `oos_objective`, `smoothed_objective`, `rank`, `selected_feature`
-- `fold_scores.csv` enhanced (when `use_enhanced_selection=True`): add `trade_frequency`, `selected_in_top_k`
+- `fold_scores.csv` enhanced (when `selection_method="enhanced"`): add `trade_frequency`, `selected_in_top_k`
 - `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
 - `portfolio_results_df` columns: `fold_id`, `oos_portfolio_sharpe`, `n_params_selected`, `error`
 - `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_in_top_k=True` when present, otherwise `selected_feature=True`

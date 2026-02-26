@@ -25,7 +25,7 @@ Not public in this doc:
 from datetime import datetime
 from pathlib import Path
 
-from utils.enums import TimeFrame, Ticker
+from utils.core.enums import TimeFrame, Ticker
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from research.bias_node_helpers import build_feature_metadata
 from eda.feature_explorer import FeatureExplorer
@@ -273,7 +273,7 @@ Raises:
 - `ValueError` when no valid data points remain after alignment/cleaning.
 
 ### EDA/Research entrypoints
-- `feature_research/continuous_binning/run_binning_analysis.py`: CLI entrypoint that orchestrates continuous binning analysis runs and emits research artifacts.
+- `feature_research/in_sample/continuous_binning/run_binning_analysis.py`: CLI entrypoint that orchestrates continuous binning analysis runs and emits research artifacts.
 
 ### `build_feature_metadata`
 Type: function  
@@ -369,7 +369,7 @@ Notes / Constraints:
 
 ### `run_rule_based_eda_pipeline`
 Type: function  
-Module: `feature_research/rule_based/pipeline.py`
+Module: `feature_research/in_sample/rule_based/pipeline.py`
 
 Signature:
 ```python
@@ -387,7 +387,7 @@ Walkforward output contract (`feature_type="rule_based"`):
 
 ### `run_continuous_eda_pipeline`
 Type: function  
-Module: `feature_research/continuous_binning/pipeline.py`
+Module: `feature_research/in_sample/continuous_binning/pipeline.py`
 
 Signature:
 ```python
@@ -425,8 +425,8 @@ results = analyzer.analyze_nd_parameters(
 
 ## Internal but required
 - `eda.parameter_analysis._get_metric_name_from_object(...)` is private but imported by `FeatureExplorer` for metric labeling.
-- `utils.helpers.parse_feature_column_name(...)` is required by `build_feature_metadata` and FeatureExplorer parameter grouping.
-- Bias-node cache classes (`utils.bias_node_cache.*`) are required when calling extraction APIs with `use_cache=True`.
+- `utils.core.helpers.parse_feature_column_name(...)` is required by `build_feature_metadata` and FeatureExplorer parameter grouping.
+- Bias-node cache classes (`utils.cache.bias_node_cache.*`) are required when calling extraction APIs with `use_cache=True`.
 
 ## Errors & logging
 - Exception-heavy APIs (feature extraction/analysis) primarily raise `ValueError` and `TypeError` with explicit alignment/contract messages.

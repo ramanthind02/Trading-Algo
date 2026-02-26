@@ -9,21 +9,10 @@ Tests cover:
 """
 
 import unittest
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
 import pandas as pd
 import numpy as np
 
-
-_WEIGHT_LAYER_PATH = Path(__file__).resolve().parents[1] / "ensemble" / "weight_layer.py"
-_WEIGHT_LAYER_SPEC = spec_from_file_location("weight_layer_module", _WEIGHT_LAYER_PATH)
-if _WEIGHT_LAYER_SPEC is None or _WEIGHT_LAYER_SPEC.loader is None:
-    raise RuntimeError(f"Unable to load weight_layer module from {_WEIGHT_LAYER_PATH}")
-_WEIGHT_LAYER_MODULE = module_from_spec(_WEIGHT_LAYER_SPEC)
-_WEIGHT_LAYER_SPEC.loader.exec_module(_WEIGHT_LAYER_MODULE)
-
-WeightLayer = _WEIGHT_LAYER_MODULE.WeightLayer
-InverseCorrelationWeighter = _WEIGHT_LAYER_MODULE.InverseCorrelationWeighter
+from ensemble.weight_layer import WeightLayer, InverseCorrelationWeighter
 
 
 class TestInverseCorrelationWeighter(unittest.TestCase):

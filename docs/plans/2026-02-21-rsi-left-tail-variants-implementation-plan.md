@@ -4,9 +4,9 @@
 
 **Goal:** Add four standalone RSI-derived bias nodes optimized for short-term left-tail mean-reversion behavior, with deterministic unit coverage and node registry/docs updates.
 
-**Architecture:** Reuse the existing incremental RSI state pattern (Cython-backed kernels via `utils.fast_nodes`) as the functional core for all new nodes. Each node adds one focused transformation (lag, tail pressure, streak, rebound velocity) with explicit warmup defaults and standardized metadata. Surface nodes through canonical wrappers plus taxonomy mappings so dynamic creation and legacy imports both work.
+**Architecture:** Reuse the existing incremental RSI state pattern (Cython-backed kernels via `utils.compute.fast_nodes`) as the functional core for all new nodes. Each node adds one focused transformation (lag, tail pressure, streak, rebound velocity) with explicit warmup defaults and standardized metadata. Surface nodes through canonical wrappers plus taxonomy mappings so dynamic creation and legacy imports both work.
 
-**Tech Stack:** Python, NumPy, existing `BiasNode` framework, `utils.fast_nodes`, pytest.
+**Tech Stack:** Python, NumPy, existing `BiasNode` framework, `utils.compute.fast_nodes`, pytest.
 
 ---
 

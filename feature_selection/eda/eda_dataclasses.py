@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
 
-from utils.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 # ─── T001: Common EDA ────────────────────────────────────────────────────────
@@ -30,13 +30,6 @@ class DescriptiveStats:
 
 
 @dataclass(frozen=True)
-class TemporalStability:
-    """Rolling correlation series and structural breaks."""
-    rolling_correlation: pd.Series           # DatetimeIndex → float
-    structural_breaks: list[pd.Timestamp]    # timestamps where |Δcorr| is large
-
-
-@dataclass(frozen=True)
 class CorrelationAnalysis:
     """Feature-target correlation at various lags."""
     pearson: float
@@ -45,27 +38,9 @@ class CorrelationAnalysis:
 
 
 @dataclass(frozen=True)
-class ICDecay:
-    """Spearman IC at multiple forward-return horizons."""
-    horizons: list[int]               # e.g. [1, 5, 10, 21]
-    ic_by_horizon: dict[int, float]   # horizon → IC value
-
-
-@dataclass(frozen=True)
-class FeatureACF:
-    """Autocorrelation and partial autocorrelation of the feature."""
-    lags: np.ndarray        # shape (max_acf_lag,), values 1..max_acf_lag
-    acf_values: np.ndarray  # shape (max_acf_lag,)
-    pacf_values: np.ndarray # shape (max_acf_lag,)
-
-
-@dataclass(frozen=True)
 class CommonEDAPlots:
     """Matplotlib Figure objects for common EDA."""
     time_series_fig: Figure      # feature over time (single subplot)
-    rolling_corr_fig: Figure     # rolling correlation over time
-    ic_decay_fig: Figure         # IC at each forward-return horizon
-    acf_fig: Figure              # ACF and PACF correlograms
 
 
 @dataclass(frozen=True)
@@ -73,10 +48,7 @@ class CommonEDAStats:
     """Aggregated common EDA statistics."""
     feature_stats: DescriptiveStats
     target_stats: DescriptiveStats
-    temporal_stability: TemporalStability
     correlation_analysis: CorrelationAnalysis
-    ic_decay: ICDecay
-    feature_acf: FeatureACF
 
 
 # ─── T002: Continuous Feature EDA ────────────────────────────────────────────
@@ -204,8 +176,6 @@ class EDAConfig:
     max_lag: int = 5
     bootstrap_iterations: int = 1000
     random_seed: int = 42
-    ic_horizons: tuple[int, ...] = (1, 5, 10, 21)
-    max_acf_lag: int = 20
 
 
 @dataclass(frozen=True)

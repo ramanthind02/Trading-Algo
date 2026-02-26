@@ -32,7 +32,7 @@ Create dedicated RSI-derived bias nodes tuned for short-horizon (2-10 period) le
 
 ## Architecture
 - Each new node is a standalone `BiasNode` in `nodes/mean_reversion/rsi/`.
-- Reuse RSI incremental state flow and Cython-backed helpers from `utils.fast_nodes` for base RSI updates.
+- Reuse RSI incremental state flow and Cython-backed helpers from `utils.compute.fast_nodes` for base RSI updates.
 - Add lightweight rolling state (deques or fixed arrays) per node for each engineered transformation.
 - Keep outputs continuous and deterministic; no lookahead.
 

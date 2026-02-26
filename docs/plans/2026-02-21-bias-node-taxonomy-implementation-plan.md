@@ -20,7 +20,7 @@
 **Step 1: Write the failing test**
 
 ```python
-from utils.helpers import _resolve_bias_node_module
+from utils.core.helpers import _resolve_bias_node_module
 
 
 def test_resolve_bias_node_module_uses_taxonomy_mapping() -> None:
@@ -71,12 +71,12 @@ git commit -m "feat(nodes): add taxonomy-backed module resolver"
 
 ```python
 import pytest
-from utils.helpers import _resolve_bias_node_module
+from utils.core.helpers import _resolve_bias_node_module
 
 
 def test_resolve_bias_node_module_raises_on_ambiguous_match(monkeypatch) -> None:
     monkeypatch.setattr(
-        "utils.helpers._find_node_module_candidates",
+        "utils.core.helpers._find_node_module_candidates",
         lambda _: ["nodes.a.rsi", "nodes.b.rsi"],
     )
     with pytest.raises(ValueError, match="Ambiguous"):
@@ -127,8 +127,8 @@ git commit -m "feat(nodes): add recursive fallback and ambiguity guard"
 **Step 1: Write the failing test**
 
 ```python
-from utils.enums import TimeFrame, Ticker
-from utils.helpers import create_bias_node
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.helpers import create_bias_node
 
 
 def test_create_bias_node_resolves_canonical_module_path() -> None:
@@ -220,8 +220,8 @@ git commit -m "refactor(nodes): move rsi to mean_reversion with compatibility sh
 **Step 1: Write the failing test**
 
 ```python
-from utils.enums import TimeFrame, Ticker
-from utils.helpers import create_bias_node
+from utils.core.enums import TimeFrame, Ticker
+from utils.core.helpers import create_bias_node
 
 
 def test_all_active_modules_still_construct_nodes() -> None:
@@ -273,7 +273,7 @@ git commit -m "refactor(nodes): migrate active node modules into taxonomy layout
 ```python
 def test_extract_features_still_accepts_flat_module_name() -> None:
     from feature_extraction.feature_extractor import extract_features
-    from utils.enums import Ticker
+    from utils.core.enums import Ticker
 
     features_df, targets_df = extract_features(
         module_name="rsi",

@@ -14,8 +14,8 @@ from enum import Enum
 from typing import List
 
 from nodes import BiasNode
-from utils.enums import Ticker, TimeFrame
-from utils.models import Candle
+from utils.core.enums import Ticker, TimeFrame
+from utils.core.models import Candle
 
 
 class SeasonalBondsMonthMode(Enum):

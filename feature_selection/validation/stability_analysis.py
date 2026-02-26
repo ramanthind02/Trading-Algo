@@ -63,6 +63,15 @@ def _compute_neighbor_smoothed_objectives(
     return smoothed
 
 
+def compute_jaccard_overlap(a: set[str], b: set[str]) -> float:
+    """Compute Jaccard-style overlap between two parameter sets."""
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return float(len(a & b) / max(len(a), len(b)))
+
+
 def _compute_consistency_metrics(
     fold_results: List[FoldResult], top_k: int
 ) -> Dict[str, float]:
@@ -76,12 +85,7 @@ def _compute_consistency_metrics(
     for i in range(len(fold_results) - 1):
         a = set(fold_results[i].top_k_params)
         b = set(fold_results[i + 1].top_k_params)
-        if not a and not b:
-            overlap_rates.append(1.0)
-        elif not a or not b:
-            overlap_rates.append(0.0)
-        else:
-            overlap_rates.append(len(a & b) / max(len(a), len(b)))
+        overlap_rates.append(compute_jaccard_overlap(a, b))
 
     return {
         'overlap_rate': float(np.mean(overlap_rates)),

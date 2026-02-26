@@ -10,9 +10,9 @@ Output: Continuous 0-100 (percentile rank of RSI)
 from typing import List
 import numpy as np
 from collections import deque
-from utils.models import Candle
-from utils.enums import Ticker, TimeFrame
-from utils.rsi_helpers import compute_rsi_initial, update_rsi
+from utils.core.models import Candle
+from utils.core.enums import Ticker, TimeFrame
+from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
 from nodes import BiasNode
 
 

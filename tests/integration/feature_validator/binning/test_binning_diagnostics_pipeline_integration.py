@@ -11,15 +11,15 @@ import pytest
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validators.binning.diagnostics import (
+from feature_selection.validation.binning.diagnostics import (
     BinningSuccessCriteria,
     calculate_coverage,
     detect_region_shape,
     extract_region_metadata,
     validate_binning_success,
 )
-from utils.cache_manager import CacheManager
-from utils.enums import Ticker, TimeFrame
+from utils.cache.cache_manager import CacheManager
+from utils.core.enums import Ticker, TimeFrame
 
 START_DATE = datetime(2000, 1, 1)
 END_DATE = datetime(2024, 12, 31)
@@ -80,7 +80,6 @@ def _extract_rsi_features() -> tuple[pd.DataFrame, pd.DataFrame]:
         ticker=ENSEMBLE_TICKERS,
         start=START_DATE,
         end=END_DATE,
-        use_millisecond_offset=True,
         target_col="log_return",
         use_cache=USE_CACHE,
     )
