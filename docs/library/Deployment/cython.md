@@ -55,7 +55,7 @@ Candles DataFrame columns: `datetime`, `open`, `high`, `low`, `close`, `volume`,
 python scripts/benchmark_portfolio_backtest.py [--warmup 1] [--runs 2]
 ```
 
-Loads 8 vault ensembles, train 2000–2020 / test 2020–2024, tickers ES/NQ/YM/RTY.
+Uses the same config as `portfolio_research/run_portfolio_test.py`: tickers, ensemble list, and train/test dates come from `portfolio_research.config.load_config()`.
 
 ### Profiling Script (Synthetic Data)
 

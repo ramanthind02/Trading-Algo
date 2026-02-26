@@ -214,6 +214,7 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
             base_models={},
             required_columns=[],
             base_tf=TimeFrame.D,
+            member_forecast_scaling_mode="sharpe_weighted",
         )
         member_output = pd.Series([0.0, 0.05, -0.10, 0.30, np.nan])
 
@@ -229,4 +230,19 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
                 0.0,
             ]
         )
+        assert np.allclose(result, expected)
+
+    def test_member_signal_strength_binary_mode_uses_sign_only(self):
+        """Binary mode should discard magnitude and preserve signed activation only."""
+        ensemble = DiversifiedEnsemble(
+            base_models={},
+            required_columns=[],
+            base_tf=TimeFrame.D,
+            member_forecast_scaling_mode="binary",
+        )
+        member_output = pd.Series([0.0, 0.01, -0.80, 5.0, np.nan])
+
+        result = ensemble._member_signal_strength(member_output)
+
+        expected = np.array([0.0, 1.0, -1.0, 1.0, 0.0])
         assert np.allclose(result, expected)

@@ -192,6 +192,55 @@ class CacheManager:
 
         return df
 
+    def get_available_date_range(
+        self,
+        tickers: List[Ticker],
+        timeframes: List[TimeFrame],
+    ) -> Optional[tuple[datetime, datetime]]:
+        """Return (min_date, max_date) across all OHLC data for the given tickers and timeframes.
+
+        Used when populating cache so the invariant "always use all possible data" is satisfied:
+        cache population uses this full range instead of config.start/end.
+
+        Returns
+        -------
+        (datetime, datetime) or None
+            Global min and max datetime across all parquet files. None if no data found.
+        """
+        all_mins: List[datetime] = []
+        all_maxes: List[datetime] = []
+        for ticker in tickers:
+            for tf in timeframes:
+                ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
+                tf_str = tf.name if hasattr(tf, "name") else str(tf)
+                possible_paths = [
+                    Path(self.candle_dir) / f"{ticker_str}_{tf_str}.parquet",
+                    Path(self.candle_dir) / tf_str / f"{ticker_str}.parquet",
+                    Path(self.candle_dir) / ticker_str / f"{tf_str}.parquet",
+                    Path(self.candle_dir) / f"{ticker_str}.parquet",
+                    Path(self.candle_dir) / ticker_str / f"{tf_str}_{ticker_str}.parquet",
+                ]
+                candle_path = next((p for p in possible_paths if p.exists()), None)
+                if candle_path is None:
+                    continue
+                try:
+                    df = pd.read_parquet(candle_path)
+                    if "datetime" in df.columns:
+                        dts = pd.to_datetime(df["datetime"])
+                    elif isinstance(df.index, pd.DatetimeIndex):
+                        dts = df.index
+                    else:
+                        dts = pd.to_datetime(df.reset_index().iloc[:, 0])
+                    if len(dts) == 0:
+                        continue
+                    all_mins.append(pd.Timestamp(dts.min()).to_pydatetime())
+                    all_maxes.append(pd.Timestamp(dts.max()).to_pydatetime())
+                except Exception as e:
+                    logger.warning("Could not read date range from %s: %s", candle_path, e)
+        if not all_mins or not all_maxes:
+            return None
+        return (min(all_mins), max(all_maxes))
+
     def _compute_bias_node_output(
         self,
         module_name: str,

@@ -1,6 +1,9 @@
 """Unified walkforward research entry point for both continuous and rule-based features.
 
-Runs walkforward-only analysis (no EDA) with enhanced selection enabled.
+Runs walkforward-only analysis (no EDA). Selection method is controlled by config:
+default is stable_region (see WalkforwardResearchConfig); set
+``walkforward_defaults.selection_method`` in ``feature_research/config.py`` to TOP_K
+or ENHANCED if needed.
 
 This script dispatches on feature_type to use the appropriate evaluation strategy:
   - CONTINUOUS: uses continuous binning with bin-count expansion
@@ -15,10 +18,7 @@ Artifacts are written to the ``output_root`` defined in ``config.walkforward``
 (default: ``feature_research/shared_results/{feature_type}/{module_name}/walkforward/``).
 
 To customize tickers, dates, bias_spec, or walkforward parameters, edit
-``feature_research/config.py`` and ``feature_research/in_sample/config.py``.
-
-To disable enhanced selection, set ``use_enhanced_selection=False`` in the
-``dataclasses.replace`` call below, or override ``load_config()`` directly.
+``feature_research/config.py`` (single source of truth for shared defaults and phase presets).
 """
 import dataclasses
 import sys
@@ -43,7 +43,7 @@ if _repo_root is not None and str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
 from feature_research.in_sample.config import load_config
-from feature_research.in_sample.pipeline import run_walkforward_pipeline
+from feature_research.pipeline import run_walkforward_pipeline
 
 
 if __name__ == "__main__":
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     walkforward = dataclasses.replace(
         config.walkforward,
         enabled=True,
-        use_enhanced_selection=True,
+        run_oracle_baseline=True,
     )
     config = dataclasses.replace(config, walkforward=walkforward)
 

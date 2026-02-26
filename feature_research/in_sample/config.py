@@ -4,19 +4,27 @@ This module provides a single ResearchConfig that handles both feature types.
 The feature_type field determines validation behavior:
   - CONTINUOUS: uses BinningAnalysisConfig, supports Phase 2 binning analysis
   - RULE_BASED: uses fixed 3-level binning, skips Phase 2 analysis
+
+Researcher-editable phase presets (bias specs, targets, reports dirs, walkforward overrides)
+live in ``feature_research/config.py``. This module mainly provides the runtime
+``ResearchConfig`` shape, and re-exports ``BinningAnalysisConfig`` for backward
+compatibility while assembling shared defaults.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 from feature_research.config import (
+    BinningAnalysisConfig,
+    GlobalResearchDefaults,
+    OBJECTIVE_METRIC_PRESETS,
     RAW_TARGET_COLS,
-    BaseResearchConfig,
     FeatureType,
+    OOSWindowConfig,
+    ParamSensitivityConfig,
     PermutationSuiteConfig,
     load_config as load_base_config,
 )
@@ -24,82 +32,34 @@ from feature_research.walkforward.config import (
     WalkforwardResearchConfig,
     WalkforwardSelectionMethod,
     WeightLayerAlgorithm,
+    _coerce_enum_or_raise,
 )
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import Ticker
 
-_FEATURE_RESEARCH_DIR = Path(__file__).resolve().parents[1]
-EnumT = TypeVar("EnumT", bound=Enum)
-
-
-def _coerce_enum_or_raise(value: object, enum_cls: type[EnumT], field_name: str) -> EnumT:
-    """Coerce a string or enum value to the specified enum type."""
-    valid_values = tuple(item.value for item in enum_cls)
-    if isinstance(value, enum_cls):
-        return value
-    if isinstance(value, str):
-        try:
-            return enum_cls(value)
-        except ValueError as exc:
-            raise ValueError(
-                f"{field_name} must be one of {valid_values}, got '{value}'"
-            ) from exc
-    raise ValueError(f"{field_name} must be one of {valid_values}, got '{value}'")
+IN_SAMPLE_OBJECTIVE_METRIC_PRESETS = OBJECTIVE_METRIC_PRESETS
 
 
-@dataclass(frozen=True)
-class BinningAnalysisConfig:
-    """Settings for continuous binning model parameters.
+def _default_permutation_from_global() -> PermutationSuiteConfig:
+    """Build permutation config from GlobalResearchDefaults so tests/defaults stay aligned."""
+    g = GlobalResearchDefaults()
+    return PermutationSuiteConfig(
+        OBJECTIVE_METRIC_PRESETS[g.objective_metric_key],
+        g.top_k,
+        g.min_folds_stable,
+        g.fold_years,
+    )
 
-    Only used when feature_type == FeatureType.CONTINUOUS.
-    Rule-based features use fixed 3 levels and ignore these settings.
 
-    Attributes
-    ----------
-    bin_counts : list[int]
-        List of bin counts to test in grid search.
-    selection_metric : str
-        Metric used for bin selection ('sharpe', 'mean', 't_stat', 'sortino').
-    strategy : str
-        Trading strategy ('long', 'short', 'long_short').
-    metric_threshold : float
-        Minimum metric value to consider a bin active.
-    t_threshold : float
-        Minimum |t-stat| for significance.
-    min_region_width : int
-        Legacy parameter (ignored by new grid search approach).
-    use_coverage_bonus : bool
-        Whether to add coverage bonus to Sharpe ratio.
-    coverage_bonus_per_10pct : float
-        Bonus added per 10% coverage above 10% floor.
-    max_coverage_bonus : float
-        Maximum coverage bonus cap.
-    shrinkage_k : float
-        James-Stein shrinkage constant.
-    long_clip_min : float
-        Minimum long position multiplier.
-    long_clip_max : float
-        Maximum long position multiplier.
-    short_clip_min : float
-        Minimum short position multiplier.
-    short_clip_max : float
-        Maximum short position multiplier.
-    """
-
-    bin_counts: list[int] = field(default_factory=lambda: [10, 8, 5, 3])
-    selection_metric: str = "sortino"
-    strategy: str = "long"
-    metric_threshold: float = 0.0
-    t_threshold: float = 2.0
-    min_region_width: int = 2  # Legacy, ignored by new approach
-    use_coverage_bonus: bool = False
-    coverage_bonus_per_10pct: float = 0.02
-    max_coverage_bonus: float = 0.2
-    shrinkage_k: float = 20.0
-    long_clip_min: float = 0.5
-    long_clip_max: float = 2.0
-    short_clip_min: float = 0.5
-    short_clip_max: float = 2.0
-
+__all__ = [
+    "BinningAnalysisConfig",
+    "FeatureType",
+    "IN_SAMPLE_OBJECTIVE_METRIC_PRESETS",
+    "ParamSensitivityConfig",
+    "PermutationSuiteConfig",
+    "ResearchConfig",
+    "WalkforwardResearchConfig",
+    "load_config",
+]
 
 @dataclass(frozen=True)
 class ResearchConfig:
@@ -107,8 +67,6 @@ class ResearchConfig:
 
     Attributes
     ----------
-    feature_type : FeatureType
-        CONTINUOUS or RULE_BASED. Determines validation behavior and binning approach.
     tickers : list[Ticker]
         Instruments to include. Data is concatenated across tickers.
     start : datetime
@@ -131,19 +89,28 @@ class ResearchConfig:
         If True, run ``CacheManager.populate_cache()`` before extraction.
     reports_dir : Path
         Root output directory for EDA reports.
-    permutation_suite : PermutationSuiteConfig
-        Settings for permutation test suite (if enabled).
+    feature_type : FeatureType
+        CONTINUOUS or RULE_BASED. Determines validation behavior and binning approach.
+    walkforward_selection_method : WalkforwardSelectionMethod | str
+        Selection algorithm. Must match ``walkforward.selection_method``.
+        Set at the top level here so researchers don't need to dig into
+        ``walkforward`` to find/change it. Accepts string values for convenience.
+    weight_layer_algorithm : WeightLayerAlgorithm | str
+        Weight layer method. Must match ``walkforward.weight_layer_algorithm``.
+        Accepts string values for convenience.
+    in_sample_permutation : PermutationSuiteConfig
+        In-sample permutation settings (if enabled).
     binning_params : BinningAnalysisConfig
         Binning hyperparameters. Only used for CONTINUOUS; rule-based uses fixed 3 levels.
-    walkforward_selection_method : WalkforwardSelectionMethod | str
-        Method for selecting top features in walkforward splits.
-    weight_layer_algorithm : WeightLayerAlgorithm | str
-        Algorithm for combining forecasts.
     walkforward : WalkforwardResearchConfig
         Walkforward configuration (enabled/disabled, parameters).
+    param_sensitivity : ParamSensitivityConfig
+        Parameter sensitivity / stable region selection (notebook and reports).
+    oos_window : OOSWindowConfig | None
+        Explicit train/test window for out-of-sample run. When None, OOS is disabled.
     """
 
-    feature_type: FeatureType
+    # --- Required fields (no defaults) ---
     tickers: list[Ticker]
     start: datetime
     end: datetime
@@ -153,21 +120,32 @@ class ResearchConfig:
     use_cache: bool
     populate_cache: bool
     reports_dir: Path
-    permutation_suite: PermutationSuiteConfig = field(default_factory=PermutationSuiteConfig)
-    binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)
+    # --- Optional fields (with defaults) ---
+    feature_type: FeatureType = FeatureType.CONTINUOUS
     walkforward_selection_method: WalkforwardSelectionMethod | str = (
-        WalkforwardSelectionMethod.TOP_K
+        WalkforwardSelectionMethod.STABLE_REGION
     )
     weight_layer_algorithm: WeightLayerAlgorithm | str = (
         WeightLayerAlgorithm.INVERSE_CORRELATION
     )
+    in_sample_permutation: PermutationSuiteConfig = field(
+        default_factory=lambda: _default_permutation_from_global()
+    )
+    binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)
     walkforward: WalkforwardResearchConfig = field(
         default_factory=lambda: WalkforwardResearchConfig(
             train_start=datetime(2020, 1, 1),
-            train_end=datetime(2024, 12, 31),
+            train_end=datetime(2023, 12, 31),
             enabled=False,
         )
     )
+    param_sensitivity: ParamSensitivityConfig = field(default_factory=ParamSensitivityConfig)
+    oos_window: OOSWindowConfig | None = None
+
+    @property
+    def permutation_suite(self) -> PermutationSuiteConfig:
+        """Backward-compatible alias for in-sample permutation settings."""
+        return self.in_sample_permutation
 
     def __post_init__(self) -> None:
         if self.target_col in RAW_TARGET_COLS and len(self.tickers) > 1:
@@ -178,50 +156,32 @@ class ResearchConfig:
                 "Use 'log_return_ewsd' or 'log_return_atr' for multi-ticker research."
             )
 
-        normalized_selection_method = _coerce_enum_or_raise(
+        # Coerce and validate walkforward_selection_method
+        normalized_sm = _coerce_enum_or_raise(
             self.walkforward_selection_method,
             WalkforwardSelectionMethod,
             "walkforward_selection_method",
         )
-        object.__setattr__(
-            self,
-            "walkforward_selection_method",
-            normalized_selection_method,
-        )
+        object.__setattr__(self, "walkforward_selection_method", normalized_sm)
+        if normalized_sm != self.walkforward.selection_method:
+            raise ValueError(
+                f"walkforward_selection_method ({normalized_sm.value!r}) does not match "
+                f"walkforward.selection_method ({self.walkforward.selection_method.value!r}). "
+                "Set both consistently or build walkforward via BaseResearchConfig.build_walkforward()."
+            )
 
-        normalized_weight_layer_algorithm = _coerce_enum_or_raise(
+        # Coerce and validate weight_layer_algorithm
+        normalized_wla = _coerce_enum_or_raise(
             self.weight_layer_algorithm,
             WeightLayerAlgorithm,
             "weight_layer_algorithm",
         )
-        object.__setattr__(
-            self,
-            "weight_layer_algorithm",
-            normalized_weight_layer_algorithm,
-        )
-
-        nested_selection_method = _coerce_enum_or_raise(
-            self.walkforward.selection_method,
-            WalkforwardSelectionMethod,
-            "walkforward.selection_method",
-        )
-        if nested_selection_method != normalized_selection_method:
+        object.__setattr__(self, "weight_layer_algorithm", normalized_wla)
+        if normalized_wla != self.walkforward.weight_layer_algorithm:
             raise ValueError(
-                "walkforward_selection_method must match walkforward.selection_method; "
-                f"got top-level={normalized_selection_method.value!r}, "
-                f"nested={nested_selection_method.value!r}"
-            )
-
-        nested_weight_layer_algorithm = _coerce_enum_or_raise(
-            self.walkforward.weight_layer_algorithm,
-            WeightLayerAlgorithm,
-            "walkforward.weight_layer_algorithm",
-        )
-        if nested_weight_layer_algorithm != normalized_weight_layer_algorithm:
-            raise ValueError(
-                "weight_layer_algorithm must match walkforward.weight_layer_algorithm; "
-                f"got top-level={normalized_weight_layer_algorithm.value!r}, "
-                f"nested={nested_weight_layer_algorithm.value!r}"
+                f"weight_layer_algorithm ({normalized_wla.value!r}) does not match "
+                f"walkforward.weight_layer_algorithm ({self.walkforward.weight_layer_algorithm.value!r}). "
+                "Set both consistently or build walkforward via BaseResearchConfig.build_walkforward()."
             )
 
 
@@ -232,63 +192,38 @@ def load_config() -> ResearchConfig:
     It checks base.feature_type to determine which phase-specific defaults to apply.
     """
     base = load_base_config()
+    phase_defaults = base.in_sample_defaults.for_feature_type(base.feature_type)
 
-    # Dispatch on feature_type to set phase-specific parameters
-    if base.feature_type == FeatureType.CONTINUOUS:
-        # CONTINUOUS BINNING DEFAULTS
-        bias_spec = {
-            "module_name": "rsi",
-            "timeframes": [TimeFrame.D],
-            "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10]},
-        }
-        target_col = "log_return_atr"
-        strategy = "long"
-        binning_params = BinningAnalysisConfig(
-            bin_counts=[10, 9, 8, 7, 6, 5, 4, 3],
-            strategy="long",
-            t_threshold=2.0,
-            use_coverage_bonus=False,
-        )
-        reports_dir = _FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous"
-        walkforward = base.build_walkforward(enabled=False)
+    # Param-sensitivity / binning metric source of truth lives in shared
+    # BinningAnalysisConfig (feature_research.config), not the permutation presets.
+    binning_overrides = dict(phase_defaults.binning_params_overrides)
+    binning_overrides.setdefault("selection_metric", BinningAnalysisConfig().selection_metric)
+    binning_overrides.setdefault("strategy", phase_defaults.strategy)
+    binning_params = BinningAnalysisConfig(**binning_overrides)
 
-    elif base.feature_type == FeatureType.RULE_BASED:
-        # RULE-BASED DEFAULTS
-        bias_spec = {
-            "module_name": "rsi_signal",
-            "timeframes": [TimeFrame.D],
-            "params": {
-                "rsi_period": [2, 3, 5, 7],
-                "oversold": list(range(5, 26, 5)),
-                "overbought": list(range(95, 64, -5)),
-                "strategy_mode": "long",
-                "exit_policy": "threshold_or_bars",
-                "exit_bars": 5,
-            },
-        }
-        target_col = "log_return"
-        strategy = "long"
-        binning_params = BinningAnalysisConfig()  # Defaults; rule-based ignores these
-        reports_dir = _FEATURE_RESEARCH_DIR / "in_sample" / "results" / "rule_based"
-        walkforward = base.build_walkforward(test_step=252, num_steps=8, enabled=False)
-
-    else:
-        raise ValueError(f"Unknown feature_type: {base.feature_type}")
+    walkforward = base.build_walkforward(
+        train_window_years=phase_defaults.walkforward_train_window_years,
+        test_window_years=phase_defaults.walkforward_test_window_years,
+        num_steps=phase_defaults.walkforward_num_steps,
+        enabled=phase_defaults.walkforward_enabled,
+    )
 
     return ResearchConfig(
         feature_type=base.feature_type,
         tickers=base.tickers,
         start=base.start,
         end=base.end,
-        bias_spec=bias_spec,
-        target_col=target_col,
-        strategy=strategy,
+        bias_spec=phase_defaults.bias_spec,
+        target_col=phase_defaults.target_col,
+        strategy=phase_defaults.strategy,
         use_cache=base.use_cache,
         populate_cache=base.populate_cache,
-        reports_dir=reports_dir,
-        permutation_suite=base.permutation_suite,
+        reports_dir=phase_defaults.reports_dir,
+        walkforward_selection_method=base.walkforward_defaults.selection_method,
+        weight_layer_algorithm=base.walkforward_defaults.weight_layer_algorithm,
+        in_sample_permutation=base.permutation,
         binning_params=binning_params,
-        walkforward_selection_method=base.walkforward_selection_method,
-        weight_layer_algorithm=base.weight_layer_algorithm,
         walkforward=walkforward,
+        param_sensitivity=base.param_sensitivity,
+        oos_window=base.oos_window,
     )

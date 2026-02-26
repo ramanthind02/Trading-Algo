@@ -34,7 +34,7 @@ import pytest
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.validation.config import PermutationTestConfig
+from feature_selection.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from feature_selection.validation.orchestration import run_permutation_test_suite
 from feature_selection.validation.permutation_tests import (
@@ -128,7 +128,6 @@ def _load_features(
             ticker=[ticker],
             start=start,
             end=end,
-            use_millisecond_offset=True,
             target_col='log_return',
             use_cache=True,
         )
@@ -346,8 +345,7 @@ def _run_rule_based_permutation_suite(
     target = targets_df['log_return'].dropna().copy()
     target.index = pd.to_datetime(target.index, utc=False)
     target.index = target.index.tz_localize(None) if target.index.tz is not None else target.index
-    # Cache targets can carry millisecond offsets; strip sub-day precision so
-    # candle-derived proxy features align on bar timestamps.
+    # Normalize to bar date so candle-derived proxy features align.
     target.index = target.index.floor('D')
     target = target[~target.index.duplicated(keep='last')]
 
@@ -382,7 +380,10 @@ def _run_rule_based_permutation_suite(
         random_seed=42,
         permutation_mode_stage2='feature_shuffle',
         min_folds_stable=1,
-        objective_metric=oos_objective_metric,
+        out_of_sample=OutOfSamplePermutationConfig(
+            objective_metric=oos_objective_metric or ObjectiveMetricSpec(builtin='sortino'),
+            run_oos_permutation=True,
+        ),
     )
 
     suite = run_permutation_test_suite(

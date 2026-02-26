@@ -2,22 +2,15 @@
 
 This package contains all permutation testing functionality:
 - permutation_engine: Core permutation test engine with strategy pattern
-- permute_bars: Bar permutation and walk-forward validation
+- candle_shuffle: Canonical candle/bar permutation (source of truth)
 """
 
-# Import main classes and functions for easy access
 from utils.evaluation.permutation_test.permutation_engine import (
     PermutationEngine,
     PermutationStrategy,
     FeaturePermutationStrategy,
     BarPermutationStrategy,
-    run_permutation_test
-)
-
-from utils.evaluation.permutation_test.permute_bars import (
-    BarPermute,
-    BarPermuteWalkForward,
-    WalkForwardValidator
+    run_permutation_test,
 )
 from utils.evaluation.permutation_test.candle_shuffle import (
     CandleShuffler,
@@ -29,17 +22,11 @@ from utils.evaluation.permutation_test.candle_shuffle import (
 )
 
 __all__ = [
-    # Core engine
     'PermutationEngine',
     'PermutationStrategy',
     'FeaturePermutationStrategy',
     'BarPermutationStrategy',
     'run_permutation_test',
-    
-    # Bar permutation utilities
-    'BarPermute',
-    'BarPermuteWalkForward',
-    'WalkForwardValidator',
     'CandleShuffler',
     'CandleShuffleMode',
     'GapType',

@@ -11,10 +11,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from feature_research.walkforward.config import WalkforwardResearchConfig
+from feature_research.walkforward.config import (
+    WalkforwardResearchConfig,
+    WalkforwardSelectionMethod,
+)
 from feature_research.walkforward.top_k_selection import (
     EnhancedSelectionResult,
     compute_trade_frequency,
+    compute_all_trade_frequencies,
+    _extract_series_from_evaluator_result,
     run_enhanced_selection,
 )
 
@@ -81,7 +86,7 @@ def test_run_enhanced_selection_returns_result() -> None:
     config = WalkforwardResearchConfig(
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2010, 1, 1),
-        use_enhanced_selection=True,
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
     )
 
     result = run_enhanced_selection(
@@ -105,7 +110,7 @@ def test_run_enhanced_selection_respects_trade_freq_min() -> None:
     config = WalkforwardResearchConfig(
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2005, 1, 1),
-        use_enhanced_selection=True,
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
         trade_freq_min=0.99,
     )
 
@@ -134,7 +139,7 @@ def test_run_enhanced_selection_uses_smoothed_objective_only_for_ranking() -> No
     config = WalkforwardResearchConfig(
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2005, 1, 1),
-        use_enhanced_selection=True,
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
         top_k=2,
     )
 
@@ -157,3 +162,78 @@ def test_run_enhanced_selection_uses_smoothed_objective_only_for_ranking() -> No
     )
 
     assert result.selected_labels == ["lookback=4", "lookback=5"]
+
+
+def test_extract_series_from_evaluator_result_plain_series() -> None:
+    """_extract_series_from_evaluator_result returns series unchanged when not a tuple."""
+    s = _make_signal([1.0, 0.0, 1.0])
+    assert _extract_series_from_evaluator_result(s) is s
+
+
+def test_extract_series_from_evaluator_result_tuple() -> None:
+    """_extract_series_from_evaluator_result returns first element when tuple."""
+    s = _make_signal([1.0, 0.0, 1.0])
+    out = _extract_series_from_evaluator_result((s, {"selected_long_bin": 2}))
+    pd.testing.assert_series_equal(out, s)
+
+
+def test_compute_all_trade_frequencies_handles_tuple_return() -> None:
+    """compute_all_trade_frequencies unpacks (series, meta) from evaluator."""
+    candles, target = _make_training_data(100)
+    param_grid: list[dict[str, object]] = [{"lookback": 3}]
+
+    def evaluator_returns_tuple(
+        _candles: pd.DataFrame,
+        target_series: pd.Series,
+        _params: dict[str, object],
+    ) -> tuple[pd.Series, dict[str, object]]:
+        return (pd.Series(0.01, index=target_series.index), {"selected_long_bin": 2})
+
+    freqs = compute_all_trade_frequencies(
+        training_data=candles,
+        training_target=target,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluator_returns_tuple,
+    )
+    assert "lookback=3" in freqs
+    assert freqs["lookback=3"] == pytest.approx(1.0)
+
+
+def test_run_enhanced_selection_long_t_stat_filters_negative_objective() -> None:
+    """When strategy is long and objective is t_stat, only positive smoothed_objective params are considered."""
+    candles, target = _make_training_data(120)
+    param_grid: list[dict[str, object]] = [
+        {"lookback": 3},
+        {"lookback": 4},
+        {"lookback": 5},
+    ]
+    # One negative, two positive
+    smoothed = {"lookback=3": -0.5, "lookback=4": 0.9, "lookback=5": 0.7}
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2005, 1, 1),
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
+        top_k=2,
+        objective_metric_name="t_stat",
+    )
+
+    def nonzero_signal(
+        _candles: pd.DataFrame,
+        target_series: pd.Series,
+        _params: dict[str, object],
+    ) -> pd.Series:
+        return pd.Series(0.01, index=target_series.index)
+
+    result = run_enhanced_selection(
+        training_data=candles,
+        training_target=target,
+        param_grid=param_grid,
+        evaluate_param_combo=nonzero_signal,
+        smoothed_objectives=smoothed,
+        config=config,
+        strategy="long",
+    )
+    # lookback=3 has negative objective so must be excluded; only 4 and 5 qualify
+    assert "lookback=3" not in result.selected_labels
+    assert set(result.selected_labels) <= {"lookback=4", "lookback=5"}
+    assert len(result.selected_labels) == 2

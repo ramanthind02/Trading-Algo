@@ -21,9 +21,9 @@ from feature_research.in_sample.config import (
     PermutationSuiteConfig,
     ResearchConfig,
 )
-from feature_research.in_sample.pipeline import (
-    run_continuous_eda_pipeline,
-    run_continuous_permutation_pipeline,
+from feature_research.pipeline import (
+    run_eda_pipeline,
+    run_permutation_pipeline,
 )
 from utils.core.enums import Ticker, TimeFrame
 
@@ -84,7 +84,7 @@ def test_continuous_eda_pipeline_smoke(
             populate_cache=True,
             reports_dir=Path(tmpdir),
         )
-        results = run_continuous_eda_pipeline(config, Path(tmpdir))
+        results = run_eda_pipeline(config, Path(tmpdir))
 
         assert len(results) == 1, f"Expected 1 result, got {len(results)}"
 
@@ -101,11 +101,8 @@ def test_continuous_eda_pipeline_smoke(
         assert plots_dir.is_dir()
         expected_plots = [
             "time_series_fig.png",
-            "rolling_corr_fig.png",
             "decile_plot_fig.png",
             "histogram_fig.png",
-            "ic_decay_fig.png",
-            "acf_fig.png",
             "quintile_spread_fig.png",
         ]
         for plot_file in expected_plots:
@@ -146,7 +143,7 @@ def test_continuous_eda_pipeline_multi_combo(
             populate_cache=True,
             reports_dir=Path(tmpdir),
         )
-        results = run_continuous_eda_pipeline(config, Path(tmpdir))
+        results = run_eda_pipeline(config, Path(tmpdir))
 
         assert len(results) == len(lookbacks), (
             f"Expected {len(lookbacks)} results, got {len(results)}"
@@ -181,11 +178,11 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
-            permutation_suite=PermutationSuiteConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+            in_sample_permutation=PermutationSuiteConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
         )
 
         try:
-            suite = run_continuous_permutation_pipeline(config, Path(tmpdir))
+            suite = run_permutation_pipeline(config, Path(tmpdir))
         except Exception as exc:  # pragma: no cover - integration environment guard
             _skip_if_missing_data_prereq(exc)
             raise

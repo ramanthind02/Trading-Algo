@@ -9,7 +9,7 @@ from typing import Callable, Literal, Mapping, cast
 import numpy as np
 import pandas as pd
 
-BuiltinMetricName = Literal['sharpe', 'sortino', 'calmar', 'profit_factor', 'always_zero']
+BuiltinMetricName = Literal['sharpe', 'sortino', 'calmar', 't_stat', 'profit_factor', 'always_zero']
 ObjectiveMetricCallable = Callable[[pd.Series], float]
 _MetricFactoryCallable = Callable[..., float]
 
@@ -65,6 +65,20 @@ def metric_calmar(
     return _deterministic_ratio(numerator=annualized_return, denominator=max_drawdown)
 
 
+def metric_t_stat(returns: pd.Series) -> float:
+    """One-sample t-statistic of mean returns against zero."""
+    clean = _clean_returns(returns)
+    if clean.empty:
+        return 0.0
+    n_obs = int(clean.shape[0])
+    if n_obs < 2:
+        return 0.0
+    mean_return = float(clean.mean())
+    sample_std = float(clean.std(ddof=1))
+    standard_error = sample_std / math.sqrt(float(n_obs))
+    return _deterministic_ratio(numerator=mean_return, denominator=standard_error)
+
+
 def metric_profit_factor(returns: pd.Series) -> float:
     """Profit factor as gross gains divided by gross losses."""
     clean = _clean_returns(returns)
@@ -84,6 +98,7 @@ _BUILTIN_OBJECTIVE_METRICS: Mapping[BuiltinMetricName, _MetricFactoryCallable] =
     'sharpe': metric_sharpe,
     'sortino': metric_sortino,
     'calmar': metric_calmar,
+    't_stat': metric_t_stat,
     'profit_factor': metric_profit_factor,
     'always_zero': metric_always_zero,
 }

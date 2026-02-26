@@ -16,9 +16,6 @@ import pandas as pd
 from feature_selection.eda.common_eda import (
     compute_correlation_analysis,
     compute_descriptive_stats,
-    compute_feature_acf,
-    compute_ic_decay,
-    compute_temporal_stability,
     create_common_eda_plots,
 )
 from feature_selection.eda.continuous_eda import (
@@ -43,15 +40,12 @@ from feature_selection.eda.eda_dataclasses import (
     DistributionDiagnostics,
     EDAConfig,
     EDAMetadata,
-    FeatureACF,
-    ICDecay,
     LevelStats,
     PerLevelStats,
     QuintileSpread,
     RuleBasedEDAPlots,
     RuleBasedEDAReport,
     RuleBasedEDAStats,
-    TemporalStability,
 )
 from feature_selection.eda.rule_based_eda import (
     compute_bootstrap_ci,
@@ -161,8 +155,6 @@ def compute_diagnostic_flags(
         warnings.append("High NaN percentage (>10%)")
     if feature_desc.sample_size < 252:
         warnings.append("Low sample size (<252)")
-    if common_stats.temporal_stability.structural_breaks:
-        warnings.append("Unstable rolling correlation")
     if feature_desc.std == 0:
         red_flags.append("Zero variance in feature")
     if abs(feature_desc.skew) > 5:
@@ -279,38 +271,17 @@ def _build_common_stats_and_plots(
 ) -> tuple[CommonEDAStats, CommonEDAPlots]:
     feature_stats = compute_descriptive_stats(feature)
     target_stats = compute_descriptive_stats(target)
-    temporal_stability = compute_temporal_stability(
-        feature=feature,
-        target=target,
-        timestamps=timestamps,
-        rolling_window=config.rolling_window,
-    )
     correlation_analysis = compute_correlation_analysis(
         feature=feature,
         target=target,
         max_lag=config.max_lag,
     )
-    ic_decay = compute_ic_decay(
-        feature=feature,
-        target=target,
-        horizons=list(config.ic_horizons),
-    )
-    feature_acf = compute_feature_acf(feature=feature, max_lag=config.max_acf_lag)
     common_stats = CommonEDAStats(
         feature_stats=feature_stats,
         target_stats=target_stats,
-        temporal_stability=temporal_stability,
         correlation_analysis=correlation_analysis,
-        ic_decay=ic_decay,
-        feature_acf=feature_acf,
     )
-    common_plots = create_common_eda_plots(
-        feature=feature,
-        timestamps=timestamps,
-        rolling_corr=temporal_stability.rolling_correlation,
-        ic_decay=ic_decay,
-        feature_acf=feature_acf,
-    )
+    common_plots = create_common_eda_plots(feature=feature, timestamps=timestamps)
     return common_stats, common_plots
 
 
@@ -351,13 +322,6 @@ def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _series_from_json(payload: dict[str, Any]) -> pd.Series:
-    index_values = payload.get("index", [])
-    data_values = payload.get("values", [])
-    index = pd.to_datetime(index_values) if index_values else pd.DatetimeIndex([])
-    return pd.Series(data_values, index=index, dtype=float)
-
-
 def _descriptive_stats_from_json(payload: dict[str, Any]) -> DescriptiveStats:
     return DescriptiveStats(
         min_val=float(payload["min_val"]),
@@ -374,17 +338,10 @@ def _descriptive_stats_from_json(payload: dict[str, Any]) -> DescriptiveStats:
 
 
 def _common_stats_from_json(payload: dict[str, Any]) -> CommonEDAStats:
-    temporal_payload = payload["temporal_stability"]
     corr_payload = payload["correlation_analysis"]
-    ic_decay_payload = payload["ic_decay"]
-    feature_acf_payload = payload["feature_acf"]
     return CommonEDAStats(
         feature_stats=_descriptive_stats_from_json(payload["feature_stats"]),
         target_stats=_descriptive_stats_from_json(payload["target_stats"]),
-        temporal_stability=TemporalStability(
-            rolling_correlation=_series_from_json(temporal_payload["rolling_correlation"]),
-            structural_breaks=[pd.Timestamp(ts) for ts in temporal_payload["structural_breaks"]],
-        ),
         correlation_analysis=CorrelationAnalysis(
             pearson=float(corr_payload["pearson"]),
             spearman=float(corr_payload["spearman"]),
@@ -392,15 +349,6 @@ def _common_stats_from_json(payload: dict[str, Any]) -> CommonEDAStats:
                 int(lag): float(value)
                 for lag, value in corr_payload["lagged_correlations"].items()
             },
-        ),
-        ic_decay=ICDecay(
-            horizons=list(ic_decay_payload["horizons"]),
-            ic_by_horizon={int(h): float(v) for h, v in ic_decay_payload["ic_by_horizon"].items()},
-        ),
-        feature_acf=FeatureACF(
-            lags=np.array(feature_acf_payload["lags"], dtype=float),
-            acf_values=np.array(feature_acf_payload["acf_values"], dtype=float),
-            pacf_values=np.array(feature_acf_payload["pacf_values"], dtype=float),
         ),
     )
 
@@ -486,9 +434,6 @@ def _figure_from_png(path: Path) -> plt.Figure:
 def _common_plots_from_dir(plots_dir: Path) -> CommonEDAPlots:
     return CommonEDAPlots(
         time_series_fig=_figure_from_png(plots_dir / "time_series_fig.png"),
-        rolling_corr_fig=_figure_from_png(plots_dir / "rolling_corr_fig.png"),
-        ic_decay_fig=_figure_from_png(plots_dir / "ic_decay_fig.png"),
-        acf_fig=_figure_from_png(plots_dir / "acf_fig.png"),
     )
 
 

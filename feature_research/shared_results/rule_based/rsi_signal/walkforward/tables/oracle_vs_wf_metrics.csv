@@ -1,0 +1,8 @@
+metric,value
+mean_efficiency_ratio,1.0020288749179338
+median_efficiency_ratio,1.0
+min_efficiency_ratio,0.9988318338319924
+max_efficiency_ratio,1.0129091998542923
+std_efficiency_ratio,0.00440512737068783
+mean_wf_sharpe,0.8761716293655059
+mean_oracle_sharpe,0.8748783030168322

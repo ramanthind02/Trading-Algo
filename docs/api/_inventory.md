@@ -31,7 +31,7 @@
 |--------|---------|
 | `scripts/tws_live_forecast.py` | Live/paper forecast loop via Interactive Brokers TWS with optional notifications |
 | `scripts/run_manual_forecast.py` | Manual forecast execution and JSON output for selected tickers/timeframes |
-| `scripts/benchmark_portfolio_backtest.py` | End-to-end portfolio backtest benchmark using vault/control artifacts |
+| `scripts/benchmark_portfolio_backtest.py` | End-to-end portfolio backtest benchmark (config from portfolio_research) |
 | `scripts/demo_forecast_pipeline.py` | Demonstrates full forecast stack from base model to position sizing |
 | `scripts/demo_ib_data_fetch.py` | Interactive Brokers data fetch and streaming demonstrations |
 | `scripts/demo_prop_firm_simulator.py` | Demonstrates prop-firm simulation workflow and outputs |

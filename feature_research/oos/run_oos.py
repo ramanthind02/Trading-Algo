@@ -4,9 +4,9 @@ Run with:
     source /home/raman/repos/Trading-Algo/venv/bin/activate
     python feature_research/oos/run_oos.py
 
-This is a stub implementation. OOS pipeline for research not yet fully implemented.
-When ready, this will dispatch on feature_type (from config) to run the appropriate
-out-of-sample validation for continuous or rule-based features.
+Uses config.oos_window from feature_research.config.load_config() for the single
+OOS fold (train/test dates). Reuses the same evaluation and selection logic as
+walkforward; artifacts are written under output_root/.../oos/.
 """
 from __future__ import annotations
 
@@ -31,12 +31,16 @@ _repo_root = _find_repo_root(Path(__file__).resolve())
 if _repo_root is not None and str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
+from feature_research.in_sample.config import load_config
+from feature_research.pipeline import run_oos_pipeline
+
 
 def main() -> None:
-    raise NotImplementedError(
-        "OOS pipeline for research not implemented yet. "
-        "When implemented, this will dispatch on config.feature_type "
-        "to run continuous or rule-based OOS validation."
+    config = load_config()
+    report = run_oos_pipeline(config)
+    print(
+        f"OOS complete. {len(report.folds_df)} fold(s). "
+        f"Artifacts written to {config.walkforward.output_root}"
     )
 
 

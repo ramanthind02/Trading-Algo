@@ -140,6 +140,7 @@ def test_write_walkforward_artifacts_writes_required_files_and_columns(tmp_path:
     assert paths.fold_timeline_png.exists()
     assert paths.summary_md.exists()
     assert paths.summary_html.exists()
+    assert paths.tables_report_html.exists()
 
     folds_df = pd.read_csv(paths.folds_csv)
     assert folds_df.columns.tolist() == [
@@ -203,6 +204,7 @@ def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: 
         first_oos_metrics_csv = first_paths.oos_metrics_csv.read_text(encoding="utf-8")
         first_summary_md = first_paths.summary_md.read_text(encoding="utf-8")
         first_summary_html = first_paths.summary_html.read_text(encoding="utf-8")
+        first_tables_report_html = first_paths.tables_report_html.read_text(encoding="utf-8")
 
         second_paths = write_walkforward_artifacts(
             report=report,
@@ -226,6 +228,7 @@ def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: 
     assert first_oos_metrics_csv == second_paths.oos_metrics_csv.read_text(encoding="utf-8")
     assert first_summary_md == second_paths.summary_md.read_text(encoding="utf-8")
     assert first_summary_html == second_paths.summary_html.read_text(encoding="utf-8")
+    assert first_tables_report_html == second_paths.tables_report_html.read_text(encoding="utf-8")
 
 
 def test_write_walkforward_artifacts_normalizes_metadata_identifiers_to_match_output_path(

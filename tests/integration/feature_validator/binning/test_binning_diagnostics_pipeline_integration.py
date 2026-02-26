@@ -80,7 +80,6 @@ def _extract_rsi_features() -> tuple[pd.DataFrame, pd.DataFrame]:
         ticker=ENSEMBLE_TICKERS,
         start=START_DATE,
         end=END_DATE,
-        use_millisecond_offset=True,
         target_col="log_return",
         use_cache=USE_CACHE,
     )

@@ -56,6 +56,9 @@ class StableRegionConfig:
     min_region_size : int
         Connected components smaller than this are treated as isolated spikes
         and discarded.
+
+    Use ``StableRegionConfig.aggressive()`` for a stricter preset (smaller
+    adaptive_sigma_multiplier, smaller k_max) when running selection experiments.
     """
 
     floor_method: str = "adaptive"
@@ -81,6 +84,11 @@ class StableRegionConfig:
             raise ValueError("k_max must be >= 1")
         if self.min_region_size < 1:
             raise ValueError("min_region_size must be >= 1")
+
+    @classmethod
+    def aggressive(cls) -> "StableRegionConfig":
+        """Preset for more aggressive selection: smaller sigma, fewer params (for experiments)."""
+        return cls(adaptive_sigma_multiplier=0.5, k_max=3, k_per_region=2, min_region_size=2)
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +272,8 @@ def run_stable_region_selection(
     param_grid: list[dict[str, object]],
     config: StableRegionConfig,
     grid_structure: Optional[Mapping[str, list]] = None,
+    strategy: Optional[str] = None,
+    objective_metric_name: str = "",
 ) -> StableRegionResult:
     """Select param combos from stable regions of the smoothed performance landscape.
 
@@ -283,6 +293,11 @@ def run_stable_region_selection(
         If provided, param name → ordered list of values per axis. Adjacency
         is then "one grid step" (consecutive index in that list). If None,
         adjacency uses value difference == 1 (unit-step) for backward compatibility.
+    strategy : str, optional
+        When "long" and objective_metric_name is "t_stat", only params with
+        smoothed_objective > 0 are considered (long-only filter).
+    objective_metric_name : str, optional
+        Used with strategy for long-only t_stat filter.
 
     Returns
     -------
@@ -314,6 +329,12 @@ def run_stable_region_selection(
         passed_hard[label] = not (fails_tf or fails_bin)
 
     surviving = [label for label in all_labels if passed_hard[label]]
+    # Long-only + t_stat: exclude params with non-positive objective
+    if strategy == "long" and objective_metric_name == "t_stat":
+        surviving = [
+            label for label in surviving
+            if smoothed_objectives.get(label, float("-inf")) > 0
+        ]
 
     # -----------------------------------------------------------------------
     # Step 2: Relative floor computation (from surviving only)

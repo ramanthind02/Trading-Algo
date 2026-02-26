@@ -28,6 +28,7 @@ Fix walkforward stage-2 OOS/tearsheet return generation so strategy returns are 
 ## Scope
 In scope:
 - Walkforward stage-2 return generation in `feature_research/walkforward/portfolio_evaluator.py`
+- Portfolio WeightLayer fit path bugfix in `ensemble/portfolio.py` (undefined `target_data`)
 - Unit regression test(s) for multi-ticker OOS return aggregation path
 
 Out of scope:
@@ -36,6 +37,7 @@ Out of scope:
 
 ## Interfaces (must match)
 - Modify: `feature_research/walkforward/portfolio_evaluator.py` — keep `evaluate_fold_portfolio(...) -> FoldPortfolioResult` signature unchanged
+- Modify: `ensemble/portfolio.py` — `_fit_weight_layer(...)` internal helper only (no public API changes)
 - Add/modify internal helper(s) only (no public API changes)
 
 ## Constraints / Risk

@@ -18,13 +18,17 @@ def add_smoothed_objective(
     param_columns: List[str],
     objective_column: str,
     output_column: str = "avg_objective",
+    self_weight: float = 1.0,
 ) -> pd.DataFrame:
     """
     Add a stability-smoothed objective column using grid-aware neighbor averaging.
 
-    For each row, computes the mean of the objective at that row and at all
-    axis-aligned 1-step neighbor rows (neighbors differ in exactly one
-    parameter by one step). Result is written to a new column; input is unchanged.
+    For each row, computes a weighted mean of the objective at that row and at
+    all axis-aligned 1-step neighbor rows. The row's own value is weighted by
+    ``self_weight`` (default 1.0); each neighbor has weight 1.0. Higher
+    ``self_weight`` reduces smoothing (param value counts more).
+
+    Formula: smoothed = (self_weight * self_val + sum(neighbor_vals)) / (self_weight + n_neighbors).
 
     Parameters
     ----------
@@ -36,6 +40,9 @@ def add_smoothed_objective(
         Name of the numeric column to smooth.
     output_column : str, default "avg_objective"
         Name of the new column to add.
+    self_weight : float, default 1.0
+        Weight for the row's own objective. Use > 1 (e.g. 2.0) to make smoothing
+        less aggressive (param value counts more relative to neighbors).
 
     Returns
     -------
@@ -43,6 +50,8 @@ def add_smoothed_objective(
         New DataFrame with same rows/columns as df plus output_column.
     """
     _validate_inputs(df, param_columns, objective_column)
+    if self_weight <= 0:
+        raise ValueError("self_weight must be > 0")
 
     result = df.copy()
 
@@ -58,7 +67,7 @@ def add_smoothed_objective(
 
     # Compute smoothed values for each row
     smoothed = _compute_smoothed_values(
-        df, param_columns, objective_column, adjacency, cell_lookup
+        df, param_columns, objective_column, adjacency, cell_lookup, self_weight
     )
 
     result[output_column] = smoothed
@@ -145,15 +154,17 @@ def _compute_smoothed_values(
     objective_column: str,
     adjacency: Dict[str, Dict[object, Tuple[Optional[object], Optional[object]]]],
     cell_lookup: Dict[tuple, float],
+    self_weight: float = 1.0,
 ) -> np.ndarray:
     """
     Compute smoothed objective for every row in the DataFrame.
 
-    For each row: collect self objective + objectives of all existing
-    axis-aligned 1-step neighbors, then take nanmean.
+    For each row: weighted mean of self (weight self_weight) and all existing
+    axis-aligned 1-step neighbors (weight 1 each). NaN values are excluded.
     """
     param_values = df[param_columns].values
     obj_values = df[objective_column].values
+    w_self = max(1, int(round(self_weight)))
 
     # Pre-compute column indices for adjacency lookup
     col_indices = {col: i for i, col in enumerate(param_columns)}
@@ -168,7 +179,8 @@ def _compute_smoothed_values(
             row_params, param_columns, col_indices, adjacency, cell_lookup
         )
 
-        all_vals = [self_val] + neighbor_vals
+        # Weight the param's own value more than neighbors (self_weight copies)
+        all_vals = [self_val] * w_self + neighbor_vals
         smoothed[row_idx] = np.nanmean(all_vals)
 
     return smoothed

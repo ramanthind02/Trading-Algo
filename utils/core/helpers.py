@@ -138,7 +138,7 @@ def load_data_multi_ticker(
     timeframe: TimeFrame,
     start: datetime = datetime(1990, 1, 1),
     end: datetime = datetime(2025, 12, 30),
-    use_millisecond_offset: bool = True
+    use_millisecond_offset: bool = False
 ) -> pd.DataFrame:
     """
     Load OHLC data from multiple tickers and append rows with ticker column.
@@ -153,8 +153,8 @@ def load_data_multi_ticker(
         Start datetime to filter from
     end : datetime, default=datetime(2025, 12, 30)
         End datetime to filter to
-    use_millisecond_offset : bool, default=True
-        If True, add millisecond offsets to datetime indices to avoid duplicates
+    use_millisecond_offset : bool, default=False
+        Deprecated. Ignored. Primary key is (datetime, ticker); no offsets applied.
         
     Returns
     -------
@@ -163,7 +163,7 @@ def load_data_multi_ticker(
         - All OHLC columns (datetime, open, high, low, close, volume)
         - 'ticker' column identifying the ticker for each row
         - 'timeframe' column (same for all rows)
-        - Indexed by timestamp (with offsets if use_millisecond_offset=True)
+        - Rows keyed by (datetime, ticker); datetime is bar time (no per-ticker offset)
         
     Examples
     --------
@@ -184,22 +184,16 @@ def load_data_multi_ticker(
     """
     all_dfs = []
     
-    for ticker_idx, ticker in enumerate(tickers):
+    for ticker in tickers:
         # Load data for this ticker
         ticker_df = load_data(ticker, timeframe, start=start, end=end)
         
         # Reset index to get timestamp as column (we'll use datetime as index)
         ticker_df = ticker_df.reset_index()
         
-        # Add ticker column
+        # Add ticker column (primary key is (datetime, ticker); no millisecond offset)
         ticker_df['ticker'] = ticker
         ticker_df['timeframe'] = timeframe
-        
-        # Add millisecond offset to avoid duplicate datetime indices
-        if use_millisecond_offset and ticker_idx > 0:
-            offset = pd.Timedelta(milliseconds=ticker_idx)
-            ticker_df['datetime'] = ticker_df['datetime'] + offset
-        
         all_dfs.append(ticker_df)
     
     # Concatenate all tickers

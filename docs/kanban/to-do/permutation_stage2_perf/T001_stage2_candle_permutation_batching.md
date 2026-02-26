@@ -61,10 +61,10 @@ Out of scope:
 4. `pytest tests/unit-tests/validators/permutation/test_permutation_engine_bar_strategy.py -q` — compatibility with `permute_bars` symbols
 
 ## Definition of done
-- [ ] Tests updated/added under permutation unit test folders
-- [ ] Module ownership clarified in `permute_bars.py`
-- [ ] Stage 2 batching path wired into orchestration
-- [ ] `pytest` targeted permutation suites pass in shared `venv`
+- [x] Tests updated/added under permutation unit test folders
+- [x] Module ownership clarified in `permute_bars.py`
+- [x] Stage 2 batching path wired into orchestration
+- [x] `pytest` targeted permutation suites pass in shared `venv`
 
 ## Notes
 - `candle_shuffle.py` is the canonical candle permutation implementation.

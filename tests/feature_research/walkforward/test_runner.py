@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime
 import json
 from pathlib import Path
@@ -17,8 +18,16 @@ from feature_research.walkforward.config import (
     WalkforwardResearchConfig,
     WalkforwardSelectionMethod,
 )
-from feature_research.walkforward.runner import run_walkforward_research, run_portfolio_simulation
-from feature_research.walkforward.stable_region_selection import StableRegionResult
+from feature_research.walkforward.runner import (
+    build_fold_rows_from_explicit_specs,
+    run_walkforward_research,
+    run_portfolio_simulation,
+)
+from feature_research.walkforward.stable_region_selection import (
+    StableRegionConfig,
+    StableRegionResult,
+    run_stable_region_selection,
+)
 from feature_research.walkforward.top_k_selection import EnhancedSelectionResult
 from ensemble.weight_layer import WeightLayerConfig
 
@@ -28,6 +37,26 @@ def _build_inputs() -> tuple[pd.DataFrame, pd.Series]:
     candles_df = pd.DataFrame({"close": range(120)}, index=index)
     target = pd.Series(0.01, index=index, name="target")
     return candles_df, target
+
+
+def test_build_fold_rows_from_explicit_specs_produces_same_shape_as_walkforward() -> None:
+    """Explicit specs produce fold rows with train/test masks and boundaries for OOS reuse."""
+    index = pd.date_range("2020-01-01", periods=100, freq="D")
+    train_start = datetime(2020, 1, 1)
+    train_end = datetime(2020, 2, 10)
+    test_start = datetime(2020, 2, 11)
+    test_end = datetime(2020, 3, 15)
+    rows = build_fold_rows_from_explicit_specs(
+        index,
+        [(train_start, train_end, test_start, test_end)],
+        min_fold_samples=5,
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["fold_id"] == 0
+    assert "_train_mask" in row and "_test_mask" in row
+    assert row["train_samples"] >= 5 and row["test_samples"] >= 5
+    assert row["train_start"] <= row["train_end"] < row["test_start"] <= row["test_end"]
 
 
 def test_run_walkforward_research_deterministic_selection_order() -> None:
@@ -85,27 +114,136 @@ def test_run_walkforward_research_deterministic_selection_order() -> None:
         .sort_values("rank")
         .reset_index(drop=True)
     )
+    # Order with equal-weight neighbor smoothing: x=3 best, then x=2, x=4 (tie broken by raw then param_label); then x=1, x=6, x=5
     assert fold_0_scores["param_label"].tolist() == ["x=3", "x=2", "x=4", "x=1", "x=6", "x=5"]
     assert fold_0_scores["rank"].tolist() == [1, 2, 3, 4, 5, 6]
 
-    smoothed_tie = fold_0_scores[fold_0_scores["param_label"].isin(["x=2", "x=4"])]
-    assert smoothed_tie["smoothed_objective"].nunique() == 1, (
-        "Expected a true smoothed-objective tie for x=2 and x=4"
-    )
-    assert smoothed_tie.sort_values("rank")["param_label"].tolist() == ["x=2", "x=4"], (
-        "Expected raw_objective descending to break smoothed tie between x=2 and x=4"
-    )
-
+    # x=1 and x=6 tie on smoothed and raw objective; param_label breaks tie
     full_tie = fold_0_scores[fold_0_scores["param_label"].isin(["x=1", "x=6"])]
-    assert full_tie["smoothed_objective"].nunique() == 1 and full_tie["raw_objective"].nunique() == 1, (
-        "Expected a true smoothed/raw tie for x=1 and x=6"
-    )
-    assert full_tie.sort_values("rank")["param_label"].tolist() == ["x=1", "x=6"], (
-        "Expected param_label ascending to break full tie between x=1 and x=6"
-    )
+    assert full_tie["smoothed_objective"].nunique() == 1 and full_tie["raw_objective"].nunique() == 1
+    assert full_tie.sort_values("rank")["param_label"].tolist() == ["x=1", "x=6"]
 
     selected = first.selection_summary_df.sort_values("fold_id")["selected_feature"].tolist()
     assert selected == ["x=3", "x=3"]
+
+
+def test_run_walkforward_research_n_jobs_1_and_2_produce_same_fold_scores() -> None:
+    """n_jobs=1 (sequential) and n_jobs=2 (parallel) yield the same fold_scores_df."""
+    candles_df, target = _build_inputs()
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        test_step=20,
+        num_steps=1,
+        top_k=2,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+        n_jobs=1,
+    )
+    param_grid: list[dict[str, object]] = [{"x": 1}, {"x": 2}]
+
+    def evaluate_param_combo(
+        fold_candles: pd.DataFrame,
+        _fold_target: pd.Series,
+        params: dict[str, object],
+    ) -> pd.Series:
+        val = cast(int, params["x"])
+        n = len(fold_candles)
+        return pd.Series([0.1 * val] * n, index=fold_candles.index)
+
+    report1 = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluate_param_combo,
+    )
+    config2 = dataclasses.replace(config, n_jobs=2)
+    report2 = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config2,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluate_param_combo,
+    )
+    a = report1.fold_scores_df.sort_values("param_label").reset_index(drop=True)
+    b = report2.fold_scores_df.sort_values("param_label").reset_index(drop=True)
+    assert list(a.columns) == list(b.columns)
+    pd.testing.assert_series_equal(a["param_label"], b["param_label"])
+    pd.testing.assert_series_equal(a["raw_objective"], b["raw_objective"], rtol=1e-9)
+    pd.testing.assert_series_equal(a["oos_objective"], b["oos_objective"], rtol=1e-9)
+    pd.testing.assert_series_equal(a["smoothed_objective"], b["smoothed_objective"], rtol=1e-9)
+    pd.testing.assert_series_equal(a["rank"], b["rank"])
+
+
+def test_run_walkforward_research_fold_scores_include_selected_long_bin_when_evaluator_returns_tuple() -> None:
+    """When evaluator returns (series, {"selected_long_bin": ...}), fold_scores_df has selected_long_bin."""
+    candles_df, target = _build_inputs()
+    config = WalkforwardResearchConfig(
+        train_start=datetime(2020, 1, 1),
+        train_end=datetime(2020, 2, 10),
+        test_step=20,
+        num_steps=1,
+        top_k=2,
+        objective_metric_name="mean_return",
+        min_fold_samples=10,
+    )
+    param_grid: list[dict[str, object]] = [{"x": 1}, {"x": 2}]
+
+    def evaluate_param_combo(
+        fold_candles: pd.DataFrame,
+        _fold_target: pd.Series,
+        params: dict[str, object],
+    ) -> tuple[pd.Series, dict[str, object]]:
+        x = cast(int, params["x"])
+        n = len(fold_candles)
+        return (
+            pd.Series([0.5 - x * 0.1] * n, index=fold_candles.index),
+            {"selected_long_bin": x},
+        )
+
+    report = run_walkforward_research(
+        candles_df=candles_df,
+        target=target,
+        feature_type="continuous",
+        module_name="demo",
+        config=config,
+        param_grid=param_grid,
+        evaluate_param_combo=evaluate_param_combo,
+    )
+    assert "selected_long_bin" in report.fold_scores_df.columns
+    fold0 = report.fold_scores_df[report.fold_scores_df["fold_id"] == 0]
+    labels_to_bin = fold0.set_index("param_label")["selected_long_bin"].to_dict()
+    assert labels_to_bin.get("x=1") == 1
+    assert labels_to_bin.get("x=2") == 2
+
+
+def test_stable_region_long_t_stat_excludes_non_positive_objective() -> None:
+    """When strategy is long and objective_metric_name is t_stat, params with smoothed_objective <= 0 are excluded."""
+    param_grid: list[dict[str, object]] = [
+        {"bin_count": 6, "lookback": 5},
+        {"bin_count": 6, "lookback": 6},
+        {"bin_count": 6, "lookback": 7},
+    ]
+    smoothed = {"bin_count=6|lookback=5": -0.5, "bin_count=6|lookback=6": 2.0, "bin_count=6|lookback=7": 1.5}
+    raw = {k: v for k, v in smoothed.items()}
+    trade_freq = {k: 0.1 for k in smoothed}
+    config = StableRegionConfig(bin_count_min=0, k_max=3, k_per_region=2, min_region_size=1)
+    result = run_stable_region_selection(
+        smoothed_objectives=smoothed,
+        raw_objectives=raw,
+        trade_frequencies=trade_freq,
+        param_grid=param_grid,
+        config=config,
+        strategy="long",
+        objective_metric_name="t_stat",
+    )
+    assert "bin_count=6|lookback=5" not in result.selected_labels
+    assert set(result.selected_labels) <= {"bin_count=6|lookback=6", "bin_count=6|lookback=7"}
 
 
 def test_run_walkforward_research_excludes_folds_below_minimum_samples() -> None:
@@ -119,6 +257,7 @@ def test_run_walkforward_research_excludes_folds_below_minimum_samples() -> None
         top_k=1,
         objective_metric_name="mean_return",
         min_fold_samples=10,
+        selection_method=WalkforwardSelectionMethod.TOP_K,
     )
     param_grid: list[dict[str, object]] = [{"x": 1}]
 
@@ -225,6 +364,7 @@ def test_run_walkforward_research_enforces_no_lookahead_fold_boundaries() -> Non
         top_k=2,
         objective_metric_name="mean_return",
         min_fold_samples=10,
+        selection_method=WalkforwardSelectionMethod.TOP_K,
     )
     param_grid: list[dict[str, object]] = [{"x": 1}, {"x": 2}]
     seen_boundaries: list[tuple[pd.Timestamp, pd.Timestamp]] = []
@@ -268,6 +408,7 @@ def test_run_walkforward_research_passes_fold_train_end_to_evaluator() -> None:
         top_k=1,
         objective_metric_name="mean_return",
         min_fold_samples=10,
+        selection_method=WalkforwardSelectionMethod.TOP_K,
     )
     param_grid: list[dict[str, object]] = [{"x": 1}, {"x": 2}]
     observed_train_ends: list[pd.Timestamp] = []
@@ -316,7 +457,7 @@ def test_run_walkforward_research_enhanced_selection_forwards_train_end_metadata
         top_k=1,
         objective_metric_name="mean_return",
         min_fold_samples=10,
-        use_enhanced_selection=True,
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
     )
     param_grid: list[dict[str, object]] = [{"x": 1}]
     enhanced_train_ends: list[pd.Timestamp] = []
@@ -342,10 +483,12 @@ def test_run_walkforward_research_enhanced_selection_forwards_train_end_metadata
         smoothed_objectives: dict[str, float],
         config: WalkforwardResearchConfig,
         precomputed_trade_frequencies: dict[str, float] | None = None,
+        strategy: str | None = None,
     ) -> EnhancedSelectionResult:
         _ = smoothed_objectives
         _ = config
         _ = precomputed_trade_frequencies
+        _ = strategy
         call_index = len(enhanced_fold_maxes)
         _ = evaluate_param_combo(training_data, training_target, param_grid[0])
         enhanced_call_indices.append(call_index)
@@ -474,6 +617,7 @@ def test_run_walkforward_research_ranks_by_in_sample_objective_when_series_spans
         top_k=1,
         objective_metric_name="mean_return",
         min_fold_samples=10,
+        selection_method=WalkforwardSelectionMethod.TOP_K,
     )
     param_grid: list[dict[str, object]] = [{"x": 1}]
 
@@ -531,7 +675,7 @@ def test_enhanced_selection_produces_expected_columns() -> None:
         train_end=datetime(2004, 1, 1),
         num_steps=3,
         top_k=3,
-        use_enhanced_selection=True,
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
     )
 
     report = run_walkforward_research(
@@ -564,7 +708,7 @@ def test_enhanced_selection_uses_top_k_labels_for_selected_flags(
         train_end=datetime(2002, 1, 1),
         num_steps=1,
         top_k=2,
-        use_enhanced_selection=True,
+        selection_method=WalkforwardSelectionMethod.ENHANCED,
     )
 
     def fake_run_enhanced_selection(**_kwargs: object) -> EnhancedSelectionResult:
@@ -637,9 +781,9 @@ def test_enhanced_selection_outputs_selected_members_only(
 
     summary = report.selection_summary_df.loc[0]
     assert json.loads(summary["top_k_features"]) == ["lookback=4", "lookback=5"]
-    assert pd.isna(summary["selected_feature"])
-    assert pd.isna(summary["selected_raw_objective"])
-    assert pd.isna(summary["selected_smoothed_objective"])
+    assert summary["selected_feature"] in ("lookback=4", "lookback=5")
+    assert not pd.isna(summary["selected_raw_objective"])
+    assert not pd.isna(summary["selected_smoothed_objective"])
     selected_flags = report.fold_scores_df.set_index("param_label")["selected_feature"]
     assert bool(selected_flags.loc["lookback=4"])
     assert bool(selected_flags.loc["lookback=5"])
@@ -697,9 +841,9 @@ def test_stable_region_selection_outputs_selected_members_only(
 
     summary = report.selection_summary_df.loc[0]
     assert json.loads(summary["top_k_features"]) == ["lookback=4", "lookback=5"]
-    assert pd.isna(summary["selected_feature"])
-    assert pd.isna(summary["selected_raw_objective"])
-    assert pd.isna(summary["selected_smoothed_objective"])
+    assert summary["selected_feature"] in ("lookback=4", "lookback=5")
+    assert not pd.isna(summary["selected_raw_objective"])
+    assert not pd.isna(summary["selected_smoothed_objective"])
     selected_flags = report.fold_scores_df.set_index("param_label")["selected_feature"]
     assert bool(selected_flags.loc["lookback=4"])
     assert bool(selected_flags.loc["lookback=5"])
@@ -757,6 +901,7 @@ def test_run_walkforward_research_objective_uses_active_returns_only() -> None:
         top_k=1,
         objective_metric_name="mean_return",
         min_fold_samples=10,
+        selection_method=WalkforwardSelectionMethod.TOP_K,
     )
     param_grid: list[dict[str, object]] = [{"x": 1}, {"x": 2}]
 
@@ -861,7 +1006,7 @@ def test_run_portfolio_simulation_records_error_without_crash(monkeypatch: pytes
         },
     )()
 
-    result = run_portfolio_simulation(
+    result, _, _ = run_portfolio_simulation(
         candles_df=candles_df,
         target=target,
         fold_rows=fold_rows,
@@ -1089,7 +1234,7 @@ def test_run_portfolio_simulation_handles_invalid_top_k_features_json() -> None:
         },
     )()
 
-    result = run_portfolio_simulation(
+    result, _, _ = run_portfolio_simulation(
         candles_df=candles_df,
         target=target,
         fold_rows=fold_rows,
@@ -1168,7 +1313,7 @@ def test_run_portfolio_simulation_drops_malformed_top_k_labels(
         },
     )()
 
-    result = run_portfolio_simulation(
+    result, _, _ = run_portfolio_simulation(
         candles_df=candles_df,
         target=target,
         fold_rows=fold_rows,

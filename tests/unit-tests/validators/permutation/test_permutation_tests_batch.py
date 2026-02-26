@@ -232,3 +232,44 @@ def test_continuous_batch_multi_combo_returns_expected_shapes() -> None:
         assert report.permutation_mode == "candle_shuffle"
         assert len(report.null_distribution) == 7
         assert 0.0 <= report.p_value <= 1.0
+
+
+def test_continuous_batch_n_jobs_reps_parity() -> None:
+    """n_jobs_reps=1 and n_jobs_reps>1 produce same p-values and pass/fail (rep-level multiprocessing)."""
+    candles = _make_candles()
+    target = _make_target(candles)
+    items = [
+        _ContinuousPermutationBatchItem(
+            param_combo="a",
+            bias_node_extractor=_continuous_extractor_factory(0.3),
+            binning_model=DummyBinningModel(),
+        ),
+        _ContinuousPermutationBatchItem(
+            param_combo="b",
+            bias_node_extractor=_continuous_extractor_factory(0.9),
+            binning_model=DummyBinningModel(),
+        ),
+    ]
+    common = dict(
+        candles_df=candles,
+        items=items,
+        target=target,
+        objective_func=_objective,
+        permutation_mode="candle_shuffle",
+        nreps=11,
+        alpha=0.1,
+        random_seed=42,
+    )
+
+    reports_seq = _run_pipeline_permutation_continuous_batch(**common, n_jobs_reps=1)
+    reports_par = _run_pipeline_permutation_continuous_batch(**common, n_jobs_reps=2)
+
+    assert set(reports_seq) == set(reports_par)
+    for combo in reports_seq:
+        r_seq = reports_seq[combo]
+        r_par = reports_par[combo]
+        assert r_seq.passed == r_par.passed
+        assert r_seq.p_value == r_par.p_value
+        np.testing.assert_allclose(
+            r_seq.null_distribution, r_par.null_distribution, err_msg=f"combo={combo}"
+        )

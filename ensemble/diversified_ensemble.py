@@ -31,6 +31,29 @@ def _normalize_ticker_name(ticker_val: object) -> str:
         return ticker_val.replace("Ticker.", "")
     return getattr(ticker_val, "name", str(ticker_val))
 
+
+def _normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure 'datetime' exists only as a column so sort_values('datetime') is unambiguous."""
+    df = candles_df.copy()
+    index_has_datetime = (
+        getattr(df.index, "name", None) == "datetime"
+        or (
+            isinstance(df.index, pd.MultiIndex)
+            and "datetime" in df.index.names
+        )
+    )
+    if not index_has_datetime:
+        return df
+    if "datetime" in df.columns:
+        # Column already present; drop index so only the column remains
+        df = df.reset_index(drop=True)
+    else:
+        df = df.reset_index()
+        if df.columns.duplicated().any():
+            df = df.loc[:, ~df.columns.duplicated(keep="first")]
+    return df
+
+
 class DiversifiedEnsemble:
     """
     Diversified ensemble class for combining binary strategy signals.
@@ -83,12 +106,16 @@ class DiversifiedEnsemble:
         base_models: Optional[Dict[str, Any]] = None,
         required_columns: Optional[List[str]] = None,
         base_tf: Optional[TimeFrame] = None,
-        use_cache: bool = True
+        use_cache: bool = True,
+        member_forecast_scaling_mode: str = "sharpe_weighted",
     ):
         self.target_volatility = target_volatility
         self.instrument_weights = instrument_weights
         self.save_path = save_path
         self.use_cache = use_cache
+        self.member_forecast_scaling_mode = self._normalize_member_forecast_scaling_mode(
+            member_forecast_scaling_mode
+        )
         
         # Base model ownership
         self.base_models: Dict[str, Any] = {}  # Dict[str, BaseModel]
@@ -149,12 +176,40 @@ class DiversifiedEnsemble:
         # Default to daily if unset/unknown (current walkforward path is daily).
         return 252.0
 
+    def _normalize_member_forecast_scaling_mode(self, mode: object) -> str:
+        valid_modes = {"binary", "sharpe_weighted"}
+        if not isinstance(mode, str):
+            raise ValueError(
+                "member_forecast_scaling_mode must be one of "
+                f"{sorted(valid_modes)}, got {type(mode)}"
+            )
+        normalized = mode.strip().lower()
+        if normalized not in valid_modes:
+            raise ValueError(
+                "member_forecast_scaling_mode must be one of "
+                f"{sorted(valid_modes)}, got '{mode}'"
+            )
+        return normalized
+
     def _annualized_member_signal_strength(self, member_signal: pd.Series) -> np.ndarray:
         """Map per-bar Sharpe-like member outputs to clipped annualized forecast strength."""
         values = pd.Series(member_signal, copy=False).astype(float)
         values = values.replace([np.inf, -np.inf], np.nan).fillna(0.0)
         annualized = values.to_numpy() * np.sqrt(self._bars_per_year_for_base_timeframe())
         return np.clip(annualized, -2.0, 2.0)
+
+    def _member_signal_strength(self, member_signal: pd.Series) -> np.ndarray:
+        """Convert member outputs to forecast strength according to configured mode."""
+        values = pd.Series(member_signal, copy=False).astype(float)
+        values = values.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        if self.member_forecast_scaling_mode == "binary":
+            return np.sign(values.to_numpy())
+        if self.member_forecast_scaling_mode == "sharpe_weighted":
+            return self._annualized_member_signal_strength(values)
+        raise ValueError(
+            "Unsupported member_forecast_scaling_mode "
+            f"'{self.member_forecast_scaling_mode}'"
+        )
     
     def _validate_input_data(
         self,
@@ -1046,8 +1101,8 @@ class DiversifiedEnsemble:
         if candles_df.empty:
             return pd.Series(dtype=float, name='returns')
         
-        # Ensure datetime is datetime type
-        candles_df = candles_df.copy()
+        # Ensure datetime is only a column (not also an index level) to avoid ambiguous sort_values
+        candles_df = _normalize_candles_datetime_column(candles_df)
         candles_df['datetime'] = pd.to_datetime(candles_df['datetime'])
         
         # Group by ticker and calculate returns with forward shift
@@ -1129,6 +1184,7 @@ class DiversifiedEnsemble:
         from utils.core.models import Candle
         
         volatility_dict = {}
+        candles_df = _normalize_candles_datetime_column(candles_df)
         
         # Group by ticker
         for ticker_name in candles_df['ticker'].unique():
@@ -1236,6 +1292,9 @@ class DiversifiedEnsemble:
                 "Call fit_from_candles() or fit() first."
             )
         
+        # Ensure 'datetime' is only a column (not also an index level) so merge/groupby are unambiguous
+        candles_df = _normalize_candles_datetime_column(candles_df)
+        
         # Calculate or use provided volatility
         if volatility is None:
             volatility = self._calculate_volatility_from_candles(candles_df)
@@ -1307,13 +1366,13 @@ class DiversifiedEnsemble:
                             # Member outputs from continuous binning are per-bar Sharpe-like
                             # magnitudes. Convert to clipped annualized strength for position
                             # scaling so stronger members get proportionally larger forecasts.
-                            annualized_strength = self._annualized_member_signal_strength(pred_ser)
+                            strength = self._member_signal_strength(pred_ser)
                             h_i = self.model_exposure_fractions_.get(full_name, 0.1)
                             sqrt_h_i = np.sqrt(max(h_i, 1e-8))
                             forecast_if_active = self.target_volatility_ / (ticker_vol * sqrt_h_i)
                             forecast_if_active = min(forecast_if_active, 2.0)
                             volatility_adjusted_forecast = np.clip(
-                                forecast_if_active * annualized_strength,
+                                forecast_if_active * strength,
                                 -2.0,
                                 2.0,
                             )
@@ -1463,7 +1522,7 @@ class DiversifiedEnsemble:
         # CRITICAL FIX: Align predictions to candles' datetime index to ensure all tickers have same rows
         # This fixes the issue where different tickers have different prediction counts (e.g. ES:1008, NQ:1007)
         # causing the merge in portfolio._apply_risk_management_to_forecasts to fail
-        candles_datetime_index = candles_df[['ticker', 'datetime']].copy()
+        candles_datetime_index = candles_df.reset_index(drop=True)[['ticker', 'datetime']].copy()
         candles_datetime_index['datetime'] = pd.to_datetime(candles_datetime_index['datetime']).dt.floor('s')
         ensemble_result['datetime'] = pd.to_datetime(ensemble_result['datetime']).dt.floor('s')
         

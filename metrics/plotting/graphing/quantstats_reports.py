@@ -109,6 +109,30 @@ def generate_tearsheet(
         baseline_returns.name = "Baseline (Always-In)"
         benchmark = baseline_returns
     
+    # #region agent log
+    try:
+        _n = len(strategy_returns)
+        _zero = (strategy_returns == 0.0).sum()
+        _bm_n = len(baseline_returns) if baseline_returns is not None else 0
+        with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
+            import json
+            _f.write(
+                json.dumps(
+                    {
+                        "hypothesisId": "A,C",
+                        "location": "quantstats_reports.generate_tearsheet",
+                        "message": "strategy_returns passed to QuantStats",
+                        "data": {"strategy_n": _n, "pct_strategy_zero": float(_zero) / _n if _n else 0, "baseline_n": _bm_n},
+                        "timestamp": __import__("time").time() * 1000,
+                    },
+                    default=str,
+                )
+                + "\n"
+            )
+    except Exception:  # noqa: S110
+        pass
+    # #endregion
+
     # Generate tearsheet based on mode
     # IMPORTANT: Use match_dates=False to prevent timezone comparison errors
     # IMPORTANT: Use compounded=False to follow Robert Carver's methodology

@@ -72,6 +72,10 @@ class RuleBasedModel(BinningModelBase):
             )
         return feature_data.map(mapping).astype(int)
 
+    def _predict_bin_key(self, bin_idx: int) -> int:
+        """Rule-based uses 0-based bin indices from _assign_bins; no conversion."""
+        return bin_idx
+
     def __repr__(self) -> str:
         fitted = "fitted" if self.is_fitted_ else "unfitted"
         return f"RuleBasedModel(selection_metric='{self.selection_metric}', {fitted})"

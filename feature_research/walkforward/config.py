@@ -1,3 +1,8 @@
+"""Walkforward runtime config schema and validation.
+
+Runtime types and validation only. Researcher-editable values live in
+``feature_research.config.load_config()`` and are passed in via ``build_walkforward()``.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,6 +12,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from feature_research.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
+
 
 class WalkforwardSelectionMethod(str, Enum):
     TOP_K = "top_k"
@@ -21,6 +27,11 @@ class WeightLayerAlgorithm(str, Enum):
     INV_DOWNSIDE_VOL_GROUPED = "inv_downside_vol_grouped"
     DOWNSIDE_HRP_GROUPED = "downside_hrp_grouped"
     DOWNSIDE_HRP_FLAT = "downside_hrp_flat"
+
+
+class MemberPredictionMode(str, Enum):
+    BINARY = "binary"
+    SHARPE_WEIGHTED = "sharpe_weighted"
 
 
 EnumT = TypeVar("EnumT", bound=Enum)
@@ -44,23 +55,43 @@ def _coerce_enum_or_raise(value: object, enum_cls: type[EnumT], field_name: str)
 
 @dataclass(frozen=True)
 class WalkforwardResearchConfig:
+    """Walkforward research window and selection algorithm.
+
+    Selection is controlled only by selection_method (no boolean overrides):
+      - TOP_K: select top_k params by smoothed objective.
+      - ENHANCED: three-objective (smoothed obj + trade_freq + diversity); outputs top_k.
+      - STABLE_REGION: select params inside a stable region (floor-based); uses stable_region
+        (StableRegionConfig). When building via BaseResearchConfig.build_walkforward(),
+        stable_region is filled from param_sensitivity.stable_region_config when
+        selection_method is STABLE_REGION.
+    """
+
     train_start: datetime
     train_end: datetime
     enabled: bool = False
-    test_step: int = 365
-    num_steps: int = 8
-    top_k: int = 3
-    objective_metric_name: str = "sortino"
+    test_step: int = 730
+    num_steps: int = 4
+    top_k: int = 5
+    objective_metric_name: str = "t_stat"  # Overridden by build_walkforward() from global config
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
-    use_enhanced_selection: bool = False  # deprecated; prefer selection_method="enhanced"
-    trade_freq_min: float = 0.05
-    # --- Configurable ensemble selection algorithm ---
-    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.TOP_K
+    trade_freq_min: float = 0.01
+    # --- Selection algorithm (single source of truth) ---
+    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.STABLE_REGION
     stable_region: object = field(default=None)  # StableRegionConfig | None
     # --- Configurable weight layer method ---
     weight_layer_algorithm: WeightLayerAlgorithm | str = WeightLayerAlgorithm.INVERSE_CORRELATION
     weight_layer_config: object = field(default=None)  # WeightLayerConfig | None
+    # --- Oracle (lookahead) baseline diagnostic ---
+    run_oracle_baseline: bool = True
+    # --- Output: per-fold tearsheets are slow; set False to skip ---
+    output_per_fold_tearsheets: bool = False
+    # --- Member forecast strength mapping in walkforward stage-2 fast path ---
+    member_prediction_mode: MemberPredictionMode | str = MemberPredictionMode.BINARY
+    # --- Param sensitivity sweep (observability only; no refit) ---
+    sigma_sweep_values: list[float] | None = None  # e.g. [0.5, 0.75, 1.0, 1.5, 2.0]
+    # --- Parallelism: number of jobs for scoring param combos within each fold; 1 = sequential ---
+    n_jobs: int = 1  # -1 = use all CPUs (resolved at runtime in runner)
 
     def __post_init__(self) -> None:
         if self.train_end <= self.train_start:
@@ -103,16 +134,17 @@ class WalkforwardResearchConfig:
             normalized_weight_layer_algorithm,
         )
 
+        normalized_member_prediction_mode = _coerce_enum_or_raise(
+            self.member_prediction_mode,
+            MemberPredictionMode,
+            "member_prediction_mode",
+        )
+        object.__setattr__(self, "member_prediction_mode", normalized_member_prediction_mode)
+
     def _effective_selection_method(self) -> str:
-        """Resolve the active selection method, honouring the legacy flag."""
-        selection_method = _coerce_enum_or_raise(
+        """Return the active selection method string (top_k, enhanced, or stable_region)."""
+        return _coerce_enum_or_raise(
             self.selection_method,
             WalkforwardSelectionMethod,
             "selection_method",
-        )
-        if (
-            self.use_enhanced_selection
-            and selection_method == WalkforwardSelectionMethod.TOP_K
-        ):
-            return WalkforwardSelectionMethod.ENHANCED.value
-        return selection_method.value
+        ).value

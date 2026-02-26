@@ -1,8 +1,17 @@
+"""Canonical candle permutation implementation (source of truth for Stage 2).
+
+This module is the single source of truth for candle/bar permutation used in
+in-sample Stage 2 pipeline permutation. It preserves documented invariants
+(trend preservation, relative-quantity shuffling, gap-pool separation).
+
+- Algorithm invariants: docs/library/Feature_selection/Phase_1_IS/candle_permutation.md
+- Stage 2 semantics: docs/library/Feature_selection/Phase_1_IS/permutation_testing.md
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -513,6 +522,36 @@ def _prepare_candle_shuffle(
         mode=mode,
         intraday_gap_config=intraday_gap_config,
     )
+
+
+def permute_walk_forward(
+    df: pd.DataFrame,
+    train_windows: List[Tuple[pd.Timestamp, pd.Timestamp]],
+    random_seed: Optional[int] = None,
+) -> pd.DataFrame:
+    """Shuffle candles independently within each training window using CandleShuffler.
+
+    Used for walk-forward permutation so bars in one window are not mixed with
+    others. Each window is shuffled via the canonical daily/intraday logic.
+    """
+    out = df.copy()
+    if "datetime" not in out.columns:
+        raise ValueError("DataFrame must have 'datetime' column")
+    out["datetime"] = pd.to_datetime(out["datetime"])
+    rng = np.random.default_rng(random_seed)
+    for i, (start_ts, end_ts) in enumerate(train_windows):
+        mask = (out["datetime"] >= start_ts) & (out["datetime"] < end_ts)
+        indices = np.where(mask)[0]
+        if len(indices) < 2:
+            continue
+        window_slice = out.loc[indices].copy()
+        prepared = _prepare_candle_shuffle(window_slice, permute_start_idx=0)
+        seed = int(rng.integers(0, 2**31)) if random_seed is not None else None
+        shuffled = prepared.permute_with_seed(seed)
+        out.loc[indices, ["open", "high", "low", "close"]] = shuffled[
+            ["open", "high", "low", "close"]
+        ].values
+    return out
 
 
 class CandleShuffler:

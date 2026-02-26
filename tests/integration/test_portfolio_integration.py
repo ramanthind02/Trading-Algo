@@ -211,7 +211,6 @@ class TestPortfolioIntegration:
             timeframe=TimeFrame.D,
             start=datetime(2010, 1, 1),
             end=datetime(2020, 1, 1),
-            use_millisecond_offset=True
         )
         print(f"Loaded {len(train_candles)} training candles")
         print(f"Tickers: {train_candles['ticker'].unique()}")
@@ -223,7 +222,6 @@ class TestPortfolioIntegration:
             timeframe=TimeFrame.D,
             start=datetime(2020, 1, 1),
             end=datetime(2024, 1, 1),
-            use_millisecond_offset=True
         )
         print(f"Loaded {len(test_candles)} test candles")
         
@@ -312,7 +310,6 @@ class TestPortfolioIntegration:
             timeframe=TimeFrame.D,
             start=datetime(2010, 1, 1),
             end=datetime(2020, 1, 1),
-            use_millisecond_offset=True
         )
         print(f"Loaded {len(train_candles)} training candles")
         
@@ -323,7 +320,6 @@ class TestPortfolioIntegration:
             timeframe=TimeFrame.D,
             start=datetime(2020, 1, 1),
             end=datetime(2024, 1, 1),
-            use_millisecond_offset=True
         )
         print(f"Loaded {len(test_candles)} test candles")
         
@@ -415,7 +411,6 @@ class TestPortfolioIntegration:
             timeframe=TimeFrame.D,
             start=datetime(2020, 1, 1),
             end=datetime(2020, 3, 1),  # Just 2 months
-            use_millisecond_offset=True
         )
         print(f"Loaded {len(candles)} candles")
         
@@ -485,7 +480,6 @@ class TestPortfolioIntegration:
             timeframe=TimeFrame.D,
             start=datetime(2020, 1, 1),
             end=datetime(2020, 2, 1),  # Just 1 month
-            use_millisecond_offset=True
         )
         print(f"Loaded {len(candles)} candles")
         

@@ -27,7 +27,8 @@ def _make_price_df() -> pd.DataFrame:
 
 
 def test_bar_permutation_strategy_uses_correct_import_and_passes_shuffle_kwargs(monkeypatch) -> None:
-    import utils.evaluation.permutation_test.permute_bars as permute_bars_module
+    import utils.evaluation.permutation_test.candle_shuffle as candle_shuffle_module
+    import utils.evaluation.permutation_test.permutation_engine as perm_engine
 
     price_df = _make_price_df()
     gap_cfg = IntradayGapConfig(maintenance_prev_hour=16, maintenance_next_hour=17)
@@ -44,18 +45,18 @@ def test_bar_permutation_strategy_uses_correct_import_and_passes_shuffle_kwargs(
 
     captured: dict[str, object] = {}
 
-    class StubBarPermute:
+    class StubCandleShuffler:
         def __init__(
             self,
             df: pd.DataFrame,
-            permute_start_idx: int,
-            shuffle_mode: str,
-            intraday_gap_config: IntradayGapConfig,
-            random_seed: int,
+            permute_start_idx: int = 0,
+            mode=None,
+            intraday_gap_config=None,
+            random_seed=None,
         ) -> None:
             captured["df_rows"] = len(df)
             captured["permute_start_idx"] = permute_start_idx
-            captured["shuffle_mode"] = shuffle_mode
+            captured["mode"] = mode
             captured["intraday_gap_config"] = intraday_gap_config
             captured["random_seed"] = random_seed
             self._df = df
@@ -70,8 +71,8 @@ def test_bar_permutation_strategy_uses_correct_import_and_passes_shuffle_kwargs(
         permuted_price_df = df.set_index("datetime")[["open", "high", "low", "close"]].copy()
         return features_df, permuted_price_df
 
-    monkeypatch.setattr(permute_bars_module, "BarPermute", StubBarPermute)
-    monkeypatch.setattr(permute_bars_module, "_extract_features_from_bars", fake_extract_features_from_bars)
+    monkeypatch.setattr(candle_shuffle_module, "CandleShuffler", StubCandleShuffler)
+    monkeypatch.setattr(perm_engine, "_extract_features_from_bars", fake_extract_features_from_bars)
 
     strategy = BarPermutationStrategy()
     result = strategy.permute(
@@ -87,13 +88,13 @@ def test_bar_permutation_strategy_uses_correct_import_and_passes_shuffle_kwargs(
     assert {"open", "high", "low", "close", "feature_a"}.issubset(result.columns)
 
     assert captured["permute_start_idx"] == 3
-    assert captured["shuffle_mode"] == "intraday"
     assert captured["intraday_gap_config"] == gap_cfg
     assert captured["random_seed"] == 123
 
 
 def test_bar_permutation_strategy_uses_walkforward_permuter_when_train_windows_set(monkeypatch) -> None:
-    import utils.evaluation.permutation_test.permute_bars as permute_bars_module
+    import utils.evaluation.permutation_test.candle_shuffle as candle_shuffle_module
+    import utils.evaluation.permutation_test.permutation_engine as perm_engine
 
     price_df = _make_price_df()
 
@@ -109,14 +110,9 @@ def test_bar_permutation_strategy_uses_walkforward_permuter_when_train_windows_s
 
     called = {"walkforward": False}
 
-    class StubWalkForward:
-        def __init__(self, df: pd.DataFrame, train_windows):
-            self._df = df
-            self._train_windows = train_windows
-
-        def permute(self) -> pd.DataFrame:
-            called["walkforward"] = True
-            return self._df.copy()
+    def stub_permute_walk_forward(df: pd.DataFrame, train_windows, random_seed=None) -> pd.DataFrame:
+        called["walkforward"] = True
+        return df.copy()
 
     def fake_extract_features_from_bars(**kwargs):
         df = kwargs["df"]
@@ -125,8 +121,8 @@ def test_bar_permutation_strategy_uses_walkforward_permuter_when_train_windows_s
         permuted_price_df = df.set_index("datetime")[["open", "high", "low", "close"]].copy()
         return features_df, permuted_price_df
 
-    monkeypatch.setattr(permute_bars_module, "BarPermuteWalkForward", StubWalkForward)
-    monkeypatch.setattr(permute_bars_module, "_extract_features_from_bars", fake_extract_features_from_bars)
+    monkeypatch.setattr(candle_shuffle_module, "permute_walk_forward", stub_permute_walk_forward)
+    monkeypatch.setattr(perm_engine, "_extract_features_from_bars", fake_extract_features_from_bars)
 
     strategy = BarPermutationStrategy()
     _ = strategy.permute(

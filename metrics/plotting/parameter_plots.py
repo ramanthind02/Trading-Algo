@@ -10,7 +10,7 @@ Date: 2025-01-XX
 
 from __future__ import annotations
 
-from typing import Optional, List, TYPE_CHECKING, Union
+from typing import Any, List, Optional, TYPE_CHECKING, Union
 from itertools import combinations
 import pandas as pd
 import numpy as np
@@ -1078,6 +1078,21 @@ def plot_2d_stability_heatmap(
     contour_idx: Optional[int] = None
     region_indices: List[int] = []
 
+    # Reference pivot so region scatter uses same x/y labels as heatmap (avoids misaligned overlays)
+    _ref_pivot = working_df.pivot_table(
+        index="param1_value", columns="param2_value", values=resolved_layers[0][1],
+    ).sort_index(axis=0).sort_index(axis=1)
+
+    def _axis_label(val: object, candidates: Any) -> str:
+        """Match val to a pivot index/column value and return its string form."""
+        for c in candidates:
+            if c == val:
+                return str(c)
+            if isinstance(c, (int, float)) and isinstance(val, (int, float)):
+                if abs(float(c) - float(val)) < 1e-9:
+                    return str(c)
+        return str(val)
+
     # Stability ratio contour overlay (optional visibility)
     if "stability_ratio" in working_df.columns:
         pivot_sr = working_df.pivot_table(
@@ -1103,11 +1118,17 @@ def plot_2d_stability_heatmap(
         ))
         contour_idx = len(fig.data) - 1
 
-    # Stable region markers overlay
+    # Stable region markers overlay (use heatmap's axis labels so overlay aligns)
     if stable_regions:
         for region in stable_regions:
-            xs = [str(combo[1]) for combo in region.param_combinations]
-            ys = [str(combo[0]) for combo in region.param_combinations]
+            xs = [
+                _axis_label(combo[1], _ref_pivot.columns)
+                for combo in region.param_combinations
+            ]
+            ys = [
+                _axis_label(combo[0], _ref_pivot.index)
+                for combo in region.param_combinations
+            ]
             fig.add_trace(go.Scatter(
                 x=xs, y=ys,
                 mode="markers",

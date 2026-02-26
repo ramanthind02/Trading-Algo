@@ -35,6 +35,8 @@ class ContinuousBinningModel(BinningModelBase):
         use_coverage_bonus: bool = False,
         coverage_bonus_per_10pct: float = 0.02,
         max_coverage_bonus: float = 0.2,
+        bin_index_min: int = 0,
+        bin_index_max: int | None = None,
     ) -> None:
         """Initialize continuous binning model.
 
@@ -50,11 +52,17 @@ class ContinuousBinningModel(BinningModelBase):
             Bonus added per 10% coverage above 10% floor.
         max_coverage_bonus : float
             Maximum coverage bonus cap.
+        bin_index_min : int
+            Minimum bin index to consider for selection (inclusive). Default 0.
+        bin_index_max : int | None
+            Maximum bin index to consider (inclusive). None means no cap (all bins).
         """
         self.bin_counts = bin_counts if bin_counts is not None else [n_bins]
         self.use_coverage_bonus = use_coverage_bonus
         self.coverage_bonus_per_10pct = coverage_bonus_per_10pct
         self.max_coverage_bonus = max_coverage_bonus
+        self.bin_index_min = bin_index_min
+        self.bin_index_max = bin_index_max
 
         super().__init__(
             n_bins=n_bins,
@@ -69,6 +77,29 @@ class ContinuousBinningModel(BinningModelBase):
             long_clip_max=long_clip_max,
             short_clip_min=short_clip_min,
             short_clip_max=short_clip_max,
+        )
+
+    def clone(self) -> ContinuousBinningModel:
+        """Return a new unfitted instance with the same constructor arguments."""
+        return ContinuousBinningModel(
+            n_bins=self.n_bins,
+            selection_metric=self.selection_metric,
+            strategy=self.strategy,
+            normalize_by=self.normalize_by,
+            metric_threshold=self.metric_threshold,
+            t_threshold=self.t_threshold,
+            min_region_width=self.min_region_width,
+            shrinkage_k=self.shrinkage_k,
+            long_clip_min=self.long_clip_min,
+            long_clip_max=self.long_clip_max,
+            short_clip_min=self.short_clip_min,
+            short_clip_max=self.short_clip_max,
+            bin_counts=list(self.bin_counts),
+            use_coverage_bonus=self.use_coverage_bonus,
+            coverage_bonus_per_10pct=self.coverage_bonus_per_10pct,
+            max_coverage_bonus=self.max_coverage_bonus,
+            bin_index_min=self.bin_index_min,
+            bin_index_max=self.bin_index_max,
         )
 
     def fit(
@@ -109,6 +140,7 @@ class ContinuousBinningModel(BinningModelBase):
             raise ValueError(msg)
 
         self.feature_column = feature_data.name
+        self._training_feature_data = feature_data.copy()
 
         df = pd.DataFrame({"feature": feature_data, "target": target_data}).dropna()
 
@@ -127,8 +159,17 @@ class ContinuousBinningModel(BinningModelBase):
 
             bin_stats = self._calculate_bin_stats(df_copy, ordered_bins)
 
+            # Restrict to allowed bin index range when bin_index_max is set
+            if self.bin_index_max is None:
+                allowed_bins = list(ordered_bins)
+            else:
+                allowed_bins = [
+                    b for b in ordered_bins
+                    if self.bin_index_min <= int(b) <= self.bin_index_max
+                ]
+
             # Select best bin per direction
-            best_long_bin, best_short_bin = self._select_best_bins(bin_stats, ordered_bins)
+            best_long_bin, best_short_bin = self._select_best_bins(bin_stats, allowed_bins)
 
             # Compute coverage-adjusted Sharpe for winning bins
             total_obs = len(df_copy)
@@ -146,17 +187,19 @@ class ContinuousBinningModel(BinningModelBase):
                 short_sharpe = self._compute_coverage_adjusted_sharpe(
                     bin_stats[best_short_bin], short_coverage
                 )
-                short_t_stat = abs(bin_stats[best_short_bin]["t_stat"])
+                # Raw t-stat (negative for short bins); do not use abs() so long_short
+                # compares long (positive) vs short magnitude via -short_t_stat.
+                short_t_stat = bin_stats[best_short_bin]["t_stat"]
             else:
                 short_sharpe = short_t_stat = float("-inf")
 
-            # Track best result by highest t-stat
+            # Track best result by highest t-stat (sign-aware per strategy)
             if self.strategy == "long":
                 score = long_t_stat
             elif self.strategy == "short":
-                score = short_t_stat
+                score = -short_t_stat  # more negative short t-stat -> higher score
             else:  # long_short
-                score = max(long_t_stat, short_t_stat)
+                score = max(long_t_stat, -short_t_stat)
 
             if best_result is None or score > best_result["score"]:
                 best_result = {
@@ -170,6 +213,12 @@ class ContinuousBinningModel(BinningModelBase):
                     "long_sharpe": long_sharpe,
                     "short_sharpe": short_sharpe,
                 }
+
+        # Reject long-only fit when no profitable long bin exists
+        if self.strategy == "long" and best_result["best_long_bin"] is None:
+            raise ValueError(
+                "No long bin with positive t-stat; cannot fit long-only model."
+            )
 
         # Set fitted state from best result
         self.n_bins = best_result["n_bins"]
@@ -202,6 +251,8 @@ class ContinuousBinningModel(BinningModelBase):
             "shrinkage_k": self.shrinkage_k,
             "bin_counts": self.bin_counts,
             "use_coverage_bonus": self.use_coverage_bonus,
+            "bin_index_min": self.bin_index_min,
+            "bin_index_max": self.bin_index_max,
         }
 
         self.is_fitted_ = True

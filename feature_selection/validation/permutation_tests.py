@@ -9,12 +9,16 @@ T014 — Pipeline Permutation: Full-pipeline test that either shuffles raw
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional
 
 import numpy as np
 import pandas as pd
+import joblib.parallel
+from joblib import Parallel, delayed
+from tqdm import tqdm
 
 from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.validation.reports import (
@@ -137,13 +141,23 @@ def _fit_and_predict(
     target: pd.Series,
     strategy: str = 'long',
 ) -> tuple[pd.Series, bool]:
-    """Fit a deep-copy of binning_model then predict signals.
+    """Fit a copy of binning_model then predict signals.
+
+    Uses clone() when available (faster than deepcopy); otherwise falls back
+    to copy.deepcopy for implementations that do not define clone().
 
     Returns:
         (signals, fit_failed) — fit_failed=True means an exception was raised;
         signals is all-zeros in that case.
     """
-    model_copy = copy.deepcopy(binning_model)
+    clone_fn = getattr(binning_model, "clone", None)
+    if callable(clone_fn):
+        try:
+            model_copy = clone_fn()
+        except TypeError:
+            model_copy = copy.deepcopy(binning_model)
+    else:
+        model_copy = copy.deepcopy(binning_model)
     try:
         aligned_target = target.reindex(feature.index).dropna()
         aligned_feature = feature.reindex(aligned_target.index).dropna()
@@ -171,6 +185,29 @@ def _prepare_candles_for_shuffler(candles_df: pd.DataFrame) -> pd.DataFrame:
     return candles_df
 
 
+def _permute_candles_with_seed(
+    candles_prepared: pd.DataFrame,
+    seed: int,
+    prepared_shufflers: object,
+) -> pd.DataFrame:
+    """Permute candles with seed; when multi-ticker, shuffle each ticker independently.
+
+    prepared_shufflers is either a single prepared shuffler (one ticker or no
+    ticker column) or a dict[str, prepared] keyed by ticker. Per-ticker shuffling
+    ensures one ticker's bars do not influence another's when re-extracting bias nodes.
+    """
+    if isinstance(prepared_shufflers, dict):
+        parts = [
+            prepared_shufflers[ticker].permute_with_seed(seed)
+            for ticker in sorted(prepared_shufflers)
+        ]
+        out = pd.concat(parts, axis=0, ignore_index=True)
+        if "datetime" in out.columns and "ticker" in out.columns:
+            out = out.sort_values(["datetime", "ticker"]).reset_index(drop=True)
+        return out
+    return prepared_shufflers.permute_with_seed(seed)
+
+
 @dataclass(frozen=True)
 class _ContinuousPermutationBatchItem:
     """Internal Stage-2 continuous permutation batch input."""
@@ -178,6 +215,42 @@ class _ContinuousPermutationBatchItem:
     param_combo: str
     bias_node_extractor: Callable[[pd.DataFrame], pd.Series]
     binning_model: BinningModelBase
+
+
+def _stage2_continuous_combo_rep(
+    combo_name: str,
+    item: _ContinuousPermutationBatchItem,
+    shuffled_candles: pd.DataFrame | None,
+    seed: int,
+    original_features: dict[str, pd.Series],
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    permutation_mode: Literal['feature_shuffle', 'candle_shuffle'],
+) -> tuple[str, float, bool]:
+    """Run one combo for one rep. Returns (combo_name, null_metric, no_trade)."""
+    try:
+        if permutation_mode == 'feature_shuffle':
+            orig = original_features[combo_name]
+            shuffled_values = np.random.default_rng(seed).permutation(orig.values.copy())
+            shuffled_feature = pd.Series(
+                shuffled_values, index=orig.index, name=orig.name
+            )
+        else:
+            assert shuffled_candles is not None
+            shuffled_feature = item.bias_node_extractor(shuffled_candles).reindex(
+                target.index
+            )
+        signals, fit_failed = _fit_and_predict(
+            item.binning_model, shuffled_feature, target
+        )
+        if fit_failed:
+            return (combo_name, 0.0, True)
+        metric, is_no_trade = _compute_metric_from_signals(
+            signals, target, objective_func
+        )
+        return (combo_name, metric, is_no_trade)
+    except Exception:
+        return (combo_name, 0.0, True)
 
 
 @dataclass(frozen=True)
@@ -193,6 +266,48 @@ def _derive_permutation_seeds(nreps: int, random_seed: Optional[int]) -> np.ndar
     return rng.integers(0, 2 ** 31, size=nreps)
 
 
+def _run_one_rep_continuous(
+    rep_index: int,
+    seed: int,
+    candles_prepared: pd.DataFrame,
+    prepared_shufflers: object,
+    items_by_combo: dict[str, _ContinuousPermutationBatchItem],
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    permutation_mode: Literal['feature_shuffle', 'candle_shuffle'],
+    original_features: dict[str, pd.Series],
+) -> tuple[int, dict[str, tuple[float, bool]]]:
+    """Run a single Stage-2 rep; returns (rep_index, {combo_name: (metric, no_trade)}).
+
+    Used by joblib for rep-level multiprocessing (no GIL).
+    """
+    shuffled_candles: pd.DataFrame | None = None
+    if permutation_mode == 'candle_shuffle':
+        shuffled_candles = _permute_candles_with_seed(
+            candles_prepared, seed, prepared_shufflers
+        )
+    results: dict[str, tuple[float, bool]] = {}
+    for combo_name, item in items_by_combo.items():
+        cname, metric, no_trade = _stage2_continuous_combo_rep(
+            combo_name,
+            item,
+            shuffled_candles,
+            seed,
+            original_features,
+            target,
+            objective_func,
+            permutation_mode,
+        )
+        results[cname] = (metric, no_trade)
+    # #region agent log
+    _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
+    _items = list(results.items())[:3]
+    _log.write('{"hypothesisId":"H2","location":"permutation_tests.py:_run_one_rep_continuous","message":"worker result sample","data":{"rep_index":rep_index,"first_combos_metrics":{c: float(m) for c, (m, _) in _items}},"timestamp":0}\n')
+    _log.close()
+    # #endregion
+    return (rep_index, results)
+
+
 def _build_pipeline_report(
     *,
     param_combo: str,
@@ -206,6 +321,12 @@ def _build_pipeline_report(
 ) -> PipelinePermutationReport:
     n_null_ge_original = int((null_metrics >= original_metric).sum())
     p_value = float(1 + n_null_ge_original) / float(nreps + 1)
+    # #region agent log
+    import json
+    _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
+    _log.write(json.dumps({"hypothesisId":"H1,H3","location":"permutation_tests.py:_build_pipeline_report","message":"report inputs","data":{"param_combo":param_combo,"original_metric":original_metric,"null_min":float(null_metrics.min()),"null_max":float(null_metrics.max()),"null_id":id(null_metrics),"n_ge":n_null_ge_original,"p_value":p_value},"timestamp":0}) + "\n")
+    _log.close()
+    # #endregion
     critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
     passed = bool(original_metric > critical_value)
     return PipelinePermutationReport(
@@ -223,6 +344,28 @@ def _build_pipeline_report(
     )
 
 
+@contextlib.contextmanager
+def _joblib_tqdm(total: int, desc: str, unit: str = "rep"):
+    """Context manager that patches joblib to update a tqdm progress bar as batches complete."""
+    pbar = tqdm(total=total, desc=desc, unit=unit)
+    _tqdm_ref: list[Optional[tqdm]] = [pbar]
+
+    class _TqdmBatchCallback(joblib.parallel.BatchCompletionCallBack):
+        def _dispatch_new(self) -> None:
+            super()._dispatch_new()
+            if _tqdm_ref[0] is not None:
+                _tqdm_ref[0].update(n=self.batch_size)
+
+    old_cb = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = _TqdmBatchCallback
+    try:
+        yield pbar
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_cb
+        _tqdm_ref[0] = None
+        pbar.close()
+
+
 def _run_pipeline_permutation_continuous_batch(
     *,
     candles_df: pd.DataFrame,
@@ -234,12 +377,15 @@ def _run_pipeline_permutation_continuous_batch(
     nreps: int = 1000,
     alpha: float = 0.10,
     random_seed: Optional[int] = None,
+    n_jobs_reps: int = 1,
 ) -> dict[str, PipelinePermutationReport]:
-    """Internal batch Stage-2 runner sharing shuffled candles across passers.
+    """Internal batch Stage-2 runner; one shuffled candle stream per rep shared across all passers.
 
-    Docs source of truth:
-    - `docs/library/Feature_selection/Phase_1_IS/permutation_testing.md` (Stage 2 semantics)
-    - `docs/library/Feature_selection/Phase_1_IS/candle_permutation.md` (candle shuffle invariants)
+    Candle shuffle is source of truth (canonical implementation in
+    utils.evaluation.permutation_test.candle_shuffle).
+    Docs: permutation_testing.md (Stage 2), candle_permutation.md (invariants).
+
+    n_jobs_reps > 1: reps in parallel (joblib/loky, true multiprocessing, no GIL).
     """
     _ = metric_threshold  # Reserved for parity with public API.
 
@@ -274,47 +420,106 @@ def _run_pipeline_permutation_continuous_batch(
         null_metrics_by_combo[item.param_combo] = np.empty(nreps, dtype=float)
         no_trade_counts[item.param_combo] = 0
 
-    prepared_shuffler = None
+    # #region agent log
+    _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
+    _combo_names = list(null_metrics_by_combo.keys())[:3]
+    _log.write('{"hypothesisId":"H1","location":"permutation_tests.py:init_null","message":"null_metrics_by_combo array ids","data":{"combo_ids":{c: id(null_metrics_by_combo[c]) for c in _combo_names},"n_combos":len(null_metrics_by_combo)},"timestamp":0}\n')
+    _log.close()
+    # #endregion
+
+    prepared_shufflers: object = None
     if permutation_mode == 'candle_shuffle':
         from utils.evaluation.permutation_test.candle_shuffle import _prepare_candle_shuffle
 
-        prepared_shuffler = _prepare_candle_shuffle(candles_prepared)
+        if "ticker" in candles_prepared.columns and candles_prepared["ticker"].nunique() > 1:
+            prepared_shufflers = {
+                ticker: _prepare_candle_shuffle(
+                    candles_prepared[candles_prepared["ticker"] == ticker].copy()
+                )
+                for ticker in candles_prepared["ticker"].unique()
+            }
+        else:
+            prepared_shufflers = _prepare_candle_shuffle(candles_prepared)
 
-    for i in range(nreps):
-        shuffled_candles: pd.DataFrame | None = None
-        if permutation_mode == 'candle_shuffle':
-            assert prepared_shuffler is not None
-            shuffled_candles = prepared_shuffler.permute_with_seed(int(seeds[i]))
+    if n_jobs_reps > 1:
+        stage2_label = (
+            "Stage 2 (candle shuffle)" if permutation_mode == 'candle_shuffle' else "Stage 2 (feature shuffle)"
+        )
+        with _joblib_tqdm(nreps, desc=stage2_label, unit="rep"):
+            rep_results = Parallel(n_jobs=n_jobs_reps, backend="loky")(
+                delayed(_run_one_rep_continuous)(
+                    i,
+                    int(seeds[i]),
+                    candles_prepared,
+                    prepared_shufflers,
+                    items_by_combo,
+                    target,
+                    objective_func,
+                    permutation_mode,
+                    original_features,
+                )
+                for i in range(nreps)
+            )
+        for rep_index, results in sorted(rep_results, key=lambda x: x[0]):
+            for combo_name, (metric, no_trade) in results.items():
+                null_metrics_by_combo[combo_name][rep_index] = metric
+                if no_trade:
+                    no_trade_counts[combo_name] += 1
+        # #region agent log
+        _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
+        _samples = list(null_metrics_by_combo.items())[:2]
+        _log.write('{"hypothesisId":"H2,H4","location":"permutation_tests.py:after_parallel_merge","message":"null sample per combo","data":{"samples":{c: {"id": id(arr), "first3": arr.tolist()[:3], "mean": float(arr.mean())} for c, arr in _samples}},"timestamp":0}\n')
+        _log.close()
+        # #endregion
+    else:
+        stage2_label = (
+            "Stage 2 (candle shuffle)" if permutation_mode == 'candle_shuffle' else "Stage 2 (feature shuffle)"
+        )
+        for i in tqdm(range(nreps), desc=stage2_label, unit="rep"):
+            shuffled_candles_rep: pd.DataFrame | None = None
+            if permutation_mode == 'candle_shuffle':
+                assert prepared_shufflers is not None
+                shuffled_candles_rep = _permute_candles_with_seed(
+                    candles_prepared, int(seeds[i]), prepared_shufflers
+                )
+            seed_i = int(seeds[i])
 
-        for combo_name, item in items_by_combo.items():
-            try:
-                if permutation_mode == 'feature_shuffle':
-                    original_feature = original_features[combo_name]
-                    shuffled_values = np.random.default_rng(int(seeds[i])).permutation(
-                        original_feature.values.copy()
-                    )
-                    shuffled_feature = pd.Series(
-                        shuffled_values,
-                        index=original_feature.index,
-                        name=original_feature.name,
-                    )
-                else:
-                    assert shuffled_candles is not None
-                    shuffled_feature = item.bias_node_extractor(shuffled_candles).reindex(target.index)
+            for combo_name, item in items_by_combo.items():
+                try:
+                    if permutation_mode == 'feature_shuffle':
+                        original_feature = original_features[combo_name]
+                        shuffled_values = np.random.default_rng(seed_i).permutation(
+                            original_feature.values.copy()
+                        )
+                        shuffled_feature = pd.Series(
+                            shuffled_values,
+                            index=original_feature.index,
+                            name=original_feature.name,
+                        )
+                    else:
+                        assert shuffled_candles_rep is not None
+                        shuffled_feature = item.bias_node_extractor(shuffled_candles_rep).reindex(target.index)
 
-                signals, fit_failed = _fit_and_predict(item.binning_model, shuffled_feature, target)
-                if fit_failed:
+                    signals, fit_failed = _fit_and_predict(item.binning_model, shuffled_feature, target)
+                    if fit_failed:
+                        null_metrics_by_combo[combo_name][i] = 0.0
+                        no_trade_counts[combo_name] += 1
+                        continue
+
+                    metric, is_no_trade = _compute_metric_from_signals(signals, target, objective_func)
+                    null_metrics_by_combo[combo_name][i] = metric
+                    if is_no_trade:
+                        no_trade_counts[combo_name] += 1
+                except Exception:
                     null_metrics_by_combo[combo_name][i] = 0.0
                     no_trade_counts[combo_name] += 1
-                    continue
 
-                metric, is_no_trade = _compute_metric_from_signals(signals, target, objective_func)
-                null_metrics_by_combo[combo_name][i] = metric
-                if is_no_trade:
-                    no_trade_counts[combo_name] += 1
-            except Exception:
-                null_metrics_by_combo[combo_name][i] = 0.0
-                no_trade_counts[combo_name] += 1
+        # #region agent log
+        _log = open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a")
+        _samples = list(null_metrics_by_combo.items())[:2]
+        _log.write('{"hypothesisId":"H2,H4","location":"permutation_tests.py:after_seq_merge","message":"null sample per combo","data":{"samples":{c: {"id": id(arr), "first3": arr.tolist()[:3], "mean": float(arr.mean())} for c, arr in _samples}},"timestamp":0}\n')
+        _log.close()
+        # #endregion
 
     return {
         combo_name: _build_pipeline_report(
@@ -352,7 +557,15 @@ def _run_pipeline_permutation_rule_based_batch(
 
     seeds = _derive_permutation_seeds(nreps, random_seed)
     candles_prepared = _prepare_candles_for_shuffler(candles_df)
-    prepared_shuffler = _prepare_candle_shuffle(candles_prepared)
+    if "ticker" in candles_prepared.columns and candles_prepared["ticker"].nunique() > 1:
+        prepared_shufflers: object = {
+            ticker: _prepare_candle_shuffle(
+                candles_prepared[candles_prepared["ticker"] == ticker].copy()
+            )
+            for ticker in candles_prepared["ticker"].unique()
+        }
+    else:
+        prepared_shufflers = _prepare_candle_shuffle(candles_prepared)
 
     original_metrics: dict[str, float] = {}
     null_metrics_by_combo: dict[str, np.ndarray] = {}
@@ -366,8 +579,10 @@ def _run_pipeline_permutation_rule_based_batch(
         null_metrics_by_combo[item.param_combo] = np.empty(nreps, dtype=float)
         no_trade_counts[item.param_combo] = 0
 
-    for i in range(nreps):
-        shuffled_candles = prepared_shuffler.permute_with_seed(int(seeds[i]))
+    for i in tqdm(range(nreps), desc="Stage 2 (candle shuffle)", unit="rep"):
+        shuffled_candles = _permute_candles_with_seed(
+            candles_prepared, int(seeds[i]), prepared_shufflers
+        )
         for combo_name, item in items_by_combo.items():
             try:
                 shuffled_rule = item.rule_extractor(shuffled_candles).reindex(target.index)

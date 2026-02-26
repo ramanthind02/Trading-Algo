@@ -95,9 +95,7 @@ def calculate_strategy_returns_from_positions(
 
     candles_sorted = candles_df.sort_values(['ticker', 'datetime']).copy()
     candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
-    
-    # CRITICAL: Remove microsecond offsets used to distinguish tickers in multi-ticker DataFrames
-    # The positions DataFrame has already been normalized (floor('s')), so we need to match that
+    # Normalize to bar granularity for (datetime, ticker) merge
     candles_sorted['datetime'] = candles_sorted['datetime'].dt.floor('s')
 
     # Compute log returns per ticker (reused for all strategies)
@@ -114,17 +112,7 @@ def calculate_strategy_returns_from_positions(
     # Align positions with the *next* bar's return to avoid lookahead bias.
     positions = positions_df.copy()
     positions['datetime'] = pd.to_datetime(positions['datetime'])
-    # Ensure positions datetime is also normalized (should already be, but ensure consistency)
     positions['datetime'] = positions['datetime'].dt.floor('s')
-    
-    # #region agent log
-    from utils.dev.debug_helpers import safe_json_dumps
-    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
-        # Check date coverage
-        pos_dates = positions.groupby('ticker')['datetime'].apply(lambda x: (x.min(), x.max(), len(x))).to_dict()
-        candles_dates = candles_sorted.groupby('ticker')['datetime'].apply(lambda x: (x.min(), x.max(), len(x))).to_dict()
-        f.write(safe_json_dumps({'location':'portfolio_tester.py:117','message':'date coverage check','data':{'positions_date_range_sample':{k: {'min': str(v[0]), 'max': str(v[1]), 'count': v[2]} for k, v in list(pos_dates.items())[:3]},'candles_date_range_sample':{k: {'min': str(v[0]), 'max': str(v[1]), 'count': v[2]} for k, v in list(candles_dates.items())[:3]}},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'date_gaps'})+'\n')
-    # #endregion
 
     # Merge to find, for each position at time t, the candle row and its next_datetime
     pos_with_next = positions.merge(
@@ -132,14 +120,6 @@ def calculate_strategy_returns_from_positions(
         on=['ticker', 'datetime'],
         how='left',
     )
-    
-    # #region agent log
-    from utils.dev.debug_helpers import safe_json_dumps
-    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
-        # Check how many rows lost next_datetime
-        na_by_ticker = pos_with_next[pos_with_next['next_datetime'].isna()].groupby('ticker').size().to_dict()
-        f.write(safe_json_dumps({'location':'portfolio_tester.py:129','message':'after first merge','data':{'total_rows':len(pos_with_next),'na_next_datetime':int(pos_with_next['next_datetime'].isna().sum()),'na_by_ticker':na_by_ticker},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'date_gaps'})+'\n')
-    # #endregion
 
     # Drop positions that do not have a future bar
     pos_with_next = pos_with_next.dropna(subset=['next_datetime'])
@@ -151,23 +131,6 @@ def calculate_strategy_returns_from_positions(
 
     # Now join with instrument returns at ret_datetime
     returns_df = candles_sorted[['ticker', 'datetime', 'instrument_return']].dropna()
-    
-    # #region agent log
-    from utils.dev.debug_helpers import safe_json_dumps
-    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
-        # Check what we have before second merge
-        pos_by_ticker = pos_with_next.groupby('ticker').size().to_dict()
-        returns_by_ticker = returns_df.groupby('ticker').size().to_dict()
-        # Sample a specific date to see what's available
-        sample_date = pos_with_next['ret_datetime'].iloc[10] if len(pos_with_next) > 10 else None
-        if sample_date:
-            pos_on_date = pos_with_next[pos_with_next['ret_datetime'] == sample_date]['ticker'].tolist()
-            returns_on_date = returns_df[returns_df['datetime'] == sample_date]['ticker'].tolist()
-        else:
-            pos_on_date = []
-            returns_on_date = []
-        f.write(safe_json_dumps({'location':'portfolio_tester.py:139','message':'before second merge','data':{'pos_with_next_rows':len(pos_with_next),'returns_df_rows':len(returns_df),'pos_tickers':len(pos_by_ticker),'returns_tickers':len(returns_by_ticker),'sample_date':str(sample_date) if sample_date else None,'pos_tickers_on_sample_date':pos_on_date,'returns_tickers_on_sample_date':returns_on_date},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'second_merge'})+'\n')
-    # #endregion
 
     merged = pos_with_next.merge(
         returns_df,
@@ -176,13 +139,6 @@ def calculate_strategy_returns_from_positions(
         how='inner',
         suffixes=('', '_ret'),
     )
-    
-    # #region agent log
-    from utils.dev.debug_helpers import safe_json_dumps
-    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
-        merged_by_ticker = merged.groupby('ticker').size().to_dict()
-        f.write(safe_json_dumps({'location':'portfolio_tester.py:149','message':'after second merge','data':{'merged_rows':len(merged),'merged_tickers':len(merged_by_ticker),'rows_by_ticker':merged_by_ticker},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'second_merge'})+'\n')
-    # #endregion
 
     if merged.empty:
         return _empty_returns_series('strategy_return')
@@ -190,17 +146,6 @@ def calculate_strategy_returns_from_positions(
     # Position is signed (1 / -1 / 0); return = position * instrument_return
     merged['strategy_return'] = merged['position_fraction'] * merged['instrument_return']
 
-    # #region agent log
-    from utils.dev.debug_helpers import safe_json_dumps
-    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
-        sample_rows = merged.head(50)[['ticker','ret_datetime','position_fraction','instrument_return','strategy_return']].to_dict('records')
-        # Group by date to count tickers per date
-        tickers_per_date = merged.groupby('ret_datetime')['ticker'].nunique().sort_index()
-        dates_with_1_ticker = (tickers_per_date == 1).sum()
-        dates_with_all_tickers = (tickers_per_date == 23).sum()
-        f.write(safe_json_dumps({'location':'portfolio_tester.py:152','message':'before aggregation','data':{'n_rows':len(merged),'unique_tickers':len(merged['ticker'].unique()),'unique_dates':len(merged['ret_datetime'].unique()),'dates_with_1_ticker':int(dates_with_1_ticker),'dates_with_all_tickers':int(dates_with_all_tickers),'tickers_per_date_stats':{'mean':float(tickers_per_date.mean()),'min':int(tickers_per_date.min()),'max':int(tickers_per_date.max()),'median':float(tickers_per_date.median())},'sample_rows':sample_rows,'instrument_return_stats':{'mean':float(merged['instrument_return'].mean()),'std':float(merged['instrument_return'].std()),'min':float(merged['instrument_return'].min()),'max':float(merged['instrument_return'].max())},'strategy_return_stats':{'mean':float(merged['strategy_return'].mean()),'std':float(merged['strategy_return'].std()),'min':float(merged['strategy_return'].min()),'max':float(merged['strategy_return'].max())}},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'returns_values'})+'\n')
-    # #endregion
-    
     # Group by datetime of the return (ret_datetime) and sum across tickers
     merged['ret_datetime'] = merged['ret_datetime'].astype('datetime64[ns]')
     strategy_returns = (
@@ -208,15 +153,36 @@ def calculate_strategy_returns_from_positions(
         .sum()
         .sort_index()
     )
-    
-    # #region agent log
-    from utils.dev.debug_helpers import safe_json_dumps
-    with open('/home/raman/repos/Trading-Algo/.cursor/debug.log', 'a') as f:
-        f.write(safe_json_dumps({'location':'portfolio_tester.py:158','message':'after aggregation','data':{'n_returns':len(strategy_returns),'return_stats':{'mean':float(strategy_returns.mean()),'std':float(strategy_returns.std()),'min':float(strategy_returns.min()),'max':float(strategy_returns.max()),'abs_max':float(strategy_returns.abs().max())},'sample_returns':strategy_returns.head(20).to_dict()},'timestamp':pd.Timestamp.now().timestamp()*1000,'sessionId':'debug-session','hypothesisId':'returns_values'})+'\n')
-    # #endregion
 
     strategy_returns.name = 'strategy_return'
-    
+
+    # #region agent log
+    try:
+        _pos_n = len(positions_df)
+        _pos_zero = (positions_df["position_fraction"] == 0).sum() if "position_fraction" in positions_df.columns else 0
+        _ret_n = len(strategy_returns)
+        _ret_zero = (strategy_returns == 0.0).sum()
+        _pct_zero_pos = float(_pos_zero) / _pos_n if _pos_n else 0.0
+        _pct_zero_ret = float(_ret_zero) / _ret_n if _ret_n else 0.0
+        with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
+            import json
+            _f.write(
+                json.dumps(
+                    {
+                        "hypothesisId": "B,E",
+                        "location": "portfolio_tester.calculate_strategy_returns_from_positions",
+                        "message": "strategy returns from positions",
+                        "data": {"positions_n": _pos_n, "pct_position_zero": _pct_zero_pos, "returns_n": _ret_n, "pct_returns_zero": _pct_zero_ret},
+                        "timestamp": __import__("time").time() * 1000,
+                    },
+                    default=str,
+                )
+                + "\n"
+            )
+    except Exception:  # noqa: S110
+        pass
+    # #endregion
+
     return strategy_returns
 
 

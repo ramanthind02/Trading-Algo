@@ -25,14 +25,11 @@ from feature_selection.eda.eda_dataclasses import (
     DistributionDiagnostics,
     EDAConfig,
     EDAMetadata,
-    FeatureACF,
-    ICDecay,
     LevelStats,
     PerLevelStats,
     QuintileSpread,
     RuleBasedEDAReport,
     RuleBasedEDAStats,
-    TemporalStability,
 )
 from feature_selection.eda.eda_reporter import (
     _param_combo_hash,
@@ -61,9 +58,7 @@ def _common_stats(
     sample_size: int = 300,
     std: float = 1.0,
     skew: float = 0.0,
-    structural_breaks: list[pd.Timestamp] | None = None,
 ) -> CommonEDAStats:
-    idx = pd.bdate_range("2020-01-01", periods=sample_size)
     base_desc = DescriptiveStats(
         min_val=-1.0,
         max_val=1.0,
@@ -91,20 +86,7 @@ def _common_stats(
     return CommonEDAStats(
         feature_stats=base_desc,
         target_stats=target_desc,
-        temporal_stability=TemporalStability(
-            rolling_correlation=pd.Series(np.zeros(sample_size), index=idx),
-            structural_breaks=structural_breaks or [],
-        ),
         correlation_analysis=CorrelationAnalysis(pearson=0.4, spearman=0.35, lagged_correlations={1: 0.2}),
-        ic_decay=ICDecay(
-            horizons=[1, 5, 10, 21],
-            ic_by_horizon={1: 0.2, 5: 0.15, 10: 0.1, 21: 0.05},
-        ),
-        feature_acf=FeatureACF(
-            lags=np.arange(1, 21, dtype=float),
-            acf_values=np.linspace(0.5, 0.0, 20),
-            pacf_values=np.linspace(0.4, 0.0, 20),
-        ),
     )
 
 
@@ -186,14 +168,6 @@ def test_all_nan_feature_red_flag() -> None:
     )
     assert any("all nan" in red_flag.lower() for red_flag in flags.red_flags)
     assert flags.is_viable is False
-
-
-def test_unstable_rolling_correlation_warning() -> None:
-    flags = compute_diagnostic_flags(
-        _common_stats(structural_breaks=[pd.Timestamp("2021-01-01")]),
-        _continuous_feature_stats(),
-    )
-    assert any("rolling correlation" in warning.lower() for warning in flags.warnings)
 
 
 def test_clean_data_viable() -> None:

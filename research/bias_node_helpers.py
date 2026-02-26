@@ -134,7 +134,6 @@ def test_bias_node(
             ticker=tickers,
             start=start_date,
             end=end_date,
-            use_millisecond_offset=True,
             target_col=target_col,
             use_cache=use_cache,
         )
@@ -347,7 +346,7 @@ def generate_node_tearsheet(
             return None
         positions_df = pd.concat(position_dfs, ignore_index=True)
 
-        # Load candles for all tickers (use same offset convention as multi-ticker features)
+        # Load candles for all tickers (primary key (datetime, ticker))
         if len(tickers) == 1:
             candles_df = helpers.load_data(
                 ticker=tickers[0],
@@ -364,7 +363,6 @@ def generate_node_tearsheet(
                 timeframe=TimeFrame.D,
                 start=start_date,
                 end=end_date,
-                use_millisecond_offset=True,
             )
         if "datetime" not in candles_df.columns and candles_df.index.name == "timestamp":
             candles_df = candles_df.reset_index()

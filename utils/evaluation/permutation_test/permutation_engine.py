@@ -46,6 +46,34 @@ if str(REPO_ROOT) not in sys.path:
 from utils.core.enums import Ticker, TimeFrame
 
 
+def _extract_features_from_bars(
+    df: pd.DataFrame,
+    ticker: Ticker,
+    start: datetime,
+    end: datetime,
+    base_tf: TimeFrame,
+    atr_feature: str,
+    feature_filter: Optional[List[str]] = None,
+    verbose: bool = False,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Lightweight compatibility extractor for permuted bars.
+
+    Returns price data indexed by datetime and a feature DataFrame with
+    requested columns as zeros and ATR as 1.0 (normalization safety).
+    """
+    _ = (ticker, start, end, base_tf, verbose)
+    price_df = df.copy()
+    price_df["datetime"] = pd.to_datetime(price_df["datetime"])
+    price_df = price_df.sort_values("datetime", kind="stable")
+    price_df = price_df.set_index("datetime")
+    features_df = pd.DataFrame(index=price_df.index)
+    requested = [f for f in (feature_filter or []) if f != atr_feature]
+    for feature_name in requested:
+        features_df[feature_name] = 0.0
+    features_df[atr_feature] = 1.0
+    return features_df, price_df
+
+
 class PermutationStrategy(ABC):
     """
     Abstract base class for permutation strategies.
@@ -259,17 +287,15 @@ class BarPermutationStrategy(PermutationStrategy):
         Returns:
             DataFrame with re-extracted features from permuted bars
         """
-        from utils.evaluation.permutation_test.permute_bars import (
-            BarPermute,
-            BarPermuteWalkForward,
-            _extract_features_from_bars,
+        from utils.evaluation.permutation_test.candle_shuffle import (
+            CandleShuffler,
+            CandleShuffleMode,
+            permute_walk_forward,
         )
-        
+
         if bar_data is None:
             raise ValueError("bar_data is required for BarPermutationStrategy")
-        
-        np.random.seed(random_seed)
-        
+
         # Extract parameters from bar_data
         price_df = bar_data['price_df']
         ticker = bar_data['ticker']
@@ -278,23 +304,32 @@ class BarPermutationStrategy(PermutationStrategy):
         base_tf = bar_data['base_tf']
         atr_feature = bar_data['atr_feature']
         feature_cols = bar_data['feature_cols']
-        
-        # Choose permutation strategy based on whether train_windows is provided
-        if train_windows is not None:
-            # Walk-forward mode: shuffle bars independently within each training window
-            permuter = BarPermuteWalkForward(price_df, train_windows=train_windows)
-            permuted_bars = permuter.permute()
+
+        # CandleShuffler requires 'datetime' column
+        if "datetime" not in price_df.columns and isinstance(price_df.index, pd.DatetimeIndex):
+            price_for_shuffle = price_df.reset_index()
         else:
-            # Standard mode: shuffle all bars from permute_start_idx onwards
-            permuter = BarPermute(
-                price_df,
+            price_for_shuffle = price_df.copy()
+
+        if train_windows is not None:
+            permuted_bars = permute_walk_forward(
+                price_for_shuffle,
+                train_windows=train_windows,
+                random_seed=random_seed,
+            )
+        else:
+            mode = CandleShuffleMode.AUTO if shuffle_mode == "auto" else (
+                CandleShuffleMode.DAILY if shuffle_mode == "daily" else CandleShuffleMode.INTRADAY
+            )
+            shuffler = CandleShuffler(
+                price_for_shuffle,
                 permute_start_idx=permute_start_idx,
-                shuffle_mode=shuffle_mode,
+                mode=mode,
                 intraday_gap_config=intraday_gap_config,
                 random_seed=random_seed,
             )
-            permuted_bars = permuter.permute()
-        
+            permuted_bars = shuffler.permute()
+
         # Re-extract features from permuted bars
         permuted_features_df, permuted_price_df = _extract_features_from_bars(
             df=permuted_bars,

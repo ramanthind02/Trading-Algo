@@ -1,12 +1,12 @@
-# feature_research/in_sample/pipeline.py
+# feature_research/pipeline.py
 """Unified EDA pipeline for both continuous and rule-based feature research.
 
-Dispatches on feature_type to handle:
+Shared by in_sample, walkforward, and OOS. Dispatches on feature_type to handle:
   - CONTINUOUS: runs full EDA + optional Phase 2 binning analysis
   - RULE_BASED: runs EDA with fixed 3-level binning (no Phase 2)
 
-Entry point for tests and scripts — import ``run_eda_pipeline`` or
-``run_walkforward_pipeline`` rather than duplicating this logic.
+Entry point for tests and scripts — import ``run_eda_pipeline``,
+``run_walkforward_pipeline``, or ``run_oos_pipeline`` from ``feature_research.pipeline``.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Callable, cast
 
 import matplotlib
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 matplotlib.use("Agg")  # non-interactive backend (safe for scripts and tests)
@@ -26,7 +27,9 @@ if TYPE_CHECKING:
     from feature_research.walkforward.runner import WalkforwardRunReport
     from feature_selection.validation.reports import PermutationTestSuite
 
+from eda.parameter_analysis import generate_parameter_sensitivity_report
 from feature_research.config import FeatureType
+from feature_research.in_sample.metric_helpers import compute_param_sensitivity_metric
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
 from feature_selection.validation.objective_metrics import resolve_objective_metric
@@ -39,7 +42,10 @@ from feature_research.in_sample.data_loader import (
     populate_cache_if_needed,
 )
 from feature_research.walkforward.io import resolve_walkforward_output_dir, write_walkforward_artifacts
-from feature_research.walkforward.runner import run_walkforward_research
+from feature_research.walkforward.runner import (
+    build_fold_rows_from_explicit_specs,
+    run_walkforward_research,
+)
 from feature_research.walkforward.visualization import plot_fold_timeline, plot_selection_stability
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
 from feature_selection.eda.eda_reporter import (
@@ -68,6 +74,13 @@ def _normalize_datetime_index(index: pd.Index) -> pd.DatetimeIndex:
     return datetime_index.tz_localize(None) if datetime_index.tz is not None else datetime_index
 
 
+def _unique_sorted_datetime_index(index: pd.Index) -> pd.DatetimeIndex:
+    """Deduplicate and sort a datetime index. Use for walkforward reference when data has duplicate dates (e.g. multi-ticker)."""
+    normalized = _normalize_datetime_index(index)
+    unique_vals = normalized.unique()
+    return pd.DatetimeIndex(unique_vals).sort_values()
+
+
 def _normalize_series_datetime_index(series: pd.Series) -> pd.Series:
     """Normalize series datetime index to timezone-naive UTC."""
     if not isinstance(series.index, pd.DatetimeIndex):
@@ -80,31 +93,39 @@ def _normalize_series_datetime_index(series: pd.Series) -> pd.Series:
 def _build_continuous_walkforward_evaluator(
     combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame],
     config: "ResearchConfig",
-) -> Callable[..., pd.Series]:
+) -> Callable[..., pd.Series | tuple[pd.Series, dict[str, object]]]:
     """Build evaluator for continuous binning walkforward evaluation.
 
+    Returns a callable that returns (series, {"selected_long_bin": int | None}) so the
+    runner can record which bin was selected per param combo. Strategy is always passed
+    explicitly to the model for long-only runs.
     DISPATCH POINT: Used only for CONTINUOUS feature type.
     """
+    # Long-only: strategy is passed explicitly to model and predict; not overridden here.
+    strategy = config.binning_params.strategy
+
     def evaluate_param_combo(
         fold_candles: pd.DataFrame,
         _fold_target: pd.Series,
         params: dict[str, object],
         *,
         train_end: pd.Timestamp | None = None,
-    ) -> pd.Series:
-        combo_data = combo_feature_target[_combo_key(params)]
+    ) -> tuple[pd.Series, dict[str, object]]:
+        # Lookup feature/target by (lookback, bin_count) only; ignore selected_bin for cache key
+        combo_key = _combo_key({k: v for k, v in params.items() if k != "selected_bin"})
+        combo_data = combo_feature_target[combo_key]
         fold_index_norm = _normalize_datetime_index(fold_candles.index)
         combo_index_norm = _normalize_datetime_index(combo_data.index)
         # reindex() forbids duplicate target labels (multi-ticker folds); select by mask instead.
         in_fold = combo_index_norm.isin(fold_index_norm)
         fold_data = combo_data.loc[in_fold].dropna()
         if fold_data.empty:
-            return pd.Series(dtype=float)
+            return (pd.Series(dtype=float), {"selected_long_bin": None})
 
         train_cutoff = pd.Timestamp(train_end) if train_end is not None else pd.Timestamp(fold_data.index.max())
         train_data = fold_data.loc[fold_data.index <= train_cutoff]
         if train_data.empty:
-            return pd.Series(dtype=float)
+            return (pd.Series(dtype=float), {"selected_long_bin": None})
 
         bin_count = int(cast(int, params.get("bin_count", config.binning_params.bin_counts[0])))
         model = ContinuousBinningModel(
@@ -123,13 +144,27 @@ def _build_continuous_walkforward_evaluator(
             use_coverage_bonus=config.binning_params.use_coverage_bonus,
             coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
             max_coverage_bonus=config.binning_params.max_coverage_bonus,
+            bin_index_min=config.binning_params.bin_index_min,
+            bin_index_max=config.binning_params.bin_index_max,
         )
         try:
             model.fit(train_data["feature"], train_data["target"])
         except ValueError:
-            return pd.Series(dtype=float)
-        signal = model.predict(fold_data["feature"], strategy=config.binning_params.strategy)
-        return _normalize_series_datetime_index(signal.mul(fold_data["target"]))
+            # e.g. no long bin with positive t-stat for long-only model
+            return (pd.Series(dtype=float), {"selected_long_bin": None})
+
+        if "selected_bin" in params:
+            # 3D grid: force signal to the requested bin
+            requested_bin = int(cast(int, params["selected_bin"]))
+            bin_assignments = model._assign_bins(fold_data["feature"])
+            signal = (bin_assignments == requested_bin).astype(float)
+            series = _normalize_series_datetime_index(signal.mul(fold_data["target"]))
+            return (series, {"selected_long_bin": requested_bin})
+
+        selected_long_bin = model.selected_bins_.get("long")
+        signal = model.predict(fold_data["feature"], strategy=strategy)
+        series = _normalize_series_datetime_index(signal.mul(fold_data["target"]))
+        return (series, {"selected_long_bin": selected_long_bin})
 
     return evaluate_param_combo
 
@@ -141,6 +176,7 @@ def _build_rule_based_walkforward_evaluator(
 
     DISPATCH POINT: Used only for RULE_BASED feature type.
     Rule-based simply multiplies feature signal by target (pre-computed returns).
+    Uses mask-based selection so duplicate index labels (e.g. multi-ticker) do not raise.
     """
     def evaluate_param_combo(
         fold_candles: pd.DataFrame,
@@ -148,8 +184,15 @@ def _build_rule_based_walkforward_evaluator(
         params: dict[str, object],
     ) -> pd.Series:
         returns = combo_returns[_combo_key(params)]
-        fold_returns = returns.reindex(fold_candles.index).dropna()
-        return fold_returns if not fold_returns.empty else pd.Series(dtype=float)
+        # reindex() forbids duplicate labels on the target index (e.g. multi-ticker folds)
+        fold_mask = returns.index.isin(fold_candles.index)
+        fold_returns = returns.loc[fold_mask].dropna()
+        if fold_returns.empty:
+            return pd.Series(dtype=float)
+        # One value per date when index had duplicates (e.g. multi-ticker)
+        if fold_returns.index.duplicated().any():
+            fold_returns = fold_returns[~fold_returns.index.duplicated(keep="first")]
+        return fold_returns
 
     return evaluate_param_combo
 
@@ -164,6 +207,35 @@ def _expand_params_with_bin_count(
     if not bin_counts:
         return [dict(params)]
     return [{**params, "bin_count": int(bin_count)} for bin_count in bin_counts]
+
+
+def _expand_params_with_selected_bin(
+    params_list: list[dict[str, object]],
+    *,
+    bin_index_min: int = 0,
+    bin_index_max: int | None = None,
+) -> list[dict[str, object]]:
+    """Expand each param dict to include selected_bin. CONTINUOUS 3D grid.
+
+    When bin_index_max is set, only selected_bin in [bin_index_min, bin_index_max]
+    are emitted; otherwise 0..bin_count-1.
+    """
+    out: list[dict[str, object]] = []
+    for params in params_list:
+        bin_count = params.get("bin_count")
+        if bin_count is None:
+            out.append(dict(params))
+            continue
+        n = int(bin_count)
+        if bin_index_max is not None:
+            start = max(0, bin_index_min)
+            end = min(n, bin_index_max + 1)
+            bin_range = range(start, end)
+        else:
+            bin_range = range(n)
+        for selected_bin in bin_range:
+            out.append({**params, "selected_bin": selected_bin})
+    return out
 
 
 def _build_bin_count_specific_returns(
@@ -189,10 +261,57 @@ def _build_bin_count_specific_returns(
         use_coverage_bonus=config.binning_params.use_coverage_bonus,
         coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
         max_coverage_bonus=config.binning_params.max_coverage_bonus,
+        bin_index_min=config.binning_params.bin_index_min,
+        bin_index_max=config.binning_params.bin_index_max,
     )
     model.fit(feature, target)
     signal = model.predict(feature, strategy=config.binning_params.strategy)
     return _normalize_series_datetime_index(signal.mul(target))
+
+
+def _write_cumsum_plot(
+    returns: pd.Series,
+    output_path: Path,
+    *,
+    title: str,
+) -> None:
+    """Write a simple cumulative-sum plot for already vol-scaled returns."""
+    clean_returns = returns.dropna().sort_index()
+    if clean_returns.empty:
+        return
+
+    cumulative = clean_returns.cumsum()
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(cumulative.index, cumulative.values, linewidth=1.25)
+    ax.axhline(0.0, color="black", linewidth=0.8, alpha=0.6)
+    ax.set_title(title)
+    ax.set_ylabel("Cum sum")
+    ax.grid(alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _write_continuous_in_sample_cumsum_plots(
+    feature: pd.Series,
+    target: pd.Series,
+    combo_output_dir: Path,
+    config: "ResearchConfig",
+    *,
+    label: str,
+) -> None:
+    """Persist in-sample cumulative returns plots for each configured bin_count."""
+    plots_dir = combo_output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    bin_counts = config.binning_params.bin_counts or [config.binning_params.n_bins]
+    for bin_count in sorted({int(bin_count) for bin_count in bin_counts}, reverse=True):
+        returns = _build_bin_count_specific_returns(feature, target, bin_count, config)
+        _write_cumsum_plot(
+            returns=returns,
+            output_path=plots_dir / f"in_sample_cumsum_bin_count_{bin_count}.png",
+            title=f"In-sample cumulative sum ({label}, bin_count={bin_count})",
+        )
 
 
 def run_eda_pipeline(
@@ -288,6 +407,13 @@ def run_eda_pipeline(
             combo_output_dir.mkdir(parents=True, exist_ok=True)
 
             saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
+            _write_continuous_in_sample_cumsum_plots(
+                feature=feature,
+                target=target,
+                combo_output_dir=saved_path,
+                config=config,
+                label=label,
+            )
             results[label] = saved_path
 
             expanded_combo_params = _expand_params_with_bin_count(
@@ -323,6 +449,11 @@ def run_eda_pipeline(
             )
 
         if config.walkforward.enabled and reference_index is not None and successful_param_grid:
+            successful_param_grid = _expand_params_with_selected_bin(
+                successful_param_grid,
+                bin_index_min=config.binning_params.bin_index_min,
+                bin_index_max=config.binning_params.bin_index_max,
+            )
             if reference_target_series is None:
                 reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
             else:
@@ -364,17 +495,32 @@ def run_eda_pipeline(
                     "walkforward_num_steps": config.walkforward.num_steps,
                     "walkforward_top_k": config.walkforward.top_k,
                     "walkforward_selection_method": config.walkforward._effective_selection_method(),
+                    "walkforward_objective_metric_name": config.walkforward.objective_metric_name,
                 },
             )
             plt.close(stability_figure)
             plt.close(timeline_figure)
 
     elif config.feature_type == FeatureType.RULE_BASED:
-        # RULE-BASED: EDA only, no Phase 2 binning analysis
+        # RULE-BASED: EDA only, no Phase 2 binning analysis.
+        # Three-phase approach for large grids:
+        #   Phase 1 — Load all combos, compute metrics, build walkforward data structures.
+        #   Phase 2 — Pre-select ≤ max_eda_output_combos via param sensitivity algorithm.
+        #   Phase 3 — Run EDA and write folders only for selected combos.
         combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
         successful_param_grid: list[dict[str, object]] = []
         reference_index: pd.DatetimeIndex | None = None
 
+        # Phase 1: load all combos -------------------------------------------------
+        combo_store: dict[str, tuple[pd.Series, pd.Series, str]] = {}  # label → (feature, target, feature_col)
+        metric_col = config.binning_params.selection_metric
+        varying_params = [
+            k for k, v in config.bias_spec["params"].items()
+            if isinstance(v, list) and len(v) > 1
+        ]
+        metric_rows: list[dict[str, object]] = []
+
+        print(f"Loading data for {len(expanded)} combos...")
         for single_spec in expanded:
             combo = single_spec["params"]
             label = param_combo_label(combo)
@@ -392,8 +538,99 @@ def run_eda_pipeline(
 
             feature = paired["feature"]
             target = paired["target"]
-            timestamps = pd.DatetimeIndex(feature.index)
 
+            combo_store[label] = (feature, target, feature_col)
+            combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
+            successful_param_grid.append(dict(combo))
+            if reference_index is None:
+                reference_index = _unique_sorted_datetime_index(target.index)
+
+            # Collect metric for param sensitivity pre-selection
+            if varying_params:
+                signals = np.asarray(feature.values == 1).flatten()
+                selected_returns = target.values[signals]
+                if len(selected_returns) >= 5:
+                    try:
+                        metric_value = compute_param_sensitivity_metric(selected_returns, metric_col)
+                        row: dict[str, object] = {
+                            f"param{k + 1}_value": combo[key]
+                            for k, key in enumerate(varying_params)
+                        }
+                        row[metric_col] = metric_value
+                        metric_rows.append(row)
+                    except Exception:
+                        pass  # combo excluded from pre-selection metrics; still loaded
+
+        # Phase 2: pre-select combos for EDA output --------------------------------
+        max_eda_combos = config.param_sensitivity.max_eda_output_combos
+        should_preselect = (
+            max_eda_combos > 0
+            and len(combo_store) > max_eda_combos
+            and varying_params
+            and metric_rows
+        )
+        if should_preselect:
+            ps_df = pd.DataFrame(metric_rows)
+            ps_cfg = config.param_sensitivity
+            fixed_params = {
+                k: v for k, v in config.bias_spec["params"].items() if k not in varying_params
+            }
+            print(
+                f"\nParam sensitivity pre-selection: {len(combo_store)} combos → "
+                f"selecting top {max_eda_combos} for EDA output..."
+            )
+            try:
+                ps_report = generate_parameter_sensitivity_report(
+                    results_df=ps_df,
+                    param_names=varying_params,
+                    metric_col=metric_col,
+                    stability_threshold=ps_cfg.stability_threshold,
+                    top_k=max_eda_combos,
+                    plot_3d_mode="heatmap_slices",  # plots not needed here
+                    use_floor_based_selection=ps_cfg.use_floor_based_selection,
+                    stable_region_config=replace(
+                        ps_cfg.stable_region_config, k_max=max_eda_combos
+                    ),
+                )
+                selected_labels: set[str] = {
+                    param_combo_label({**fixed_params, **dict(zip(varying_params, t))})
+                    for t in ps_report.top_k_combinations
+                }
+                print(
+                    f"Pre-selection complete: {len(selected_labels)}/{len(combo_store)} combos selected"
+                )
+            except Exception as exc:
+                print(f"Pre-selection failed ({exc}); falling back to top-{max_eda_combos} by raw metric")
+                sorted_rows = sorted(
+                    metric_rows, key=lambda r: r.get(metric_col, float("-inf")), reverse=True
+                )
+                selected_labels = {
+                    param_combo_label({
+                        **fixed_params,
+                        **{varying_params[k]: r[f"param{k + 1}_value"] for k in range(len(varying_params))},
+                    })
+                    for r in sorted_rows[:max_eda_combos]
+                }
+        else:
+            selected_labels = set(combo_store.keys())
+
+        # Phase 3: EDA for selected combos only ------------------------------------
+        print(
+            f"\nRunning EDA for {len(selected_labels)}/{len(combo_store)} combos"
+            + (f" (limit={max_eda_combos})" if should_preselect else "")
+            + "..."
+        )
+        for single_spec in expanded:
+            combo = single_spec["params"]
+            label = param_combo_label(combo)
+
+            if label not in combo_store:
+                continue  # failed to load in Phase 1
+            if label not in selected_labels:
+                continue  # filtered out by pre-selection
+
+            feature, target, feature_col = combo_store[label]
+            timestamps = pd.DatetimeIndex(feature.index)
             rolling_window = max(20, min(252, len(feature) // 4))
 
             metadata = EDAMetadata(
@@ -412,11 +649,6 @@ def run_eda_pipeline(
 
             saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
             results[label] = saved_path
-
-            combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
-            successful_param_grid.append(dict(combo))
-            if reference_index is None:
-                reference_index = _normalize_datetime_index(target.index)
 
             stats_by_level = report.rule_stats.per_level_stats.stats_by_level
             level_parts = "  ".join(
@@ -531,6 +763,10 @@ def run_walkforward_pipeline(
 
     # Dispatch on feature_type
     if config.feature_type == FeatureType.CONTINUOUS:
+        # Long-only: BinningAnalysisConfig.strategy should be "long"; not overridden by pipeline.
+        assert config.binning_params.strategy == "long", (
+            "Continuous walkforward expects strategy='long'; got %r" % config.binning_params.strategy
+        )
         combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
         successful_param_grid: list[dict[str, object]] = []
         reference_index: pd.DatetimeIndex | None = None
@@ -578,6 +814,16 @@ def run_walkforward_pipeline(
         if not successful_param_grid or reference_index is None:
             raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
 
+        # Warn if loaded data ends before config.end so 2025 (or later) can be included
+        data_end = pd.Timestamp(reference_index.max()).normalize()
+        config_end = pd.Timestamp(config.end).normalize()
+        if data_end < config_end:
+            print(
+                f"\n  [WARNING] Loaded data ends {data_end.date()}; config.end is {config_end.date()}. "
+                "Last fold will not include 2025. To extend: ensure raw OHLC in data/ohlc_data has "
+                "dates through config.end and run with populate_cache=True once to refresh the cache.\n"
+            )
+
         if reference_target_series is None:
             reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
         else:
@@ -585,6 +831,12 @@ def run_walkforward_pipeline(
         reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
         portfolio_candles = load_candles_for_config(config)
 
+        successful_param_grid = _expand_params_with_selected_bin(
+            successful_param_grid,
+            bin_index_min=config.binning_params.bin_index_min,
+            bin_index_max=config.binning_params.bin_index_max,
+        )
+        print(f"  Param grid (3D): {len(successful_param_grid)} combos (lookback × bin_count × selected_bin).\n", flush=True)
         walkforward_report = run_walkforward_research(
             candles_df=reference_candles,
             target=reference_target,
@@ -601,8 +853,10 @@ def run_walkforward_pipeline(
 
     elif config.feature_type == FeatureType.RULE_BASED:
         combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
+        combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
         successful_param_grid: list[dict[str, object]] = []
         reference_index: pd.DatetimeIndex | None = None
+        reference_target_series: pd.Series | None = None
 
         for single_spec in expanded:
             combo = single_spec["params"]
@@ -621,17 +875,34 @@ def run_walkforward_pipeline(
 
             feature = paired["feature"]
             target = paired["target"]
-            combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
+            feat_norm = _normalize_series_datetime_index(feature)
+            tgt_norm = _normalize_series_datetime_index(target)
+            if feat_norm.index.duplicated().any():
+                feat_norm = feat_norm.groupby(level=0).first()
+            if tgt_norm.index.duplicated().any():
+                tgt_norm = tgt_norm.groupby(level=0).first()
+
+            key = _combo_key(combo)
+            combo_returns[key] = _normalize_series_datetime_index(feat_norm.mul(tgt_norm))
+            combo_feature_target[key] = pd.DataFrame({"feature": feat_norm, "target": tgt_norm})
             successful_param_grid.append(dict(combo))
             if reference_index is None:
-                reference_index = _normalize_datetime_index(target.index)
+                reference_index = _unique_sorted_datetime_index(target.index)
+                reference_target_series = tgt_norm.reindex(reference_index).fillna(0.0)
+                reference_target_series.name = "walkforward_target"
             print(f"  [{label}] loaded n={len(feature):,}")
 
         if not successful_param_grid or reference_index is None:
             raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
 
-        reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+        reference_target = (
+            reference_target_series
+            if reference_target_series is not None
+            else pd.Series(0.0, index=reference_index, name="walkforward_target")
+        )
         reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
+        # Portfolio simulation and tearsheets need real multi-ticker OHLCV candles.
+        portfolio_candles_df = load_candles_for_config(config)
 
         walkforward_report = run_walkforward_research(
             candles_df=reference_candles,
@@ -641,6 +912,9 @@ def run_walkforward_pipeline(
             config=config.walkforward,
             param_grid=successful_param_grid,
             evaluate_param_combo=_build_rule_based_walkforward_evaluator(combo_returns),
+            research_config=config,
+            portfolio_candles_df=portfolio_candles_df,
+            feature_data_by_combo=combo_feature_target,
             output_dir=output_dir,
         )
 
@@ -689,6 +963,221 @@ def run_walkforward_pipeline(
         f"-> walkforward artifacts written to {config.walkforward.output_root}\n"
     )
     return walkforward_report
+
+
+def run_oos_pipeline(config: "ResearchConfig") -> "WalkforwardRunReport":
+    """Run out-of-sample validation with a single fold from config.oos_window.
+
+    Reuses the same evaluation/selection logic as walkforward; only the fold
+    boundaries come from config.oos_window. Uses global defaults (top_k,
+    objective_metric_name, selection_method). Data range is extended to cover
+    oos_window.train_start through oos_window.test_end when loading.
+    """
+    if config.oos_window is None:
+        raise ValueError("OOS window is not set (config.oos_window is None). Set it in feature_research.config.load_config().")
+    oos = config.oos_window
+    data_start = min(config.start, oos.train_start)
+    data_end = max(config.end, oos.test_end)
+    config_oos = replace(config, start=data_start, end=data_end)
+    output_dir = resolve_walkforward_output_dir(
+        feature_type=config.feature_type.value,
+        module_name=str(config.bias_spec["module_name"]),
+        root_dir=config.walkforward.output_root,
+        output_subdir="oos",
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    populate_cache_if_needed(config_oos)
+
+    expanded = expand_bias_specs(config.bias_spec)
+    feature_type_label = config.feature_type.value.upper()
+    print(f"\n{'='*64}")
+    print(f"OOS Pipeline: {config.bias_spec['module_name'].upper()} ({feature_type_label})")
+    print(f"Tickers : {[t.name for t in config.tickers]}")
+    print(f"OOS train: {oos.train_start.date()} -> {oos.train_end.date()}")
+    print(f"OOS test : {oos.test_start.date()} -> {oos.test_end.date()}")
+    print(f"Combos  : {len(expanded)}")
+    print(f"{'='*64}\n")
+
+    if config.feature_type == FeatureType.CONTINUOUS:
+        combo_feature_target: dict[tuple[tuple[str, object], ...], pd.DataFrame] = {}
+        successful_param_grid: list[dict[str, object]] = []
+        reference_index: pd.DatetimeIndex | None = None
+        reference_target_series: pd.Series | None = None
+
+        for single_spec in expanded:
+            combo = single_spec["params"]
+            label = param_combo_label(combo)
+            data = load_features_for_combo(single_spec, config_oos)
+            if data is None:
+                print(f"  [{label}] SKIP -- no data")
+                continue
+            feature, target, _ = data
+            paired = pd.DataFrame({"feature": feature, "target": target}).dropna()
+            if paired.empty:
+                print(f"  [{label}] SKIP -- aligned feature/target empty")
+                continue
+            feature = paired["feature"]
+            target = paired["target"]
+            expanded_combo_params = _expand_params_with_bin_count(
+                params=dict(combo),
+                bin_counts=config.binning_params.bin_counts,
+            )
+            normalized_feature = _normalize_series_datetime_index(feature)
+            normalized_target = _normalize_series_datetime_index(target)
+            for combo_params in expanded_combo_params:
+                combo_bin_count = int(
+                    cast(int, combo_params.get("bin_count", config.binning_params.bin_counts[0]))
+                )
+                combo_feature_target[_combo_key(combo_params)] = pd.DataFrame(
+                    {"feature": normalized_feature, "target": normalized_target}
+                )
+                successful_param_grid.append(combo_params)
+            if reference_index is None:
+                reference_index = _normalize_datetime_index(target.index)
+                reference_target_series = normalized_target.reindex(reference_index)
+            print(f"  [{label}] loaded n={len(feature):,}")
+
+        if not successful_param_grid or reference_index is None:
+            raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
+        if reference_target_series is None:
+            reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+        else:
+            reference_target = reference_target_series.fillna(0.0).rename("walkforward_target")
+        reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
+        portfolio_candles = load_candles_for_config(config_oos)
+        fold_rows = build_fold_rows_from_explicit_specs(
+            reference_index,
+            [(oos.train_start, oos.train_end, oos.test_start, oos.test_end)],
+            min_fold_samples=config.walkforward.min_fold_samples,
+        )
+        if not fold_rows:
+            raise ValueError(
+                "OOS fold has insufficient samples. Check oos_window dates and data range."
+            )
+        successful_param_grid = _expand_params_with_selected_bin(
+            successful_param_grid,
+            bin_index_min=config.binning_params.bin_index_min,
+            bin_index_max=config.binning_params.bin_index_max,
+        )
+        walkforward_report = run_walkforward_research(
+            candles_df=reference_candles,
+            target=reference_target,
+            feature_type="continuous",
+            module_name=str(config.bias_spec["module_name"]),
+            config=config.walkforward,
+            param_grid=successful_param_grid,
+            evaluate_param_combo=_build_continuous_walkforward_evaluator(combo_feature_target, config),
+            research_config=config,
+            portfolio_candles_df=portfolio_candles,
+            feature_data_by_combo=combo_feature_target,
+            output_dir=output_dir,
+            fold_rows_override=fold_rows,
+        )
+    elif config.feature_type == FeatureType.RULE_BASED:
+        combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
+        successful_param_grid = []
+        reference_index = None
+
+        for single_spec in expanded:
+            combo = single_spec["params"]
+            label = param_combo_label(combo)
+            data = load_features_for_combo(single_spec, config_oos)
+            if data is None:
+                print(f"  [{label}] SKIP -- no data")
+                continue
+            feature, target, _ = data
+            paired = pd.DataFrame({"feature": feature, "target": target}).dropna()
+            if paired.empty:
+                print(f"  [{label}] SKIP -- aligned feature/target empty")
+                continue
+            feature = paired["feature"]
+            target = paired["target"]
+            combo_returns[_combo_key(combo)] = _normalize_series_datetime_index(feature.mul(target))
+            successful_param_grid.append(dict(combo))
+            if reference_index is None:
+                reference_index = _unique_sorted_datetime_index(target.index)
+            print(f"  [{label}] loaded n={len(feature):,}")
+
+        if not successful_param_grid or reference_index is None:
+            raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
+        reference_target = pd.Series(0.0, index=reference_index, name="walkforward_target")
+        reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
+        fold_rows = build_fold_rows_from_explicit_specs(
+            reference_index,
+            [(oos.train_start, oos.train_end, oos.test_start, oos.test_end)],
+            min_fold_samples=config.walkforward.min_fold_samples,
+        )
+        if not fold_rows:
+            raise ValueError(
+                "OOS fold has insufficient samples. Check oos_window dates and data range."
+            )
+        walkforward_report = run_walkforward_research(
+            candles_df=reference_candles,
+            target=reference_target,
+            feature_type="rule_based",
+            module_name=str(config.bias_spec["module_name"]),
+            config=config.walkforward,
+            param_grid=successful_param_grid,
+            evaluate_param_combo=_build_rule_based_walkforward_evaluator(combo_returns),
+            output_dir=output_dir,
+            fold_rows_override=fold_rows,
+        )
+    else:
+        raise ValueError(f"Unknown feature_type: {config.feature_type}")
+
+    stability_figure, _ = plot_selection_stability(
+        selection_summary_df=walkforward_report.selection_summary_df,
+        top_k=config.walkforward.top_k,
+    )
+    timeline_figure, _ = plot_fold_timeline(folds_df=walkforward_report.folds_df)
+    write_walkforward_artifacts(
+        report=walkforward_report,
+        walkforward_stability_figure=stability_figure,
+        fold_timeline_figure=timeline_figure,
+        feature_type=config.feature_type.value,
+        module_name=str(config.bias_spec["module_name"]),
+        root_dir=config.walkforward.output_root,
+        research_context={
+            "tickers": [ticker.name for ticker in config.tickers],
+            "period_start": str(oos.train_start.date()),
+            "period_end": str(oos.test_end.date()),
+            "target_col": config.target_col,
+            "strategy": config.strategy,
+            "oos_train_start": str(oos.train_start.date()),
+            "oos_train_end": str(oos.train_end.date()),
+            "oos_test_start": str(oos.test_start.date()),
+            "oos_test_end": str(oos.test_end.date()),
+            "walkforward_top_k": config.walkforward.top_k,
+            "walkforward_selection_method": config.walkforward._effective_selection_method(),
+        },
+        output_subdir="oos",
+    )
+    plt.close(stability_figure)
+    plt.close(timeline_figure)
+    print(f"\nDone. OOS artifacts written to {output_dir}\n")
+    return walkforward_report
+
+
+def run_continuous_walkforward_pipeline(
+    config: "ResearchConfig",
+    output_dir: Path,
+) -> "WalkforwardRunReport":
+    """Run walkforward for CONTINUOUS features. Convenience alias for ``run_walkforward_pipeline``.
+
+    Equivalent to calling ``run_walkforward_pipeline`` with a CONTINUOUS ``ResearchConfig``.
+    """
+    return run_walkforward_pipeline(config, output_dir)
+
+
+def run_rule_based_walkforward_pipeline(
+    config: "ResearchConfig",
+    output_dir: Path,
+) -> "WalkforwardRunReport":
+    """Run walkforward for RULE_BASED features. Convenience alias for ``run_walkforward_pipeline``.
+
+    Equivalent to calling ``run_walkforward_pipeline`` with a RULE_BASED ``ResearchConfig``.
+    """
+    return run_walkforward_pipeline(config, output_dir)
 
 
 def _build_fold_structure(
@@ -805,8 +1294,8 @@ def run_permutation_pipeline(
     DISPATCHES on feature_type to determine binning model factory and param grid
     (continuous: expand by bin_count).
     """
-    if not config.permutation_suite.enabled:
-        raise ValueError("Permutation suite is disabled; set config.permutation_suite.enabled=True.")
+    if not config.in_sample_permutation.enabled:
+        raise ValueError("Permutation suite is disabled; set config.in_sample_permutation.enabled=True.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     populate_cache_if_needed(config)
@@ -869,27 +1358,27 @@ def run_permutation_pipeline(
         return feature.rename(feature_name)
 
     permutation_config = PermutationTestConfig(
-        nreps=config.permutation_suite.nreps,
-        alpha=config.permutation_suite.alpha,
-        metric_threshold=config.permutation_suite.metric_threshold,
-        top_k=config.permutation_suite.top_k,
-        random_seed=config.permutation_suite.random_seed,
-        permutation_mode_stage2=config.permutation_suite.permutation_mode_stage2,
-        min_folds_stable=config.permutation_suite.min_folds_stable,
-        n_jobs_stage2_reps=config.permutation_suite.n_jobs_stage2_reps,
-        run_stage1=config.permutation_suite.run_stage1,
-        run_stage2=config.permutation_suite.run_stage2,
+        nreps=config.in_sample_permutation.nreps,
+        alpha=config.in_sample_permutation.alpha,
+        metric_threshold=config.in_sample_permutation.metric_threshold,
+        top_k=config.in_sample_permutation.top_k,
+        random_seed=config.in_sample_permutation.random_seed,
+        permutation_mode_stage2=config.in_sample_permutation.permutation_mode_stage2,
+        min_folds_stable=config.in_sample_permutation.min_folds_stable,
+        n_jobs_stage2_reps=config.in_sample_permutation.n_jobs_stage2_reps,
+        run_stage1=config.in_sample_permutation.run_stage1,
+        run_stage2=config.in_sample_permutation.run_stage2,
         run_stage3_walkforward=False,
         out_of_sample=OutOfSamplePermutationConfig(
-            objective_metric=config.permutation_suite.objective_metric,
+            objective_metric=config.in_sample_permutation.objective_metric,
             run_oos_permutation=False,
         ),
     )
-    objective_func = resolve_objective_metric(config.permutation_suite.objective_metric)
+    objective_func = resolve_objective_metric(config.in_sample_permutation.objective_metric)
     fold_structure = _build_fold_structure(
         config.start,
         config.end,
-        config.permutation_suite.fold_years,
+        config.in_sample_permutation.fold_years,
     )
 
     # Dispatch on feature_type for binning model factory
@@ -914,6 +1403,8 @@ def run_permutation_pipeline(
                 use_coverage_bonus=bp.use_coverage_bonus,
                 coverage_bonus_per_10pct=bp.coverage_bonus_per_10pct,
                 max_coverage_bonus=bp.max_coverage_bonus,
+                bin_index_min=bp.bin_index_min,
+                bin_index_max=bp.bin_index_max,
             )
     else:
         def binning_model_factory(_params: dict[str, Any]) -> None:

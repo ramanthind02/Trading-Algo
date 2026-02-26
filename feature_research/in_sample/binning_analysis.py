@@ -85,6 +85,10 @@ def run_binning_analysis_pipeline(
     use_coverage_bonus = params.get("use_coverage_bonus", False)
     coverage_bonus_per_10pct = float(params.get("coverage_bonus_per_10pct", 0.02))
     max_coverage_bonus = float(params.get("max_coverage_bonus", 0.2))
+    bin_index_min = int(params.get("bin_index_min", 0))
+    bin_index_max = params.get("bin_index_max")  # None = no cap
+    if bin_index_max is not None:
+        bin_index_max = int(bin_index_max)
     max_regions = int(params.get("max_regions", 1))
     direction_filter = str(params.get("direction_filter", "both"))
 
@@ -118,6 +122,8 @@ def run_binning_analysis_pipeline(
             long_clip_max=float(params.get("long_clip_max", 2.0)),
             short_clip_min=float(params.get("short_clip_min", 0.5)),
             short_clip_max=float(params.get("short_clip_max", 2.0)),
+            bin_index_min=bin_index_min,
+            bin_index_max=bin_index_max,
         )
         model.fit(feature, target)
 

@@ -193,20 +193,49 @@ class BaseModel:
         # Multi-member container: list of (member_name, binning_model) tuples
         # Each member is an independent binning model that can be fitted on the same features
         self.members: List[Tuple[str, BinningModelBase]] = []
-    
-    def add_member(self, name: str, binning_model: BinningModelBase) -> None:
+        # Optional: member_name -> feature_column for per-member feature columns (DataFrame input)
+        self._member_feature_columns: Dict[str, str] = {}
+
+    def add_member(
+        self,
+        name: str,
+        binning_model: BinningModelBase,
+        feature_column: Optional[str] = None,
+    ) -> None:
         """
         Add a member model to this base model.
-        
+
         Parameters
         ----------
         name : str
             Unique identifier for this member
         binning_model : BinningModelBase
             The binning model instance to add as a member
+        feature_column : str, optional
+            Feature column name for this member. When provided, emit_member_signals(feature_data=pd.DataFrame)
+            will use feature_data[feature_column] for this member. If None, the member uses the primary
+            feature (single Series or first column) when feature_data is provided.
         """
         self.members.append((name, binning_model))
-    
+        if feature_column is not None:
+            self._member_feature_columns[name] = feature_column
+
+    def get_member_feature_columns(self) -> List[str]:
+        """
+        Return the list of feature column names used by members (for ensemble required_columns).
+
+        Returns the primary feature_column if set, plus each member's feature_column when
+        provided via add_member(..., feature_column=...). Deduplicated and order-preserving.
+        """
+        columns: List[str] = []
+        if self.feature_column:
+            columns.append(self.feature_column)
+        for _name, _bm in self.members:
+            col = self._member_feature_columns.get(_name)
+            if col and col not in columns:
+                columns.append(col)
+        return columns
+
     def __getattr__(self, name: str) -> Any:
         """
         Delegate attribute access to binning_model for compatibility.
@@ -267,8 +296,8 @@ class BaseModel:
         """
         Extract feature from tracked bias node outputs.
         
-        For multi-ticker models, aggregates feature values across tickers by base datetime
-        (removing millisecond offsets) using mean aggregation.
+        For multi-ticker models, aggregates feature values across tickers by bar datetime
+        (primary key (datetime, ticker)) using mean aggregation.
         
         Returns feature values in the order candles were added.
         The feature column name is standardized using build_feature_column_name().
@@ -1023,23 +1052,29 @@ class BaseModel:
 
     def emit_member_signals(
         self,
-        feature_data: Optional[pd.Series] = None,
-        strategy: str = "long"
+        feature_data: Optional[Union[pd.Series, pd.DataFrame]] = None,
+        strategy: str = "long",
     ) -> pd.DataFrame:
         """
         Emit flattened member-level signal outputs.
-        
+
         For each member in self.members, generates predictions and combines them
         into a DataFrame with member names as columns.
-        
+
+        When feature_data is a DataFrame, each member uses its own feature column
+        when set via add_member(..., feature_column=...); otherwise the first
+        column or primary feature_column is used. When feature_data is a Series,
+        it is used for all members (or for the primary model when no members).
+
         Parameters
         ----------
-        feature_data : pd.Series, optional
-            Feature data for prediction. If not provided, uses the training feature data
-            from the primary binning model (for backward compatibility).
+        feature_data : pd.Series or pd.DataFrame, optional
+            Feature data for prediction. If DataFrame, columns should match
+            member feature columns (or primary). If not provided, uses the
+            training feature data from the primary binning model (backward compat).
         strategy : str, default='long'
             Strategy to use: 'long', 'short', or 'long_short'
-            
+
         Returns
         -------
         pd.DataFrame
@@ -1052,31 +1087,61 @@ class BaseModel:
                     "No members defined and no feature_data provided. "
                     "Either add members or provide feature_data."
                 )
-            predictions_df = pd.DataFrame({
-                self.feature_column or "default": self.binning_model.predict(feature_data, strategy=strategy)
-            })
+            series = (
+                feature_data.iloc[:, 0]
+                if isinstance(feature_data, pd.DataFrame) and not feature_data.empty
+                else feature_data
+            )
+            if not isinstance(series, pd.Series):
+                series = pd.Series(feature_data) if hasattr(feature_data, "__len__") else feature_data
+            predictions_df = pd.DataFrame(
+                {
+                    self.feature_column or "default": self.binning_model.predict(
+                        series, strategy=strategy
+                    )
+                }
+            )
             return predictions_df
-        
+
         member_signals: Dict[str, pd.Series] = {}
-        
+
         for member_name, binning_model in self.members:
             if not binning_model.is_fitted_:
                 logger.warning(f"Member {member_name} is not fitted, skipping")
                 continue
-            
+
             if feature_data is not None:
-                signal = binning_model.predict(feature_data, strategy=strategy)
-            elif hasattr(binning_model, '_training_feature_data'):
+                if isinstance(feature_data, pd.DataFrame):
+                    col = self._member_feature_columns.get(
+                        member_name, self.feature_column
+                    )
+                    if col is not None and col in feature_data.columns:
+                        series = feature_data[col]
+                    elif len(feature_data.columns) > 0:
+                        series = feature_data.iloc[:, 0]
+                    else:
+                        logger.warning(
+                            f"Member {member_name}: no feature column in DataFrame, skipping"
+                        )
+                        continue
+                else:
+                    series = feature_data
+                signal = binning_model.predict(series, strategy=strategy)
+            elif hasattr(binning_model, "_training_feature_data"):
                 signal = binning_model.get_fitted_vector(strategy=strategy)
             else:
-                logger.warning(f"Member {member_name} has no training data, skipping")
+                logger.warning(
+                    f"Member {member_name} has no training data, skipping"
+                )
                 continue
-            
+
             member_signals[member_name] = signal
-        
+
         if not member_signals:
-            raise ValueError("No valid member signals to emit. Ensure members are fitted.")
-        
+            raise ValueError(
+                "No valid member signals to emit. Ensure members are fitted."
+            )
+
         return pd.DataFrame(member_signals)
 
     def save_to_vault(

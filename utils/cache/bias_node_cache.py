@@ -160,19 +160,17 @@ class BiasNodeCache:
     ) -> None:
         if start is not None and not self._warned_partial_start:
             if cache_start > start + pd.Timedelta(days=1):
-                logger.warning(
+                logger.debug(
                     f"Partial cache coverage for {self.module_name} ({self.ticker_str}, {self.tf_str}). "
-                    f"Cache starts at {cache_start}, requested {start}. "
-                    f"Proceeding with available data."
+                    f"Cache starts at {cache_start}, requested {start}. Proceeding with available data."
                 )
                 self._warned_partial_start = True
-        
+
         if end is not None and not self._warned_partial_end:
             if cache_end < end - pd.Timedelta(days=1):
-                logger.warning(
+                logger.debug(
                     f"Partial cache coverage for {self.module_name} ({self.ticker_str}, {self.tf_str}). "
-                    f"Cache ends at {cache_end}, requested {end}. "
-                    f"Proceeding with available data."
+                    f"Cache ends at {cache_end}, requested {end}. Proceeding with available data."
                 )
                 self._warned_partial_end = True
 
@@ -292,7 +290,7 @@ class BiasNodeCache:
         Raises
         ------
         CacheMissError
-            If cache file does not exist
+            If cache file does not exist or is invalid
         FileNotFoundError
             If cache file cannot be read
         """
@@ -304,6 +302,27 @@ class BiasNodeCache:
                 tf=self.tf,
                 cache_path=self.cache_path,
                 reason="Cache file does not exist"
+            )
+
+        # Treat zero-byte parquet files as cache misses
+        # These typically result from interrupted writes or disk issues.
+        file_size = self._cache_path.stat().st_size
+        if file_size == 0:
+            logger.warning(
+                f"Cache file {self.cache_path} is empty (0 bytes). "
+                f"Invalidating and treating as cache miss."
+            )
+            self.invalidate()
+            raise CacheMissError(
+                module_name=self.module_name,
+                params=self.params,
+                ticker=self.ticker,
+                tf=self.tf,
+                cache_path=self.cache_path,
+                reason=(
+                    "Cache file was empty (0 bytes) and has been invalidated. "
+                    "Likely from an interrupted write; rerun cache_manager.populate_cache()."
+                )
             )
 
         try:

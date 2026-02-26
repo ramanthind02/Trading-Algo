@@ -68,13 +68,13 @@ class Test1DNeighborSmoothing(unittest.TestCase):
         })
 
     def test_output_columns_present(self):
-        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino")
+        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino", self_weight=1.0)
         self.assertIn("smoothed_sortino", result.columns)
         self.assertIn("stability_ratio", result.columns)
         self.assertIn("n_neighbors", result.columns)
 
     def test_boundary_neighbors_count(self):
-        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino")
+        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino", self_weight=1.0)
         # First and last rows have 1 neighbor each
         self.assertEqual(result.iloc[0]["n_neighbors"], 1)
         self.assertEqual(result.iloc[-1]["n_neighbors"], 1)
@@ -83,14 +83,15 @@ class Test1DNeighborSmoothing(unittest.TestCase):
             self.assertEqual(result.iloc[i]["n_neighbors"], 2)
 
     def test_smoothed_values(self):
-        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino")
+        # self_weight=1.0 for equal-weight (self + neighbors) to match expected values
+        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino", self_weight=1.0)
         # First row: mean(0.5, 0.6) = 0.55
         self.assertAlmostEqual(result.iloc[0]["smoothed_sortino"], 0.55, places=10)
         # Second row: mean(0.6, 0.5, 0.8) = 0.6333...
         self.assertAlmostEqual(result.iloc[1]["smoothed_sortino"], np.mean([0.6, 0.5, 0.8]), places=10)
 
     def test_stability_ratio_computation(self):
-        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino")
+        result = compute_neighbor_smoothing(self.df, ["lookback"], "sortino", self_weight=1.0)
         for _, row in result.iterrows():
             raw = row["sortino"]
             smoothed = row["smoothed_sortino"]
@@ -103,13 +104,13 @@ class Test1DNeighborSmoothing(unittest.TestCase):
             "param1_value": [1, 2, 3],
             "metric": [0.0, 0.5, 1.0],
         })
-        result = compute_neighbor_smoothing(df, ["p"], "metric")
+        result = compute_neighbor_smoothing(df, ["p"], "metric", self_weight=1.0)
         # raw=0 at index 0 → stability_ratio = NaN
         self.assertTrue(np.isnan(result.iloc[0]["stability_ratio"]))
 
     def test_immutability(self):
         original = self.df.copy()
-        compute_neighbor_smoothing(self.df, ["lookback"], "sortino")
+        compute_neighbor_smoothing(self.df, ["lookback"], "sortino", self_weight=1.0)
         pd.testing.assert_frame_equal(self.df, original)
 
 

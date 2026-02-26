@@ -68,12 +68,12 @@ def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
     raw_timeframe = timeframes[0] if isinstance(timeframes, list) else timeframes
     timeframe = TimeFrame[raw_timeframe] if isinstance(raw_timeframe, str) else raw_timeframe
 
+    # Primary key is (datetime, ticker); no millisecond offsets
     candles_df = load_data_multi_ticker(
         tickers=config.tickers,
         timeframe=timeframe,
         start=config.start,
         end=config.end,
-        use_millisecond_offset=True,
     )
 
     normalized = candles_df.copy()
@@ -118,6 +118,10 @@ def param_combo_label(combo: dict[str, Any]) -> str:
 def populate_cache_if_needed(config: "ResearchConfig") -> None:
     """Populate the feature cache if config.populate_cache is True.
 
+    Invariant: cache population always uses all possible data (full date range
+    discovered from OHLC parquet files), not config.start/end. This avoids
+    partial cache when config is later extended.
+
     Safe to call even if cache already exists — ``overwrite_existing=False``
     means only missing entries are computed.
 
@@ -129,14 +133,19 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
     if not config.populate_cache:
         return
 
-    project_root = next(
-        (
-            parent
-            for parent in Path(__file__).resolve().parents
-            if (parent / "pyproject.toml").exists()
-        ),
-        Path(__file__).resolve().parents[3],
-    )
+    # Resolve the repository root in the same way as run_is.py:
+    # walk up until we find either a pyproject.toml or a .git directory.
+    this_file = Path(__file__).resolve()
+    search_root = this_file.parent
+    project_root: Path | None = None
+    for parent in (search_root, *search_root.parents):
+        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
+            project_root = parent
+            break
+    if project_root is None:
+        # Fallback to the workspace-level default (kept for safety)
+        project_root = this_file.parents[3]
+
     candle_dir = project_root / "data" / "ohlc_data"
     if not candle_dir.exists():
         print(
@@ -147,11 +156,31 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
 
     manager = CacheManager(candle_dir=str(candle_dir))
     expanded = expand_bias_specs(config.bias_spec)
+
+    # Invariant: use full available data range from OHLC, not config dates
+    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
+    timeframes = [
+        TimeFrame[t] if isinstance(t, str) else t
+        for t in (timeframes_raw if isinstance(timeframes_raw, list) else [timeframes_raw])
+    ]
+    date_range = manager.get_available_date_range(tickers=config.tickers, timeframes=timeframes)
+    if date_range is not None:
+        start_date, end_date = date_range
+        print(
+            f"[data_loader] Populating cache with full OHLC range: {start_date.date()} -> {end_date.date()}"
+        )
+    else:
+        start_date = config.start
+        end_date = config.end
+        print(
+            f"[data_loader] Could not discover OHLC date range; using config: {start_date.date()} -> {end_date.date()}"
+        )
+
     summary = manager.populate_cache(
         bias_node_specs=expanded,
         tickers=config.tickers,
-        start_date=config.start,
-        end_date=config.end,
+        start_date=start_date,
+        end_date=end_date,
         show_progress=True,
         overwrite_existing=False,
     )
@@ -194,7 +223,6 @@ def load_features_for_combo(
         ticker=config.tickers,
         start=config.start,
         end=config.end,
-        use_millisecond_offset=True,
         target_col=config.target_col,
         use_cache=config.use_cache,
         candles_override=candles_override,

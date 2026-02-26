@@ -79,10 +79,11 @@ def test_load_features_for_combo_rejects_raw_return_with_multi_ticker(
         return features_df, targets_df
 
     monkeypatch.setattr(
-        "feature_research.in_sample.continuous_binning.data_loader.extract_features_for_bias_node",
+        "feature_research.in_sample.data_loader.extract_features_for_bias_node",
         _fake_extract_features_for_bias_node,
     )
 
+    from feature_research.config import FeatureType
     config = cast(
         ResearchConfig,
         SimpleNamespace(
@@ -91,6 +92,7 @@ def test_load_features_for_combo_rejects_raw_return_with_multi_ticker(
             end=None,
             target_col="log_return",
             use_cache=False,
+            feature_type=FeatureType.CONTINUOUS,
         ),
     )
 

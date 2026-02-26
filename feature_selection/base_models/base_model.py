@@ -13,6 +13,8 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from feature_selection.validation.objective_metrics import metric_calmar, metric_profit_factor
+
 
 class BinningModelBase(ABC):
     """Abstract base class for binning models."""
@@ -83,6 +85,28 @@ class BinningModelBase(ABC):
         self.fit_config_ = {}
         self.is_fitted_ = False
 
+    def clone(self) -> BinningModelBase:
+        """Return a new unfitted instance with the same constructor arguments.
+
+        Cheaper than copy.deepcopy when only a fresh template is needed (e.g.
+        permutation tests). Subclasses with extra __init__ args should override
+        and call super().clone() or pass through their own args.
+        """
+        return type(self)(
+            n_bins=self.n_bins,
+            selection_metric=self.selection_metric,
+            normalize_by=self.normalize_by,
+            strategy=self.strategy,
+            metric_threshold=self.metric_threshold,
+            t_threshold=self.t_threshold,
+            min_region_width=self.min_region_width,
+            shrinkage_k=self.shrinkage_k,
+            long_clip_min=self.long_clip_min,
+            long_clip_max=self.long_clip_max,
+            short_clip_min=self.short_clip_min,
+            short_clip_max=self.short_clip_max,
+        )
+
     def _normalize_feature(
         self,
         feature_data: pd.Series,
@@ -113,12 +137,26 @@ class BinningModelBase(ABC):
         bins = np.digitize(feature_data.to_numpy(), np.asarray(self.bin_edges_, dtype=float))
         return pd.Series(bins, index=feature_data.index, dtype=int)
 
+    def _predict_bin_key(self, bin_idx: int) -> int:
+        """Convert assigned bin index to position_multipliers key.
+
+        np.digitize (used in _assign_bins) returns 1-based indices; multipliers
+        from qcut/cut use 0-based keys. Subclasses that use 0-based _assign_bins
+        (e.g. RuleBasedModel) should override to return bin_idx unchanged.
+        """
+        return bin_idx - 1
+
     def _extract_bin_edges(self, df: pd.DataFrame, ordered_bins: List[int]) -> List[float]:
         if len(ordered_bins) <= 1:
             return []
 
+        # Add small epsilon to bin edges to properly separate bins during np.digitize.
+        # For binary/discrete signals (e.g., 0/1 rule-based features), without epsilon
+        # both values map to the same digitize index, causing all predictions to have
+        # the same multiplier. The epsilon ensures proper bin boundary separation.
+        eps = 1e-9
         maxima = [
-            float(df.loc[df["bin"] == bin_idx, "feature"].max())
+            float(df.loc[df["bin"] == bin_idx, "feature"].max()) + eps
             for bin_idx in ordered_bins[:-1]
         ]
         return maxima
@@ -162,6 +200,10 @@ class BinningModelBase(ABC):
 
             sortino_long = self._calculate_sortino(returns)
             sortino_short = self._calculate_sortino(-returns)
+            calmar_long = float(metric_calmar(returns, annualization_factor=252.0))
+            calmar_short = float(metric_calmar(-returns, annualization_factor=252.0))
+            profit_factor_long = float(metric_profit_factor(returns))
+            profit_factor_short = float(metric_profit_factor(-returns))
 
             if self.selection_metric == "sharpe":
                 metric_long = sharpe
@@ -175,10 +217,16 @@ class BinningModelBase(ABC):
             elif self.selection_metric == "sortino":
                 metric_long = sortino_long
                 metric_short = sortino_short
+            elif self.selection_metric == "calmar":
+                metric_long = calmar_long
+                metric_short = calmar_short
+            elif self.selection_metric == "profit_factor":
+                metric_long = profit_factor_long
+                metric_short = profit_factor_short
             else:
                 raise ValueError(
                     f"Unknown selection_metric: {self.selection_metric}. "
-                    "Use 'sharpe', 'mean', 't_stat', or 'sortino'."
+                    "Use 'sharpe', 'mean', 't_stat', 'sortino', 'calmar', or 'profit_factor'."
                 )
 
             stats[int(bin_idx)] = {
@@ -189,6 +237,12 @@ class BinningModelBase(ABC):
                 "adjusted_sharpe": adjusted_sharpe,
                 "adjusted_sharpe_short": -adjusted_sharpe,
                 "t_stat": t_stat,
+                "sortino_long": sortino_long,
+                "sortino_short": sortino_short,
+                "calmar_long": calmar_long,
+                "calmar_short": calmar_short,
+                "profit_factor_long": profit_factor_long,
+                "profit_factor_short": profit_factor_short,
                 "selection_metric_long": float(metric_long),
                 "selection_metric_short": float(metric_short),
                 "feature_min": float(bin_data["feature"].min()),
@@ -389,7 +443,9 @@ class BinningModelBase(ABC):
         bins = self._assign_bins(feature_data)
         multipliers = self.position_multipliers_by_strategy_.get(normalized_strategy, {})
 
-        raw = bins.map(lambda bin_idx: float(multipliers.get(int(bin_idx), 0.0))).astype(float)
+        raw = bins.map(
+            lambda bin_idx: float(multipliers.get(self._predict_bin_key(int(bin_idx)), 0.0))
+        ).astype(float)
         raw.index = feature_data.index
 
         if not scaled or self.normalize_by is None:

@@ -6,9 +6,9 @@ from typing import Any
 
 import pandas as pd
 
-from feature_extraction import feature_extractor
-from feature_research.in_sample.continuous_binning import data_loader as continuous_data_loader
-from feature_research.in_sample.rule_based import data_loader as rule_based_data_loader
+import feature_extraction.feature_extractor as feature_extractor
+from feature_research.config import FeatureType
+from feature_research.in_sample import data_loader as in_sample_data_loader
 from utils.core.enums import TimeFrame, Ticker
 
 
@@ -168,16 +168,18 @@ def test_extract_features_with_forward_returns_normalizes_override_datetimes_to_
     assert str(seen["tz"]) == "UTC"
 
 
-def test_extract_features_with_forward_returns_applies_multi_ticker_offsets_to_override(monkeypatch: Any) -> None:
+def test_extract_features_with_forward_returns_multi_ticker_aligns_on_datetime_ticker(monkeypatch: Any) -> None:
+    """Primary key is (datetime, ticker); no millisecond offsets. All tickers align on bar datetime."""
     override = _sample_multi_ticker_override_candles()
-    idx = pd.DatetimeIndex(
+    # Bar datetimes (no offset): same timestamp for ES and NQ per bar
+    bar_dts = pd.DatetimeIndex(
         [
             pd.Timestamp("2024-01-01", tz="UTC"),
             pd.Timestamp("2024-01-02", tz="UTC"),
             pd.Timestamp("2024-01-03", tz="UTC"),
-            pd.Timestamp("2024-01-01 00:00:00.001", tz="UTC"),
-            pd.Timestamp("2024-01-02 00:00:00.001", tz="UTC"),
-            pd.Timestamp("2024-01-03 00:00:00.001", tz="UTC"),
+            pd.Timestamp("2024-01-01", tz="UTC"),
+            pd.Timestamp("2024-01-02", tz="UTC"),
+            pd.Timestamp("2024-01-03", tz="UTC"),
         ]
     )
 
@@ -186,16 +188,16 @@ def test_extract_features_with_forward_returns_applies_multi_ticker_offsets_to_o
         if module_name == "atr":
             return pd.DataFrame(
                 {"atr_252": [0.2] * 6, "ticker": ["ES", "ES", "ES", "NQ", "NQ", "NQ"]},
-                index=idx,
+                index=bar_dts,
             ), pd.DataFrame()
         if module_name == "ewsd":
             return pd.DataFrame(
                 {"ewsd_63": [1.0] * 6, "ticker": ["ES", "ES", "ES", "NQ", "NQ", "NQ"]},
-                index=idx,
+                index=bar_dts,
             ), pd.DataFrame()
         return pd.DataFrame(
             {"feat": [1.0, 2.0, 3.0, 11.0, 12.0, 13.0], "ticker": ["ES", "ES", "ES", "NQ", "NQ", "NQ"]},
-            index=idx,
+            index=bar_dts,
         ), pd.DataFrame()
 
     seen: dict[str, Any] = {}
@@ -204,7 +206,8 @@ def test_extract_features_with_forward_returns_applies_multi_ticker_offsets_to_o
         candles_df: pd.DataFrame,
         features_df: pd.DataFrame | None = None,
     ) -> pd.DataFrame:
-        seen["nq_datetimes"] = candles_df[candles_df["ticker"] == "NQ"]["datetime"].tolist()
+        seen["candles_df"] = candles_df
+        # Return targets keyed by same (datetime, ticker) as features
         return pd.DataFrame(
             {
                 "raw_return": [0.01] * 6,
@@ -213,21 +216,25 @@ def test_extract_features_with_forward_returns_applies_multi_ticker_offsets_to_o
                 "log_return_ewsd": [1.0] * 6,
                 "ticker": ["ES", "ES", "ES", "NQ", "NQ", "NQ"],
             },
-            index=idx,
+            index=bar_dts,
         )
 
     monkeypatch.setattr(feature_extractor, "extract_features", _fake_extract_features)
     monkeypatch.setattr(feature_extractor, "compute_forward_returns", _fake_compute_forward_returns)
 
-    feature_extractor.extract_features_with_forward_returns(
+    feat_df, tgt_df = feature_extractor.extract_features_with_forward_returns(
         module_name="rsi",
         params={"lookback": 14},
         ticker=[Ticker.ES, Ticker.NQ],
-        use_millisecond_offset=True,
         candles_override=override,
     )
 
-    assert seen["nq_datetimes"][0] == pd.Timestamp("2024-01-01 00:00:00.001", tz="UTC")
+    # Candles passed to compute_forward_returns use bar datetime (no offset)
+    nq_dts = seen["candles_df"].loc[seen["candles_df"]["ticker"] == "NQ", "datetime"]
+    assert nq_dts.iloc[0] == pd.Timestamp("2024-01-01", tz="UTC")
+    # Result has both tickers
+    assert set(feat_df["ticker"].unique()) == {"ES", "NQ"}
+    assert len(feat_df) == 6
 
 
 def test_extract_features_with_forward_returns_rejects_invalid_override_schema(monkeypatch: Any) -> None:
@@ -309,7 +316,6 @@ def test_extract_features_with_forward_returns_errors_when_ticker_is_dropped_aft
             module_name="rsi",
             params={"lookback": 14},
             ticker=[Ticker.ES, Ticker.NQ],
-            use_millisecond_offset=True,
             candles_override=override,
         )
     except ValueError as exc:
@@ -328,7 +334,7 @@ def test_continuous_loader_forwards_candles_override(monkeypatch: Any) -> None:
         return _aligned_feature_target()
 
     monkeypatch.setattr(
-        continuous_data_loader,
+        in_sample_data_loader,
         "extract_features_for_bias_node",
         _fake_extract_features_for_bias_node,
     )
@@ -339,9 +345,10 @@ def test_continuous_loader_forwards_candles_override(monkeypatch: Any) -> None:
         end=datetime(2024, 1, 10),
         target_col="log_return",
         use_cache=False,
+        feature_type=FeatureType.CONTINUOUS,
     )
 
-    result = continuous_data_loader.load_features_for_combo(
+    result = in_sample_data_loader.load_features_for_combo(
         single_combo_spec={"module_name": "rsi", "params": {"lookback": 14}, "timeframes": [TimeFrame.D]},
         config=config,
         candles_override=override,
@@ -359,7 +366,7 @@ def test_rule_based_loader_default_behavior_without_override(monkeypatch: Any) -
         return _aligned_feature_target()
 
     monkeypatch.setattr(
-        rule_based_data_loader,
+        in_sample_data_loader,
         "extract_features_for_bias_node",
         _fake_extract_features_for_bias_node,
     )
@@ -370,9 +377,10 @@ def test_rule_based_loader_default_behavior_without_override(monkeypatch: Any) -
         end=datetime(2024, 1, 10),
         target_col="log_return",
         use_cache=False,
+        feature_type=FeatureType.RULE_BASED,
     )
 
-    result = rule_based_data_loader.load_features_for_combo(
+    result = in_sample_data_loader.load_features_for_combo(
         single_combo_spec={"module_name": "rsi", "params": {"lookback": 14}, "timeframes": [TimeFrame.D]},
         config=config,
     )
@@ -390,7 +398,7 @@ def test_rule_based_loader_forwards_candles_override(monkeypatch: Any) -> None:
         return _aligned_feature_target()
 
     monkeypatch.setattr(
-        rule_based_data_loader,
+        in_sample_data_loader,
         "extract_features_for_bias_node",
         _fake_extract_features_for_bias_node,
     )
@@ -401,9 +409,10 @@ def test_rule_based_loader_forwards_candles_override(monkeypatch: Any) -> None:
         end=datetime(2024, 1, 10),
         target_col="log_return",
         use_cache=False,
+        feature_type=FeatureType.RULE_BASED,
     )
 
-    result = rule_based_data_loader.load_features_for_combo(
+    result = in_sample_data_loader.load_features_for_combo(
         single_combo_spec={"module_name": "rsi", "params": {"lookback": 14}, "timeframes": [TimeFrame.D]},
         config=config,
         candles_override=override,

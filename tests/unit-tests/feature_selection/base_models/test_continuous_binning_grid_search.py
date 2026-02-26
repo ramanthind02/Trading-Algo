@@ -186,3 +186,67 @@ def test_empty_bin_candidates_handled() -> None:
     # Should have long bin but may not have short bin (all t-stats positive)
     assert model.selected_bins_["long"] is not None
     # selected_bins_["short"] may be None if no negative t-stats exist
+
+
+def test_long_only_fit_raises_when_no_positive_t_stat_bin() -> None:
+    """When strategy is long and all bins have negative t-stat, fit raises."""
+    # Strong negative correlation: every bin has negative mean return (no long bin)
+    np.random.seed(42)
+    feature = pd.Series(np.linspace(0, 10, 1000), name="f")
+    # All bins get negative mean: -0.05 in each bin (no noise so t-stat clearly negative)
+    target = pd.Series(-0.05 + np.random.randn(1000) * 0.001, name="t")
+
+    model = ContinuousBinningModel(
+        bin_counts=[5],
+        strategy="long",
+        t_threshold=0.0,
+    )
+    with pytest.raises(ValueError, match="No long bin with positive t-stat"):
+        model.fit(feature, target)
+
+
+def test_short_t_stat_raw_not_abs_for_long_short_score() -> None:
+    """Score for long_short uses max(long_t_stat, -short_t_stat); short is raw (negative)."""
+    np.random.seed(43)
+    # Feature with one tail positive returns (long), one tail negative (short)
+    feature = pd.Series(np.linspace(-2, 2, 1000), name="f")
+    target = pd.Series(
+        np.where(feature > 0.5, 0.05, np.where(feature < -0.5, -0.05, 0.0))
+        + np.random.randn(1000) * 0.01,
+        name="t",
+    )
+    model = ContinuousBinningModel(
+        bin_counts=[5],
+        strategy="long_short",
+        t_threshold=0.0,
+    )
+    model.fit(feature, target)
+    # Should have both long and short bins; selected_bins_ stores raw indices
+    assert model.selected_bins_["long"] is not None
+    assert model.selected_bins_["short"] is not None
+
+
+def test_bin_index_max_restricts_selection_to_range() -> None:
+    """When bin_index_max=3, selected long bin must be in [0, 3] even if best t-stat is in bin 5."""
+    np.random.seed(44)
+    # 10 quantile bins; make bin 5 (middle) have the highest positive t-stat
+    n = 1000
+    feature = pd.Series(np.linspace(0, 1, n), name="f")
+    target = pd.Series(np.random.randn(n) * 0.01, name="t")
+    # Boost returns in the middle (roughly bin 4 or 5 with 10 bins)
+    mid = (feature >= 0.45) & (feature <= 0.55)
+    target = target.where(~mid, 0.08)
+
+    model = ContinuousBinningModel(
+        bin_counts=[10],
+        strategy="long",
+        t_threshold=0.0,
+        bin_index_min=0,
+        bin_index_max=3,
+    )
+    model.fit(feature, target)
+    assert model.is_fitted_
+    assert model.selected_bins_["long"] is not None
+    assert 0 <= model.selected_bins_["long"] <= 3
+    assert model.fit_config_["bin_index_min"] == 0
+    assert model.fit_config_["bin_index_max"] == 3
