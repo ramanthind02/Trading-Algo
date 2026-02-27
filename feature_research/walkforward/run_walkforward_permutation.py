@@ -73,6 +73,7 @@ from feature_research.walkforward.portfolio_evaluator import (
 )
 from feature_research.walkforward.permutation_core import (
     _compute_fixed_oos_signal_by_fold,
+    _compute_rule_based_oos_signal_by_fold,
     run_vector_shuffle_null,
 )
 from feature_research.walkforward.runner import (
@@ -582,13 +583,25 @@ def main() -> int:
     if effective_mode == "vector_shuffle":
         unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
         fixed_oos_signal_by_fold = None
+        # Compute fixed OOS signals (no refitting in null loop)
         if feature_data_by_combo is not None:
+            # Continuous features: pre-computed feature data available
             fixed_oos_signal_by_fold = _compute_fixed_oos_signal_by_fold(
                 fold_rows=fold_rows,
                 selection_summary_df=report0.selection_summary_df,
                 reference_target=reference_target,
                 research_config=config,
                 feature_data_by_combo=feature_data_by_combo,
+            )
+        else:
+            # Rule-based features: build models once, extract signals
+            print("Computing rule-based OOS signals (one-time)...")
+            fixed_oos_signal_by_fold = _compute_rule_based_oos_signal_by_fold(
+                fold_rows=fold_rows,
+                reference_candles=reference_candles,
+                reference_target=reference_target,
+                selection_summary_df=report0.selection_summary_df,
+                research_config=config,
             )
         canonical_oos_index = agg_returns.dropna().index if agg_returns is not None else None
         print(f"Running vector shuffle null (nreps={nreps})...")
