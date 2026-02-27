@@ -43,6 +43,7 @@ from feature_research.config import FeatureType
 from feature_research.in_sample.config import load_config
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
+    get_available_date_ranges_for_tickers,
     get_tickers_with_coverage_for_config,
     load_candles_for_config,
     load_features_for_combo,
@@ -73,7 +74,7 @@ from feature_research.walkforward.portfolio_evaluator import (
 )
 from feature_research.walkforward.permutation_core import (
     _compute_fixed_oos_signal_by_fold,
-    _compute_rule_based_oos_signal_by_fold,
+    run_return_shuffle_null_vectorized,
     run_vector_shuffle_null,
 )
 from feature_research.walkforward.runner import (
@@ -136,18 +137,31 @@ def _load_research_data(config: object) -> tuple[
     """
     from feature_research.config import FeatureType as FT
 
+    original_tickers = list(config.tickers)
     covered_tickers = get_tickers_with_coverage_for_config(config)
-    if len(covered_tickers) < len(config.tickers):
-        dropped = set(config.tickers) - set(covered_tickers)
+    if len(covered_tickers) < len(original_tickers):
+        dropped = set(original_tickers) - set(covered_tickers)
         print(
             f"[walkforward_permutation] Tickers without full date coverage for "
             f"{config.start.date()}–{config.end.date()} dropped: {[t.name for t in dropped]}"
         )
     config = replace(config, tickers=covered_tickers)
     if not config.tickers:
+        ranges = get_available_date_ranges_for_tickers(
+            replace(config, tickers=original_tickers), original_tickers
+        )
+        hint = (
+            " Available ranges: "
+            + ", ".join(
+                f"{t.name}: {r[0].date()}–{r[1].date()}" for t, r in ranges.items()
+            )
+            + ". Narrow config.start/end or oos_window.test_end to match."
+            if ranges
+            else " Check data/ohlc_data or narrow config.start/end."
+        )
         raise ValueError(
-            "No tickers have OHLC data covering the config date range. "
-            "Check data/ohlc_data or narrow config.start/end."
+            "No tickers have OHLC data covering the config date range."
+            + hint
         )
 
     populate_cache_if_needed(config)
@@ -581,11 +595,9 @@ def main() -> int:
 
     agg_returns = getattr(report0, "aggregate_oos_returns", None)
     if effective_mode == "vector_shuffle":
-        unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
-        fixed_oos_signal_by_fold = None
-        # Compute fixed OOS signals (no refitting in null loop)
         if feature_data_by_combo is not None:
-            # Continuous features: pre-computed feature data available
+            # Continuous features: vector shuffle with fixed feature signals (vectorized, ~50k reps/sec)
+            unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
             fixed_oos_signal_by_fold = _compute_fixed_oos_signal_by_fold(
                 fold_rows=fold_rows,
                 selection_summary_df=report0.selection_summary_df,
@@ -593,35 +605,37 @@ def main() -> int:
                 research_config=config,
                 feature_data_by_combo=feature_data_by_combo,
             )
-        else:
-            # Rule-based features: build models once, extract signals
-            print("Computing rule-based OOS signals (one-time)...")
-            fixed_oos_signal_by_fold = _compute_rule_based_oos_signal_by_fold(
-                fold_rows=fold_rows,
+            canonical_oos_index = agg_returns.dropna().index if agg_returns is not None else None
+            print(f"Running vector shuffle null for continuous (nreps={nreps})...")
+            null_metrics = run_vector_shuffle_null(
                 reference_candles=reference_candles,
                 reference_target=reference_target,
-                selection_summary_df=report0.selection_summary_df,
+                fold_rows=fold_rows,
+                unit1_mask=unit1_mask,
+                unit2_mask=unit2_mask,
+                nreps=nreps,
+                random_seed=random_seed,
+                initial_report=report0,
                 research_config=config,
+                feature_data_by_combo=feature_data_by_combo,
+                portfolio_candles_df=portfolio_candles_df,
+                n_jobs=n_jobs,
+                fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
+                objective_metric_name=objective_metric_name,
+                canonical_oos_index=canonical_oos_index,
             )
-        canonical_oos_index = agg_returns.dropna().index if agg_returns is not None else None
-        print(f"Running vector shuffle null (nreps={nreps})...")
-        null_metrics = run_vector_shuffle_null(
-            reference_candles=reference_candles,
-            reference_target=reference_target,
-            fold_rows=fold_rows,
-            unit1_mask=unit1_mask,
-            unit2_mask=unit2_mask,
-            nreps=nreps,
-            random_seed=random_seed,
-            initial_report=report0,
-            research_config=config,
-            feature_data_by_combo=feature_data_by_combo,
-            portfolio_candles_df=portfolio_candles_df,
-            n_jobs=n_jobs,
-            fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-            objective_metric_name=objective_metric_name,
-            canonical_oos_index=canonical_oos_index,
-        )
+        else:
+            # Rule-based features: return shuffle with pre-computed OOS returns (vectorized, ~50k reps/sec)
+            # No signal extraction or model refitting needed; shuffle the temporal order of returns
+            if agg_returns is None or agg_returns.empty:
+                raise ValueError("Stage 1 (vector shuffle) for rule-based requires aggregate_oos_returns from original run")
+            print(f"Running return shuffle null for rule-based (nreps={nreps})...")
+            null_metrics = run_return_shuffle_null_vectorized(
+                aggregate_oos_returns=agg_returns,
+                nreps=nreps,
+                random_seed=random_seed,
+                objective_metric_name=objective_metric_name,
+            )
     else:
         print(f"Running candle shuffle null (nreps={nreps})...")
         null_metrics = run_candle_shuffle_null(

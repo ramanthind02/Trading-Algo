@@ -205,121 +205,6 @@ def run_vector_shuffle_null_vectorized(
     return null_metrics
 
 
-def _compute_rule_based_oos_signal_by_fold(
-    fold_rows: list[dict],
-    reference_candles: pd.DataFrame,
-    reference_target: pd.Series,
-    selection_summary_df: pd.DataFrame,
-    research_config: object,
-) -> dict[int, pd.Series]:
-    """Compute per-fold OOS signals for rule-based features.
-
-    Builds the selected rule-based portfolio for each fold (once, with real target)
-    and extracts OOS signals (portfolio positions). No refitting in null loop.
-
-    Parameters
-    ----------
-    fold_rows : list[dict]
-        Fold metadata with train_start, train_end, test_start, test_end.
-    reference_candles : pd.DataFrame
-        Full candle data (OHLCV).
-    reference_target : pd.Series
-        Target return series.
-    selection_summary_df : pd.DataFrame
-        Selected param combinations per fold.
-    research_config : object
-        Research configuration with binning_params, tickers, bias_spec, etc.
-
-    Returns
-    -------
-    dict[int, pd.Series]
-        OOS signals (portfolio positions) per fold ID.
-    """
-    from feature_research.walkforward.portfolio_evaluator import (
-        ensure_portfolio_candle_columns,
-        evaluate_fold_portfolio,
-    )
-
-    result: dict[int, pd.Series] = {}
-
-    if "datetime" in reference_candles.columns:
-        all_datetimes = pd.to_datetime(reference_candles["datetime"], utc=False)
-    else:
-        all_datetimes = pd.DatetimeIndex(reference_candles.index)
-    if getattr(all_datetimes, "tz", None) is not None:
-        all_datetimes = all_datetimes.tz_localize(None)
-
-    # Get config parameters
-    tickers = getattr(research_config, "tickers", [])
-    bias_spec = getattr(research_config, "bias_spec", {}) or {}
-    module_name = str(bias_spec.get("module_name", "rsi")) if hasattr(bias_spec, "get") else "rsi"
-    timeframes = bias_spec.get("timeframes", [None]) if hasattr(bias_spec, "get") else [None]
-    tf_raw = timeframes[0] if timeframes else None
-    trading_timeframe = (
-        _normalize_timeframe(tf_raw) if tf_raw is not None else TimeFrame.D
-    )
-    binning_config = getattr(research_config, "binning_params", None)
-    feature_type = _resolve_feature_type(research_config)
-
-    for fold_row in fold_rows:
-        fold_id = int(fold_row["fold_id"])
-        summary = selection_summary_df.loc[selection_summary_df["fold_id"] == fold_id]
-        if summary.empty:
-            continue
-
-        selected_params = _parse_top_k_param_labels(str(summary.iloc[0]["top_k_features"]))
-        if not selected_params:
-            continue
-
-        if all(key in fold_row for key in ("train_start", "train_end", "test_start", "test_end")):
-            train_start = pd.Timestamp(fold_row["train_start"])
-            train_end = pd.Timestamp(fold_row["train_end"])
-            test_start = pd.Timestamp(fold_row["test_start"])
-            test_end = pd.Timestamp(fold_row["test_end"])
-            train_mask = (all_datetimes >= train_start) & (all_datetimes <= train_end)
-            test_mask = (all_datetimes >= test_start) & (all_datetimes <= test_end)
-        else:
-            train_mask = cast(pd.Series, fold_row["_train_mask"])
-            test_mask = cast(pd.Series, fold_row["_test_mask"])
-
-        train_candles = reference_candles.loc[train_mask].copy()
-        test_candles = reference_candles.loc[test_mask].copy()
-
-        try:
-            wf_cfg = getattr(research_config, "walkforward", None)
-            from feature_research.walkforward.runner import (
-                _resolve_weight_layer_config,
-                _resolve_member_prediction_mode,
-            )
-            weight_layer_config = _resolve_weight_layer_config(wf_cfg)
-            member_prediction_mode = _resolve_member_prediction_mode(wf_cfg)
-
-            fold_result = evaluate_fold_portfolio(
-                train_candles=train_candles,
-                test_candles=test_candles,
-                selected_params=selected_params,
-                target_series=reference_target,
-                binning_config=binning_config,
-                tickers=list(tickers),
-                trading_timeframe=trading_timeframe,
-                module_name=module_name,
-                objective_metric_name=getattr(research_config.walkforward, "objective_metric_name", "sharpe"),
-                weight_layer_config=weight_layer_config,
-                member_prediction_mode=member_prediction_mode,
-                feature_data_by_combo=None,  # Rule-based: no pre-computed features
-                feature_type=feature_type,
-            )
-        except Exception:
-            continue
-
-        # Extract OOS signal from portfolio returns
-        oos_signal = fold_result.oos_portfolio_returns
-        if oos_signal is not None and not oos_signal.empty:
-            result[fold_id] = oos_signal
-
-    return result
-
-
 def _compute_fixed_oos_signal_by_fold(
     fold_rows: list[dict],
     selection_summary_df: pd.DataFrame,
@@ -461,6 +346,76 @@ def aggregate_signal_target_returns(
     if not collected:
         return pd.Series(dtype=float)
     return pd.concat(collected, axis=0).sort_index()
+
+
+def run_return_shuffle_null_vectorized(
+    aggregate_oos_returns: pd.Series,
+    nreps: int,
+    random_seed: int | None,
+    objective_metric_name: str = "sharpe",
+) -> np.ndarray:
+    """Vectorized return shuffle: all nreps shuffles at once, ~50k reps/sec.
+
+    Generates all nreps shuffled return series as a (nreps, N) matrix and
+    applies the objective metric vectorized across axis=1. No model fits,
+    no signals, no joblib needed. Suitable for rule-based features where
+    the test hypothesis is: "does the temporal order of OOS returns matter?"
+
+    Parameters
+    ----------
+    aggregate_oos_returns : pd.Series
+        Pre-computed OOS returns from the original walkforward run.
+    nreps : int
+        Number of null replicates.
+    random_seed : int or None
+        Seed for reproducibility.
+    objective_metric_name : str
+        Metric to apply to each shuffled return series.
+
+    Returns
+    -------
+    np.ndarray
+        Shape (nreps,); metric value for each replicate.
+    """
+    clean = aggregate_oos_returns.dropna()
+    if clean.empty:
+        return np.zeros(nreps, dtype=float)
+
+    oos_vals = clean.values.copy()  # shape (N,)
+    n = len(oos_vals)
+
+    rng = np.random.default_rng(random_seed)
+    # All shuffles at once: (nreps, N) — each row is a random permutation of oos_vals
+    perm = rng.random((nreps, n)).argsort(axis=1)  # (nreps, N) permutation indices
+    all_returns = oos_vals[perm]  # (nreps, N) — all shuffled return series
+
+    # Apply metric vectorized (same as run_vector_shuffle_null_vectorized)
+    if objective_metric_name == "sharpe":
+        means = all_returns.mean(axis=1)
+        stds = all_returns.std(axis=1, ddof=0)
+        null_metrics = np.where(stds > 0, means / stds, 0.0)
+    elif objective_metric_name == "mean_return":
+        null_metrics = all_returns.mean(axis=1)
+    elif objective_metric_name == "t_stat":
+        means = all_returns.mean(axis=1)
+        stds = all_returns.std(axis=1, ddof=0)
+        null_metrics = np.where(stds > 0, means / stds * np.sqrt(n), 0.0)
+    elif objective_metric_name == "sortino":
+        means = all_returns.mean(axis=1)
+        neg_mask = all_returns < 0
+        downside_sq = np.where(neg_mask, all_returns ** 2, 0.0).mean(axis=1)
+        downside_std = np.sqrt(downside_sq)
+        null_metrics = np.where(downside_std > 0, means / downside_std, 0.0)
+    else:
+        # Fallback: apply metric_fn to each row (slower)
+        metric_fn = resolve_objective_metric(objective_metric_name)
+        null_metrics = np.array(
+            [metric_fn(pd.Series(all_returns[i])) for i in range(nreps)],
+            dtype=float
+        )
+
+    null_metrics = np.where(np.isfinite(null_metrics), null_metrics, 0.0)
+    return null_metrics
 
 
 def _one_vector_shuffle_rep_fixed_signal(
