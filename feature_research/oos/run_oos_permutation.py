@@ -105,7 +105,7 @@ def main() -> int:
     n_jobs = (
         args.n_jobs
         if args.n_jobs is not None
-        else getattr(perm_cfg, "n_jobs_walkforward_reps", 1)
+        else getattr(perm_cfg, "n_jobs_stage1_reps", 1)
     )
     # When config says run_stage1=False, skip vector shuffle and run candle shuffle (stage 2) only.
     run_stage1 = getattr(perm_cfg, "run_stage1", True)

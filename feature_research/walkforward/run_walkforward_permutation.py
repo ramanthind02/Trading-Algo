@@ -44,6 +44,7 @@ from feature_research.config import FeatureType
 from feature_research.in_sample.config import load_config
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
+    get_tickers_with_coverage_for_config,
     load_candles_for_config,
     load_features_for_combo,
     param_combo_label,
@@ -133,6 +134,20 @@ def _load_research_data(config: object) -> tuple[
     Shared by walkforward and OOS permutation scripts.
     """
     from feature_research.config import FeatureType as FT
+
+    covered_tickers = get_tickers_with_coverage_for_config(config)
+    if len(covered_tickers) < len(config.tickers):
+        dropped = set(config.tickers) - set(covered_tickers)
+        print(
+            f"[walkforward_permutation] Tickers without full date coverage for "
+            f"{config.start.date()}–{config.end.date()} dropped: {[t.name for t in dropped]}"
+        )
+    config = replace(config, tickers=covered_tickers)
+    if not config.tickers:
+        raise ValueError(
+            "No tickers have OHLC data covering the config date range. "
+            "Check data/ohlc_data or narrow config.start/end."
+        )
 
     populate_cache_if_needed(config)
     expanded = expand_bias_specs(config.bias_spec)
@@ -508,7 +523,7 @@ def main() -> int:
     n_jobs = (
         args.n_jobs
         if args.n_jobs is not None
-        else getattr(perm_cfg, "n_jobs_walkforward_reps", 1)
+        else getattr(perm_cfg, "n_jobs_stage1_reps", 1)
     )
     # When config says run_stage1=False, skip vector shuffle and run candle shuffle (stage 2) only.
     run_stage1 = getattr(perm_cfg, "run_stage1", True)
