@@ -360,18 +360,21 @@ def _compute_rule_based_oos_signal_by_fold(
         if not selected_params:
             continue
 
-        # Slice candles using stored masks (same as run_portfolio_simulation), else timestamp fallback
-        if "_train_mask" in fold_row and "_test_mask" in fold_row:
-            train_candles = candles_for_fitting[fold_row["_train_mask"]]
-            test_candles = candles_for_fitting[fold_row["_test_mask"]]
+        # Slice candles using timestamps (masks are built on different index)
+        train_start = pd.Timestamp(fold_row["train_start"])
+        train_end = pd.Timestamp(fold_row["train_end"])
+        test_start = pd.Timestamp(fold_row["test_start"])
+        test_end = pd.Timestamp(fold_row["test_end"])
+
+        # Handle both DatetimeIndex and MultiIndex (ticker, datetime)
+        if isinstance(candles_for_fitting.index, pd.MultiIndex):
+            # Multi-level index: get last level (datetime)
+            idx = candles_for_fitting.index.get_level_values(-1)
         else:
-            train_start = pd.Timestamp(fold_row["train_start"])
-            train_end = pd.Timestamp(fold_row["train_end"])
-            test_start = pd.Timestamp(fold_row["test_start"])
-            test_end = pd.Timestamp(fold_row["test_end"])
             idx = candles_for_fitting.index
-            train_candles = candles_for_fitting.loc[(idx >= train_start) & (idx <= train_end)]
-            test_candles = candles_for_fitting.loc[(idx >= test_start) & (idx <= test_end)]
+
+        train_candles = candles_for_fitting.loc[(idx >= train_start) & (idx <= train_end)]
+        test_candles = candles_for_fitting.loc[(idx >= test_start) & (idx <= test_end)]
 
         train_end_ts = pd.Timestamp(fold_row["train_end"])
         train_target = target_unique.loc[:train_end_ts].dropna()
