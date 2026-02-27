@@ -5,10 +5,36 @@ Used by run_walkforward_permutation.py for vector (target) and candle shuffle.
 """
 from __future__ import annotations
 
-from typing import Callable
+import contextlib
+from typing import Callable, Optional
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+
+
+@contextlib.contextmanager
+def _joblib_tqdm(total: int, desc: str, unit: str = "rep"):
+    """Context manager that patches joblib to update a tqdm progress bar as batches complete."""
+    import joblib.parallel
+
+    pbar = tqdm(total=total, desc=desc, unit=unit)
+    _pbar_ref: list[Optional[tqdm]] = [pbar]
+
+    class _TqdmBatchCallback(joblib.parallel.BatchCompletionCallBack):
+        def _dispatch_new(self) -> None:
+            super()._dispatch_new()
+            if _pbar_ref[0] is not None:
+                _pbar_ref[0].update(n=self.batch_size)
+
+    old_cb = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = _TqdmBatchCallback
+    try:
+        yield pbar
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_cb
+        _pbar_ref[0] = None
+        pbar.close()
 
 
 def permute_target_in_two_units(

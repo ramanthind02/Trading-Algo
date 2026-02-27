@@ -13,6 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from feature_research.walkforward.permutation_helpers import (
+    _joblib_tqdm,
     aggregate_oos_metric_from_report,
     permute_target_in_two_units,
 )
@@ -28,6 +29,180 @@ from feature_research.walkforward.runner import (
     run_portfolio_simulation,
 )
 from utils.core.enums import TimeFrame
+
+
+def run_vector_shuffle_null_vectorized(
+    reference_target: pd.Series,
+    unit1_mask: pd.Series,
+    unit2_mask: pd.Series,
+    fixed_oos_signal_by_fold: dict[int, pd.Series],
+    fold_rows: list[dict],
+    nreps: int,
+    random_seed: int | None,
+    objective_metric_name: str = "sharpe",
+    canonical_oos_index: pd.Index | None = None,
+) -> np.ndarray:
+    """Vectorized null distribution: all nreps permutations at once, no loop overhead.
+
+    Generates all nreps permuted targets as a (nreps, T) matrix, computes all
+    (nreps, n_oos) return matrices via broadcast multiply, and applies the
+    objective metric vectorized across axis=1. ~10–100x faster than looping
+    over _one_vector_shuffle_rep_fixed_signal for nreps >= 100.
+
+    Parameters
+    ----------
+    reference_target : pd.Series
+        Target return series (walkforward_target, possibly multi-ticker with dups).
+    unit1_mask, unit2_mask : pd.Series
+        Boolean masks defining two-unit blocking (e.g., first fold train vs rest).
+    fixed_oos_signal_by_fold : dict[int, pd.Series]
+        OOS signals per fold (pre-fitted, no refit in null loop).
+    fold_rows : list[dict]
+        Fold metadata with train_start, train_end, test_start, test_end.
+    nreps : int
+        Number of null replicates.
+    random_seed : int or None
+        Seed for reproducibility.
+    objective_metric_name : str
+        Metric name: "sharpe", "mean_return", "t_stat", "sortino".
+    canonical_oos_index : pd.Index or None
+        If provided, align aggregate returns to this index (padding with 0s).
+
+    Returns
+    -------
+    np.ndarray
+        Shape (nreps,); metric value for each replicate.
+    """
+    # Prepare target (handle multi-ticker duplicates)
+    target_unique = (
+        reference_target.groupby(level=0).first()
+        if reference_target.index.duplicated().any()
+        else reference_target
+    )
+    T = len(target_unique)
+    target_vals = target_unique.values.copy()  # shape (T,)
+    target_idx = target_unique.index
+
+    # Compute permutation positions (once, outside rep loop)
+    unit1_mask_aligned = unit1_mask.reindex(target_idx).fillna(False)
+    unit2_mask_aligned = unit2_mask.reindex(target_idx).fillna(False)
+    u1_pos = np.where(unit1_mask_aligned.values)[0]
+    u2_pos = np.where(unit2_mask_aligned.values)[0]
+
+    # Determine output OOS index
+    if canonical_oos_index is not None and len(canonical_oos_index) > 0:
+        oos_index = canonical_oos_index
+    else:
+        # Build OOS index from fold test windows
+        collected: list[pd.Series] = []
+        for fold_row in fold_rows:
+            if not all(k in fold_row for k in ("test_start", "test_end")):
+                continue
+            test_start = pd.Timestamp(fold_row["test_start"])
+            test_end = pd.Timestamp(fold_row["test_end"])
+            fold_test_idx = target_idx[(target_idx >= test_start) & (target_idx <= test_end)]
+            if len(fold_test_idx) > 0:
+                collected.append(pd.Series(0, index=fold_test_idx))
+
+        if not collected:
+            return np.zeros(nreps, dtype=float)
+        oos_index = pd.concat(collected).index.unique().sort_values()
+
+    n_oos_cols = len(oos_index)
+
+    # Generate all nreps permutations at once (vectorized)
+    rng = np.random.default_rng(random_seed)
+    if len(u1_pos) > 1:
+        perm1 = rng.random((nreps, len(u1_pos))).argsort(axis=1)  # (nreps, |u1|)
+    else:
+        perm1 = np.zeros((nreps, len(u1_pos)), dtype=np.int64)
+
+    if len(u2_pos) > 1:
+        perm2 = rng.random((nreps, len(u2_pos))).argsort(axis=1)  # (nreps, |u2|)
+    else:
+        perm2 = np.zeros((nreps, len(u2_pos)), dtype=np.int64)
+
+    # All permuted targets: (nreps, T)
+    all_targets = np.tile(target_vals, (nreps, 1))  # broadcast copy
+    if len(u1_pos) > 0:
+        all_targets[:, u1_pos] = target_vals[u1_pos][perm1]
+    if len(u2_pos) > 0:
+        all_targets[:, u2_pos] = target_vals[u2_pos][perm2]
+
+    # Allocate output matrix: (nreps, n_oos_cols)
+    all_returns = np.zeros((nreps, n_oos_cols), dtype=np.float64)
+
+    # Populate OOS returns by fold
+    for fold_row in fold_rows:
+        fold_id = int(fold_row["fold_id"])
+        oos_signal = fixed_oos_signal_by_fold.get(fold_id)
+
+        if not all(k in fold_row for k in ("test_start", "test_end")):
+            continue
+
+        test_start = pd.Timestamp(fold_row["test_start"])
+        test_end = pd.Timestamp(fold_row["test_end"])
+        full_test_index = target_idx[(target_idx >= test_start) & (target_idx <= test_end)]
+
+        if len(full_test_index) == 0:
+            continue
+
+        if oos_signal is None or oos_signal.empty:
+            # No signal for this fold: contribute zeros (already zero-initialized)
+            continue
+
+        # Align signal with target (same as aggregate_signal_target_returns)
+        oos_target_at_signal = target_unique.reindex(oos_signal.index).dropna()
+        oos_signal_aligned = oos_signal.reindex(oos_target_at_signal.index).dropna()
+
+        if oos_signal_aligned.empty:
+            continue
+
+        # Find integer positions in target_unique and oos_index
+        oos_int_pos = target_idx.get_indexer(oos_signal_aligned.index)
+        oos_col_pos = oos_index.get_indexer(oos_signal_aligned.index)
+
+        # Keep only indices valid in BOTH target and oos_index
+        valid_both = (oos_int_pos >= 0) & (oos_col_pos >= 0)
+        if not valid_both.any():
+            continue
+
+        oos_int_pos_valid = oos_int_pos[valid_both]
+        oos_col_pos_valid = oos_col_pos[valid_both]
+        signal_vals_valid = oos_signal_aligned.values[valid_both]
+
+        # Broadcast multiply: (nreps, len(valid)) * (1, len(valid))
+        all_returns[:, oos_col_pos_valid] = all_targets[:, oos_int_pos_valid] * signal_vals_valid[np.newaxis, :]
+
+    # Apply metric vectorized (no loop over reps)
+    if objective_metric_name == "sharpe":
+        means = all_returns.mean(axis=1)
+        stds = all_returns.std(axis=1, ddof=0)
+        null_metrics = np.where(stds > 0, means / stds, 0.0)
+    elif objective_metric_name == "mean_return":
+        null_metrics = all_returns.mean(axis=1)
+    elif objective_metric_name == "t_stat":
+        means = all_returns.mean(axis=1)
+        stds = all_returns.std(axis=1, ddof=0)
+        n = all_returns.shape[1]
+        null_metrics = np.where(stds > 0, means / stds * np.sqrt(n), 0.0)
+    elif objective_metric_name == "sortino":
+        means = all_returns.mean(axis=1)
+        neg_mask = all_returns < 0
+        downside_sq = np.where(neg_mask, all_returns ** 2, 0.0).mean(axis=1)
+        downside_std = np.sqrt(downside_sq)
+        null_metrics = np.where(downside_std > 0, means / downside_std, 0.0)
+    else:
+        # Fallback: apply metric_fn to each row (slow, but correct)
+        metric_fn = resolve_objective_metric(objective_metric_name)
+        null_metrics = np.array(
+            [metric_fn(pd.Series(all_returns[i])) for i in range(nreps)],
+            dtype=float
+        )
+
+    # Handle infinities/NaNs
+    null_metrics = np.where(np.isfinite(null_metrics), null_metrics, 0.0)
+    return null_metrics
 
 
 def _compute_fixed_oos_signal_by_fold(
@@ -333,10 +508,11 @@ def run_return_shuffle_null(
     from joblib import Parallel, delayed
 
     n_jobs_actual = cpu_count() if n_jobs == -1 else min(n_jobs, cpu_count())
-    results = Parallel(n_jobs=n_jobs_actual, backend="loky")(
-        delayed(_one_return_shuffle_rep)(seed, oos_values, index_values, objective_metric_name)
-        for seed in seeds
-    )
+    with _joblib_tqdm(nreps, desc="Vector shuffle (return shuffle)", unit="rep"):
+        results = Parallel(n_jobs=n_jobs_actual, backend="loky")(
+            delayed(_one_return_shuffle_rep)(seed, oos_values, index_values, objective_metric_name)
+            for seed in seeds
+        )
     return np.array(results, dtype=float)
 
 
@@ -369,39 +545,20 @@ def run_vector_shuffle_null(
     use_fixed_signal = fixed_oos_signal_by_fold is not None and len(fixed_oos_signal_by_fold) > 0
 
     if use_fixed_signal:
+        # Use fully vectorized approach: all nreps permutations at once, no loop overhead
+        # This is ~10–100x faster than the serial/parallel loop approaches
         obj_name = objective_metric_name or "sharpe"
-        if n_jobs == 1:
-            null_metrics = np.empty(nreps, dtype=float)
-            for i in tqdm(range(nreps), desc="Vector shuffle (target permute)", unit="rep"):
-                null_metrics[i] = _one_vector_shuffle_rep_fixed_signal(
-                    seeds[i],
-                    reference_target,
-                    unit1_mask,
-                    unit2_mask,
-                    fixed_oos_signal_by_fold,
-                    fold_rows,
-                    obj_name,
-                    canonical_oos_index=canonical_oos_index,
-                )
-            return null_metrics
-        from multiprocessing import cpu_count
-        from joblib import Parallel, delayed
-
-        n_jobs_actual = cpu_count() if n_jobs == -1 else min(n_jobs, cpu_count())
-        results = Parallel(n_jobs=n_jobs_actual, backend="loky")(
-            delayed(_one_vector_shuffle_rep_fixed_signal)(
-                seed,
-                reference_target,
-                unit1_mask,
-                unit2_mask,
-                fixed_oos_signal_by_fold,
-                fold_rows,
-                obj_name,
-                canonical_oos_index=canonical_oos_index,
-            )
-            for seed in seeds
+        return run_vector_shuffle_null_vectorized(
+            reference_target=reference_target,
+            unit1_mask=unit1_mask,
+            unit2_mask=unit2_mask,
+            fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
+            fold_rows=fold_rows,
+            nreps=nreps,
+            random_seed=random_seed,
+            objective_metric_name=obj_name,
+            canonical_oos_index=canonical_oos_index,
         )
-        return np.array(results, dtype=float)
 
     selection_summary_df = getattr(initial_report, "selection_summary_df", None)
     if selection_summary_df is None:
@@ -432,19 +589,20 @@ def run_vector_shuffle_null(
     from joblib import Parallel, delayed
 
     n_jobs_actual = cpu_count() if n_jobs == -1 else min(n_jobs, cpu_count())
-    results = Parallel(n_jobs=n_jobs_actual, backend="loky")(
-        delayed(_one_vector_shuffle_rep)(
-            seed,
-            reference_target,
-            unit1_mask,
-            unit2_mask,
-            candles_for_simulation,
-            fold_rows,
-            selection_summary_df,
-            research_config,
-            feature_data_by_combo,
-            obj_name,
+    with _joblib_tqdm(nreps, desc="Vector shuffle (target permute)", unit="rep"):
+        results = Parallel(n_jobs=n_jobs_actual, backend="loky")(
+            delayed(_one_vector_shuffle_rep)(
+                seed,
+                reference_target,
+                unit1_mask,
+                unit2_mask,
+                candles_for_simulation,
+                fold_rows,
+                selection_summary_df,
+                research_config,
+                feature_data_by_combo,
+                obj_name,
+            )
+            for seed in seeds
         )
-        for seed in seeds
-    )
     return np.array(results, dtype=float)

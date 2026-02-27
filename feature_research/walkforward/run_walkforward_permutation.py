@@ -13,7 +13,6 @@ When in_sample_permutation.run_stage1 is False, vector_shuffle is skipped and ca
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import sys
 import types
@@ -62,6 +61,7 @@ from feature_research.pipeline import (
 )
 from feature_research.walkforward.io import resolve_walkforward_output_dir
 from feature_research.walkforward.permutation_helpers import (
+    _joblib_tqdm,
     aggregate_oos_metric_from_report,
     two_unit_masks_from_fold_rows,
 )
@@ -287,30 +287,6 @@ def _prepare_candles_for_shuffler(candles_df: pd.DataFrame) -> pd.DataFrame:
             df["datetime"] = candles_df.index
             return df
     return candles_df.copy()
-
-
-@contextlib.contextmanager
-def _joblib_tqdm(total: int, desc: str, unit: str = "rep"):
-    """Context manager that patches joblib to update a tqdm progress bar as batches complete."""
-    import joblib.parallel
-
-    pbar = tqdm(total=total, desc=desc, unit=unit)
-    _pbar_ref: list[Optional[tqdm]] = [pbar]
-
-    class _TqdmBatchCallback(joblib.parallel.BatchCompletionCallBack):
-        def _dispatch_new(self) -> None:
-            super()._dispatch_new()
-            if _pbar_ref[0] is not None:
-                _pbar_ref[0].update(n=self.batch_size)
-
-    old_cb = joblib.parallel.BatchCompletionCallBack
-    joblib.parallel.BatchCompletionCallBack = _TqdmBatchCallback
-    try:
-        yield pbar
-    finally:
-        joblib.parallel.BatchCompletionCallBack = old_cb
-        _pbar_ref[0] = None
-        pbar.close()
 
 
 def _one_candle_shuffle_rep(
