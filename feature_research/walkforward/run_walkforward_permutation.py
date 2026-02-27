@@ -74,7 +74,7 @@ from feature_research.walkforward.portfolio_evaluator import (
 )
 from feature_research.walkforward.permutation_core import (
     _compute_fixed_oos_signal_by_fold,
-    run_return_shuffle_null_vectorized,
+    _compute_rule_based_oos_signal_by_fold,
     run_vector_shuffle_null,
 )
 from feature_research.walkforward.runner import (
@@ -625,16 +625,35 @@ def main() -> int:
                 canonical_oos_index=canonical_oos_index,
             )
         else:
-            # Rule-based features: return shuffle with pre-computed OOS returns (vectorized, ~50k reps/sec)
-            # No signal extraction or model refitting needed; shuffle the temporal order of returns
-            if agg_returns is None or agg_returns.empty:
-                raise ValueError("Stage 1 (vector shuffle) for rule-based requires aggregate_oos_returns from original run")
-            print(f"Running return shuffle null for rule-based (nreps={nreps})...")
-            null_metrics = run_return_shuffle_null_vectorized(
-                aggregate_oos_returns=agg_returns,
+            # Rule-based features: vector shuffle with fixed portfolio position signals (vectorized, ~50k reps/sec)
+            # No model refitting in null loop; only target is permuted within two blocking units.
+            unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
+            print("Computing rule-based OOS signals (one-time fit per fold)...")
+            fixed_oos_signal_by_fold = _compute_rule_based_oos_signal_by_fold(
+                fold_rows=fold_rows,
+                reference_candles=reference_candles,
+                reference_target=reference_target,
+                selection_summary_df=report0.selection_summary_df,
+                research_config=config,
+            )
+            canonical_oos_index = agg_returns.dropna().index if agg_returns is not None else None
+            print(f"Running vector shuffle null for rule-based (nreps={nreps})...")
+            null_metrics = run_vector_shuffle_null(
+                reference_candles=reference_candles,
+                reference_target=reference_target,
+                fold_rows=fold_rows,
+                unit1_mask=unit1_mask,
+                unit2_mask=unit2_mask,
                 nreps=nreps,
                 random_seed=random_seed,
+                initial_report=report0,
+                research_config=config,
+                feature_data_by_combo=None,
+                portfolio_candles_df=None,
+                n_jobs=n_jobs,
+                fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
                 objective_metric_name=objective_metric_name,
+                canonical_oos_index=canonical_oos_index,
             )
     else:
         print(f"Running candle shuffle null (nreps={nreps})...")

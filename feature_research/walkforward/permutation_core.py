@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from feature_research.config import FeatureType
 from feature_research.walkforward.permutation_helpers import (
     _joblib_tqdm,
     aggregate_oos_metric_from_report,
@@ -22,6 +23,7 @@ from feature_research.walkforward.portfolio_evaluator import (
     _build_one_base_model_with_members,
     _normalize_strategy,
     _normalize_timeframe,
+    build_research_portfolio,
 )
 from feature_research.walkforward.runner import (
     _parse_top_k_param_labels,
@@ -300,6 +302,91 @@ def _compute_fixed_oos_signal_by_fold(
             continue
         avg_signal = aligned.mean(axis=1)
         result[fold_id] = avg_signal
+
+    return result
+
+
+def _compute_rule_based_oos_signal_by_fold(
+    fold_rows: list[dict],
+    reference_candles: pd.DataFrame,
+    reference_target: pd.Series,
+    selection_summary_df: pd.DataFrame,
+    research_config: object,
+) -> dict[int, pd.Series]:
+    """Per-fold OOS position fractions from fitted rule-based portfolio (one-time, no null loop refit).
+
+    Fits the portfolio ONCE per fold with real target; extracts position_fraction
+    on the test window (averaged across tickers). Returned dict is passed to
+    run_vector_shuffle_null as fixed_oos_signal_by_fold, triggering the fast
+    vectorized null path (~50k reps/sec).
+    """
+    result: dict[int, pd.Series] = {}
+    binning_config = getattr(research_config, "binning_params", None)
+    if binning_config is None:
+        return result
+    tickers = list(getattr(research_config, "tickers", []))
+    bias_spec = getattr(research_config, "bias_spec", {}) or {}
+    module_name = str(bias_spec.get("module_name", "rsi")) if hasattr(bias_spec, "get") else "rsi"
+    timeframes = bias_spec.get("timeframes", [None]) if hasattr(bias_spec, "get") else [None]
+    tf_raw = timeframes[0] if timeframes else None
+    trading_timeframe = _normalize_timeframe(tf_raw) if tf_raw is not None else TimeFrame.D
+
+    target_unique = (
+        reference_target.groupby(level=0).first()
+        if reference_target.index.duplicated().any()
+        else reference_target
+    )
+
+    for fold_row in fold_rows:
+        fold_id = int(fold_row["fold_id"])
+        summary = selection_summary_df.loc[selection_summary_df["fold_id"] == fold_id]
+        if summary.empty:
+            continue
+        selected_params = _parse_top_k_param_labels(str(summary.iloc[0]["top_k_features"]))
+        if not selected_params:
+            continue
+
+        # Slice candles using stored masks (same as run_portfolio_simulation), else timestamp fallback
+        if "_train_mask" in fold_row and "_test_mask" in fold_row:
+            train_candles = reference_candles[fold_row["_train_mask"]]
+            test_candles = reference_candles[fold_row["_test_mask"]]
+        else:
+            train_start = pd.Timestamp(fold_row["train_start"])
+            train_end = pd.Timestamp(fold_row["train_end"])
+            test_start = pd.Timestamp(fold_row["test_start"])
+            test_end = pd.Timestamp(fold_row["test_end"])
+            idx = reference_candles.index
+            train_candles = reference_candles.loc[(idx >= train_start) & (idx <= train_end)]
+            test_candles = reference_candles.loc[(idx >= test_start) & (idx <= test_end)]
+
+        train_end_ts = pd.Timestamp(fold_row["train_end"])
+        train_target = target_unique.loc[:train_end_ts].dropna()
+
+        try:
+            portfolio = build_research_portfolio(
+                selected_params=selected_params,
+                binning_config=binning_config,
+                tickers=tickers,
+                trading_timeframe=trading_timeframe,
+                module_name=module_name,
+                feature_type=FeatureType.RULE_BASED,
+            )
+            portfolio.fit_from_candles(train_candles, target_data=train_target)
+            predictions = portfolio.predict_from_candles(test_candles)
+            portfolio_preds = predictions["portfolio"] if isinstance(predictions, dict) else predictions
+            if "position_fraction" not in portfolio_preds.columns:
+                continue
+            if "datetime" in portfolio_preds.columns:
+                pos_df = portfolio_preds.set_index("datetime")
+            else:
+                pos_df = portfolio_preds
+            # Average position_fraction across tickers per datetime
+            pos_signal = pos_df.groupby(level=0)["position_fraction"].mean()
+            if pos_signal.empty:
+                continue
+            result[fold_id] = pos_signal
+        except Exception:
+            continue
 
     return result
 
