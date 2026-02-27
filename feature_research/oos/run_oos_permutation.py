@@ -42,6 +42,7 @@ from feature_research.in_sample.data_loader import load_candles_for_config
 from feature_research.walkforward.io import resolve_walkforward_output_dir
 from feature_research.walkforward.permutation_core import (
     _compute_fixed_oos_signal_by_fold,
+    _compute_rule_based_oos_signal_by_fold,
     run_vector_shuffle_null,
 )
 from feature_research.walkforward.metrics import resolve_objective_metric
@@ -192,12 +193,24 @@ def main() -> int:
         unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
         fixed_oos_signal_by_fold = None
         if feature_data_by_combo is not None:
+            # Continuous: fixed signals from pre-fitted base models
             fixed_oos_signal_by_fold = _compute_fixed_oos_signal_by_fold(
                 fold_rows=fold_rows,
                 selection_summary_df=report0.selection_summary_df,
                 reference_target=reference_target,
                 research_config=config,
                 feature_data_by_combo=feature_data_by_combo,
+            )
+        else:
+            # Rule-based: fixed signals from pre-fitted rule-based portfolios
+            print("Computing rule-based OOS signals (one-time fit per fold)...")
+            fixed_oos_signal_by_fold = _compute_rule_based_oos_signal_by_fold(
+                fold_rows=fold_rows,
+                reference_candles=reference_candles,
+                reference_target=reference_target,
+                selection_summary_df=report0.selection_summary_df,
+                research_config=config,
+                portfolio_candles_df=portfolio_candles_df,
             )
         canonical_oos_index = agg_returns.dropna().index if agg_returns is not None else None
         print(f"Running vector shuffle null (nreps={nreps})...")

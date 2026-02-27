@@ -635,6 +635,7 @@ def main() -> int:
                 reference_target=reference_target,
                 selection_summary_df=report0.selection_summary_df,
                 research_config=config,
+                portfolio_candles_df=portfolio_candles_df,
             )
             canonical_oos_index = agg_returns.dropna().index if agg_returns is not None else None
             print(f"Running vector shuffle null for rule-based (nreps={nreps})...")

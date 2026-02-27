@@ -312,6 +312,7 @@ def _compute_rule_based_oos_signal_by_fold(
     reference_target: pd.Series,
     selection_summary_df: pd.DataFrame,
     research_config: object,
+    portfolio_candles_df: pd.DataFrame | None = None,
 ) -> dict[int, pd.Series]:
     """Per-fold OOS position fractions from fitted rule-based portfolio (one-time, no null loop refit).
 
@@ -319,6 +320,16 @@ def _compute_rule_based_oos_signal_by_fold(
     on the test window (averaged across tickers). Returned dict is passed to
     run_vector_shuffle_null as fixed_oos_signal_by_fold, triggering the fast
     vectorized null path (~50k reps/sec).
+
+    Parameters
+    ----------
+    fold_rows, reference_target, selection_summary_df, research_config : as in _compute_fixed_oos_signal_by_fold
+    reference_candles : pd.DataFrame
+        Low-level candles (may have limited columns). Used only for slicing logic;
+        actual fit/predict uses candles_for_fitting (see below).
+    portfolio_candles_df : pd.DataFrame or None
+        Full OHLCV candles with all columns required by portfolio.fit_from_candles.
+        If provided, used for fit/predict instead of reference_candles.
     """
     result: dict[int, pd.Series] = {}
     binning_config = getattr(research_config, "binning_params", None)
@@ -330,6 +341,9 @@ def _compute_rule_based_oos_signal_by_fold(
     timeframes = bias_spec.get("timeframes", [None]) if hasattr(bias_spec, "get") else [None]
     tf_raw = timeframes[0] if timeframes else None
     trading_timeframe = _normalize_timeframe(tf_raw) if tf_raw is not None else TimeFrame.D
+
+    # Use portfolio candles for fitting if available (has all required columns)
+    candles_for_fitting = portfolio_candles_df if portfolio_candles_df is not None else reference_candles
 
     target_unique = (
         reference_target.groupby(level=0).first()
@@ -348,16 +362,16 @@ def _compute_rule_based_oos_signal_by_fold(
 
         # Slice candles using stored masks (same as run_portfolio_simulation), else timestamp fallback
         if "_train_mask" in fold_row and "_test_mask" in fold_row:
-            train_candles = reference_candles[fold_row["_train_mask"]]
-            test_candles = reference_candles[fold_row["_test_mask"]]
+            train_candles = candles_for_fitting[fold_row["_train_mask"]]
+            test_candles = candles_for_fitting[fold_row["_test_mask"]]
         else:
             train_start = pd.Timestamp(fold_row["train_start"])
             train_end = pd.Timestamp(fold_row["train_end"])
             test_start = pd.Timestamp(fold_row["test_start"])
             test_end = pd.Timestamp(fold_row["test_end"])
-            idx = reference_candles.index
-            train_candles = reference_candles.loc[(idx >= train_start) & (idx <= train_end)]
-            test_candles = reference_candles.loc[(idx >= test_start) & (idx <= test_end)]
+            idx = candles_for_fitting.index
+            train_candles = candles_for_fitting.loc[(idx >= train_start) & (idx <= train_end)]
+            test_candles = candles_for_fitting.loc[(idx >= test_start) & (idx <= test_end)]
 
         train_end_ts = pd.Timestamp(fold_row["train_end"])
         train_target = target_unique.loc[:train_end_ts].dropna()
