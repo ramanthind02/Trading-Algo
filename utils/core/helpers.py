@@ -373,6 +373,41 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
         raise RuntimeError(f"Error instantiating class from {module_name}: {e}")
 
 
+def create_filtered_bias_node(
+    module_name: str,
+    ticker: 'Ticker',
+    tf: 'TimeFrame',
+    params: Dict,
+    filter_specs: 'Sequence',
+    *,
+    neutral_value: float = 0.0,
+) -> Any:
+    """Create a bias node optionally wrapped with a filter chain.
+
+    If *filter_specs* is empty the raw node is returned unchanged.
+    Mirrors :func:`create_bias_node` but adds filter support.
+
+    Parameters
+    ----------
+    module_name, ticker, tf, params
+        Forwarded to :func:`create_bias_node`.
+    filter_specs
+        Zero or more :class:`filters.FilterSpec` instances defining the
+        filter chain.
+    neutral_value
+        Value emitted when a filter blocks (default ``0.0``).
+    """
+    base_node = create_bias_node(module_name, ticker, tf, params)
+    if not filter_specs:
+        return base_node
+    from filters import create_filter
+    from nodes.filtered import FilteredBiasNode
+    filters = [create_filter(spec) for spec in filter_specs]
+    return FilteredBiasNode.get_instance(
+        base_node, tuple(filters), neutral_value=neutral_value,
+    )
+
+
 
 
 # ============================================================================
@@ -526,6 +561,31 @@ def _get_functime_function(function_name: str):
         f"Tried modules: {possible_modules}"
     )
 
+
+def _parse_filter_suffix(segment: str) -> Dict[str, Any]:
+    """Parse a single filter suffix segment like ``vol_atrPeriod_14_regime_high``.
+
+    Returns ``{'filter_name': 'vol', 'params': {'atrPeriod': 14, 'regime': 'high'}}``.
+    """
+    tokens = segment.split('_')
+    filter_name = tokens[0] if tokens else ''
+    params: Dict[str, Any] = {}
+    i = 1
+    while i + 1 < len(tokens):
+        key = _to_camel_case(tokens[i])
+        val_raw = tokens[i + 1]
+        val: Any = val_raw
+        try:
+            val = int(val_raw)
+        except Exception:
+            try:
+                val = float(val_raw)
+            except Exception:
+                pass
+        params[key] = val
+        i += 2
+    return {'filter_name': filter_name, 'params': params}
+
 
 def parse_feature_column_name(name: str) -> Dict[str, Any]:
     """
@@ -533,8 +593,11 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     
     Module and feature names use snake_case, parameter names use camelCase.
     Expected format: {module}_{feature}_{tf}_{param}_{value}_{param}_{value}...
+    Optionally with filter suffixes: ...{base}__f_{filter}_{params}__f_{filter}_{params}
+    
     Example: rsi_signal_D_lookback_14
     Example: cumulative_rsi_signal_D_avgPeriod_2_lookback_2
+    Example: rsi_signal_D_lookback_14__f_vol_atrPeriod_14_regime_high
     
     Handles multi-word module names (ma_diff, cumulative_rsi, ts_feature, etc.)
     by checking against known modules first.
@@ -542,13 +605,24 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     Parameter names are in camelCase (e.g., 'avgPeriod' not 'avg_period')
     to avoid parser confusion with underscores.
 
-    Returns dict with keys: { 'module', 'feature', 'tf', 'params' }
+    Returns dict with keys: { 'module', 'feature', 'tf', 'params', 'filters' }
     - tf is the TimeFrame enum if name matches, else raw string
     - params keys are in camelCase (converted from snake_case if needed)
     - params values are auto-converted to int/float when possible
+    - filters is a list of dicts with 'filter_name' and 'params' (empty if no filters)
     """
     if not isinstance(name, str):
         name = str(name)
+    
+    # Split off filter suffixes (separated by __f_)
+    filter_parts: List[Dict[str, Any]] = []
+    base_name = name
+    if '__f_' in name:
+        segments = name.split('__f_')
+        base_name = segments[0]
+        for seg in segments[1:]:
+            filter_parts.append(_parse_filter_suffix(seg))
+    name = base_name
     
     # Known multi-word module names (in order of length, longest first to match greedily)
     # All use snake_case to match Python file names
@@ -580,14 +654,14 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     if module is None:
         tokens = name.split('_')
         if len(tokens) < 3:
-            return {'module': None, 'feature': None, 'tf': None, 'params': {}}
+            return {'module': None, 'feature': None, 'tf': None, 'params': {}, 'filters': filter_parts}
         module = tokens[0]
         remainder = '_'.join(tokens[1:])
     
     # Parse remainder: feature_tf_param_value_param_value...
     tokens = remainder.split('_')
     if len(tokens) < 2:
-        return {'module': module, 'feature': None, 'tf': None, 'params': {}}
+        return {'module': module, 'feature': None, 'tf': None, 'params': {}, 'filters': filter_parts}
     
     feature = tokens[0]
     tf_token = tokens[1]
@@ -626,7 +700,8 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
         'module': module,
         'feature': feature,
         'tf': tf,
-        'params': params
+        'params': params,
+        'filters': filter_parts,
     }
 def align_candles_with_features(
     candles_df: pd.DataFrame,
