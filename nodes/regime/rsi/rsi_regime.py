@@ -41,7 +41,7 @@ class RSIRegime(BiasNode):
         tf: TimeFrame, 
         lookback: int = 14,
         ma_period: int = 200,
-        regime_filter: str = "off"
+        regime_filter: str = "bullish"
     ):
         """
         Initialize RSI with Regime Filter node

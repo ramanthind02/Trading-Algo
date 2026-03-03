@@ -1,0 +1,26 @@
+{
+  "mode": "vector_shuffle",
+  "nreps": 1000,
+  "random_seed": 42,
+  "alpha": 0.1,
+  "original_metric": 1.4457900924947429,
+  "p_value": 0.17582417582417584,
+  "critical_value": 1.6861452713676055,
+  "passed": false,
+  "aggregation": "mean",
+  "per_ticker": {
+    "ES": {
+      "original_metric": 0.9711122359715619,
+      "p_value": 0.4255744255744256,
+      "critical_value": 2.047091078785175,
+      "passed": false
+    },
+    "NQ": {
+      "original_metric": 1.9204679490179237,
+      "p_value": 0.12387612387612387,
+      "critical_value": 2.0324660144780697,
+      "passed": false
+    }
+  },
+  "skipped_tickers": []
+}

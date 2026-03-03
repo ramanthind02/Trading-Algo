@@ -44,20 +44,13 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+_repo_hint = Path(__file__).resolve().parents[2]
+if str(_repo_hint) not in sys.path:
+    sys.path.insert(0, str(_repo_hint))
 
-def _find_repo_root(start: Path) -> Path | None:
-    search_root = start if start.is_dir() else start.parent
-    for parent in (search_root, *search_root.parents):
-        if (parent / "pyproject.toml").exists():
-            return parent
-        if (parent / ".git").exists():
-            return parent
-    return None
+from feature_research.bootstrap import ensure_repo_root_on_syspath
 
-
-_repo_root = _find_repo_root(Path(__file__).resolve())
-if _repo_root is not None and str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 from feature_research.config import PermutationResearchConfig
 from feature_research.in_sample.config import load_config

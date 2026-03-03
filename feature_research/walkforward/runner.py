@@ -44,9 +44,6 @@ class WalkforwardRunReport:
     fold_signal_metrics_df: pd.DataFrame = dataclasses.field(
         default_factory=lambda: pd.DataFrame(columns=["fold_id", "signal_name", "oos_sharpe"])
     )
-    oracle_portfolio_results_df: pd.DataFrame | None = None
-    oracle_vs_wf_df: pd.DataFrame | None = None
-    sigma_sweep_df: pd.DataFrame | None = None
     aggregate_oos_returns: pd.Series | None = None
     objective_metric_name: str = "objective"
 
@@ -147,11 +144,6 @@ def _resolve_member_prediction_mode(wf_cfg: object | None) -> str | None:
         return None
     raw = getattr(configured, "value", configured)
     return str(raw) if isinstance(raw, str) else None
-
-
-def _combo_key(params: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
-    """Convert params dict to hashable sorted tuple for use as dict key."""
-    return tuple(sorted(params.items(), key=lambda item: item[0]))
 
 
 def _sanitize_tearsheet_name(name: str) -> str:
@@ -392,234 +384,6 @@ def run_portfolio_simulation(
     return portfolio_results_df, fold_signal_metrics_df, aggregate_oos_returns
 
 
-def _run_oracle_baseline(
-    candles_df: pd.DataFrame,
-    target: pd.Series,
-    fold_rows: Sequence[Mapping[str, object]],
-    selection_summary_df: pd.DataFrame,
-    research_config: object,
-    portfolio_results_df: pd.DataFrame,
-    feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
-    tearsheets_dir: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit once on full walkforward test window, evaluate per-fold tests.
-
-    Reuses WF selection (same top_k per fold); only the fit window changes. Returns oracle
-    portfolio results per fold and oracle vs WF comparison (efficiency ratio) for diagnostics.
-    """
-    from feature_research.walkforward.portfolio_evaluator import (
-        ensure_portfolio_candle_columns,
-        evaluate_fold_portfolio,
-    )
-
-    if "datetime" in candles_df.columns:
-        all_datetimes = pd.to_datetime(candles_df["datetime"], utc=False)
-    else:
-        all_datetimes = pd.DatetimeIndex(candles_df.index)
-    if getattr(all_datetimes, "tz", None) is not None:
-        all_datetimes = all_datetimes.tz_localize(None)
-
-    typed_research_config = cast(_ResearchConfigLike, research_config)
-    feature_type = _resolve_feature_type(research_config)
-    trading_timeframes = cast(
-        Sequence[object],
-        typed_research_config.bias_spec.get("timeframes", [None]),
-    )
-    trading_timeframe = trading_timeframes[0] if trading_timeframes else None
-    objective_metric_name = typed_research_config.walkforward.objective_metric_name
-
-    # Oracle uses only the union of all walkforward test periods as its training window.
-    first_test_start = pd.Timestamp(fold_rows[0]["test_start"])
-    last_test_end = pd.Timestamp(fold_rows[-1]["test_end"])
-    oracle_train_mask = (all_datetimes >= first_test_start) & (all_datetimes <= last_test_end)
-
-    _tearsheet_available = False
-    if tearsheets_dir is not None:
-        try:
-            from ensemble.portfolio_tester import calculate_baseline_returns
-            from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
-            _tearsheet_available = True
-        except ImportError:
-            pass
-
-    oracle_rows: list[dict[str, object]] = []
-    oracle_vs_wf_rows: list[dict[str, object]] = []
-    collected_oos_returns: list[pd.Series] = []
-    wf_sharpe_by_fold: dict[int, float] = (
-        portfolio_results_df.set_index("fold_id")["oos_portfolio_sharpe"].to_dict()
-        if not portfolio_results_df.empty and "oos_portfolio_sharpe" in portfolio_results_df.columns
-        else {}
-    )
-
-    for fold_row in fold_rows:
-        fold_id = int(cast(int, fold_row["fold_id"]))
-        summary = selection_summary_df.loc[selection_summary_df["fold_id"] == fold_id]
-        if summary.empty:
-            oracle_rows.append(
-                {"fold_id": fold_id, "oracle_oos_sharpe": float("nan"), "n_params_selected": 0, "error": "missing_selection_summary"}
-            )
-            _append_oracle_vs_wf_row(oracle_vs_wf_rows, fold_id, float("nan"), wf_sharpe_by_fold.get(fold_id, float("nan")))
-            continue
-
-        selected_params = _parse_top_k_param_labels(str(summary.iloc[0]["top_k_features"]))
-        if not selected_params:
-            oracle_rows.append(
-                {"fold_id": fold_id, "oracle_oos_sharpe": float("nan"), "n_params_selected": 0, "error": "no_selected_params"}
-            )
-            _append_oracle_vs_wf_row(oracle_vs_wf_rows, fold_id, float("nan"), wf_sharpe_by_fold.get(fold_id, float("nan")))
-            continue
-
-        test_start = pd.Timestamp(fold_row["test_start"])
-        test_end = pd.Timestamp(fold_row["test_end"])
-        test_mask = (all_datetimes >= test_start) & (all_datetimes <= test_end)
-
-        train_candles = candles_df.loc[oracle_train_mask].copy()
-        test_candles = candles_df.loc[test_mask].copy()
-        train_candles = ensure_portfolio_candle_columns(train_candles, trading_timeframe)
-        test_candles = ensure_portfolio_candle_columns(test_candles, trading_timeframe)
-
-        try:
-            wf_cfg = getattr(research_config, "walkforward", None)
-            weight_layer_config = _resolve_weight_layer_config(wf_cfg)
-            member_prediction_mode = _resolve_member_prediction_mode(wf_cfg)
-            result = evaluate_fold_portfolio(
-                train_candles=train_candles,
-                test_candles=test_candles,
-                selected_params=selected_params,
-                target_series=target,
-                binning_config=typed_research_config.binning_params,
-                tickers=typed_research_config.tickers,
-                trading_timeframe=trading_timeframe,
-                module_name=str(typed_research_config.bias_spec.get("module_name", "rsi")),
-                objective_metric_name=objective_metric_name,
-                weight_layer_config=weight_layer_config,
-                member_prediction_mode=member_prediction_mode,
-                feature_data_by_combo=feature_data_by_combo,
-                feature_type=feature_type,
-            )
-            oracle_rows.append(
-                {
-                    "fold_id": fold_id,
-                    "oracle_oos_sharpe": result.oos_portfolio_sharpe,
-                    "n_params_selected": result.n_params_selected,
-                    "error": "",
-                }
-            )
-            _append_oracle_vs_wf_row(
-                oracle_vs_wf_rows, fold_id, result.oos_portfolio_sharpe, wf_sharpe_by_fold.get(fold_id, float("nan"))
-            )
-            if not result.oos_portfolio_returns.empty:
-                collected_oos_returns.append(result.oos_portfolio_returns)
-        except Exception as exc:  # pragma: no cover - defensive catch
-            oracle_rows.append(
-                {
-                    "fold_id": fold_id,
-                    "oracle_oos_sharpe": float("nan"),
-                    "n_params_selected": len(selected_params),
-                    "error": str(exc),
-                }
-            )
-            _append_oracle_vs_wf_row(oracle_vs_wf_rows, fold_id, float("nan"), wf_sharpe_by_fold.get(fold_id, float("nan")))
-
-    oracle_portfolio_results_df = pd.DataFrame(
-        oracle_rows,
-        columns=["fold_id", "oracle_oos_sharpe", "n_params_selected", "error"],
-    )
-    oracle_vs_wf_df = pd.DataFrame(
-        oracle_vs_wf_rows,
-        columns=["fold_id", "wf_sharpe", "oracle_sharpe", "efficiency_ratio"],
-    )
-
-    if tearsheets_dir is not None and _tearsheet_available and collected_oos_returns:
-        try:
-            tearsheets_dir.mkdir(parents=True, exist_ok=True)
-            oracle_portfolio_returns = pd.concat(collected_oos_returns, axis=0).sort_index()
-            baseline_returns = calculate_baseline_returns(candles_df)
-            generate_tearsheet(
-                strategy_returns=oracle_portfolio_returns,
-                baseline_returns=baseline_returns,
-                feature_name="Oracle Ensemble (full train window)",
-                output_file=str(tearsheets_dir / "oracle_ensemble_tearsheet.html"),
-                mode="html",
-            )
-        except ValueError as te:
-            if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
-                warnings.warn(
-                    "Skipping oracle ensemble tearsheet (constant returns): %s" % te,
-                    UserWarning,
-                    stacklevel=2,
-                )
-            else:
-                raise
-
-    return oracle_portfolio_results_df, oracle_vs_wf_df
-
-
-def _append_oracle_vs_wf_row(
-    rows: list[dict[str, object]],
-    fold_id: int,
-    oracle_sharpe: float,
-    wf_sharpe: float,
-) -> None:
-    ratio = float("nan")
-    if (
-        isinstance(wf_sharpe, (int, float))
-        and isinstance(oracle_sharpe, (int, float))
-        and not (wf_sharpe != wf_sharpe or oracle_sharpe != oracle_sharpe)
-        and abs(oracle_sharpe) > 1e-12
-    ):
-        ratio = float(wf_sharpe) / float(oracle_sharpe)
-    rows.append(
-        {
-            "fold_id": fold_id,
-            "wf_sharpe": wf_sharpe,
-            "oracle_sharpe": oracle_sharpe,
-            "efficiency_ratio": ratio,
-        }
-    )
-
-
-def _run_sigma_sweep(
-    config: WalkforwardResearchConfig,
-    stable_cfg: object,
-    smoothed_obj_map: Mapping[str, float],
-    raw_obj_map: Mapping[str, float],
-    trade_frequencies_filtered: Mapping[str, float],
-    param_grid: list[dict[str, object]],
-    fold_id: int,
-) -> list[dict[str, object]]:
-    """Re-run stable region selection across sigma values for observability (no refit)."""
-    from dataclasses import replace as dataclasses_replace
-    from feature_research.walkforward.stable_region_selection import (
-        StableRegionConfig,
-        run_stable_region_selection,
-    )
-
-    sigma_sweep_values = getattr(config, "sigma_sweep_values", None)
-    if not sigma_sweep_values or not isinstance(stable_cfg, StableRegionConfig):
-        return []
-
-    rows: list[dict[str, object]] = []
-    for sigma in sigma_sweep_values:
-        sweep_cfg = dataclasses_replace(stable_cfg, adaptive_sigma_multiplier=sigma)
-        sweep_result = run_stable_region_selection(
-            smoothed_objectives=smoothed_obj_map,
-            raw_objectives=raw_obj_map,
-            trade_frequencies=trade_frequencies_filtered,
-            param_grid=param_grid,
-            config=sweep_cfg,
-        )
-        rows.append(
-            {
-                "fold_id": fold_id,
-                "adaptive_sigma_multiplier": sigma,
-                "n_selected": len(sweep_result.selected_labels),
-                "selected_labels": ";".join(sweep_result.selected_labels),
-            }
-        )
-    return rows
-
-
 def _canonical_param_label(params: dict[str, object]) -> str:
     return "|".join(
         f"{key}={params[key]}" for key in sorted(params)
@@ -654,6 +418,14 @@ def _score_one_param_for_fold(
     if isinstance(scored_returns.index, pd.DatetimeIndex):
         train_returns = scored_returns.loc[scored_returns.index.isin(train_index)]
         test_returns = scored_returns.loc[scored_returns.index.isin(test_index)]
+        # Sanity check: non-empty evaluator output but empty slices suggests index mismatch.
+        if not scored_returns.empty and train_returns.empty and test_returns.empty:
+            warnings.warn(
+                "Walkforward scoring: scored_returns non-empty but train/test slices empty; "
+                "check index alignment between evaluator output and fold train_index/test_index.",
+                UserWarning,
+                stacklevel=2,
+            )
     else:
         train_len = len(train_index)
         test_len = len(test_index)
@@ -789,6 +561,7 @@ def _build_fold_scores(
     config: WalkforwardResearchConfig,
     strategy: str | None = None,
     n_jobs: int = 1,
+    research_config: object | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     train_mask = cast(pd.Series, fold_row["_train_mask"])
     test_mask = cast(pd.Series, fold_row["_test_mask"])
@@ -838,6 +611,14 @@ def _build_fold_scores(
         if isinstance(scored_returns.index, pd.DatetimeIndex):
             train_returns = scored_returns.loc[scored_returns.index.isin(train_index)]
             test_returns = scored_returns.loc[scored_returns.index.isin(test_index)]
+            # Sanity check: non-empty evaluator output but empty slices suggests index mismatch.
+            if not scored_returns.empty and train_returns.empty and test_returns.empty:
+                warnings.warn(
+                    "Walkforward scoring: scored_returns non-empty but train/test slices empty; "
+                    "check index alignment between evaluator output and fold train_index/test_index.",
+                    UserWarning,
+                    stacklevel=2,
+                )
         else:
             train_len = len(train_index)
             test_len = len(test_index)
@@ -907,6 +688,7 @@ def _build_fold_scores(
         param_columns=param_columns,
         objective_column="raw_objective",
         output_column="smoothed_objective",
+        self_weight=config.smoothing_self_weight,
     )
 
     ranked_df = (
@@ -957,9 +739,8 @@ def _build_fold_scores(
     )
 
     effective_selection_method = config._effective_selection_method()
-    sigma_sweep_rows: list[dict[str, object]] = []
 
-    if effective_selection_method in ("enhanced", "stable_region"):
+    if effective_selection_method == "enhanced":
         from feature_research.walkforward.top_k_selection import (
             compute_all_trade_frequencies,
             run_enhanced_selection,
@@ -981,20 +762,12 @@ def _build_fold_scores(
                 train_end=fold_train_end,
             )
 
-        # Shared trade-frequency computation (avoids double evaluation)
         trade_frequencies = compute_all_trade_frequencies(
             training_data=train_candles,
             training_target=train_target,
             param_grid=param_grid,
             evaluate_param_combo=evaluate_training_param_combo,
         )
-        # Apply trade_freq_min hard filter for stable region input
-        trade_frequencies_filtered = {
-            label: freq
-            for label, freq in trade_frequencies.items()
-            if freq >= config.trade_freq_min
-        }
-
         smoothed_obj_map = {
             str(row.param_label): float(row.smoothed_objective)
             for row in smoothed_df.itertuples(index=False)
@@ -1003,70 +776,82 @@ def _build_fold_scores(
             str(row.param_label): float(row.raw_objective)
             for row in raw_df.itertuples(index=False)
         }
-
-        if effective_selection_method == "enhanced":
-            enhanced_result = run_enhanced_selection(
-                training_data=train_candles,
-                training_target=train_target,
-                param_grid=param_grid,
-                evaluate_param_combo=evaluate_training_param_combo,
-                smoothed_objectives=smoothed_obj_map,
-                config=config,
-                precomputed_trade_frequencies=trade_frequencies,
-                strategy=strategy,
-            )
-            top_k_features = enhanced_result.selected_labels
-            selected_in_top_k = fold_scores_df["param_label"].isin(enhanced_result.selected_labels)
-            fold_scores_df = fold_scores_df.assign(
-                selected_feature=selected_in_top_k,
-                trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
-                selected_in_top_k=selected_in_top_k,
-            )
-        else:  # stable_region
-            from feature_research.walkforward.stable_region_selection import (
-                StableRegionConfig,
-                run_stable_region_selection,
-            )
-            stable_cfg: StableRegionConfig = (
-                config.stable_region
-                if isinstance(config.stable_region, StableRegionConfig)
-                else StableRegionConfig()
-            )
-            stable_result = run_stable_region_selection(
-                smoothed_objectives=smoothed_obj_map,
-                raw_objectives=raw_obj_map,
-                trade_frequencies=trade_frequencies_filtered,
-                param_grid=param_grid,
-                config=stable_cfg,
-                strategy=strategy,
-                objective_metric_name=getattr(config, "objective_metric_name", ""),
-            )
-            top_k_features = stable_result.selected_labels
-            # Merge per-param detail into fold_scores_df
-            detail = stable_result.per_param_detail.set_index("param_label")
-            _map = lambda col: (  # noqa: E731
-                fold_scores_df["param_label"].map(detail[col].to_dict())
-                if col in detail.columns else float("nan")
-            )
-            fold_scores_df = fold_scores_df.assign(
-                selected_feature=fold_scores_df["param_label"].isin(stable_result.selected_labels),
-                trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
-                selected_in_top_k=fold_scores_df["param_label"].isin(stable_result.selected_labels),
-                above_floor=_map("above_floor"),
-                region_id=_map("region_id"),
-                region_size=_map("region_size"),
-            )
-            # Optional sigma sweep (observability only; no refit)
-            sigma_sweep_rows = _run_sigma_sweep(
-                config=config,
-                stable_cfg=stable_cfg,
-                smoothed_obj_map=smoothed_obj_map,
-                raw_obj_map=raw_obj_map,
-                trade_frequencies_filtered=trade_frequencies_filtered,
-                param_grid=param_grid,
-                fold_id=int(cast(int, fold_row["fold_id"])),
-            )
+        enhanced_result = run_enhanced_selection(
+            training_data=train_candles,
+            training_target=train_target,
+            param_grid=param_grid,
+            evaluate_param_combo=evaluate_training_param_combo,
+            smoothed_objectives=smoothed_obj_map,
+            config=config,
+            precomputed_trade_frequencies=trade_frequencies,
+            strategy=strategy,
+        )
+        top_k_features = enhanced_result.selected_labels
+        selected_in_top_k = fold_scores_df["param_label"].isin(enhanced_result.selected_labels)
+        fold_scores_df = fold_scores_df.assign(
+            selected_feature=selected_in_top_k,
+            trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
+            selected_in_top_k=selected_in_top_k,
+        )
         # Summary row: use first selected (by rank) for display
+        selected_mask = fold_scores_df["selected_in_top_k"].astype(bool)
+        first_selected = (
+            fold_scores_df.loc[selected_mask].sort_values("rank").iloc[0]
+            if selected_mask.any()
+            else None
+        )
+        if first_selected is not None:
+            selected_summary_feature = str(first_selected["param_label"])
+            selected_summary_raw = float(first_selected["raw_objective"])
+            selected_summary_smoothed = float(first_selected["smoothed_objective"])
+        else:
+            selected_summary_feature = float("nan")
+            selected_summary_raw = float("nan")
+            selected_summary_smoothed = float("nan")
+    elif effective_selection_method == "marginal_peak":
+        from feature_research.walkforward.marginal_peak_selection import (
+            MarginalPeakConfig,
+            run_marginal_peak_selection,
+        )
+        raw_obj_map = {
+            str(row.param_label): float(row.raw_objective)
+            for row in raw_df.itertuples(index=False)
+        }
+        mps_cfg: MarginalPeakConfig = (
+            config.marginal_peak
+            if isinstance(config.marginal_peak, MarginalPeakConfig)
+            else MarginalPeakConfig()
+        )
+        bp = getattr(research_config, "binning_params", None) if research_config else None
+        if (
+            bp is not None
+            and getattr(bp, "bin_index_max", None) is not None
+            and param_grid
+            and "selected_bin" in param_grid[0]
+        ):
+            bin_min = getattr(bp, "bin_index_min", 0)
+            bin_max = getattr(bp, "bin_index_max", 0)
+            mps_cfg = dataclasses.replace(
+                mps_cfg,
+                dimension_ranges={"selected_bin": (bin_min, bin_max)},
+            )
+        mps_result = run_marginal_peak_selection(
+            raw_objectives=raw_obj_map,
+            param_grid=param_grid,
+            config=mps_cfg,
+            strategy=strategy,
+            objective_metric_name=getattr(config, "objective_metric_name", ""),
+        )
+        top_k_features = mps_result.selected_labels
+        if "param_label" in mps_result.per_param_detail.columns:
+            in_peak_map = mps_result.per_param_detail.set_index("param_label")["in_peak_cell"].to_dict()
+        else:
+            in_peak_map = {}
+        fold_scores_df = fold_scores_df.assign(
+            selected_feature=fold_scores_df["param_label"].isin(mps_result.selected_labels),
+            selected_in_top_k=fold_scores_df["param_label"].isin(mps_result.selected_labels),
+            in_peak_cell=fold_scores_df["param_label"].map(in_peak_map),
+        )
         selected_mask = fold_scores_df["selected_in_top_k"].astype(bool)
         first_selected = (
             fold_scores_df.loc[selected_mask].sort_values("rank").iloc[0]
@@ -1102,7 +887,7 @@ def _build_fold_scores(
         "selected_smoothed_objective": selected_summary_smoothed,
         "top_k_features": json.dumps(top_k_features, separators=(",", ":"), ensure_ascii=True),
     }
-    return fold_scores_df, summary_row, sigma_sweep_rows
+    return fold_scores_df, summary_row
 
 
 def run_walkforward_research(
@@ -1166,7 +951,6 @@ def run_walkforward_research(
 
     fold_score_parts: list[pd.DataFrame] = []
     selection_rows: list[dict[str, object]] = []
-    sigma_sweep_rows_collected: list[dict[str, object]] = []
     strategy: str | None = None
     if research_config is not None:
         bp = getattr(research_config, "binning_params", None)
@@ -1178,7 +962,7 @@ def run_walkforward_research(
     for fold_idx, fold_row in enumerate(fold_rows):
         print(f"  Fold {fold_idx + 1}/{n_folds} ({n_params} params)...", flush=True)
         n_jobs = getattr(config, "n_jobs", 1)
-        fold_scores_df, summary_row, sigma_sweep_rows = _build_fold_scores(
+        fold_scores_df, summary_row = _build_fold_scores(
             fold_row=fold_row,
             candles_df=candles_df,
             target=target,
@@ -1189,10 +973,10 @@ def run_walkforward_research(
             config=config,
             strategy=strategy,
             n_jobs=n_jobs,
+            research_config=research_config,
         )
         fold_score_parts.append(fold_scores_df)
         selection_rows.append(summary_row)
-        sigma_sweep_rows_collected.extend(sigma_sweep_rows)
         print(f"  Fold {fold_idx + 1}/{n_folds} done.", flush=True)
 
     fold_scores_df = (
@@ -1224,17 +1008,6 @@ def run_walkforward_research(
         ],
     )
 
-    sigma_sweep_df = (
-        pd.DataFrame(
-            sigma_sweep_rows_collected,
-            columns=["fold_id", "adaptive_sigma_multiplier", "n_selected", "selected_labels"],
-        )
-        if sigma_sweep_rows_collected
-        else None
-    )
-    oracle_portfolio_results_df: pd.DataFrame | None = None
-    oracle_vs_wf_df: pd.DataFrame | None = None
-
     aggregate_oos_returns: pd.Series | None = None
     if research_config is None:
         portfolio_results_df = _empty_portfolio_results_df()
@@ -1253,18 +1026,6 @@ def run_walkforward_research(
                 tearsheets_dir=tearsheets_dir,
                 output_per_fold_tearsheets=output_per_fold_tearsheets,
             )
-            if getattr(config, "run_oracle_baseline", False):
-                candles_for_oracle = portfolio_candles_df if portfolio_candles_df is not None else candles_df
-                oracle_portfolio_results_df, oracle_vs_wf_df = _run_oracle_baseline(
-                    candles_df=candles_for_oracle,
-                    target=target,
-                    fold_rows=fold_rows,
-                    selection_summary_df=selection_summary_df,
-                    research_config=research_config,
-                    portfolio_results_df=portfolio_results_df,
-                    feature_data_by_combo=feature_data_by_combo,
-                    tearsheets_dir=tearsheets_dir,
-                )
         except Exception as exc:  # pragma: no cover - defensive catch
             portfolio_results_df = pd.DataFrame(
                 [
@@ -1286,9 +1047,6 @@ def run_walkforward_research(
         selection_summary_df=selection_summary_df,
         portfolio_results_df=portfolio_results_df,
         fold_signal_metrics_df=fold_signal_metrics_df,
-        oracle_portfolio_results_df=oracle_portfolio_results_df,
-        oracle_vs_wf_df=oracle_vs_wf_df,
-        sigma_sweep_df=sigma_sweep_df,
         aggregate_oos_returns=aggregate_oos_returns,
         objective_metric_name=config.objective_metric_name,
     )

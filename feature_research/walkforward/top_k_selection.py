@@ -81,7 +81,7 @@ def run_enhanced_selection(
     ----------
     precomputed_trade_frequencies : dict, optional
         If provided, skip signal evaluation and use these frequencies directly.
-        Allows sharing the evaluation cost with stable_region selection.
+        Allows sharing the evaluation cost with MPS or other selection.
     strategy : str, optional
         When "long" and objective is t_stat, only params with positive smoothed_objective are considered.
     """

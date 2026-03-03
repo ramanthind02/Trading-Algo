@@ -65,7 +65,7 @@ def test_load_config_enables_per_fold_tearsheets_for_oos() -> None:
 def test_load_config_exposes_walkforward_selection_control() -> None:
     config = load_config()
 
-    assert config.walkforward_selection_method == WalkforwardSelectionMethod.TOP_K
+    assert config.walkforward_selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK
     assert config.walkforward.selection_method == config.walkforward_selection_method
 
 
@@ -134,7 +134,7 @@ def test_research_config_coerces_top_level_controls_from_strings() -> None:
     walkforward = WalkforwardResearchConfig(
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2023, 1, 1),
-        selection_method="stable_region",
+        selection_method="marginal_peak",
         weight_layer_algorithm="equal_grouped",
     )
 
@@ -153,12 +153,12 @@ def test_research_config_coerces_top_level_controls_from_strings() -> None:
         use_cache=True,
         populate_cache=False,
         reports_dir=Path("/tmp/test_reports"),
-        walkforward_selection_method="stable_region",
+        walkforward_selection_method="marginal_peak",
         weight_layer_algorithm="equal_grouped",
         walkforward=walkforward,
     )
 
-    assert config.walkforward_selection_method == WalkforwardSelectionMethod.STABLE_REGION
+    assert config.walkforward_selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK
     assert config.weight_layer_algorithm == WeightLayerAlgorithm.EQUAL_GROUPED
 
 

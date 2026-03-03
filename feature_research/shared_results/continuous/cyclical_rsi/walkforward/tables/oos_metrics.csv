@@ -1,0 +1,15 @@
+metric,value
+objective_metric_name,t_stat
+num_folds,8
+num_selected_rows,8
+mean_selected_raw_t_stat,0.8943095260406511
+median_selected_raw_t_stat,0.8011641429571907
+std_selected_raw_t_stat,1.0780088121097178
+min_selected_raw_t_stat,-0.3970880747745282
+max_selected_raw_t_stat,3.3472567922322414
+positive_raw_fold_rate,0.875
+mean_selected_smoothed_t_stat,4.715763395120307
+unique_selected_features,1
+most_selected_feature,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4
+most_selected_feature_count,8
+mean_oos_portfolio_sharpe,0.9381896655516578

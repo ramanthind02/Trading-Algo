@@ -23,11 +23,6 @@ from feature_research.walkforward.runner import (
     run_walkforward_research,
     run_portfolio_simulation,
 )
-from feature_research.walkforward.stable_region_selection import (
-    StableRegionConfig,
-    StableRegionResult,
-    run_stable_region_selection,
-)
 from feature_research.walkforward.top_k_selection import EnhancedSelectionResult
 from ensemble.weight_layer import WeightLayerConfig
 
@@ -220,30 +215,6 @@ def test_run_walkforward_research_fold_scores_include_selected_long_bin_when_eva
     labels_to_bin = fold0.set_index("param_label")["selected_long_bin"].to_dict()
     assert labels_to_bin.get("x=1") == 1
     assert labels_to_bin.get("x=2") == 2
-
-
-def test_stable_region_long_t_stat_excludes_non_positive_objective() -> None:
-    """When strategy is long and objective_metric_name is t_stat, params with smoothed_objective <= 0 are excluded."""
-    param_grid: list[dict[str, object]] = [
-        {"bin_count": 6, "lookback": 5},
-        {"bin_count": 6, "lookback": 6},
-        {"bin_count": 6, "lookback": 7},
-    ]
-    smoothed = {"bin_count=6|lookback=5": -0.5, "bin_count=6|lookback=6": 2.0, "bin_count=6|lookback=7": 1.5}
-    raw = {k: v for k, v in smoothed.items()}
-    trade_freq = {k: 0.1 for k in smoothed}
-    config = StableRegionConfig(bin_count_min=0, k_max=3, k_per_region=2, min_region_size=1)
-    result = run_stable_region_selection(
-        smoothed_objectives=smoothed,
-        raw_objectives=raw,
-        trade_frequencies=trade_freq,
-        param_grid=param_grid,
-        config=config,
-        strategy="long",
-        objective_metric_name="t_stat",
-    )
-    assert "bin_count=6|lookback=5" not in result.selected_labels
-    assert set(result.selected_labels) <= {"bin_count=6|lookback=6", "bin_count=6|lookback=7"}
 
 
 def test_run_walkforward_research_excludes_folds_below_minimum_samples() -> None:
@@ -767,66 +738,6 @@ def test_enhanced_selection_outputs_selected_members_only(
     monkeypatch.setattr(
         "feature_research.walkforward.top_k_selection.run_enhanced_selection",
         fake_run_enhanced_selection,
-    )
-
-    report = run_walkforward_research(
-        candles_df=candles_df,
-        target=target,
-        feature_type="continuous",
-        module_name="rsi",
-        config=config,
-        param_grid=param_grid,
-        evaluate_param_combo=_enhanced_dummy_evaluate,
-    )
-
-    summary = report.selection_summary_df.loc[0]
-    assert json.loads(summary["top_k_features"]) == ["lookback=4", "lookback=5"]
-    assert summary["selected_feature"] in ("lookback=4", "lookback=5")
-    assert not pd.isna(summary["selected_raw_objective"])
-    assert not pd.isna(summary["selected_smoothed_objective"])
-    selected_flags = report.fold_scores_df.set_index("param_label")["selected_feature"]
-    assert bool(selected_flags.loc["lookback=4"])
-    assert bool(selected_flags.loc["lookback=5"])
-    assert not bool(selected_flags.loc["lookback=3"])
-    assert report.fold_scores_df["selected_feature"].equals(
-        report.fold_scores_df["selected_in_top_k"]
-    )
-
-
-def test_stable_region_selection_outputs_selected_members_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    candles_df, target = _make_enhanced_inputs(1000)
-    param_grid: list[dict[str, object]] = [
-        {"lookback": 3},
-        {"lookback": 4},
-        {"lookback": 5},
-    ]
-    config = WalkforwardResearchConfig(
-        train_start=datetime(2000, 1, 1),
-        train_end=datetime(2002, 1, 1),
-        num_steps=1,
-        top_k=2,
-        selection_method=WalkforwardSelectionMethod.STABLE_REGION,
-    )
-
-    def fake_run_stable_region_selection(**_kwargs: object) -> StableRegionResult:
-        detail = pd.DataFrame(
-            {
-                "param_label": ["lookback=3", "lookback=4", "lookback=5"],
-                "above_floor": [False, True, True],
-                "region_id": [float("nan"), 0, 0],
-                "region_size": [float("nan"), 2, 2],
-            }
-        )
-        return StableRegionResult(
-            selected_labels=["lookback=4", "lookback=5"],
-            per_param_detail=detail,
-        )
-
-    monkeypatch.setattr(
-        "feature_research.walkforward.stable_region_selection.run_stable_region_selection",
-        fake_run_stable_region_selection,
     )
 
     report = run_walkforward_research(

@@ -37,13 +37,13 @@ def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path)
         }
     ]
 
-    monkeypatch.setattr("feature_research.pipeline.populate_cache_if_needed", lambda _cfg: None)
+    monkeypatch.setattr("feature_research.pipelines.oos.populate_cache_if_needed", lambda _cfg: None)
     monkeypatch.setattr(
-        "feature_research.pipeline.resolve_walkforward_output_dir",
+        "feature_research.pipelines.oos.resolve_walkforward_output_dir",
         lambda **_kwargs: tmp_path / "oos",
     )
     monkeypatch.setattr(
-        "feature_research.pipeline.expand_bias_specs",
+        "feature_research.pipelines.oos.expand_bias_specs",
         lambda _spec: [
             {
                 "module_name": "rsi_signal",
@@ -60,27 +60,27 @@ def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path)
         ],
     )
     monkeypatch.setattr(
-        "feature_research.pipeline.load_features_for_combo",
-        lambda _single_spec, _cfg: (feature, target, None),
+        "feature_research.walkforward.research_data.load_features_for_combo",
+        lambda _single_spec, _cfg, **_kwargs: (feature, target, None),
     )
     monkeypatch.setattr(
-        "feature_research.pipeline.build_fold_rows_from_explicit_specs",
+        "feature_research.pipelines.oos.build_fold_rows_from_explicit_specs",
         lambda *_args, **_kwargs: fold_rows,
     )
     monkeypatch.setattr(
-        "feature_research.pipeline.load_candles_for_config",
+        "feature_research.pipelines.oos.load_portfolio_candles",
         lambda _cfg: portfolio_candles,
     )
     monkeypatch.setattr(
-        "feature_research.pipeline.plot_selection_stability",
+        "feature_research.pipelines.oos.plot_selection_stability",
         lambda *_args, **_kwargs: (None, None),
     )
     monkeypatch.setattr(
-        "feature_research.pipeline.plot_fold_timeline",
+        "feature_research.pipelines.oos.plot_fold_timeline",
         lambda *_args, **_kwargs: (None, None),
     )
     monkeypatch.setattr(
-        "feature_research.pipeline.write_walkforward_artifacts",
+        "feature_research.pipelines.oos.write_walkforward_artifacts",
         lambda *_args, **_kwargs: None,
     )
 
@@ -91,7 +91,7 @@ def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path)
         return SimpleNamespace(selection_summary_df=pd.DataFrame(), folds_df=pd.DataFrame())
 
     monkeypatch.setattr(
-        "feature_research.pipeline.run_walkforward_research",
+        "feature_research.pipelines.oos.run_walkforward_research",
         _mock_run_walkforward_research,
     )
 

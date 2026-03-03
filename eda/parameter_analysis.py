@@ -23,271 +23,6 @@ from metrics.plotting.parameter_plots import (
 )
 from utils.compute.grid_smoothing import add_smoothed_objective
 
-# Phase 3/4 stable region selection (walkforward algorithm)
-from feature_research.walkforward.stable_region_selection import (
-    StableRegionConfig,
-    StableRegionResult,
-    run_stable_region_selection,
-)
-
-
-def _phase3_label_to_param_tuple(label: str, param_names: List[str]) -> Tuple[Any, ...]:
-    """Parse canonical param label (e.g. 'lookback=5|n_bins=3') to tuple in param_names order."""
-    parts = label.split("|")
-    parsed: Dict[str, Any] = {}
-    for part in parts:
-        if "=" not in part:
-            continue
-        k, v_str = part.split("=", 1)
-        v_str = v_str.strip()
-        try:
-            v: Any = int(v_str)
-        except ValueError:
-            try:
-                v = float(v_str)
-            except ValueError:
-                v = v_str
-        parsed[k.strip()] = v
-    return tuple(parsed.get(name) for name in param_names)
-
-
-def run_phase3_stable_region_selection(
-    results_df: pd.DataFrame,
-    param_names: List[str],
-    metric_col: str,
-    config: Optional[StableRegionConfig] = None,
-    grid_structure: Optional[Dict[str, List]] = None,
-    smoothing_self_weight: float = 2.0,
-) -> Tuple[StableRegionResult, pd.DataFrame]:
-    """Run Phase 3/4 stable region selection on a results_df (paramK_value + metric column).
-
-    Uses the same algorithm as walkforward: floor (adaptive or relative) → qualifying
-    set → connected components (grid-step adjacency) → filter degenerate → select
-    k_per_region per region, cap at k_max.
-
-    Parameters
-    ----------
-    results_df : pd.DataFrame
-        Grid search results with param1_value … paramN_value and metric_col.
-    param_names : List[str]
-        Human-readable parameter names (same order as paramK_value columns).
-    metric_col : str
-        Column name of the raw objective metric (e.g. 'sortino').
-    config : Optional[StableRegionConfig], optional
-        Algorithm config. If None, uses defaults (floor_method='adaptive',
-        k_per_region=3, k_max=6, min_region_size=2, bin_count_min=0).
-    grid_structure : Optional[Dict[str, List]], optional
-        Param name → ordered list of values per axis for grid-step adjacency.
-        If None, built from results_df unique values.
-    smoothing_self_weight : float, default 2.0
-        Weight for param's own value vs. neighbors in neighbor smoothing.
-
-    Returns
-    -------
-    Tuple[StableRegionResult, pd.DataFrame]
-        StableRegionResult (selected_labels, per_param_detail) and smoothed_df
-        (copy of results with smoothed_* and stability columns).
-    """
-    if config is None:
-        config = StableRegionConfig(
-            floor_method="adaptive",
-            k_per_region=3,
-            k_max=6,
-            min_region_size=2,
-            bin_count_min=0,
-        )
-    n_params = len(param_names)
-    param_cols = [f"param{k}_value" for k in range(1, n_params + 1)]
-    smoothed_df = compute_neighbor_smoothing(
-        results_df, param_names, metric_col, self_weight=smoothing_self_weight
-    )
-    smoothed_metric_col = f"smoothed_{metric_col}"
-
-    # One row per unique param combo (aggregate if duplicates)
-    group_cols = [c for c in param_cols if c in smoothed_df.columns]
-    if not group_cols:
-        raise ValueError("results_df must contain param1_value, ... paramN_value columns")
-    agg_df = (
-        smoothed_df.groupby(group_cols)
-        .agg({metric_col: "first", smoothed_metric_col: "first"})
-        .reset_index()
-    )
-
-    param_grid: List[Dict[str, object]] = []
-    for _, row in agg_df.iterrows():
-        params = {param_names[i]: row[group_cols[i]] for i in range(len(param_names))}
-        param_grid.append(params)
-
-    labels = [
-        "|".join(f"{k}={params[k]}" for k in sorted(params))
-        for params in param_grid
-    ]
-    smoothed_objectives = {
-        lbl: float(agg_df.iloc[i][smoothed_metric_col])
-        for i, lbl in enumerate(labels)
-    }
-    raw_objectives = {
-        lbl: float(agg_df.iloc[i][metric_col])
-        for i, lbl in enumerate(labels)
-    }
-    trade_frequencies = {lbl: 1.0 for lbl in labels}
-
-    if grid_structure is None:
-        grid_structure = {
-            param_names[i]: sorted(agg_df[group_cols[i]].dropna().unique().tolist())
-            for i in range(len(param_names))
-        }
-
-    result = run_stable_region_selection(
-        smoothed_objectives=smoothed_objectives,
-        raw_objectives=raw_objectives,
-        trade_frequencies=trade_frequencies,
-        param_grid=param_grid,
-        config=config,
-        grid_structure=grid_structure,
-    )
-    return result, smoothed_df
-
-
-def build_phase3_selected_mask(
-    result: StableRegionResult,
-    grid_df: pd.DataFrame,
-    param_names: List[str],
-) -> pd.Series:
-    """Build a boolean mask aligned with grid_df: True where param combo is in result.selected_labels."""
-    param_cols = [f"param{k}_value" for k in range(1, len(param_names) + 1)]
-    if not all(c in grid_df.columns for c in param_cols):
-        return pd.Series(False, index=grid_df.index)
-    selected_set = set(result.selected_labels)
-    def row_to_label(row: pd.Series) -> str:
-        params = {param_names[i]: row[param_cols[i]] for i in range(len(param_names))}
-        return "|".join(f"{k}={params[k]}" for k in sorted(params))
-    labels = grid_df.apply(row_to_label, axis=1)
-    return labels.isin(selected_set)
-
-
-def format_phase3_stable_regions_display(
-    result: StableRegionResult,
-    param_names: List[str],
-) -> List[Dict[str, Any]]:
-    """Format Phase 3/4 per_param_detail into a list of stable regions for display.
-
-    Returns
-    -------
-    List[Dict[str, Any]]
-        Each dict has keys: region_id, region_size, members (list of param tuples),
-        mean_smoothed_objective, member_labels.
-    """
-    detail = result.per_param_detail
-    qualifying = detail.loc[detail["above_floor"] & detail["region_id"].notna()]
-    if qualifying.empty:
-        return []
-    regions: List[Dict[str, Any]] = []
-    for region_id in qualifying["region_id"].dropna().unique():
-        subset = qualifying[qualifying["region_id"] == region_id]
-        size = int(subset["region_size"].iloc[0]) if "region_size" in subset.columns else len(subset)
-        members = [
-            _phase3_label_to_param_tuple(label, param_names)
-            for label in subset["param_label"].tolist()
-        ]
-        mean_smoothed = float(subset["smoothed_objective"].mean())
-        regions.append({
-            "region_id": int(region_id),
-            "region_size": size,
-            "members": members,
-            "member_labels": subset["param_label"].tolist(),
-            "mean_smoothed_objective": mean_smoothed,
-        })
-    return sorted(regions, key=lambda r: -r["mean_smoothed_objective"])
-
-
-def _stable_regions_from_phase3_result(
-    result: StableRegionResult,
-    smoothed_df: pd.DataFrame,
-    param_names: List[str],
-    metric_col: str,
-) -> List[StableRegion]:
-    """Build List[StableRegion] from Phase 3 floor-based selection result for report/plots.
-
-    Uses the same param_ranges key convention as identify_stable_regions (param1, param2).
-    """
-    detail = result.per_param_detail
-    qualifying = detail.loc[detail["above_floor"] & detail["region_id"].notna()]
-    if qualifying.empty:
-        return []
-
-    n_params = len(param_names)
-    param_cols = [f"param{k}_value" for k in range(1, n_params + 1)]
-    internal_names = [c.replace("_value", "") for c in param_cols]
-    if not all(c in smoothed_df.columns for c in param_cols):
-        return []
-
-    def row_to_label(row: pd.Series) -> str:
-        return "|".join(
-            f"{k}={row[param_cols[param_names.index(k)]]}"
-            for k in sorted(param_names)
-        )
-
-    smoothed_with_label = smoothed_df.assign(
-        _label=smoothed_df.apply(row_to_label, axis=1)
-    )
-    ratio_by_label = smoothed_with_label.set_index("_label")["stability_ratio"]
-
-    grid_min_max: Dict[str, Tuple[Any, Any]] = {}
-    for col, iname in zip(param_cols, internal_names):
-        grid_min_max[iname] = (
-            smoothed_df[col].min(),
-            smoothed_df[col].max(),
-        )
-
-    regions: List[StableRegion] = []
-    for region_id in qualifying["region_id"].dropna().unique():
-        subset = qualifying[qualifying["region_id"] == region_id]
-        labels = subset["param_label"].tolist()
-        param_combinations = [
-            _phase3_label_to_param_tuple(lbl, param_names) for lbl in labels
-        ]
-        if len(param_combinations) < 2:
-            continue
-
-        param_range_dict: Dict[str, Tuple[Any, Any]] = {}
-        for k, iname in enumerate(internal_names):
-            vals = [t[k] for t in param_combinations]
-            param_range_dict[iname] = (min(vals), max(vals))
-
-        obj_values = subset["smoothed_objective"].values
-        mean_objective = float(np.nanmean(obj_values))
-        min_objective = float(np.nanmin(obj_values))
-        max_objective = float(np.nanmax(obj_values))
-
-        ratios = ratio_by_label.reindex(labels).dropna()
-        mean_stability_ratio = float(ratios.mean()) if len(ratios) > 0 else 0.0
-
-        is_boundary = False
-        for k, iname in enumerate(internal_names):
-            gmin, gmax = grid_min_max[iname]
-            vals = [t[k] for t in param_combinations]
-            if gmin in vals or gmax in vals:
-                is_boundary = True
-                break
-
-        regions.append(
-            StableRegion(
-                param_ranges=param_range_dict,
-                param_combinations=param_combinations,
-                mean_stability_ratio=mean_stability_ratio,
-                mean_objective=mean_objective,
-                min_objective=min_objective,
-                max_objective=max_objective,
-                n_combinations=len(param_combinations),
-                is_boundary_region=is_boundary,
-            )
-        )
-
-    regions.sort(key=lambda r: r.mean_objective, reverse=True)
-    return regions
-
-
 def _get_metric_name_from_object(metric_obj: Any) -> str:
     """
     Extract metric name from a metric object for display/plotting purposes.
@@ -627,6 +362,10 @@ class ParameterSensitivityReport:
     n_stable_regions: int = 0
     timestamp: str = ""
 
+    # MPS path (optional); keys are tuple of dim names (length = marginal_dim)
+    marginal_tables: Optional[Dict[Tuple[str, ...], pd.DataFrame]] = None
+    mps_result: Optional[Any] = None
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -638,19 +377,15 @@ def generate_parameter_sensitivity_report(
     stability_threshold: float = 0.8,
     top_k: int = 3,
     plot_3d_mode: str = "heatmap_slices",
-    use_floor_based_selection: bool = True,
-    stable_region_config: Optional[StableRegionConfig] = None,
     smoothing_self_weight: float = 2.0,
+    marginal_peak_config: Optional[Any] = None,
 ) -> ParameterSensitivityReport:
     """
-    Orchestrate smoothing → stable region identification → plots and recommendations.
+    Orchestrate smoothing, Marginal Peak Selection (MPS), and plots/recommendations.
 
-    When use_floor_based_selection is True (default), uses the algorithm from
-    docs/library/Feature_selection/Phase_2_WF/param_stability.md: adaptive/relative
-    floor → qualifying set → connected components → filter → select. This avoids
-    marking the entire grid as one stable region when stability_ratio is high
-    everywhere. When False, uses legacy ratio-based criterion (stability_ratio >
-    stability_threshold).
+    Selection is always done via MPS (pairwise marginal tables, gap-based peak cell).
+    stable_regions is set to [] so plots run without shading. See
+    docs/library/Feature_selection/Phase_2_WF/param_stability.md.
 
     Parameters
     ----------
@@ -661,25 +396,25 @@ def generate_parameter_sensitivity_report(
     metric_col : str
         Column name of the raw objective metric (e.g. ``'sortino'``).
     stability_threshold : float, default 0.8
-        Used only when use_floor_based_selection=False. Minimum stability ratio
-        for stable region membership.
+        Plot shading threshold when stable_regions are provided (unused when []).
     top_k : int, default 3
         Number of top recommended parameter combinations.
     plot_3d_mode : str, default "heatmap_slices"
         3D plot style when ``len(param_names) >= 3``.
-    use_floor_based_selection : bool, default True
-        If True, use floor-based stable region selection (doc algorithm).
-        If False, use legacy stability_ratio > threshold.
-    stable_region_config : Optional[StableRegionConfig], default None
-        Config for floor-based selection. When None and use_floor_based_selection
-        is True, uses defaults (adaptive floor, bin_count_min=0 for in-sample).
     smoothing_self_weight : float, default 2.0
         Weight for param's own value vs. neighbors in neighbor smoothing.
+    marginal_peak_config : Optional[Any], default None
+        MPS config. When None, uses default MarginalPeakConfig().
 
     Returns
     -------
     ParameterSensitivityReport
     """
+    from feature_research.walkforward.marginal_peak_selection import (
+        MarginalPeakConfig,
+        compute_pairwise_marginal_tables,
+        run_marginal_peak_selection,
+    )
     from metrics.plotting.parameter_plots import (
         plot_parameter_sensitivity_with_stability,
         plot_2d_stability_heatmap,
@@ -690,59 +425,42 @@ def generate_parameter_sensitivity_report(
     param_cols = [f"param{k}_value" for k in range(1, n_dims + 1)]
     smoothed_metric_col = f"smoothed_{metric_col}"
 
-    if use_floor_based_selection:
-        config = stable_region_config or StableRegionConfig(
-            floor_method="adaptive",
-            k_per_region=3,
-            k_max=6,
-            min_region_size=2,
-            bin_count_min=0,
+    mps_cfg = marginal_peak_config if marginal_peak_config is not None else MarginalPeakConfig()
+    param_grid = [
+        {param_names[k]: row[f"param{k+1}_value"] for k in range(n_dims)}
+        for _, row in results_df.iterrows()
+    ]
+    raw_objectives = {
+        "|".join(f"{k}={pg[k]}" for k in sorted(pg)): float(
+            results_df.iloc[i][metric_col]
         )
-        result, smoothed_df = run_phase3_stable_region_selection(
-            results_df, param_names, metric_col, config=config,
-            smoothing_self_weight=smoothing_self_weight,
-        )
-        stable_regions = _stable_regions_from_phase3_result(
-            result, smoothed_df, param_names, metric_col
-        )
-        recommended = [
-            _phase3_label_to_param_tuple(lbl, param_names)
-            for lbl in result.selected_labels
-        ]
-        top_k_combos = recommended[:top_k]
-        # Summary: pct of grid in a valid stable region (above floor + in component)
-        detail = result.per_param_detail
-        qualifying = detail.loc[
-            detail["above_floor"] & detail["region_id"].notna()
-        ]
-        pct_stable = (
-            qualifying.shape[0] / len(detail) if len(detail) > 0 else 0.0
-        )
-    else:
-        smoothed_df = compute_neighbor_smoothing(
-            results_df, param_names, metric_col, self_weight=smoothing_self_weight
-        )
-        stable_regions = identify_stable_regions(
-            smoothed_df, metric_col, stability_threshold
-        )
-        stable_combos_set: set = set()
-        for region in stable_regions:
-            stable_combos_set.update(region.param_combinations)
-        stable_mask = smoothed_df[param_cols].apply(
-            lambda row: tuple(row) in stable_combos_set, axis=1
-        )
-        stable_rows = smoothed_df[stable_mask].sort_values(
-            by=smoothed_metric_col, ascending=False
-        )
-        recommended = [
-            tuple(row) for row in stable_rows[param_cols].values
-        ]
-        top_k_combos = recommended[:top_k]
-        ratios = smoothed_df["stability_ratio"].dropna()
-        pct_stable = (
-            float((ratios > stability_threshold).mean())
-            if len(ratios) > 0 else 0.0
-        )
+        for i, pg in enumerate(param_grid)
+    }
+    marginal_tables = compute_pairwise_marginal_tables(
+        param_grid,
+        raw_objectives,
+        min_cell_size=getattr(mps_cfg, "min_cell_size", 2),
+        marginal_dim=getattr(mps_cfg, "marginal_dim", 2),
+    )
+    mps_result = run_marginal_peak_selection(
+        raw_objectives=raw_objectives,
+        param_grid=param_grid,
+        config=mps_cfg,
+    )
+    label_to_pg = {
+        "|".join(f"{k}={pg[k]}" for k in sorted(pg)): pg
+        for pg in param_grid
+    }
+    recommended = [
+        tuple(label_to_pg[lbl][name] for name in param_names)
+        for lbl in mps_result.selected_labels
+    ]
+    top_k_combos = recommended[:top_k]
+    stable_regions: List[StableRegion] = []
+    pct_stable = len(mps_result.selected_labels) / max(len(results_df), 1)
+    smoothed_df = compute_neighbor_smoothing(
+        results_df, param_names, metric_col, self_weight=smoothing_self_weight
+    )
 
     # Summary statistics (from smoothed grid)
     ratios = smoothed_df["stability_ratio"].dropna()
@@ -753,9 +471,7 @@ def generate_parameter_sensitivity_report(
     plot_1d: Optional[go.Figure] = None
     plot_2d: Optional[go.Figure] = None
     plot_3d: Optional[go.Figure] = None
-    plot_threshold = (
-        stability_threshold if not use_floor_based_selection else 0.8
-    )
+    plot_threshold = stability_threshold
     if n_dims == 1:
         plot_1d = plot_parameter_sensitivity_with_stability(
             df=smoothed_df,
@@ -809,6 +525,8 @@ def generate_parameter_sensitivity_report(
         n_parameter_combinations=len(smoothed_df),
         n_stable_regions=len(stable_regions),
         timestamp=datetime.now(timezone.utc).isoformat(),
+        marginal_tables=marginal_tables,
+        mps_result=mps_result,
     )
 
 

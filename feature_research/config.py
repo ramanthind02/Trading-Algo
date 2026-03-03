@@ -193,7 +193,6 @@ class WalkforwardDefaultsConfig:
     output_per_fold_tearsheets: bool = False
     weight_layer_algorithm: WeightLayerAlgorithm = WeightLayerAlgorithm.INVERSE_CORRELATION
     member_prediction_mode: MemberPredictionMode = MemberPredictionMode.BINARY
-    run_oracle_baseline: bool = True
     n_jobs: int = 8  # parallel jobs for scoring param combos within each fold; -1 = all CPUs
     # Center param weight relative to each 1-step neighbor in smoothing.
     # 1.0 = equal weight (most aggressive); 2.0–3.0 reduces boundary-param dilution.
@@ -219,7 +218,7 @@ class ParamSensitivityConfig:
     # Marginal Peak Selection (MPS): min gap to declare dominant regime; fallback when gap < min_gap.
     marginal_min_gap: float = 0.10
     marginal_min_cell_size: int = 2
-    marginal_fallback_k: int = 5
+    marginal_fallback_k: int = 1
     marginal_dim: int = 2  # 2 = C(D,2) pairwise tables, 3 = C(D,3) 3D tables (e.g. for 5D+ grids)
 
 
@@ -277,16 +276,19 @@ class InSamplePhaseDefaultsConfig:
 def _default_continuous_in_sample_defaults() -> InSamplePhaseDefaultsConfig:
     return InSamplePhaseDefaultsConfig(
         bias_spec={
-            "module_name": "cumulative_rsi",
+            "module_name": "cyclical_rsi",
             "timeframes": [TimeFrame.D],
-            "params": {"lookback": [2,3,4],
-            "avg_period": [2,3]},
+            "params": {
+                "short_period": [4],
+                "long_period": [120],
+                "rsi_period": [2]
+            },
         },
         target_col="log_return_atr",
         strategy="long",
         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
         binning_params_overrides={
-            "bin_counts": [12,11,10,9,8,7],
+            "bin_counts": [10],
             "t_threshold": 1,
             "use_coverage_bonus": False,
         },
@@ -399,7 +401,6 @@ class BaseResearchConfig:
             weight_layer_algorithm=wf_defaults.weight_layer_algorithm,
             member_prediction_mode=wf_defaults.member_prediction_mode,
             output_root=wf_defaults.output_root,
-            run_oracle_baseline=wf_defaults.run_oracle_baseline,
             output_per_fold_tearsheets=wf_defaults.output_per_fold_tearsheets,
             n_jobs=wf_defaults.n_jobs,
             smoothing_self_weight=wf_defaults.smoothing_self_weight,
@@ -418,10 +419,9 @@ def load_config() -> BaseResearchConfig:
     tickers = [
         Ticker.ES,
         Ticker.NQ
-
     ]
     start = datetime(2000, 1, 1)
-    end = datetime(2023, 12, 30)
+    end = datetime(2023, 12, 31)
     use_cache = True
     populate_cache = True
 
@@ -452,16 +452,17 @@ def load_config() -> BaseResearchConfig:
         output_per_fold_tearsheets=False,
         weight_layer_algorithm=WeightLayerAlgorithm.INVERSE_CORRELATION,
         member_prediction_mode=MemberPredictionMode.BINARY,
-        run_oracle_baseline=False,
     )
 
-    # OOS: single fold with explicit train/test dates (e.g. train 2007–2023, test 2024–2025).
+    # OOS: single fold with explicit train/test dates. test_end must be within
+    # available OHLC data (data/ohlc_data); otherwise no tickers pass coverage.
+    # Example with data through 2023: train 2009–2022, test 2023.
     # Set to None to disable OOS.
     oos_window = OOSWindowConfig(
         train_start=datetime(2009, 1, 1),
-        train_end=datetime(2023, 12, 30),
-        test_start=datetime(2024, 1, 1),
-        test_end=datetime(2025, 12, 31),
+        train_end=datetime(2022, 12, 30),
+        test_start=datetime(2023, 1, 1),
+        test_end=datetime(2025, 9, 18),
     )
 
     permutation = PermutationResearchConfig(
@@ -472,7 +473,7 @@ def load_config() -> BaseResearchConfig:
         enabled=True,
     )
 
-    feature_type = FeatureType.RULE_BASED
+    feature_type = FeatureType.CONTINUOUS
     in_sample_defaults = InSampleDefaultsCatalog()
     param_sensitivity = ParamSensitivityConfig()
     # ==========================================================================

@@ -19,7 +19,10 @@ from feature_research.walkforward.permutation_helpers import (
 from feature_research.walkforward.runner import _build_fold_rows
 from feature_research.walkforward.permutation_core import (
     _one_vector_shuffle_rep_fixed_signal,
+    aggregate_per_ticker_metrics,
+    aggregate_per_ticker_nulls,
     run_vector_shuffle_null,
+    run_vector_shuffle_null_vectorized,
 )
 from feature_research.walkforward.run_walkforward_permutation import _two_unit_train_windows
 
@@ -278,3 +281,80 @@ def test_p_value_in_valid_range() -> None:
     assert 0 <= p_value <= 1
     assert n_ge == 6
     assert p_value == pytest.approx(7 / 11)  # (1 + 6) / (10 + 1)
+
+
+def test_aggregate_per_ticker_metrics_mean() -> None:
+    """aggregate_per_ticker_metrics returns mean across tickers."""
+    metrics = {"ES": 1.0, "NQ": 3.0, "YM": 2.0}
+    assert aggregate_per_ticker_metrics(metrics) == pytest.approx(2.0)
+
+
+def test_aggregate_per_ticker_nulls_mean() -> None:
+    """aggregate_per_ticker_nulls returns mean across tickers per replicate."""
+    nulls = {
+        "ES": np.array([1.0, 2.0, 3.0]),
+        "NQ": np.array([3.0, 4.0, 5.0]),
+    }
+    expected = np.array([2.0, 3.0, 4.0])
+    np.testing.assert_array_equal(aggregate_per_ticker_nulls(nulls), expected)
+
+
+def test_aggregate_per_ticker_nulls_mismatched_lengths() -> None:
+    """aggregate_per_ticker_nulls raises on inconsistent lengths."""
+    nulls = {
+        "ES": np.array([1.0, 2.0]),
+        "NQ": np.array([3.0, 4.0, 5.0]),
+    }
+    with pytest.raises(ValueError, match="same length"):
+        aggregate_per_ticker_nulls(nulls)
+
+
+def test_return_shuffle_null_vectorized_raises_for_order_invariant_metrics() -> None:
+    """Return-shuffle null is degenerate for our supported metrics (order-invariant)."""
+    from feature_research.walkforward.permutation_core import run_return_shuffle_null_vectorized
+
+    idx = pd.date_range("2022-01-01", periods=10, freq="D")
+    oos_returns = pd.Series(np.arange(len(idx), dtype=float), index=idx)
+    with pytest.raises(ValueError, match="degenerate"):
+        run_return_shuffle_null_vectorized(
+            aggregate_oos_returns=oos_returns,
+            nreps=3,
+            random_seed=42,
+            objective_metric_name="sharpe",
+        )
+
+
+def test_vector_shuffle_null_vectorized_is_not_degenerate() -> None:
+    """Target-permutation null should vary when signal is fixed and target is permuted."""
+    idx = pd.date_range("2022-01-01", periods=200, freq="D")
+    rng = np.random.default_rng(123)
+    target = pd.Series(rng.normal(0.0, 1.0, len(idx)), index=idx, name="walkforward_target")
+    # Fixed OOS "signal" over the same period (e.g., portfolio position fraction).
+    signal = pd.Series(rng.choice([-1.0, 0.0, 1.0], size=len(idx), p=[0.45, 0.1, 0.45]), index=idx)
+
+    fold_rows = [
+        {
+            "fold_id": 0,
+            "test_start": idx[0],
+            "test_end": idx[-1],
+        }
+    ]
+    unit1_mask = pd.Series(False, index=idx)
+    unit1_mask.iloc[:100] = True
+    unit2_mask = ~unit1_mask
+
+    null_metrics = run_vector_shuffle_null_vectorized(
+        reference_target=target,
+        unit1_mask=unit1_mask,
+        unit2_mask=unit2_mask,
+        fixed_oos_signal_by_fold={0: signal},
+        fold_rows=fold_rows,
+        nreps=200,
+        random_seed=42,
+        objective_metric_name="t_stat",
+        canonical_oos_index=idx,
+        return_returns=False,
+    )
+    assert null_metrics.shape == (200,)
+    # If permutation is working, distribution should not collapse to a single value.
+    assert float(np.std(null_metrics)) > 1e-9

@@ -5,8 +5,8 @@ The feature_type field determines validation behavior:
   - CONTINUOUS: uses BinningAnalysisConfig, supports Phase 2 binning analysis
   - RULE_BASED: uses fixed 3-level binning, skips Phase 2 analysis
 
-Researcher-editable phase presets (bias specs, targets, reports dirs, walkforward overrides)
-live in ``feature_research/config.py``. This module mainly provides the runtime
+Researcher-editable phase presets (bias specs, targets, reports dirs) live in
+``feature_research/config.py``. This module mainly provides the runtime
 ``ResearchConfig`` shape, and re-exports ``BinningAnalysisConfig`` for backward
 compatibility while assembling shared defaults.
 """
@@ -103,7 +103,9 @@ class ResearchConfig:
     binning_params : BinningAnalysisConfig
         Binning hyperparameters. Only used for CONTINUOUS; rule-based uses fixed 3 levels.
     walkforward : WalkforwardResearchConfig
-        Walkforward configuration (enabled/disabled, parameters).
+        Walkforward config (window, selection, etc.). In-sample never runs walkforward;
+        the standalone script ``feature_research/walkforward/run_walkforward.py`` uses
+        this and sets enabled=True when running walkforward.
     param_sensitivity : ParamSensitivityConfig
         Parameter sensitivity / stable region selection (notebook and reports).
     oos_window : OOSWindowConfig | None
@@ -123,7 +125,7 @@ class ResearchConfig:
     # --- Optional fields (with defaults) ---
     feature_type: FeatureType = FeatureType.CONTINUOUS
     walkforward_selection_method: WalkforwardSelectionMethod | str = (
-        WalkforwardSelectionMethod.STABLE_REGION
+        WalkforwardSelectionMethod.MARGINAL_PEAK
     )
     weight_layer_algorithm: WeightLayerAlgorithm | str = (
         WeightLayerAlgorithm.INVERSE_CORRELATION
@@ -205,7 +207,7 @@ def load_config() -> ResearchConfig:
         train_window_years=phase_defaults.walkforward_train_window_years,
         test_window_years=phase_defaults.walkforward_test_window_years,
         num_steps=phase_defaults.walkforward_num_steps,
-        enabled=phase_defaults.walkforward_enabled,
+        enabled=False,  # In-sample never runs walkforward; standalone run_walkforward.py sets enabled=True
     )
 
     return ResearchConfig(

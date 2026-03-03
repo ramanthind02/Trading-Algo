@@ -15,7 +15,6 @@ from feature_research.config import (
     OOSWindowConfig,
     compute_first_fold_bounds,
 )
-from feature_research.walkforward.stable_region_selection import StableRegionConfig
 from utils.core.enums import Ticker, TimeFrame
 
 _PORTFOLIO_RESEARCH_DIR = Path(__file__).resolve().parent
@@ -64,8 +63,6 @@ class PortfolioResearchConfig:
         'equal_weight' or 'buy_hold' for PortfolioTester.
     output_root : Path
         Root directory for tearsheets and artifacts.
-    stable_region_config : StableRegionConfig | None
-        Reserved for future per-group parameter selection; unused by script.
     """
 
     tickers: list[Ticker]
@@ -85,7 +82,6 @@ class PortfolioResearchConfig:
     max_position_pct: float = 3.5
     baseline_mode: str = "equal_weight"
     output_root: Path = field(default_factory=lambda: _PORTFOLIO_RESEARCH_DIR / "results")
-    stable_region_config: StableRegionConfig | None = None
 
     def __post_init__(self) -> None:
         if self.baseline_mode not in ("equal_weight", "buy_hold"):
@@ -152,7 +148,6 @@ def load_config() -> PortfolioResearchConfig:
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"
-    stable_region_config = None
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -175,5 +170,4 @@ def load_config() -> PortfolioResearchConfig:
         max_position_pct=max_position_pct,
         baseline_mode=baseline_mode,
         output_root=output_root,
-        stable_region_config=stable_region_config,
     )

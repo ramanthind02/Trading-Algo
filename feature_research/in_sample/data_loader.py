@@ -16,12 +16,18 @@ if TYPE_CHECKING:
     from feature_research.in_sample.config import ResearchConfig
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
+from feature_research.bootstrap import find_repo_root
 from feature_research.config import FeatureType
 from utils.cache.cache_manager import CacheManager
-from utils.core.enums import TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
 
 _UNNORMALIZED_RETURN_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
+
+
+def _resolve_project_root() -> Path | None:
+    this_file = Path(__file__).resolve()
+    return find_repo_root(this_file)
 
 
 def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -133,18 +139,9 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
     if not config.populate_cache:
         return
 
-    # Resolve the repository root in the same way as run_is.py:
-    # walk up until we find either a pyproject.toml or a .git directory.
-    this_file = Path(__file__).resolve()
-    search_root = this_file.parent
-    project_root: Path | None = None
-    for parent in (search_root, *search_root.parents):
-        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            project_root = parent
-            break
+    project_root = _resolve_project_root()
     if project_root is None:
-        # Fallback to the workspace-level default (kept for safety)
-        project_root = this_file.parents[3]
+        project_root = Path(__file__).resolve().parents[3]
 
     candle_dir = project_root / "data" / "ohlc_data"
     if not candle_dir.exists():
@@ -185,6 +182,83 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
         overwrite_existing=False,
     )
     print(f"[data_loader] Cache populated: {summary}")
+
+
+def get_tickers_with_coverage_for_config(config: "ResearchConfig") -> list[Ticker]:
+    """Return tickers that have OHLC data covering [config.start, config.end].
+
+    Tickers whose data starts after config.start or ends before config.end are
+    excluded so pipelines (walkforward, permutation, OOS) do not hit cache
+    misses for partial ranges.
+
+    Returns
+    -------
+    list
+        Subset of config.tickers with full coverage. May be empty if no ticker
+        has data for the config range.
+    """
+    project_root = _resolve_project_root()
+    if project_root is None:
+        return list(config.tickers)
+    candle_dir = project_root / "data" / "ohlc_data"
+    if not candle_dir.exists():
+        return list(config.tickers)
+    manager = CacheManager(candle_dir=str(candle_dir))
+    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
+    timeframes = [
+        TimeFrame[t] if isinstance(t, str) else t
+        for t in (
+            timeframes_raw
+            if isinstance(timeframes_raw, list)
+            else [timeframes_raw]
+        )
+    ]
+    ranges = manager.get_available_date_range_per_ticker(
+        tickers=config.tickers,
+        timeframes=timeframes,
+    )
+    start_ts = pd.Timestamp(config.start)
+    end_ts = pd.Timestamp(config.end)
+    covered = [
+        t
+        for t in config.tickers
+        if t in ranges
+        and ranges[t][0] <= start_ts.to_pydatetime()
+        and ranges[t][1] >= end_ts.to_pydatetime()
+    ]
+    return covered
+
+
+def get_available_date_ranges_for_tickers(
+    config: "ResearchConfig", tickers: list[Ticker]
+) -> dict[Ticker, tuple[pd.Timestamp, pd.Timestamp]]:
+    """Return per-ticker (min_date, max_date) from OHLC data for error messages.
+
+    Used when no tickers have full coverage so we can report what range each
+    ticker actually has (e.g. suggest narrowing config.start/end or oos_window).
+    """
+    project_root = _resolve_project_root()
+    if project_root is None or not (project_root / "data" / "ohlc_data").exists():
+        return {}
+    manager = CacheManager(candle_dir=str(project_root / "data" / "ohlc_data"))
+    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
+    timeframes = [
+        TimeFrame[t] if isinstance(t, str) else t
+        for t in (
+            timeframes_raw
+            if isinstance(timeframes_raw, list)
+            else [timeframes_raw]
+        )
+    ]
+    ranges = manager.get_available_date_range_per_ticker(
+        tickers=tickers,
+        timeframes=timeframes,
+    )
+    return {
+        t: (pd.Timestamp(ranges[t][0]), pd.Timestamp(ranges[t][1]))
+        for t in tickers
+        if t in ranges
+    }
 
 
 def load_features_for_combo(

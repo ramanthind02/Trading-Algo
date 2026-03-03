@@ -17,7 +17,7 @@ from feature_research.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
 class WalkforwardSelectionMethod(str, Enum):
     TOP_K = "top_k"
     ENHANCED = "enhanced"
-    STABLE_REGION = "stable_region"
+    MARGINAL_PEAK = "marginal_peak"
 
 
 class WeightLayerAlgorithm(str, Enum):
@@ -60,10 +60,9 @@ class WalkforwardResearchConfig:
     Selection is controlled only by selection_method (no boolean overrides):
       - TOP_K: select top_k params by smoothed objective.
       - ENHANCED: three-objective (smoothed obj + trade_freq + diversity); outputs top_k.
-      - STABLE_REGION: select params inside a stable region (floor-based); uses stable_region
-        (StableRegionConfig). When building via BaseResearchConfig.build_walkforward(),
-        stable_region is filled from param_sensitivity.stable_region_config when
-        selection_method is STABLE_REGION.
+      - MARGINAL_PEAK: pairwise 2D marginal tables, pick table with largest peak-vs-second gap,
+        restrict to peak cell, return top k_max by raw objective; uses marginal_peak
+        (MarginalPeakConfig). Best for large grids (15–50 combos, 3+ dimensions).
     """
 
     train_start: datetime
@@ -77,23 +76,26 @@ class WalkforwardResearchConfig:
     output_root: Path = Path("feature_research/shared_results")
     trade_freq_min: float = 0.01
     # --- Selection algorithm (single source of truth) ---
-    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.STABLE_REGION
-    stable_region: object = field(default=None)  # StableRegionConfig | None
+    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.MARGINAL_PEAK
+    marginal_peak: object = field(default=None)  # MarginalPeakConfig | None
     # --- Configurable weight layer method ---
     weight_layer_algorithm: WeightLayerAlgorithm | str = WeightLayerAlgorithm.INVERSE_CORRELATION
     weight_layer_config: object = field(default=None)  # WeightLayerConfig | None
-    # --- Oracle (lookahead) baseline diagnostic ---
-    run_oracle_baseline: bool = True
     # --- Output: per-fold tearsheets are slow; set False to skip ---
     output_per_fold_tearsheets: bool = False
     # --- Member forecast strength mapping in walkforward stage-2 fast path ---
     member_prediction_mode: MemberPredictionMode | str = MemberPredictionMode.BINARY
-    # --- Param sensitivity sweep (observability only; no refit) ---
-    sigma_sweep_values: list[float] | None = None  # e.g. [0.5, 0.75, 1.0, 1.5, 2.0]
     # --- Parallelism: number of jobs for scoring param combos within each fold; 1 = sequential ---
     n_jobs: int = 1  # -1 = use all CPUs (resolved at runtime in runner)
+    # --- Smoothing: weight for the center param relative to each 1-step neighbor ---
+    # 1.0 = equal weight (most aggressive smoothing; boundary params get diluted).
+    # Higher values (e.g. 2.0–3.0) reduce neighbor dilution for boundary params.
+    # Must match the value used in EDA/param_sensitivity so researcher sees the same landscape.
+    smoothing_self_weight: float = 1.0
 
     def __post_init__(self) -> None:
+        if self.smoothing_self_weight <= 0:
+            raise ValueError("smoothing_self_weight must be > 0")
         if self.train_end <= self.train_start:
             raise ValueError("train_end must be greater than train_start")
         if self.test_step < 1:
@@ -142,7 +144,7 @@ class WalkforwardResearchConfig:
         object.__setattr__(self, "member_prediction_mode", normalized_member_prediction_mode)
 
     def _effective_selection_method(self) -> str:
-        """Return the active selection method string (top_k, enhanced, or stable_region)."""
+        """Return the active selection method string (top_k, enhanced, or marginal_peak)."""
         return _coerce_enum_or_raise(
             self.selection_method,
             WalkforwardSelectionMethod,

@@ -1,0 +1,6 @@
+metric,value
+num_folds,8.0
+mean_oos_portfolio_sharpe,0.9381896655516578
+median_oos_portfolio_sharpe,0.6628547279255798
+min_oos_portfolio_sharpe,0.34600619198532157
+max_oos_portfolio_sharpe,2.0539195265067356

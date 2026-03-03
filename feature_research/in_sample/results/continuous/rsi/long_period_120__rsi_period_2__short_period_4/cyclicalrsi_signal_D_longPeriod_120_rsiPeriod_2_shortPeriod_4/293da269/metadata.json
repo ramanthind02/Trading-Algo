@@ -1,0 +1,12 @@
+{
+  "feature_name": "cyclicalrsi_signal_D_longPeriod_120_rsiPeriod_2_shortPeriod_4",
+  "param_combo": {
+    "long_period": 120,
+    "rsi_period": 2,
+    "short_period": 4
+  },
+  "report_type": "continuous",
+  "ticker": "ES",
+  "timeframe": "D",
+  "timestamp": "2026-02-27T21:31:05.829719"
+}

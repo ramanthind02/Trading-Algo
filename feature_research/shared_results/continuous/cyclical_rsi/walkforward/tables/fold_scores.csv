@@ -1,0 +1,9 @@
+fold_id,param_label,raw_objective,oos_objective,smoothed_objective,rank,selected_feature,trade_frequency,selected_in_top_k,selected_long_bin
+0,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.930298973855113,1.104488335921138,4.930298973855113,1,True,0.09848391470479477,True,0
+1,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.8169266683503835,3.3472567922322414,4.8169266683503835,1,True,0.09848204368752314,True,0
+2,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.97459161890731,0.05166470975705764,4.97459161890731,1,True,0.09843151784611584,True,0
+3,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.972551919690044,1.3473223578436715,4.972551919690044,1,True,0.098676888833931,True,0
+4,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.726916861940866,0.8332656800732768,4.726916861940866,1,True,0.09892419933226165,True,0
+5,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.558561666031141,0.0985038014312467,4.558561666031141,1,True,0.09912139586684816,True,0
+6,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.739596754151511,0.7690626058411048,4.739596754151511,1,True,0.09925742574257426,True,0
+7,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.006662698036089,-0.3970880747745282,4.006662698036089,1,True,0.09925742574257426,True,0

@@ -40,11 +40,7 @@ class WalkforwardArtifactPaths:
     fold_signal_metrics_csv: Path
     aggregate_ensemble_metrics_csv: Path
     oos_metrics_csv: Path
-    oracle_portfolio_results_csv: Path
-    oracle_vs_wf_csv: Path
-    oracle_vs_wf_metrics_csv: Path
     aggregate_walkforward_metrics_csv: Path
-    stable_region_sigma_sweep_csv: Path
     report_json: Path
     walkforward_stability_png: Path
     fold_timeline_png: Path
@@ -210,26 +206,6 @@ def _build_aggregate_walkforward_metrics(report: WalkforwardRunReport) -> pd.Dat
     return pd.DataFrame(rows, columns=["metric", "value"])
 
 
-def _build_oracle_vs_wf_metrics(report: WalkforwardRunReport) -> pd.DataFrame:
-    """Aggregate stats for WF vs Oracle (efficiency ratio and Sharpe comparison)."""
-    oracle_vs_wf = getattr(report, "oracle_vs_wf_df", None)
-    if oracle_vs_wf is None or oracle_vs_wf.empty or "efficiency_ratio" not in oracle_vs_wf.columns:
-        return pd.DataFrame(columns=["metric", "value"])
-    ratio = oracle_vs_wf["efficiency_ratio"].replace([float("inf"), float("-inf")], float("nan")).dropna().astype(float)
-    wf_sharpe = oracle_vs_wf["wf_sharpe"].dropna().astype(float)
-    oracle_sharpe = oracle_vs_wf["oracle_sharpe"].dropna().astype(float)
-    rows = [
-        ("mean_efficiency_ratio", float(ratio.mean()) if not ratio.empty else float("nan")),
-        ("median_efficiency_ratio", float(ratio.median()) if not ratio.empty else float("nan")),
-        ("min_efficiency_ratio", float(ratio.min()) if not ratio.empty else float("nan")),
-        ("max_efficiency_ratio", float(ratio.max()) if not ratio.empty else float("nan")),
-        ("std_efficiency_ratio", float(ratio.std(ddof=0)) if len(ratio) > 1 else float("nan")),
-        ("mean_wf_sharpe", float(wf_sharpe.mean()) if not wf_sharpe.empty else float("nan")),
-        ("mean_oracle_sharpe", float(oracle_sharpe.mean()) if not oracle_sharpe.empty else float("nan")),
-    ]
-    return pd.DataFrame(rows, columns=["metric", "value"])
-
-
 def _build_oos_metrics(report: WalkforwardRunReport) -> pd.DataFrame:
     selected = report.fold_scores_df.loc[report.fold_scores_df["selected_feature"].astype(bool)].copy()
     total_folds = int(len(report.folds_df))
@@ -246,23 +222,42 @@ def _build_oos_metrics(report: WalkforwardRunReport) -> pd.DataFrame:
     objective_col = "oos_objective" if "oos_objective" in selected.columns else "raw_objective"
     raw = selected[objective_col].astype(float)
     smooth = selected["smoothed_objective"].astype(float)
+    # Treat -inf/inf as missing for aggregate stats so summary table shows nan instead of -inf
+    raw_finite = raw.replace([float("-inf"), float("inf")], float("nan"))
+    smooth_finite = smooth.replace([float("-inf"), float("inf")], float("nan"))
     # Count how often each param_label was selected (in top-k) across folds
     chosen_counts = selected["param_label"].value_counts()
     most_selected_feature = str(chosen_counts.index[0]) if not chosen_counts.empty else ""
     most_selected_count = int(chosen_counts.iloc[0]) if not chosen_counts.empty else 0
     unique_selected = int(selected["param_label"].nunique())
 
+    def _nan_safe_stats(s: pd.Series) -> tuple[float, float, float, float, float]:
+        if s.empty or not s.notna().any():
+            return (float("nan"), float("nan"), float("nan"), float("nan"), float("nan"))
+        valid = s.dropna()
+        return (
+            float(valid.mean()),
+            float(valid.median()),
+            float(valid.std(ddof=0)),
+            float(valid.min()),
+            float(valid.max()),
+        )
+
+    raw_mean, raw_median, raw_std, raw_min, raw_max = _nan_safe_stats(raw_finite)
+    positive_raw_rate = float((raw_finite > 0.0).mean()) if raw_finite.notna().any() else float("nan")
+    smooth_mean = _nan_safe_stats(smooth_finite)[0]
+
     metrics: list[tuple[str, object]] = [
         ("objective_metric_name", objective_metric_name),
         ("num_folds", total_folds),
         ("num_selected_rows", int(len(selected))),
-        (f"mean_selected_raw{metric_suffix}", float(raw.mean())),
-        (f"median_selected_raw{metric_suffix}", float(raw.median())),
-        (f"std_selected_raw{metric_suffix}", float(raw.std(ddof=0))),
-        (f"min_selected_raw{metric_suffix}", float(raw.min())),
-        (f"max_selected_raw{metric_suffix}", float(raw.max())),
-        ("positive_raw_fold_rate", float((raw > 0.0).mean())),
-        (f"mean_selected_smoothed{metric_suffix}", float(smooth.mean())),
+        (f"mean_selected_raw{metric_suffix}", raw_mean),
+        (f"median_selected_raw{metric_suffix}", raw_median),
+        (f"std_selected_raw{metric_suffix}", raw_std),
+        (f"min_selected_raw{metric_suffix}", raw_min),
+        (f"max_selected_raw{metric_suffix}", raw_max),
+        ("positive_raw_fold_rate", positive_raw_rate),
+        (f"mean_selected_smoothed{metric_suffix}", smooth_mean),
         ("unique_selected_features", unique_selected),
         ("most_selected_feature", most_selected_feature),
         ("most_selected_feature_count", most_selected_count),
@@ -305,7 +300,6 @@ def _write_summary_markdown(
     oos_metrics_df: pd.DataFrame,
     selected_params_df: pd.DataFrame,
     aggregate_walkforward_metrics_df: pd.DataFrame,
-    oracle_vs_wf_metrics_df: pd.DataFrame,
 ) -> None:
     objective_metric_name = getattr(report, "objective_metric_name", "")
 
@@ -328,13 +322,6 @@ def _write_summary_markdown(
             "## Aggregate Walkforward Test Performance",
             _frame_to_markdown_table(aggregate_walkforward_metrics_df, max_rows=50),
         ]
-    oracle_section = []
-    if not oracle_vs_wf_metrics_df.empty:
-        oracle_section = [
-            "",
-            "## Model vs Oracle (Efficiency Ratio)",
-            _frame_to_markdown_table(oracle_vs_wf_metrics_df, max_rows=50),
-        ]
     lines = [
         f"# Walkforward Summary: {feature_type}/{module_name}",
         "",
@@ -351,7 +338,6 @@ def _write_summary_markdown(
             "## Aggregated OOS Metrics",
             _frame_to_markdown_table(oos_metrics_df, max_rows=200),
             *agg_wf_section,
-            *oracle_section,
             "",
             "## Selected Parameters By Fold",
             _frame_to_markdown_table(selected_params_df, max_rows=50),
@@ -383,7 +369,6 @@ def _write_summary_html(
     oos_metrics_df: pd.DataFrame,
     selected_params_df: pd.DataFrame,
     aggregate_walkforward_metrics_df: pd.DataFrame,
-    oracle_vs_wf_metrics_df: pd.DataFrame,
 ) -> None:
     objective_metric_name = getattr(report, "objective_metric_name", "")
 
@@ -400,9 +385,6 @@ def _write_summary_html(
     agg_wf_html = ""
     if not aggregate_walkforward_metrics_df.empty:
         agg_wf_html = "<h2>Aggregate Walkforward Test Performance</h2>" + aggregate_walkforward_metrics_df.to_html(index=False, escape=True)
-    oracle_html = ""
-    if not oracle_vs_wf_metrics_df.empty:
-        oracle_html = "<h2>Model vs Oracle (Efficiency Ratio)</h2>" + oracle_vs_wf_metrics_df.to_html(index=False, escape=True)
 
     html = "".join(
         [
@@ -430,7 +412,6 @@ def _write_summary_html(
             "<h2>Aggregated OOS Metrics</h2>",
             oos_metrics_df.to_html(index=False, escape=True),
             agg_wf_html,
-            oracle_html,
             "<h2>Selected Parameters By Fold</h2>",
             selected_params_df.to_html(index=False, escape=True),
             "<h2>Fold Timeline (Tabular)</h2>",
@@ -472,7 +453,6 @@ def _write_tables_report_html(
     aggregate_ensemble_metrics_df: pd.DataFrame,
     oos_metrics_df: pd.DataFrame,
     aggregate_walkforward_metrics_df: pd.DataFrame,
-    oracle_vs_wf_metrics_df: pd.DataFrame,
 ) -> None:
     """Write a single HTML report with all tabular data for researcher UX."""
     objective_metric_name = getattr(report, "objective_metric_name", "")
@@ -486,7 +466,6 @@ def _write_tables_report_html(
         ("aggregate_ensemble_metrics", "Aggregate ensemble metrics"),
         ("oos_metrics", "OOS metrics"),
         ("aggregate_walkforward_metrics", "Aggregate walkforward test performance"),
-        ("oracle_vs_wf_metrics", "Model vs Oracle (efficiency ratio)"),
         ("portfolio_results", "Portfolio simulation"),
     ]
     nav_links = "".join(
@@ -549,9 +528,6 @@ def _write_tables_report_html(
         _section_table("aggregate_walkforward_metrics", "Aggregate walkforward test performance", aggregate_walkforward_metrics_df)
     )
     parts.append(
-        _section_table("oracle_vs_wf_metrics", "Model vs Oracle (efficiency ratio)", oracle_vs_wf_metrics_df)
-    )
-    parts.append(
         _section_table("portfolio_results", "Portfolio simulation", report.portfolio_results_df)
     )
     parts.append("</body></html>")
@@ -593,11 +569,7 @@ def write_walkforward_artifacts(
         fold_signal_metrics_csv=tables_dir / "fold_signal_metrics.csv",
         aggregate_ensemble_metrics_csv=tables_dir / "aggregate_ensemble_metrics.csv",
         oos_metrics_csv=tables_dir / "oos_metrics.csv",
-        oracle_portfolio_results_csv=tables_dir / "oracle_portfolio_results.csv",
-        oracle_vs_wf_csv=tables_dir / "oracle_vs_wf.csv",
-        oracle_vs_wf_metrics_csv=tables_dir / "oracle_vs_wf_metrics.csv",
         aggregate_walkforward_metrics_csv=tables_dir / "aggregate_walkforward_metrics.csv",
-        stable_region_sigma_sweep_csv=tables_dir / "stable_region_sigma_sweep.csv",
         report_json=output_dir / "report.json",
         walkforward_stability_png=output_dir / "walkforward_stability.png",
         fold_timeline_png=output_dir / "fold_timeline.png",
@@ -670,26 +642,6 @@ def write_walkforward_artifacts(
         paths.aggregate_walkforward_metrics_csv, index=False, lineterminator="\n"
     )
 
-    oracle_vs_wf_metrics_df = _build_oracle_vs_wf_metrics(report)
-    oracle_vs_wf_metrics_df.to_csv(
-        paths.oracle_vs_wf_metrics_csv, index=False, lineterminator="\n"
-    )
-
-    oracle_portfolio_results_df = getattr(report, "oracle_portfolio_results_df", None)
-    if oracle_portfolio_results_df is not None and not oracle_portfolio_results_df.empty:
-        oracle_portfolio_results_df.to_csv(
-            paths.oracle_portfolio_results_csv, index=False, lineterminator="\n"
-        )
-    oracle_vs_wf_df = getattr(report, "oracle_vs_wf_df", None)
-    if oracle_vs_wf_df is not None and not oracle_vs_wf_df.empty:
-        oracle_vs_wf_df.to_csv(paths.oracle_vs_wf_csv, index=False, lineterminator="\n")
-
-    sigma_sweep_df = getattr(report, "sigma_sweep_df", None)
-    if sigma_sweep_df is not None and not sigma_sweep_df.empty:
-        sigma_sweep_df.to_csv(
-            paths.stable_region_sigma_sweep_csv, index=False, lineterminator="\n"
-        )
-
     walkforward_stability_figure.savefig(paths.walkforward_stability_png)
     fold_timeline_figure.savefig(paths.fold_timeline_png)
 
@@ -701,7 +653,6 @@ def write_walkforward_artifacts(
         oos_metrics_df=oos_metrics_df,
         selected_params_df=selected_params_df,
         aggregate_walkforward_metrics_df=aggregate_walkforward_metrics_df,
-        oracle_vs_wf_metrics_df=oracle_vs_wf_metrics_df,
     )
     _write_summary_html(
         path=paths.summary_html,
@@ -711,7 +662,6 @@ def write_walkforward_artifacts(
         oos_metrics_df=oos_metrics_df,
         selected_params_df=selected_params_df,
         aggregate_walkforward_metrics_df=aggregate_walkforward_metrics_df,
-        oracle_vs_wf_metrics_df=oracle_vs_wf_metrics_df,
     )
 
     _write_tables_report_html(
@@ -725,7 +675,6 @@ def write_walkforward_artifacts(
         aggregate_ensemble_metrics_df=aggregate_ensemble_metrics_df,
         oos_metrics_df=oos_metrics_df,
         aggregate_walkforward_metrics_df=aggregate_walkforward_metrics_df,
-        oracle_vs_wf_metrics_df=oracle_vs_wf_metrics_df,
     )
 
     tearsheet_files: list[str] = []
@@ -751,11 +700,7 @@ def write_walkforward_artifacts(
             "fold_signal_metrics_csv": str(paths.fold_signal_metrics_csv),
             "aggregate_ensemble_metrics_csv": str(paths.aggregate_ensemble_metrics_csv),
             "oos_metrics_csv": str(paths.oos_metrics_csv),
-            "oracle_portfolio_results_csv": str(paths.oracle_portfolio_results_csv),
-            "oracle_vs_wf_csv": str(paths.oracle_vs_wf_csv),
-            "oracle_vs_wf_metrics_csv": str(paths.oracle_vs_wf_metrics_csv),
             "aggregate_walkforward_metrics_csv": str(paths.aggregate_walkforward_metrics_csv),
-            "stable_region_sigma_sweep_csv": str(paths.stable_region_sigma_sweep_csv),
             "report_json": str(paths.report_json),
             "walkforward_stability_png": str(paths.walkforward_stability_png),
             "fold_timeline_png": str(paths.fold_timeline_png),
@@ -775,7 +720,6 @@ def write_walkforward_artifacts(
             "aggregate_ensemble_metrics": int(len(aggregate_ensemble_metrics_df)),
             "oos_metrics": int(len(oos_metrics_df)),
             "aggregate_walkforward_metrics": int(len(aggregate_walkforward_metrics_df)),
-            "oracle_vs_wf_metrics": int(len(oracle_vs_wf_metrics_df)),
         },
     }
     paths.report_json.write_text(

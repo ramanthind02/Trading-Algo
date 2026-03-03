@@ -1,0 +1,9 @@
+fold_id,selected_feature,selected_raw_objective,selected_smoothed_objective,top_k_features
+0,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.930298973855113,4.930298973855113,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"
+1,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.8169266683503835,4.8169266683503835,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"
+2,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.97459161890731,4.97459161890731,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"
+3,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.972551919690044,4.972551919690044,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"
+4,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.726916861940866,4.726916861940866,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"
+5,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.558561666031141,4.558561666031141,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"
+6,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.739596754151511,4.739596754151511,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"
+7,bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4,4.006662698036089,4.006662698036089,"[""bin_count=10|long_period=120|rsi_period=2|selected_bin=0|short_period=4""]"

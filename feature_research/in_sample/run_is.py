@@ -1,24 +1,24 @@
 """Unified in-sample research entry point for both continuous and rule-based features.
 
-This single script runs the full in-sample research pipeline:
+This single script runs the in-sample research pipeline:
   1. EDA (exploratory data analysis for all param combos)
   2. Optional in-sample permutation (Stage 1 vector shuffle → Stage 2 candle shuffle)
   3. Optional Phase 2 binning analysis (continuous only)
-  4. Optional walkforward validation
+
+Walkforward is a separate phase; run ``feature_research/walkforward/run_walkforward.py`` for that.
 
 Usage
 -----
     source /home/raman/repos/Trading-Algo/venv/bin/activate
     python feature_research/in_sample/run_is.py
 
-To customize tickers, dates, bias_spec, walkforward defaults, or phase presets, edit
+To customize tickers, dates, bias_spec, or phase presets, edit
 ``feature_research/config.py`` (single source of truth). ``feature_research/in_sample/config.py``
 mainly defines the runtime dataclasses and assembles shared defaults.
 
 To enable permutation: set ``in_sample_permutation.enabled=True`` in ``feature_research/config.py``.
 To speed up Stage 2: set ``in_sample_permutation.n_jobs_stage2_reps`` to the number of
 CPU cores to use (e.g. 4); reps run in separate processes (real parallelism, no GIL).
-To disable walkforward, set ``enabled=False`` in the walkforward config.
 
 To profile Stage 2 (find bottlenecks): run
 ``python feature_research/in_sample/profile_stage2.py --reps 2 --out profile.stats``
@@ -39,29 +39,18 @@ import dataclasses
 import sys
 from pathlib import Path
 
+_repo_hint = Path(__file__).resolve().parents[2]
+if str(_repo_hint) not in sys.path:
+    sys.path.insert(0, str(_repo_hint))
 
-def _find_repo_root(start: Path) -> Path | None:
-    """Search up from start path to find repo root (pyproject.toml or .git)."""
-    search_root = start if start.is_dir() else start.parent
+from feature_research.bootstrap import ensure_repo_root_on_syspath
 
-    for parent in (search_root, *search_root.parents):
-        if (parent / "pyproject.toml").exists():
-            return parent
-        if (parent / ".git").exists():
-            return parent
-
-    return None
-
-
-_repo_root = _find_repo_root(Path(__file__).resolve())
-if _repo_root is not None and str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 from feature_research.in_sample.config import load_config
 from feature_research.pipeline import (
     run_eda_pipeline,
     run_permutation_pipeline,
-    run_walkforward_pipeline,
     write_permutation_summary,
 )
 
@@ -93,21 +82,7 @@ if __name__ == "__main__":
             print(f"\nPermutation pipeline failed: {e}")
             raise
 
-    # Run optional walkforward validation
-    if config.walkforward.enabled:
-        print(f"\n{'*'*70}")
-        print(f"Walkforward: Validation ({config.feature_type.value.upper()})")
-        print(f"{'*'*70}")
-        walkforward_report = run_walkforward_pipeline(config, config.reports_dir / "walkforward")
-        print(
-            f"\nIn-sample research complete. "
-            f"{len(eda_results)} EDA combos, "
-            f"{len(walkforward_report.folds_df)} walkforward folds. "
-            f"Artifacts in {config.reports_dir}"
-        )
-    else:
-        print(f"\n{'*'*70}")
-        print("Walkforward validation disabled (set config.walkforward.enabled=True to enable)")
-        print(f"{'*'*70}")
-        print(f"\nIn-sample research complete. {len(eda_results)} EDA combos. "
-              f"Artifacts in {config.reports_dir}")
+    msg = f"\nIn-sample research complete. {len(eda_results)} EDA combos. Artifacts in {config.reports_dir}"
+    if config.in_sample_permutation.enabled:
+        msg += " Permutation summary CSV/MD in reports_dir."
+    print(msg)

@@ -6,7 +6,7 @@ Used by run_walkforward_permutation.py and run_oos_permutation.py.
 from __future__ import annotations
 
 import types
-from typing import cast
+from typing import Mapping, cast
 
 import numpy as np
 import pandas as pd
@@ -33,6 +33,57 @@ from feature_research.walkforward.runner import (
 from utils.core.enums import TimeFrame
 
 
+def _compute_metrics_from_returns_matrix(
+    all_returns: np.ndarray,
+    objective_metric_name: str,
+) -> np.ndarray:
+    nreps, ncols = all_returns.shape if all_returns.ndim == 2 else (0, 0)
+    if nreps == 0 or ncols == 0:
+        # Nothing to measure → zero metrics
+        return np.zeros(nreps, dtype=float)
+    if objective_metric_name == "sharpe":
+        means = all_returns.mean(axis=1)
+        stds = all_returns.std(axis=1, ddof=0)
+        out = np.zeros_like(means, dtype=float)
+        np.divide(means, stds, out=out, where=stds > 0)
+        return out
+    if objective_metric_name == "mean_return":
+        return all_returns.mean(axis=1)
+    if objective_metric_name == "t_stat":
+        means = all_returns.mean(axis=1)
+        stds = all_returns.std(axis=1, ddof=0)
+        ratio = np.zeros_like(means, dtype=float)
+        np.divide(means, stds, out=ratio, where=stds > 0)
+        return ratio * np.sqrt(ncols)
+    if objective_metric_name == "sortino":
+        means = all_returns.mean(axis=1)
+        neg_mask = all_returns < 0
+        downside_sq = np.where(neg_mask, all_returns ** 2, 0.0).mean(axis=1)
+        downside_std = np.sqrt(downside_sq)
+        out = np.zeros_like(means, dtype=float)
+        np.divide(means, downside_std, out=out, where=downside_std > 0)
+        return out
+    metric_fn = resolve_objective_metric(objective_metric_name)
+    return np.array(
+        [metric_fn(pd.Series(all_returns[i])) for i in range(nreps)],
+        dtype=float,
+    )
+
+
+def combine_return_series(series_map: dict[str, pd.Series]) -> pd.Series:
+    combined_index = pd.Index([])
+    for series in series_map.values():
+        combined_index = combined_index.union(series.index)
+    if combined_index.empty:
+        return pd.Series(dtype=float)
+    combined_index = combined_index.sort_values()
+    combined = pd.Series(0.0, index=combined_index)
+    for series in series_map.values():
+        reindexed = series.reindex(combined_index).fillna(0.0)
+        combined = combined.add(reindexed, fill_value=0.0)
+    return combined
+
+
 def run_vector_shuffle_null_vectorized(
     reference_target: pd.Series,
     unit1_mask: pd.Series,
@@ -43,7 +94,8 @@ def run_vector_shuffle_null_vectorized(
     random_seed: int | None,
     objective_metric_name: str = "sharpe",
     canonical_oos_index: pd.Index | None = None,
-) -> np.ndarray:
+    return_returns: bool = False,
+) -> np.ndarray | tuple[np.ndarray, pd.Index, np.ndarray]:
     """Vectorized null distribution: all nreps permutations at once, no loop overhead.
 
     Generates all nreps permuted targets as a (nreps, T) matrix, computes all
@@ -176,34 +228,12 @@ def run_vector_shuffle_null_vectorized(
         # Broadcast multiply: (nreps, len(valid)) * (1, len(valid))
         all_returns[:, oos_col_pos_valid] = all_targets[:, oos_int_pos_valid] * signal_vals_valid[np.newaxis, :]
 
-    # Apply metric vectorized (no loop over reps)
-    if objective_metric_name == "sharpe":
-        means = all_returns.mean(axis=1)
-        stds = all_returns.std(axis=1, ddof=0)
-        null_metrics = np.where(stds > 0, means / stds, 0.0)
-    elif objective_metric_name == "mean_return":
-        null_metrics = all_returns.mean(axis=1)
-    elif objective_metric_name == "t_stat":
-        means = all_returns.mean(axis=1)
-        stds = all_returns.std(axis=1, ddof=0)
-        n = all_returns.shape[1]
-        null_metrics = np.where(stds > 0, means / stds * np.sqrt(n), 0.0)
-    elif objective_metric_name == "sortino":
-        means = all_returns.mean(axis=1)
-        neg_mask = all_returns < 0
-        downside_sq = np.where(neg_mask, all_returns ** 2, 0.0).mean(axis=1)
-        downside_std = np.sqrt(downside_sq)
-        null_metrics = np.where(downside_std > 0, means / downside_std, 0.0)
-    else:
-        # Fallback: apply metric_fn to each row (slow, but correct)
-        metric_fn = resolve_objective_metric(objective_metric_name)
-        null_metrics = np.array(
-            [metric_fn(pd.Series(all_returns[i])) for i in range(nreps)],
-            dtype=float
-        )
+    null_metrics = _compute_metrics_from_returns_matrix(all_returns, objective_metric_name)
 
     # Handle infinities/NaNs
     null_metrics = np.where(np.isfinite(null_metrics), null_metrics, 0.0)
+    if return_returns:
+        return null_metrics, oos_index, all_returns
     return null_metrics
 
 
@@ -397,8 +427,35 @@ def _compute_rule_based_oos_signal_by_fold(
                 pos_df = portfolio_preds.set_index("datetime")
             else:
                 pos_df = portfolio_preds
-            # Average position_fraction across tickers per datetime
-            pos_signal = pos_df.groupby(level=0)["position_fraction"].mean()
+            # Average position_fraction across tickers per datetime.
+            # portfolio predictions may come back as:
+            # - DatetimeIndex (single ticker or already aggregated)
+            # - MultiIndex with levels in either order: (datetime, ticker) or (ticker, datetime)
+            if isinstance(pos_df.index, pd.MultiIndex):
+                dt_level: int | None = None
+                names = list(pos_df.index.names)
+                if "datetime" in names:
+                    dt_level = names.index("datetime")
+                else:
+                    for i in range(pos_df.index.nlevels):
+                        lvl = pos_df.index.get_level_values(i)
+                        if np.issubdtype(lvl.dtype, np.datetime64):
+                            dt_level = i
+                            break
+                if dt_level is None:
+                    dt_level = pos_df.index.nlevels - 1
+                pos_signal = pos_df["position_fraction"].groupby(level=dt_level).mean()
+            else:
+                pos_signal = pos_df["position_fraction"]
+            pos_signal = pos_signal.sort_index()
+            # Ensure datetime index (tz-naive) for later alignment with target_unique (DatetimeIndex).
+            try:
+                pos_idx = pd.DatetimeIndex(pos_signal.index)
+                if getattr(pos_idx, "tz", None) is not None:
+                    pos_idx = pos_idx.tz_localize(None)
+                pos_signal.index = pos_idx
+            except Exception:
+                continue
             if pos_signal.empty:
                 continue
             result[fold_id] = pos_signal
@@ -457,7 +514,8 @@ def run_return_shuffle_null_vectorized(
     nreps: int,
     random_seed: int | None,
     objective_metric_name: str = "sharpe",
-) -> np.ndarray:
+    return_returns: bool = False,
+) -> np.ndarray | tuple[np.ndarray, pd.Index, np.ndarray]:
     """Vectorized return shuffle: all nreps shuffles at once, ~50k reps/sec.
 
     Generates all nreps shuffled return series as a (nreps, N) matrix and
@@ -481,44 +539,39 @@ def run_return_shuffle_null_vectorized(
     np.ndarray
         Shape (nreps,); metric value for each replicate.
     """
+    # IMPORTANT:
+    # For our currently supported objective metrics (mean_return/sharpe/sortino/t_stat),
+    # a "return shuffle" produces a degenerate null because these metrics are invariant
+    # to permutation of the return order. Using this in stage-1 permutation testing
+    # yields p-values of ~1.0 (all null metrics == original) and is not meaningful.
+    #
+    # Correct stage-1 behavior is to permute the *target* (within blocking units)
+    # relative to a fixed OOS signal vector, then evaluate metric(signal * permuted_target).
+    if objective_metric_name in {"sharpe", "sortino", "mean_return", "t_stat"}:
+        raise ValueError(
+            "run_return_shuffle_null_vectorized is degenerate for objective_metric_name="
+            f"{objective_metric_name!r} (order-invariant). Use vector-shuffle on target "
+            "with a fixed OOS signal instead."
+        )
+
     clean = aggregate_oos_returns.dropna()
     if clean.empty:
-        return np.zeros(nreps, dtype=float)
+        null_metrics = np.zeros(nreps, dtype=float)
+        if return_returns:
+            return null_metrics, clean.index, np.zeros((nreps, 0), dtype=float)
+        return null_metrics
 
     oos_vals = clean.values.copy()  # shape (N,)
     n = len(oos_vals)
 
     rng = np.random.default_rng(random_seed)
-    # All shuffles at once: (nreps, N) — each row is a random permutation of oos_vals
-    perm = rng.random((nreps, n)).argsort(axis=1)  # (nreps, N) permutation indices
-    all_returns = oos_vals[perm]  # (nreps, N) — all shuffled return series
+    perm = rng.random((nreps, n)).argsort(axis=1)
+    all_returns = oos_vals[perm]
 
-    # Apply metric vectorized (same as run_vector_shuffle_null_vectorized)
-    if objective_metric_name == "sharpe":
-        means = all_returns.mean(axis=1)
-        stds = all_returns.std(axis=1, ddof=0)
-        null_metrics = np.where(stds > 0, means / stds, 0.0)
-    elif objective_metric_name == "mean_return":
-        null_metrics = all_returns.mean(axis=1)
-    elif objective_metric_name == "t_stat":
-        means = all_returns.mean(axis=1)
-        stds = all_returns.std(axis=1, ddof=0)
-        null_metrics = np.where(stds > 0, means / stds * np.sqrt(n), 0.0)
-    elif objective_metric_name == "sortino":
-        means = all_returns.mean(axis=1)
-        neg_mask = all_returns < 0
-        downside_sq = np.where(neg_mask, all_returns ** 2, 0.0).mean(axis=1)
-        downside_std = np.sqrt(downside_sq)
-        null_metrics = np.where(downside_std > 0, means / downside_std, 0.0)
-    else:
-        # Fallback: apply metric_fn to each row (slower)
-        metric_fn = resolve_objective_metric(objective_metric_name)
-        null_metrics = np.array(
-            [metric_fn(pd.Series(all_returns[i])) for i in range(nreps)],
-            dtype=float
-        )
-
+    null_metrics = _compute_metrics_from_returns_matrix(all_returns, objective_metric_name)
     null_metrics = np.where(np.isfinite(null_metrics), null_metrics, 0.0)
+    if return_returns:
+        return null_metrics, clean.index, all_returns
     return null_metrics
 
 
@@ -706,7 +759,8 @@ def run_vector_shuffle_null(
     fixed_oos_signal_by_fold: dict[int, pd.Series] | None = None,
     objective_metric_name: str = "sharpe",
     canonical_oos_index: pd.Index | None = None,
-) -> np.ndarray:
+    return_returns: bool = False,
+) -> np.ndarray | tuple[np.ndarray, pd.Index, np.ndarray]:
     """Run nreps null replicates; return null distribution.
 
     When fixed_oos_signal_by_fold is provided (continuous path): no refit; each replicate
@@ -722,7 +776,7 @@ def run_vector_shuffle_null(
         # Use fully vectorized approach: all nreps permutations at once, no loop overhead
         # This is ~10–100x faster than the serial/parallel loop approaches
         obj_name = objective_metric_name or "sharpe"
-        return run_vector_shuffle_null_vectorized(
+        result = run_vector_shuffle_null_vectorized(
             reference_target=reference_target,
             unit1_mask=unit1_mask,
             unit2_mask=unit2_mask,
@@ -732,7 +786,9 @@ def run_vector_shuffle_null(
             random_seed=random_seed,
             objective_metric_name=obj_name,
             canonical_oos_index=canonical_oos_index,
+            return_returns=return_returns,
         )
+        return result
 
     selection_summary_df = getattr(initial_report, "selection_summary_df", None)
     if selection_summary_df is None:
@@ -780,3 +836,32 @@ def run_vector_shuffle_null(
             for seed in seeds
         )
     return np.array(results, dtype=float)
+
+
+def aggregate_per_ticker_metrics(metrics_by_ticker: Mapping[str, float]) -> float:
+    """Aggregate per-ticker metrics into a single scalar (mean across tickers)."""
+    values = np.array(
+        [val for val in metrics_by_ticker.values() if np.isfinite(val)],
+        dtype=float,
+    )
+    if values.size == 0:
+        return 0.0
+    return float(values.mean())
+
+
+def aggregate_per_ticker_nulls(
+    nulls_by_ticker: Mapping[str, np.ndarray],
+) -> np.ndarray:
+    """Aggregate per-ticker null distributions into a single null (mean across tickers)."""
+    arrays = [
+        np.asarray(arr, dtype=float)
+        for arr in nulls_by_ticker.values()
+        if arr is not None and len(arr) > 0
+    ]
+    if not arrays:
+        return np.array([], dtype=float)
+    lengths = {arr.shape[0] for arr in arrays}
+    if len(lengths) != 1:
+        raise ValueError("Per-ticker null distributions must have the same length.")
+    stacked = np.stack(arrays, axis=0)
+    return stacked.mean(axis=0)
