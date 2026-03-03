@@ -16,7 +16,7 @@ from feature_research.walkforward.config import (
     WalkforwardSelectionMethod,
     WeightLayerAlgorithm,
 )
-from feature_research.walkforward.stable_region_selection import StableRegionConfig
+from feature_research.walkforward.marginal_peak_selection import MarginalPeakConfig
 from feature_selection.validation.config import OOSCandidateSource, PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.core.enums import Ticker, TimeFrame
@@ -74,7 +74,7 @@ class GlobalResearchDefaults:
     train_window_years: float = 15.0
     test_window_years: float = 2.0
     num_steps: int = 4
-    selection_method: WalkforwardSelectionMethod = WalkforwardSelectionMethod.TOP_K
+    selection_method: WalkforwardSelectionMethod = WalkforwardSelectionMethod.MARGINAL_PEAK
 
 
 @dataclass(frozen=True)
@@ -161,6 +161,7 @@ class PermutationResearchConfig:
     metric_threshold: float = 0.0
     random_seed: int | None = 42
     permutation_mode_stage2: PermutationModeStage2 = "candle_shuffle"
+    n_jobs_stage1_reps: int = 8
     n_jobs_stage2_reps: int = 8
     run_stage1: bool = True
     run_stage2: bool = False
@@ -192,44 +193,33 @@ class WalkforwardDefaultsConfig:
     output_per_fold_tearsheets: bool = False
     weight_layer_algorithm: WeightLayerAlgorithm = WeightLayerAlgorithm.INVERSE_CORRELATION
     member_prediction_mode: MemberPredictionMode = MemberPredictionMode.BINARY
-    run_oracle_baseline: bool = True
     n_jobs: int = 8  # parallel jobs for scoring param combos within each fold; -1 = all CPUs
+    # Center param weight relative to each 1-step neighbor in smoothing.
+    # 1.0 = equal weight (most aggressive); 2.0–3.0 reduces boundary-param dilution.
+    # Should match ParamSensitivityConfig.smoothing_self_weight so EDA and WF use the same landscape.
+    smoothing_self_weight: float = 3.0
 
 
 @dataclass(frozen=True)
 class ParamSensitivityConfig:
-    """Settings for parameter sensitivity / stable region selection (notebook and reports).
+    """Settings for parameter sensitivity and Marginal Peak Selection (MPS).
 
     Used by the param_sensitivity notebook and anywhere that calls
-    generate_parameter_sensitivity_report(). Tune fields below to match
-    docs/library/Feature_selection/Phase_2_WF/param_stability.md.
+    generate_parameter_sensitivity_report(). Selection is done via MPS only.
+    See docs/library/Feature_selection/Phase_2_WF/param_stability.md.
     """
 
-    use_floor_based_selection: bool = True
-    stability_threshold: float = 0.7  # used only when use_floor_based_selection is False
+    stability_threshold: float = 0.5  # for plot shading threshold when stable_regions are provided
     plot_3d_mode: str = "surface_slices"  # "heatmap_slices" | "surface_slices"
-    # Stable region algo (forwarded to StableRegionConfig)
-    floor_method: str = "adaptive"  # "adaptive" (σ-based) or "relative" (fixed δ)
-    delta: float = 0.20  # for floor_method="relative": floor = best × (1 - delta)
-    adaptive_sigma_multiplier: float = 0.5 # for floor_method="adaptive": floor = best - this × σ
-    k_per_region: int = 3
-    k_max: int = 3
-    min_region_size: int = 3
-    bin_count_min: int = 0  # 0 = no filter (in-sample); use 5+ for walkforward continuous
     max_eda_output_combos: int = 25  # max EDA folders saved for rule-based; 0 = no limit
-
-    @property
-    def stable_region_config(self) -> StableRegionConfig:
-        """Build StableRegionConfig from this config’s fields."""
-        return StableRegionConfig(
-            floor_method=self.floor_method,
-            delta=self.delta,
-            adaptive_sigma_multiplier=self.adaptive_sigma_multiplier,
-            k_per_region=self.k_per_region,
-            k_max=self.k_max,
-            min_region_size=self.min_region_size,
-            bin_count_min=self.bin_count_min,
-        )
+    # Center param weight for neighbor smoothing.
+    # Must match WalkforwardDefaultsConfig.smoothing_self_weight so EDA and WF see the same landscape.
+    smoothing_self_weight: float = 3.0
+    # Marginal Peak Selection (MPS): min gap to declare dominant regime; fallback when gap < min_gap.
+    marginal_min_gap: float = 0.10
+    marginal_min_cell_size: int = 2
+    marginal_fallback_k: int = 1
+    marginal_dim: int = 2  # 2 = C(D,2) pairwise tables, 3 = C(D,3) 3D tables (e.g. for 5D+ grids)
 
 
 @dataclass(frozen=True)
@@ -259,7 +249,7 @@ class BinningAnalysisConfig:
     short_clip_min: float = 0.5
     short_clip_max: float = 2.0
     bin_index_min: int = 0
-    bin_index_max: int | None = None
+    bin_index_max: int | None = 0
 
     def __post_init__(self) -> None:
         if self.bin_index_min < 0:
@@ -286,15 +276,19 @@ class InSamplePhaseDefaultsConfig:
 def _default_continuous_in_sample_defaults() -> InSamplePhaseDefaultsConfig:
     return InSamplePhaseDefaultsConfig(
         bias_spec={
-            "module_name": "rsi",
+            "module_name": "cyclical_rsi",
             "timeframes": [TimeFrame.D],
-            "params": {"lookback": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]},
+            "params": {
+                "short_period": [4],
+                "long_period": [120],
+                "rsi_period": [2]
+            },
         },
         target_col="log_return_atr",
         strategy="long",
         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
         binning_params_overrides={
-            "bin_counts": [11, 10, 9, 8, 7, 6],
+            "bin_counts": [10],
             "t_threshold": 1,
             "use_coverage_bonus": False,
         },
@@ -373,8 +367,6 @@ class BaseResearchConfig:
 
         First fold's train_end = end - num_steps * test_step_days; train_start = train_end - train_window.
         ``top_k`` is sourced exclusively from ``walkforward_defaults.top_k``.
-        For STABLE_REGION selection, ``stable_region`` is built from ``param_sensitivity`` with
-        ``k_max`` set to ``top_k`` so selections are capped consistently.
         """
         wf_defaults = self.walkforward_defaults
         tw_years = train_window_years if train_window_years is not None else wf_defaults.train_window_years
@@ -385,19 +377,17 @@ class BaseResearchConfig:
         )
         test_step_days = int(test_years * 365)
         top_k = wf_defaults.top_k  # single source of truth
-        if wf_defaults.selection_method == WalkforwardSelectionMethod.STABLE_REGION:
+        if wf_defaults.selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK:
             ps = self.param_sensitivity
-            stable_region: object = StableRegionConfig(
-                floor_method=ps.floor_method,
-                delta=ps.delta,
-                adaptive_sigma_multiplier=ps.adaptive_sigma_multiplier,
-                k_per_region=ps.k_per_region,
-                k_max=top_k,  # keep in sync with the single top_k
-                min_region_size=ps.min_region_size,
-                bin_count_min=ps.bin_count_min,
+            marginal_peak: object = MarginalPeakConfig(
+                k_max=top_k,
+                min_gap=ps.marginal_min_gap,
+                min_cell_size=ps.marginal_min_cell_size,
+                fallback_k=ps.marginal_fallback_k,
+                marginal_dim=ps.marginal_dim,
             )
         else:
-            stable_region = None
+            marginal_peak = None
         return WalkforwardResearchConfig(
             train_start=train_start_first,
             train_end=train_end_first,
@@ -407,13 +397,13 @@ class BaseResearchConfig:
             top_k=top_k,
             objective_metric_name=wf_defaults.objective_metric_name,
             selection_method=wf_defaults.selection_method,
-            stable_region=stable_region,
+            marginal_peak=marginal_peak,
             weight_layer_algorithm=wf_defaults.weight_layer_algorithm,
             member_prediction_mode=wf_defaults.member_prediction_mode,
             output_root=wf_defaults.output_root,
-            run_oracle_baseline=wf_defaults.run_oracle_baseline,
             output_per_fold_tearsheets=wf_defaults.output_per_fold_tearsheets,
             n_jobs=wf_defaults.n_jobs,
+            smoothing_self_weight=wf_defaults.smoothing_self_weight,
         )
 
 
@@ -428,11 +418,10 @@ def load_config() -> BaseResearchConfig:
     # ==========================================================================
     tickers = [
         Ticker.ES,
-        Ticker.NQ,
-        Ticker.RTY,
+        Ticker.NQ
     ]
     start = datetime(2000, 1, 1)
-    end = datetime(2025, 12, 30)
+    end = datetime(2023, 12, 31)
     use_cache = True
     populate_cache = True
 
@@ -446,7 +435,7 @@ def load_config() -> BaseResearchConfig:
         train_window_years=17.0,
         test_window_years=1.0,
         num_steps=8,
-        selection_method=WalkforwardSelectionMethod.TOP_K,
+        selection_method=WalkforwardSelectionMethod.MARGINAL_PEAK,
     )
 
     walkforward_defaults = WalkforwardDefaultsConfig(
@@ -463,16 +452,17 @@ def load_config() -> BaseResearchConfig:
         output_per_fold_tearsheets=False,
         weight_layer_algorithm=WeightLayerAlgorithm.INVERSE_CORRELATION,
         member_prediction_mode=MemberPredictionMode.BINARY,
-        run_oracle_baseline=False,
     )
 
-    # OOS: single fold with explicit train/test dates (e.g. train 2007–2023, test 2024–2025).
+    # OOS: single fold with explicit train/test dates. test_end must be within
+    # available OHLC data (data/ohlc_data); otherwise no tickers pass coverage.
+    # Example with data through 2023: train 2009–2022, test 2023.
     # Set to None to disable OOS.
     oos_window = OOSWindowConfig(
         train_start=datetime(2009, 1, 1),
-        train_end=datetime(2023, 12, 30),
-        test_start=datetime(2024, 1, 1),
-        test_end=datetime(2025, 12, 31),
+        train_end=datetime(2022, 12, 30),
+        test_start=datetime(2023, 1, 1),
+        test_end=datetime(2025, 9, 18),
     )
 
     permutation = PermutationResearchConfig(
@@ -483,7 +473,7 @@ def load_config() -> BaseResearchConfig:
         enabled=True,
     )
 
-    feature_type = FeatureType.RULE_BASED
+    feature_type = FeatureType.CONTINUOUS
     in_sample_defaults = InSampleDefaultsCatalog()
     param_sensitivity = ParamSensitivityConfig()
     # ==========================================================================

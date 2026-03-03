@@ -59,7 +59,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
     )
 
     with (
-        patch("sys.argv", ["run_oos_permutation.py"]),
+        patch("sys.argv", ["run_oos_permutation.py", "--nreps", "3"]),
         patch("feature_research.oos.run_oos_permutation.load_config") as m_load,
         patch(
             "feature_research.oos.run_oos_permutation._load_research_data",

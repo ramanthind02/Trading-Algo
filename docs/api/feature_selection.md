@@ -158,6 +158,15 @@ Modules:
 - `feature_research/walkforward/runner.py`
 - `feature_research/walkforward/visualization.py`
 - `feature_research/walkforward/io.py`
+- `feature_research/pipelines/in_sample.py`
+- `feature_research/pipelines/walkforward.py`
+- `feature_research/pipelines/oos.py`
+- `feature_research/pipelines/permutation.py`
+
+Compatibility surface:
+- `feature_research/pipeline.py` remains the public façade that re-exports
+  `run_eda_pipeline`, `run_walkforward_pipeline`, `run_oos_pipeline`,
+  `run_permutation_pipeline`, and `write_permutation_summary`.
 
 #### `WalkforwardResearchConfig`
 Type: class
@@ -174,8 +183,8 @@ class WalkforwardResearchConfig:
     objective_metric_name: str = "sortino"
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
-    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.STABLE_REGION
-    stable_region: object = None  # StableRegionConfig | None
+    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.MARGINAL_PEAK
+    marginal_peak: object = None  # MarginalPeakConfig | None (k_max, min_gap, min_cell_size, fallback_k, marginal_dim)
     trade_freq_min: float = 0.01
 ```
 

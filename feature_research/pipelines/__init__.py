@@ -1,9 +1,3 @@
-"""Compatibility façade for feature_research phase pipelines.
-
-Public run functions keep stable import paths while implementation lives in
-`feature_research.pipelines.*`.
-"""
-
 from feature_research.pipelines.in_sample import run_eda_pipeline
 from feature_research.pipelines.oos import run_oos_pipeline
 from feature_research.pipelines.permutation import run_permutation_pipeline, write_permutation_summary

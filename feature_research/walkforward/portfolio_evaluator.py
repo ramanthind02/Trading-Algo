@@ -12,6 +12,7 @@ from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from feature_research.config import FeatureType
+from feature_research.core_helpers import combo_key
 from feature_research.walkforward.metrics import resolve_objective_metric
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.base_models.feature_base_model import BaseModel
@@ -25,12 +26,6 @@ RULE_BASED_BIN_COUNT: int = 3
 
 # Param keys that belong to the binning model only; never pass to the bias node (e.g. RSI).
 BINNING_ONLY_PARAM_KEYS: frozenset[str] = frozenset({"bin_count", "selected_bin"})
-
-
-def _combo_key(params: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
-    """Convert params dict to hashable sorted tuple for use as dict key."""
-    return tuple(sorted(params.items(), key=lambda item: item[0]))
-
 
 @dataclass(frozen=True)
 class FoldPortfolioResult:
@@ -270,7 +265,7 @@ def _build_one_base_model_with_members(
     feature_columns: list[str] = []
     for params in selected_params:
         # Feature data is keyed by (lookback, bin_count) only; selected_bin is not in the key.
-        key = _combo_key({k: v for k, v in params.items() if k != "selected_bin"})
+        key = combo_key({k: v for k, v in params.items() if k != "selected_bin"})
         if key not in feature_data_by_combo:
             continue
         df = feature_data_by_combo[key]
