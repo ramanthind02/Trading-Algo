@@ -96,10 +96,24 @@ def _align_feature_and_target(
 
 @dataclass(frozen=True)
 class BiasNodeSpec:
-    """Immutable specification for bias node creation."""
+    """Immutable specification for bias node creation.
+
+    Parameters
+    ----------
+    module_name : str
+        Canonical module key (e.g. ``'rsi'``, ``'ewmac'``).
+    timeframes : list[TimeFrame]
+        Timeframes to create nodes for.
+    params : dict[str, object]
+        Keyword arguments forwarded to the bias node constructor.
+    filters : tuple
+        Optional chain of :class:`filters.FilterSpec` instances.
+        Default is an empty tuple (no filtering).
+    """
     module_name: str
     timeframes: list[TimeFrame]
     params: dict[str, object]
+    filters: tuple = ()
 
 
 class BaseModel:
@@ -243,11 +257,14 @@ class BaseModel:
         
         for ticker in self.tickers:
             for tf in bias_node_spec['timeframes']:
-                bias_node = helpers.create_bias_node(
+                # TODO: pass filter_specs from bias_node_spec to apply signal filters
+                filter_specs = list(bias_node_spec.get('filters', ()))
+                bias_node = helpers.create_filtered_bias_node(
                     bias_node_spec['module_name'],
                     ticker,
                     tf,
-                    cleaned_params
+                    cleaned_params,
+                    filter_specs=filter_specs,
                 )
                 self.bias_nodes[(ticker, tf)] = bias_node
         

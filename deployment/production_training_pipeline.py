@@ -191,14 +191,14 @@ class ProductionTrainingPipeline:
         
         # Use bias nodes directly instead of MLManager for batch feature extraction
         # This avoids the complexity of MLManager's multi-timeframe architecture
-        from utils.core.helpers import create_bias_node
+        from utils.core.helpers import create_filtered_bias_node
         from utils.core.models import Candle
         import utils.core.helpers as helpers
         
         # Create bias nodes for feature extraction
-        rsi_node = create_bias_node('rsi', ticker, timeframe, {'lookback': 14})
-        momentum_node = create_bias_node('momentum', ticker, timeframe, {'lookback': 20})
-        ma_diff_node = create_bias_node('ma_diff', ticker, timeframe, {'lookback': 50})
+        rsi_node = create_filtered_bias_node('rsi', ticker, timeframe, {'lookback': 14}, filter_specs=[])
+        momentum_node = create_filtered_bias_node('momentum', ticker, timeframe, {'lookback': 20}, filter_specs=[])
+        ma_diff_node = create_filtered_bias_node('ma_diff', ticker, timeframe, {'lookback': 50}, filter_specs=[])
         
         # Process all candles through nodes
         rsi_values = []

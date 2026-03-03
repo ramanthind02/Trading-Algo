@@ -427,6 +427,7 @@ def _extract_features_single_ticker(
     timeframes: List[TimeFrame],
     use_cache: bool = False,
     price_df_override: pd.DataFrame | None = None,
+    filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single ticker.
@@ -464,7 +465,10 @@ def _extract_features_single_ticker(
     
     for param_combo in param_combos:
         for tf in timeframes:
-            bias_node = helpers.create_bias_node(module_name, ticker, tf, param_combo)
+            bias_node = helpers.create_filtered_bias_node(
+                module_name, ticker, tf, param_combo,
+                filter_specs=filter_specs if filter_specs else [],
+            )
             bias_nodes.append(bias_node)
             bias_node_info.append((bias_node, param_combo, tf))
             
@@ -656,6 +660,7 @@ def extract_features(
     use_millisecond_offset: bool = True,
     use_cache: bool = False,
     candles_override: pd.DataFrame | None = None,
+    filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single bias node with parameter grid exploration.
@@ -726,6 +731,8 @@ def extract_features(
         end = datetime.now()
     if timeframes is None:
         timeframes = [TimeFrame.D]
+    if filter_specs is None:
+        filter_specs = []
     
     # Normalize ticker to list
     if isinstance(ticker, Ticker):
@@ -756,6 +763,7 @@ def extract_features(
             timeframes=timeframes,
             use_cache=use_cache if not override_by_ticker else False,
             price_df_override=override_by_ticker.get(tickers[0]),
+            filter_specs=filter_specs,
         )
         
         # Add ticker column for identification
@@ -778,6 +786,7 @@ def extract_features(
             timeframes=timeframes,
             use_cache=use_cache if single_ticker not in override_by_ticker else False,
             price_df_override=override_by_ticker.get(single_ticker),
+            filter_specs=filter_specs,
         )
         
         # Primary key is (datetime, ticker); no millisecond offset
@@ -807,6 +816,7 @@ def extract_features_with_forward_returns(
     target_col: str = 'log_return',
     use_cache: bool = False,
     candles_override: pd.DataFrame | None = None,
+    filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features and compute intraday returns (shifted forward) automatically.
@@ -889,6 +899,8 @@ def extract_features_with_forward_returns(
         end = datetime.now()
     if timeframes is None:
         timeframes = [TimeFrame.D]
+    if filter_specs is None:
+        filter_specs = []
     
     # Normalize ticker to list
     if isinstance(ticker, Ticker):
@@ -926,10 +938,11 @@ def extract_features_with_forward_returns(
     }
 
     # STEP 1: Extract features - ALWAYS include ATR and EWSD for volatility scaling
-    # Extract main module features
+    # Extract main module features (filters apply only to the user's signal node)
     main_features_df, _ = extract_features(
         module_name=module_name,
         params=params,
+        filter_specs=filter_specs,
         **extract_kw,
     )
 
@@ -1354,6 +1367,7 @@ def extract_features_for_bias_node(
         timeframes = [timeframes]
     
     params = bias_spec.get('params', {})
+    filter_specs = list(bias_spec.get('filters', ()))
     
     # Use extract_features_with_forward_returns
     return extract_features_with_forward_returns(
@@ -1367,4 +1381,5 @@ def extract_features_for_bias_node(
         target_col=target_col,
         use_cache=use_cache,
         candles_override=candles_override,
+        filter_specs=filter_specs,
     )
