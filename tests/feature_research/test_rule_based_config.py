@@ -1,9 +1,7 @@
 from datetime import datetime
-from pathlib import Path
 
 from feature_research.config import FeatureType
 from feature_research.in_sample.config import ResearchConfig, load_config
-from feature_research.walkforward.config import WalkforwardResearchConfig
 from utils.core.enums import Ticker
 
 
@@ -34,13 +32,3 @@ def test_reports_dir_includes_module_name():
     config = load_config()
     # Default feature_type is CONTINUOUS, so reports_dir contains "continuous"
     assert "continuous" in str(config.reports_dir)
-
-
-def test_load_config_includes_walkforward_defaults() -> None:
-    config = load_config()
-
-    assert isinstance(config.walkforward, WalkforwardResearchConfig)
-    assert config.walkforward.enabled is False
-    assert config.walkforward.train_start >= config.start
-    assert config.walkforward.train_end < config.end
-    assert config.walkforward.output_root == Path("feature_research/shared_results")

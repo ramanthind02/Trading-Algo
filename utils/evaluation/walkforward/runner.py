@@ -14,8 +14,8 @@ import pandas as pd
 from ensemble.weight_layer import WeightLayerConfig
 from feature_research.config import FeatureType
 from feature_research.core_helpers import normalize_timeframe_from_bias_spec
-from feature_research.walkforward.config import WalkforwardResearchConfig
-from feature_research.walkforward.metrics import resolve_objective_metric
+from utils.evaluation.walkforward.config import WalkforwardResearchConfig
+from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from utils.core.enums import Ticker, TimeFrame
 from utils.compute.grid_smoothing import add_smoothed_objective
 
@@ -163,7 +163,7 @@ def run_portfolio_simulation(
     tearsheets_dir: Path | None = None,
     output_per_fold_tearsheets: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series | None]:
-    from feature_research.walkforward.portfolio_evaluator import (
+    from utils.evaluation.walkforward.portfolio_evaluator import (
         ensure_portfolio_candle_columns,
         evaluate_fold_portfolio,
     )
@@ -751,7 +751,7 @@ def _build_fold_scores(
     effective_selection_method = config._effective_selection_method()
 
     if effective_selection_method == "enhanced":
-        from feature_research.walkforward.top_k_selection import (
+        from utils.evaluation.walkforward.top_k_selection import (
             compute_all_trade_frequencies,
             run_enhanced_selection,
         )

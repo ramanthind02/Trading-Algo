@@ -9,13 +9,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from feature_research.walkforward.config import (
+from utils.evaluation.walkforward.config import (
     WalkforwardResearchConfig,
     WalkforwardSelectionMethod,
 )
-from feature_research.walkforward.top_k_selection import (
+from utils.evaluation.walkforward.top_k_selection import (
     EnhancedSelectionResult,
     compute_trade_frequency,
     compute_all_trade_frequencies,

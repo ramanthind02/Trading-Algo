@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from math import log
 
 import pandas as pd
 from feature_research.config import FeatureType
 from feature_research.in_sample.config import BinningAnalysisConfig
-from feature_research.walkforward.portfolio_evaluator import (
+from utils.evaluation.walkforward.portfolio_evaluator import (
     _calculate_oos_returns_from_positions,
     build_research_portfolio,
     ensure_portfolio_candle_columns,
@@ -15,7 +16,24 @@ from feature_research.walkforward.portfolio_evaluator import (
 from utils.core.enums import TimeFrame, Ticker
 
 
-def test_build_research_portfolio_creates_expected_models() -> None:
+def _install_fake_ensemble(monkeypatch) -> None:
+    class _FakeEnsemble:
+        def __init__(self, *args, **kwargs) -> None:
+            control_file_path = kwargs["control_file_path"]
+            with open(control_file_path, encoding="utf-8") as handle:
+                self.control_file_data = json.load(handle)
+            self.base_models = {}
+            for model in self.control_file_data.get("base_models", []):
+                self.base_models[model["name"]] = object()
+
+    monkeypatch.setattr(
+        "utils.evaluation.walkforward.portfolio_evaluator.DiversifiedEnsemble",
+        _FakeEnsemble,
+    )
+
+
+def test_build_research_portfolio_creates_expected_models(monkeypatch) -> None:
+    _install_fake_ensemble(monkeypatch)
     portfolio = build_research_portfolio(
         selected_params=[{"lookback": 5, "bin_count": 4}, {"lookback": 7, "bin_count": 6}],
         binning_config=BinningAnalysisConfig(strategy="long"),
@@ -38,8 +56,9 @@ def test_build_research_portfolio_creates_expected_models() -> None:
     assert not portfolio.is_fitted_
 
 
-def test_build_research_portfolio_rule_based_has_three_members_and_bias_node_spec() -> None:
+def test_build_research_portfolio_rule_based_has_three_members_and_bias_node_spec(monkeypatch) -> None:
     """Rule-based control payload uses RULE_BASED_BIN_COUNT members and includes bias_node_spec."""
+    _install_fake_ensemble(monkeypatch)
     portfolio = build_research_portfolio(
         selected_params=[{"oversold": 25, "overbought": 75, "rsi_period": 2}],
         binning_config=BinningAnalysisConfig(strategy="long"),

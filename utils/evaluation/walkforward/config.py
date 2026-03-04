@@ -11,12 +11,13 @@ from enum import Enum
 from pathlib import Path
 from typing import TypeVar
 
-from feature_research.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
+from utils.evaluation.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
 
 
 class WalkforwardSelectionMethod(str, Enum):
     TOP_K = "top_k"
     ENHANCED = "enhanced"
+    MARGINAL_PEAK = "marginal_peak"
 
 
 class WeightLayerAlgorithm(str, Enum):
@@ -59,6 +60,9 @@ class WalkforwardResearchConfig:
     Selection is controlled only by selection_method (no boolean overrides):
       - TOP_K: select top_k params by smoothed objective.
       - ENHANCED: three-objective (smoothed obj + trade_freq + diversity); outputs top_k.
+      - MARGINAL_PEAK: pairwise 2D marginal tables, pick table with largest peak-vs-second gap,
+        restrict to peak cell, return top k_max by raw objective; uses marginal_peak
+        (MarginalPeakConfig). Best for large grids (15–50 combos, 3+ dimensions).
     """
 
     train_start: datetime
@@ -73,6 +77,7 @@ class WalkforwardResearchConfig:
     trade_freq_min: float = 0.01
     # --- Selection algorithm (single source of truth) ---
     selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.TOP_K
+    marginal_peak: object = field(default=None)  # MarginalPeakConfig | None
     # --- Configurable weight layer method ---
     weight_layer_algorithm: WeightLayerAlgorithm | str = WeightLayerAlgorithm.INVERSE_CORRELATION
     weight_layer_config: object = field(default=None)  # WeightLayerConfig | None
@@ -139,7 +144,7 @@ class WalkforwardResearchConfig:
         object.__setattr__(self, "member_prediction_mode", normalized_member_prediction_mode)
 
     def _effective_selection_method(self) -> str:
-        """Return the active selection method string (top_k or enhanced)."""
+        """Return the active selection method string (top_k, enhanced, or marginal_peak)."""
         return _coerce_enum_or_raise(
             self.selection_method,
             WalkforwardSelectionMethod,

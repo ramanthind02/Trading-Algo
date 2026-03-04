@@ -1,21 +1,15 @@
 """Shared feature_research configuration. Edit here once; all phases reuse it.
 
-Permutation uses a single shared config for in-sample, walkforward, and OOS phases.
+Permutation uses a single shared config for in-sample and OOS phases.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
-from feature_research.walkforward.config import (
-    MemberPredictionMode,
-    WalkforwardResearchConfig,
-    WalkforwardSelectionMethod,
-    WeightLayerAlgorithm,
-)
 from feature_selection.validation.config import OOSCandidateSource, PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.core.enums import Ticker, TimeFrame
@@ -28,7 +22,7 @@ RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 def build_objective_metric_presets(tf: TimeFrame = TimeFrame.D) -> dict[str, ObjectiveMetricSpec]:
     """Reusable objective metric presets for research/permutation configs.
 
-    Keep this catalog researcher-friendly so in-sample / walkforward / OOS stages can
+    Keep this catalog researcher-friendly so in-sample / OOS stages can
     switch objectives by key without editing resolver internals.
     """
     return {
@@ -57,26 +51,6 @@ OBJECTIVE_METRIC_PRESETS: Mapping[str, ObjectiveMetricSpec] = build_objective_me
 
 
 @dataclass(frozen=True)
-class GlobalResearchDefaults:
-    """Single source of truth for shared research knobs across walkforward and permutation.
-
-    Set once in load_config(); WalkforwardDefaultsConfig and PermutationResearchConfig
-    are built from this so top_k, objective, fold_years, etc. stay aligned and DRY.
-    Window-based: train_window_years and test_window_years define fold boundaries;
-    test_step (days) is derived as int(test_window_years * 365) when building WF config.
-    """
-
-    objective_metric_key: str = "t_stat"  # key in OBJECTIVE_METRIC_PRESETS
-    top_k: int = 1  # load_config() uses this; keep aligned so effective default is 1
-    min_folds_stable: int = 1
-    fold_years: int = 1
-    train_window_years: float = 15.0
-    test_window_years: float = 2.0
-    num_steps: int = 4
-    selection_method: WalkforwardSelectionMethod = WalkforwardSelectionMethod.TOP_K
-
-
-@dataclass(frozen=True)
 class OOSWindowConfig:
     """Explicit train/test window for a single out-of-sample fold.
 
@@ -101,37 +75,6 @@ class OOSWindowConfig:
             )
 
 
-def compute_first_fold_bounds(
-    start: datetime,
-    end: datetime,
-    train_window_years: float,
-    test_window_years: float,
-    num_steps: int,
-) -> tuple[datetime, datetime, datetime, datetime]:
-    """Compute the first fold's train/test boundaries (walkforward scheme).
-
-    Uses the same formula as build_walkforward: first fold's train_end = end
-    - num_steps * test_step_days; train_start = train_end - train_window;
-    test period = (train_end + 1 day) through (train_end + test_step_days).
-    Keeps portfolio in-sample period aligned with feature_research.
-
-    Returns
-    -------
-    tuple[datetime, datetime, datetime, datetime]
-        (train_start, train_end, test_start, test_end) for the first fold.
-    """
-    test_step_days = int(test_window_years * 365)
-    train_end_first = end - timedelta(days=num_steps * test_step_days)
-    if train_end_first <= start:
-        train_end_first = end - timedelta(days=test_step_days)
-    train_start_first = train_end_first - timedelta(days=int(train_window_years * 365))
-    if train_start_first < start:
-        train_start_first = start
-    test_start_first = train_end_first + timedelta(days=1)
-    test_end_first = train_end_first + timedelta(days=test_step_days)
-    return train_start_first, train_end_first, test_start_first, test_end_first
-
-
 class FeatureType(str, Enum):
     """Feature type determines validation path."""
 
@@ -141,20 +84,16 @@ class FeatureType(str, Enum):
 
 @dataclass(frozen=True)
 class PermutationResearchConfig:
-    """Shared permutation settings for in-sample, walkforward, and OOS phases.
+    """Shared permutation settings for in-sample and OOS phases."""
 
-    Global-sourced fields (first four) must be passed from GlobalResearchDefaults
-    in load_config(); no defaults so global remains the single source of truth.
-    """
-
-    # From GlobalResearchDefaults (set in load_config() only)
+    # Required fields (set in load_config())
     objective_metric: ObjectiveMetricSpec
     top_k: int
-    min_folds_stable: int
-    fold_years: int
+    min_folds_stable: int = 1
+    fold_years: int = 1
     # Permutation-only
     enabled: bool = False
-    nreps_stage1: int = 1000   # vector shuffle (cheaper per rep; 1000 default) 
+    nreps_stage1: int = 1000   # vector shuffle (cheaper per rep; 1000 default)
     nreps_stage2: int = 100   # candle shuffle (expensive)
     alpha: float = 0.1
     metric_threshold: float = 0.0
@@ -169,37 +108,6 @@ class PermutationResearchConfig:
 
 
 @dataclass(frozen=True)
-class WalkforwardDefaultsConfig:
-    """Walkforward options; global-sourced fields are required and set from GlobalResearchDefaults in load_config().
-
-    build_walkforward() derives train_start/train_end/test_step from train_window_years,
-    test_window_years, and num_steps. No defaults for shared knobs so global remains
-    the single source of truth.
-    """
-
-    # From GlobalResearchDefaults (set in load_config() only)
-    top_k: int
-    train_window_years: float
-    test_window_years: float
-    num_steps: int
-    selection_method: WalkforwardSelectionMethod
-    min_folds_stable: int
-    fold_years: int
-    objective_metric_name: str
-    # Walkforward-only
-    enabled: bool = False
-    output_root: Path = field(default_factory=lambda: Path("feature_research/shared_results"))
-    output_per_fold_tearsheets: bool = False
-    weight_layer_algorithm: WeightLayerAlgorithm = WeightLayerAlgorithm.INVERSE_CORRELATION
-    member_prediction_mode: MemberPredictionMode = MemberPredictionMode.BINARY
-    n_jobs: int = 8  # parallel jobs for scoring param combos within each fold; -1 = all CPUs
-    # Center param weight relative to each 1-step neighbor in smoothing.
-    # 1.0 = equal weight (most aggressive); 2.0–3.0 reduces boundary-param dilution.
-    # Should match ParamSensitivityConfig.smoothing_self_weight so EDA and WF use the same landscape.
-    smoothing_self_weight: float = 3.0
-
-
-@dataclass(frozen=True)
 class ParamSensitivityConfig:
     """Settings for EDA parameter sensitivity plots and smoothing helpers."""
 
@@ -207,7 +115,6 @@ class ParamSensitivityConfig:
     plot_3d_mode: str = "surface_slices"  # "heatmap_slices" | "surface_slices"
     max_eda_output_combos: int = 25  # max EDA folders saved for rule-based; 0 = no limit
     # Center param weight for neighbor smoothing.
-    # Must match WalkforwardDefaultsConfig.smoothing_self_weight so EDA and WF see the same landscape.
     smoothing_self_weight: float = 3.0
     # Visualization-only floor for parameter sensitivity metrics.
     # When not None, parameter sensitivity plots clip metric values from below
@@ -220,8 +127,7 @@ class ParamSensitivityConfig:
 class BinningAnalysisConfig:
     """Shared continuous binning model parameter config.
 
-    This is the single schema/default source used by in-sample research and
-    walkforward helpers that depend on binning settings.
+    This is the single schema/default source used by in-sample research.
 
     When bin_index_max is set, only bin indices in [bin_index_min, bin_index_max]
     are considered (e.g. mean reversion tail 0–3). Set after EDA, before OOS,
@@ -230,7 +136,7 @@ class BinningAnalysisConfig:
 
     bin_counts: list[int] = field(default_factory=lambda: [10, 8, 5, 3])
     selection_metric: str = "t_stat"
-    strategy: str = "long"  # For continuous long-only research, keep "long"; walkforward pipeline does not override.
+    strategy: str = "long"  # For continuous long-only research, keep "long".
     metric_threshold: float = 0.0
     t_threshold: float = 2.0
     min_region_width: int = 2  # Legacy, ignored by new approach
@@ -261,10 +167,6 @@ class InSamplePhaseDefaultsConfig:
     strategy: str
     reports_dir: Path
     binning_params_overrides: Mapping[str, Any] = field(default_factory=dict)
-    walkforward_train_window_years: float | None = None
-    walkforward_test_window_years: float | None = None
-    walkforward_num_steps: int | None = None
-    walkforward_enabled: bool | None = None
 
 
 def _default_continuous_in_sample_defaults(
@@ -338,11 +240,7 @@ class InSampleDefaultsCatalog:
 
 @dataclass(frozen=True)
 class BaseResearchConfig:
-    """Shared researcher-editable settings. Phases add reports_dir and phase-specific fields.
-
-    permutation and walkforward_defaults are required; load_config() builds them from
-    GlobalResearchDefaults so global is the single source of truth.
-    """
+    """Shared researcher-editable settings. Phases add reports_dir and phase-specific fields."""
 
     tickers: list[Ticker]
     start: datetime
@@ -350,7 +248,6 @@ class BaseResearchConfig:
     use_cache: bool
     populate_cache: bool
     permutation: PermutationResearchConfig
-    walkforward_defaults: WalkforwardDefaultsConfig
     timeframe: TimeFrame = TimeFrame.D
     feature_type: FeatureType = FeatureType.CONTINUOUS
     in_sample_defaults: InSampleDefaultsCatalog = field(
@@ -359,52 +256,18 @@ class BaseResearchConfig:
     param_sensitivity: ParamSensitivityConfig = field(default_factory=ParamSensitivityConfig)
     validation_window: OOSWindowConfig | None = None
     oos_window: OOSWindowConfig | None = None
-
-    def build_walkforward(
-        self,
-        *,
-        train_window_years: float | None = None,
-        test_window_years: float | None = None,
-        num_steps: int | None = None,
-        enabled: bool | None = None,
-    ) -> WalkforwardResearchConfig:
-        """Build walkforward config from window-based spec.
-
-        First fold's train_end = end - num_steps * test_step_days; train_start = train_end - train_window.
-        ``top_k`` is sourced exclusively from ``walkforward_defaults.top_k``.
-        """
-        wf_defaults = self.walkforward_defaults
-        tw_years = train_window_years if train_window_years is not None else wf_defaults.train_window_years
-        test_years = test_window_years if test_window_years is not None else wf_defaults.test_window_years
-        steps = num_steps if num_steps is not None else wf_defaults.num_steps
-        train_start_first, train_end_first, _, _ = compute_first_fold_bounds(
-            self.start, self.end, tw_years, test_years, steps
-        )
-        test_step_days = int(test_years * 365)
-        top_k = wf_defaults.top_k  # single source of truth
-        return WalkforwardResearchConfig(
-            train_start=train_start_first,
-            train_end=train_end_first,
-            enabled=enabled if enabled is not None else wf_defaults.enabled,
-            test_step=test_step_days,
-            num_steps=steps,
-            top_k=top_k,
-            objective_metric_name=wf_defaults.objective_metric_name,
-            selection_method=wf_defaults.selection_method,
-            weight_layer_algorithm=wf_defaults.weight_layer_algorithm,
-            member_prediction_mode=wf_defaults.member_prediction_mode,
-            output_root=wf_defaults.output_root,
-            output_per_fold_tearsheets=wf_defaults.output_per_fold_tearsheets,
-            n_jobs=wf_defaults.n_jobs,
-            smoothing_self_weight=wf_defaults.smoothing_self_weight,
-        )
-
+    # Flat evaluation fields
+    top_k: int = 1
+    objective_metric_key: str = "t_stat"
+    smoothing_self_weight: float = 3.0
+    n_jobs: int = 8
+    output_root: Path = field(default_factory=lambda: Path("feature_research/shared_results"))
 
 
 def load_config() -> BaseResearchConfig:
     """Single source of truth for tickers, date range, cache, and phase defaults.
 
-    Edit here; in_sample and walkforward phases import and extend this.
+    Edit here; in_sample and OOS phases import and extend this.
     """
     # ==========================================================================
     # EDIT BELOW
@@ -419,35 +282,6 @@ def load_config() -> BaseResearchConfig:
     use_cache = True
     populate_cache = True
     objective_metric_presets = build_objective_metric_presets(timeframe)
-
-    # Global shared knobs: one place for top_k, objective, fold_years, windows, etc.
-    # Used by both walkforward and permutation so they stay aligned.
-    global_defaults = GlobalResearchDefaults(
-        objective_metric_key="t_stat",
-        top_k=1,
-        min_folds_stable=1,
-        fold_years=1,
-        train_window_years=17.0,
-        test_window_years=1.0,
-        num_steps=8,
-        selection_method=WalkforwardSelectionMethod.TOP_K,
-    )
-
-    walkforward_defaults = WalkforwardDefaultsConfig(
-        global_defaults.top_k,
-        global_defaults.train_window_years,
-        global_defaults.test_window_years,
-        global_defaults.num_steps,
-        global_defaults.selection_method,
-        global_defaults.min_folds_stable,
-        global_defaults.fold_years,
-        global_defaults.objective_metric_key,
-        enabled=True,
-        output_root=Path("feature_research/shared_results"),
-        output_per_fold_tearsheets=False,
-        weight_layer_algorithm=WeightLayerAlgorithm.INVERSE_CORRELATION,
-        member_prediction_mode=MemberPredictionMode.BINARY,
-    )
 
     validation_window = OOSWindowConfig(
         train_start=datetime(2000, 1, 1),
@@ -468,10 +302,10 @@ def load_config() -> BaseResearchConfig:
     )
 
     permutation = PermutationResearchConfig(
-        objective_metric_presets["t_stat"],
-        global_defaults.top_k,
-        global_defaults.min_folds_stable,
-        global_defaults.fold_years,
+        objective_metric=objective_metric_presets["t_stat"],
+        top_k=1,
+        min_folds_stable=1,
+        fold_years=1,
         enabled=True,
     )
 
@@ -492,8 +326,12 @@ def load_config() -> BaseResearchConfig:
         timeframe=timeframe,
         feature_type=feature_type,
         in_sample_defaults=in_sample_defaults,
-        walkforward_defaults=walkforward_defaults,
         param_sensitivity=param_sensitivity,
         validation_window=validation_window,
         oos_window=oos_window,
+        top_k=1,
+        objective_metric_key="t_stat",
+        smoothing_self_weight=3.0,
+        n_jobs=8,
+        output_root=Path("feature_research/shared_results"),
     )

@@ -9,13 +9,13 @@ from matplotlib.figure import Figure
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from feature_research.walkforward.io import (
+from utils.evaluation.walkforward.io import (
     resolve_walkforward_output_dir,
     write_walkforward_artifacts,
 )
-from feature_research.walkforward.runner import WalkforwardRunReport
+from utils.evaluation.walkforward.runner import WalkforwardRunReport
 from utils.core.enums import TimeFrame
 
 

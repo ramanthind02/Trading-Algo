@@ -8,11 +8,11 @@ from typing import cast
 import pandas as pd
 
 from feature_research.core_helpers import combo_key, expand_params_with_selected_bin
-from feature_research.walkforward.evaluators import build_continuous_walkforward_evaluator
+from utils.evaluation.walkforward.evaluators import build_continuous_walkforward_evaluator
 from feature_research.in_sample.config import load_config
-from feature_research.walkforward.config import WalkforwardResearchConfig
-from feature_research.walkforward.runner import run_walkforward_research
-from feature_research.walkforward.io import _build_selected_params_detailed
+from utils.evaluation.walkforward.config import WalkforwardResearchConfig
+from utils.evaluation.walkforward.runner import run_walkforward_research
+from utils.evaluation.walkforward.io import _build_selected_params_detailed
 
 
 def test_expand_params_with_selected_bin_yields_one_per_bin() -> None:

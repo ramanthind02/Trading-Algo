@@ -13,7 +13,7 @@ from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from feature_research.config import FeatureType
 from feature_research.core_helpers import combo_key
-from feature_research.walkforward.metrics import resolve_objective_metric
+from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.base_models.rule_based import RuleBasedModel

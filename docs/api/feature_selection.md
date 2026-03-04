@@ -6,6 +6,7 @@
 
 ## Purpose
 `feature_selection` provides the public runtime APIs for feature validation workflows: in-sample/out-of-sample selectors, walk-forward split utilities, and permutation/stability entrypoints that are reused by training, deployment, and utility modules.
+Train/validation/test cutover plan references: `docs/kanban/to-do/feature_research_train_val_test/`.
 
 ## Public API policy (what we document)
 This document covers public API only:
@@ -147,25 +148,25 @@ Public symbols:
 - `apply_function_to_rolling_windows(...)`
 
 Cross-package import surface:
-- Canonical exports are re-imported by `utils/evaluation/walkforward.py` for backward compatibility.
+- Canonical exports are re-imported by `utils/evaluation/walkforward/__init__.py` for backward compatibility.
 - `utils.evaluation.walkforward.generate_walkforward_splits(...)` is deprecated; prefer `WalkForwardSplitter` directly.
 
 ### Walk-forward research config and metrics
 Type: dataclass/function  
 Modules:
-- `feature_research/walkforward/config.py`
-- `feature_research/walkforward/metrics.py`
-- `feature_research/walkforward/runner.py`
-- `feature_research/walkforward/visualization.py`
-- `feature_research/walkforward/io.py`
+- `utils/evaluation/walkforward/config.py`
+- `utils/evaluation/walkforward/metrics.py`
+- `utils/evaluation/walkforward/runner.py`
+- `utils/evaluation/walkforward/visualization.py`
+- `utils/evaluation/walkforward/io.py`
 - `feature_research/pipelines/in_sample.py`
-- `feature_research/pipelines/walkforward.py`
+- `feature_research/pipelines/validation.py`
 - `feature_research/pipelines/oos.py`
 - `feature_research/pipelines/permutation.py`
 
 Compatibility surface:
 - `feature_research/pipeline.py` remains the public façade that re-exports
-  `run_eda_pipeline`, `run_walkforward_pipeline`, `run_oos_pipeline`,
+  `run_eda_pipeline`, `run_validation_pipeline`, `run_oos_pipeline`,
   `run_permutation_pipeline`, and `write_permutation_summary`.
 
 #### `WalkforwardResearchConfig`

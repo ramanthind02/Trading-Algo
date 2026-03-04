@@ -11,19 +11,19 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from feature_research.walkforward.config import (
+from utils.evaluation.walkforward.config import (
     WeightLayerAlgorithm,
     WalkforwardResearchConfig,
     WalkforwardSelectionMethod,
 )
-from feature_research.walkforward.runner import (
+from utils.evaluation.walkforward.runner import (
     build_fold_rows_from_explicit_specs,
     run_walkforward_research,
     run_portfolio_simulation,
 )
-from feature_research.walkforward.top_k_selection import EnhancedSelectionResult
+from utils.evaluation.walkforward.top_k_selection import EnhancedSelectionResult
 from ensemble.weight_layer import WeightLayerConfig
 from utils.core.enums import TimeFrame
 
@@ -470,7 +470,7 @@ def test_run_walkforward_research_enhanced_selection_forwards_train_end_metadata
         )
 
     monkeypatch.setattr(
-        "feature_research.walkforward.top_k_selection.run_enhanced_selection",
+        "utils.evaluation.walkforward.top_k_selection.run_enhanced_selection",
         fake_run_enhanced_selection,
     )
 
@@ -690,7 +690,7 @@ def test_enhanced_selection_uses_top_k_labels_for_selected_flags(
         )
 
     monkeypatch.setattr(
-        "feature_research.walkforward.top_k_selection.run_enhanced_selection",
+        "utils.evaluation.walkforward.top_k_selection.run_enhanced_selection",
         fake_run_enhanced_selection,
     )
 
@@ -737,7 +737,7 @@ def test_enhanced_selection_outputs_selected_members_only(
         )
 
     monkeypatch.setattr(
-        "feature_research.walkforward.top_k_selection.run_enhanced_selection",
+        "utils.evaluation.walkforward.top_k_selection.run_enhanced_selection",
         fake_run_enhanced_selection,
     )
 
@@ -905,7 +905,7 @@ def test_run_portfolio_simulation_records_error_without_crash(monkeypatch: pytes
     def _boom(**_kwargs: object) -> object:
         raise RuntimeError("sim failed")
 
-    monkeypatch.setattr("feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio", _boom)
+    monkeypatch.setattr("utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio", _boom)
 
     research_config = type(
         "ResearchCfg",
@@ -977,7 +977,7 @@ def test_run_portfolio_simulation_builds_weight_layer_config_from_algorithm(
         )()
 
     monkeypatch.setattr(
-        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
 
@@ -1064,7 +1064,7 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
         )()
 
     monkeypatch.setattr(
-        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
 
@@ -1218,7 +1218,7 @@ def test_run_portfolio_simulation_forwards_timeframe_to_tearsheets(
         )()
 
     monkeypatch.setattr(
-        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
     monkeypatch.setattr(
@@ -1304,7 +1304,7 @@ def test_run_portfolio_simulation_drops_malformed_top_k_labels(
         )()
 
     monkeypatch.setattr(
-        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
 

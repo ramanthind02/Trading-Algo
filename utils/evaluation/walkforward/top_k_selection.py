@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable
 import pandas as pd
 
 if TYPE_CHECKING:
-    from feature_research.walkforward.config import WalkforwardResearchConfig
+    from utils.evaluation.walkforward.config import WalkforwardResearchConfig
 
 
 def compute_trade_frequency(signal: pd.Series) -> float:

@@ -5,9 +5,9 @@ from pathlib import Path
 import pytest
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from feature_research.walkforward.metrics import resolve_objective_metric
+from utils.evaluation.walkforward.metrics import resolve_objective_metric
 
 
 def test_resolve_mean_return_metric() -> None:

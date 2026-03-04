@@ -13,19 +13,19 @@ import pandas as pd
 from tqdm import tqdm
 
 from feature_research.config import FeatureType
-from feature_research.walkforward.permutation_helpers import (
+from utils.evaluation.walkforward.permutation_helpers import (
     _joblib_tqdm,
     aggregate_oos_metric_from_report,
     permute_target_in_two_units,
 )
-from feature_research.walkforward.metrics import resolve_objective_metric
-from feature_research.walkforward.portfolio_evaluator import (
+from utils.evaluation.walkforward.metrics import resolve_objective_metric
+from utils.evaluation.walkforward.portfolio_evaluator import (
     _build_one_base_model_with_members,
     _normalize_strategy,
     _normalize_timeframe,
     build_research_portfolio,
 )
-from feature_research.walkforward.runner import (
+from utils.evaluation.walkforward.runner import (
     _parse_top_k_param_labels,
     _resolve_feature_type,
     run_portfolio_simulation,

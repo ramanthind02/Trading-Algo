@@ -37,7 +37,7 @@ def generate_walkforward_splits(
 ) -> List[Dict[Any, Any]]:
     """
     DEPRECATED: Use WalkForwardSplitter from feature_selection.walkforward.walkforward_model instead.
-    
+
     This function is kept for backward compatibility only.
     """
     import warnings
@@ -47,10 +47,10 @@ def generate_walkforward_splits(
         DeprecationWarning,
         stacklevel=2
     )
-    
+
     if not isinstance(df.index, pd.DatetimeIndex):
         raise ValueError("DataFrame must have a DatetimeIndex")
-    
+
     # Use canonical WalkForwardSplitter
     splitter = WalkForwardSplitter(
         train_start=train_start,
@@ -58,26 +58,26 @@ def generate_walkforward_splits(
         test_step=test_step,
         num_steps=num_steps
     )
-    
+
     # Get splits as (train_indices, test_indices) tuples
     index_splits = splitter.split(df.index)
-    
+
     # Convert to old API format (with masks and metadata) for backward compatibility
     splits = []
     for step, (train_idx, test_idx) in enumerate(index_splits):
         train_dates = df.index[train_idx]
         test_dates = df.index[test_idx]
-        
+
         # Create boolean masks
         train_mask = pd.Series(False, index=df.index)
         train_mask.iloc[train_idx] = True
         test_mask = pd.Series(False, index=df.index)
         test_mask.iloc[test_idx] = True
-        
+
         # Check minimum samples
         if len(train_idx) < min_train_samples or len(test_idx) < min_test_samples:
             continue
-        
+
         splits.append({
             'step': step,
             'train_start': train_dates.min(),
@@ -89,16 +89,66 @@ def generate_walkforward_splits(
             'train_size': len(train_idx),
             'test_size': len(test_idx)
         })
-    
+
     return splits
 
 
-# All other functions are directly imported from canonical module
-# No need to redefine them here
+# Re-export relocated walkforward engine modules for convenience.
+from . import (
+    config,
+    evaluators,
+    io,
+    metrics,
+    permutation_core,
+    permutation_helpers,
+    permutation_runtime,
+    portfolio_evaluator,
+    research_data,
+    runner,
+    top_k_selection,
+    visualization,
+)
+from .config import (
+    MemberPredictionMode,
+    WalkforwardResearchConfig,
+    WalkforwardSelectionMethod,
+    WeightLayerAlgorithm,
+)
+from .io import (
+    resolve_walkforward_output_dir,
+    write_walkforward_artifacts,
+)
+from .runner import (
+    WalkforwardRunReport,
+    build_fold_rows_from_explicit_specs,
+    run_walkforward_research,
+)
+
 __all__ = [
-    'WalkForwardSplitter',
-    'generate_walkforward_splits',
-    'generate_rolling_windows',
-    'apply_function_to_walkforward',
-    'apply_function_to_rolling_windows'
+    "WalkForwardSplitter",
+    "generate_walkforward_splits",
+    "generate_rolling_windows",
+    "apply_function_to_walkforward",
+    "apply_function_to_rolling_windows",
+    "WalkforwardResearchConfig",
+    "WalkforwardSelectionMethod",
+    "WeightLayerAlgorithm",
+    "MemberPredictionMode",
+    "WalkforwardRunReport",
+    "run_walkforward_research",
+    "build_fold_rows_from_explicit_specs",
+    "resolve_walkforward_output_dir",
+    "write_walkforward_artifacts",
+    "config",
+    "evaluators",
+    "io",
+    "metrics",
+    "permutation_core",
+    "permutation_helpers",
+    "permutation_runtime",
+    "portfolio_evaluator",
+    "research_data",
+    "runner",
+    "top_k_selection",
+    "visualization",
 ]

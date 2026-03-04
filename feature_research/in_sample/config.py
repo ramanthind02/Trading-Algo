@@ -19,7 +19,6 @@ from typing import Any
 
 from feature_research.config import (
     BinningAnalysisConfig,
-    GlobalResearchDefaults,
     OBJECTIVE_METRIC_PRESETS,
     RAW_TARGET_COLS,
     FeatureType,
@@ -28,26 +27,9 @@ from feature_research.config import (
     PermutationResearchConfig,
     load_config as load_base_config,
 )
-from feature_research.walkforward.config import (
-    WalkforwardResearchConfig,
-    WalkforwardSelectionMethod,
-    WeightLayerAlgorithm,
-    _coerce_enum_or_raise,
-)
 from utils.core.enums import Ticker
 
 IN_SAMPLE_OBJECTIVE_METRIC_PRESETS = OBJECTIVE_METRIC_PRESETS
-
-
-def _default_permutation_from_global() -> PermutationResearchConfig:
-    """Build permutation config from GlobalResearchDefaults so tests/defaults stay aligned."""
-    g = GlobalResearchDefaults()
-    return PermutationResearchConfig(
-        OBJECTIVE_METRIC_PRESETS[g.objective_metric_key],
-        g.top_k,
-        g.min_folds_stable,
-        g.fold_years,
-    )
 
 
 __all__ = [
@@ -57,7 +39,6 @@ __all__ = [
     "ParamSensitivityConfig",
     "PermutationResearchConfig",
     "ResearchConfig",
-    "WalkforwardResearchConfig",
     "load_config",
 ]
 
@@ -91,25 +72,26 @@ class ResearchConfig:
         Root output directory for EDA reports.
     feature_type : FeatureType
         CONTINUOUS or RULE_BASED. Determines validation behavior and binning approach.
-    walkforward_selection_method : WalkforwardSelectionMethod | str
-        Selection algorithm. Must match ``walkforward.selection_method``.
-        Set at the top level here so researchers don't need to dig into
-        ``walkforward`` to find/change it. Accepts string values for convenience.
-    weight_layer_algorithm : WeightLayerAlgorithm | str
-        Weight layer method. Must match ``walkforward.weight_layer_algorithm``.
-        Accepts string values for convenience.
     in_sample_permutation : PermutationResearchConfig
         In-sample permutation settings (if enabled).
     binning_params : BinningAnalysisConfig
         Binning hyperparameters. Only used for CONTINUOUS; rule-based uses fixed 3 levels.
-    walkforward : WalkforwardResearchConfig
-        Walkforward config (window, selection, etc.). In-sample never runs walkforward;
-        the standalone script ``feature_research/walkforward/run_walkforward.py`` uses
-        this and sets enabled=True when running walkforward.
     param_sensitivity : ParamSensitivityConfig
         Parameter sensitivity / stable region selection (notebook and reports).
+    validation_window : OOSWindowConfig | None
+        Explicit train/test window for validation run. When None, validation is disabled.
     oos_window : OOSWindowConfig | None
         Explicit train/test window for out-of-sample run. When None, OOS is disabled.
+    top_k : int
+        Number of top parameter combinations to select.
+    objective_metric_name : str
+        Key into objective metric presets (e.g. "t_stat", "sharpe").
+    smoothing_self_weight : float
+        Center param weight relative to each 1-step neighbor in smoothing.
+    n_jobs : int
+        Parallel jobs for scoring param combos; -1 = all CPUs.
+    output_root : Path
+        Root directory for research output artifacts.
     """
 
     # --- Required fields (no defaults) ---
@@ -124,26 +106,24 @@ class ResearchConfig:
     reports_dir: Path
     # --- Optional fields (with defaults) ---
     feature_type: FeatureType = FeatureType.CONTINUOUS
-    walkforward_selection_method: WalkforwardSelectionMethod | str = (
-        WalkforwardSelectionMethod.TOP_K
-    )
-    weight_layer_algorithm: WeightLayerAlgorithm | str = (
-        WeightLayerAlgorithm.INVERSE_CORRELATION
-    )
     in_sample_permutation: PermutationResearchConfig = field(
-        default_factory=lambda: _default_permutation_from_global()
-    )
-    binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)
-    walkforward: WalkforwardResearchConfig = field(
-        default_factory=lambda: WalkforwardResearchConfig(
-            train_start=datetime(2020, 1, 1),
-            train_end=datetime(2023, 12, 31),
-            enabled=False,
+        default_factory=lambda: PermutationResearchConfig(
+            objective_metric=OBJECTIVE_METRIC_PRESETS["t_stat"],
+            top_k=1,
+            min_folds_stable=1,
+            fold_years=1,
         )
     )
+    binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)
     param_sensitivity: ParamSensitivityConfig = field(default_factory=ParamSensitivityConfig)
     validation_window: OOSWindowConfig | None = None
     oos_window: OOSWindowConfig | None = None
+    # Flat evaluation fields
+    top_k: int = 1
+    objective_metric_name: str = "t_stat"
+    smoothing_self_weight: float = 3.0
+    n_jobs: int = 8
+    output_root: Path = field(default_factory=lambda: Path("feature_research/shared_results"))
 
     @property
     def permutation_suite(self) -> PermutationResearchConfig:
@@ -157,34 +137,6 @@ class ResearchConfig:
                 f"multiple tickers ({len(self.tickers)} configured). "
                 "Raw returns cannot be compared across tickers with different volatility. "
                 "Use 'log_return_ewsd' or 'log_return_atr' for multi-ticker research."
-            )
-
-        # Coerce and validate walkforward_selection_method
-        normalized_sm = _coerce_enum_or_raise(
-            self.walkforward_selection_method,
-            WalkforwardSelectionMethod,
-            "walkforward_selection_method",
-        )
-        object.__setattr__(self, "walkforward_selection_method", normalized_sm)
-        if normalized_sm != self.walkforward.selection_method:
-            raise ValueError(
-                f"walkforward_selection_method ({normalized_sm.value!r}) does not match "
-                f"walkforward.selection_method ({self.walkforward.selection_method.value!r}). "
-                "Set both consistently or build walkforward via BaseResearchConfig.build_walkforward()."
-            )
-
-        # Coerce and validate weight_layer_algorithm
-        normalized_wla = _coerce_enum_or_raise(
-            self.weight_layer_algorithm,
-            WeightLayerAlgorithm,
-            "weight_layer_algorithm",
-        )
-        object.__setattr__(self, "weight_layer_algorithm", normalized_wla)
-        if normalized_wla != self.walkforward.weight_layer_algorithm:
-            raise ValueError(
-                f"weight_layer_algorithm ({normalized_wla.value!r}) does not match "
-                f"walkforward.weight_layer_algorithm ({self.walkforward.weight_layer_algorithm.value!r}). "
-                "Set both consistently or build walkforward via BaseResearchConfig.build_walkforward()."
             )
 
 
@@ -204,13 +156,6 @@ def load_config() -> ResearchConfig:
     binning_overrides.setdefault("strategy", phase_defaults.strategy)
     binning_params = BinningAnalysisConfig(**binning_overrides)
 
-    walkforward = base.build_walkforward(
-        train_window_years=phase_defaults.walkforward_train_window_years,
-        test_window_years=phase_defaults.walkforward_test_window_years,
-        num_steps=phase_defaults.walkforward_num_steps,
-        enabled=False,  # In-sample never runs walkforward; standalone run_walkforward.py sets enabled=True
-    )
-
     return ResearchConfig(
         feature_type=base.feature_type,
         tickers=base.tickers,
@@ -222,12 +167,14 @@ def load_config() -> ResearchConfig:
         use_cache=base.use_cache,
         populate_cache=base.populate_cache,
         reports_dir=phase_defaults.reports_dir,
-        walkforward_selection_method=base.walkforward_defaults.selection_method,
-        weight_layer_algorithm=base.walkforward_defaults.weight_layer_algorithm,
         in_sample_permutation=base.permutation,
         binning_params=binning_params,
-        walkforward=walkforward,
         param_sensitivity=base.param_sensitivity,
         validation_window=base.validation_window,
         oos_window=base.oos_window,
+        top_k=base.top_k,
+        objective_metric_name=base.objective_metric_key,
+        smoothing_self_weight=base.smoothing_self_weight,
+        n_jobs=base.n_jobs,
+        output_root=base.output_root,
     )

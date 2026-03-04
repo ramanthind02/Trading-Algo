@@ -6,6 +6,7 @@
 
 ## Purpose
 This document describes the cross-module data-pipeline API surface used to move from raw OHLCV files to aligned feature/target frames, exploratory analysis outputs, and research reports.
+Train/validation/test cutover plan references: `docs/kanban/to-do/feature_research_train_val_test/`.
 
 ## Public API policy (what we document)
 This document covers public API only.
@@ -385,10 +386,10 @@ run_rule_based_eda_pipeline(
     output_dir: Path,
 ) -> dict[str, Path]
 ```
-Description: runs rule-based EDA per parameter combo and, when `config.walkforward.enabled=True`, also runs the shared walkforward research runner/visualization/artifact IO pipeline.
+Description: runs rule-based EDA per parameter combo. Validation and OOS runs are separate entrypoints (`run_validation_pipeline`, `run_oos_pipeline`) that reuse the shared walkforward engine in `utils.evaluation.walkforward.*`.
 
-Walkforward output contract (`feature_type="rule_based"`):
-- Root directory: `feature_research/shared_results/rule_based/{module_name}/walkforward/` (or `config.walkforward.output_root / "rule_based" / module_name / "walkforward"`).
+Validation output contract (`feature_type="rule_based"`):
+- Root directory: `feature_research/shared_results/rule_based/{module_name}/validation/` (or `config.output_root / "rule_based" / module_name / "validation"`).
 - Files: `folds.csv`, `fold_scores.csv`, `selection_summary.csv`, `report.json`, `walkforward_stability.png`, `fold_timeline.png`.
 - `selection_summary.csv` includes `selected_feature` for each fold.
 
@@ -403,14 +404,14 @@ run_continuous_eda_pipeline(
     output_dir: Path,
 ) -> dict[str, Path]
 ```
-Description: runs continuous-feature EDA per parameter combo and, when `config.walkforward.enabled=True`, also runs the shared walkforward research runner/visualization/artifact IO pipeline.
+Description: runs continuous-feature EDA per parameter combo. Validation and OOS runs are separate entrypoints that call the shared engine in `utils.evaluation.walkforward.*`.
 
-Walkforward execution details:
+Validation/OOS execution details:
 - Stage 1 refits `ContinuousBinningModel` per fold using train-only rows for parameter scoring (no future-data leakage).
 - Stage 2 (when full `ResearchConfig` is passed through) evaluates selected top-k params via production `Portfolio`/`DiversifiedEnsemble` and records per-fold portfolio Sharpe.
 
-Walkforward output contract (`feature_type="continuous"`):
-- Root directory: `feature_research/shared_results/continuous/{module_name}/walkforward/` (or `config.walkforward.output_root / "continuous" / module_name / "walkforward"`).
+Validation output contract (`feature_type="continuous"`):
+- Root directory: `feature_research/shared_results/continuous/{module_name}/validation/` (or `config.output_root / "continuous" / module_name / "validation"`).
 - Files: `folds.csv`, `fold_scores.csv`, `selection_summary.csv`, `oos_metrics.csv`, `selected_params_detailed.csv`, `report.json`, `walkforward_stability.png`, `fold_timeline.png`, `summary.md`, `summary.html`.
 - `selection_summary.csv` includes `selected_feature` for each fold.
 

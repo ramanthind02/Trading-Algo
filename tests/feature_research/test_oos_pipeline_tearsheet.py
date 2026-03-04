@@ -60,7 +60,7 @@ def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path)
         ],
     )
     monkeypatch.setattr(
-        "feature_research.walkforward.research_data.load_features_for_combo",
+        "utils.evaluation.walkforward.research_data.load_features_for_combo",
         lambda _single_spec, _cfg, **_kwargs: (feature, target, None),
     )
     monkeypatch.setattr(

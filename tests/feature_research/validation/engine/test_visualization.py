@@ -6,9 +6,9 @@ import sys
 
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
-from feature_research.walkforward.visualization import (
+from utils.evaluation.walkforward.visualization import (
     plot_fold_timeline,
     plot_selection_stability,
 )

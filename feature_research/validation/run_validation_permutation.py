@@ -1,4 +1,4 @@
-"""OOS permutation test (vector-shuffle or candle-shuffle, single fold from config.oos_window)."""
+"""Validation permutation test (vector-shuffle or candle-shuffle, single fold from config.validation_window)."""
 from __future__ import annotations
 
 import argparse
@@ -53,24 +53,11 @@ from utils.evaluation.walkforward.runner import (
 )
 
 
-def _require_oos_window(config: object) -> OOSWindowConfig:
-    oos = getattr(config, "oos_window", None)
-    if oos is None:
-        raise ValueError("config.oos_window is not set.")
-    return oos
-
-
-def _effective_oos_window(config: object) -> OOSWindowConfig:
-    oos = _require_oos_window(config)
-    validation = getattr(config, "validation_window", None)
-    if validation is None:
-        return oos
-    return OOSWindowConfig(
-        train_start=validation.train_start,
-        train_end=validation.test_end,
-        test_start=oos.test_start,
-        test_end=oos.test_end,
-    )
+def _require_validation_window(config: object) -> OOSWindowConfig:
+    window = getattr(config, "validation_window", None)
+    if window is None:
+        raise ValueError("config.validation_window is not set.")
+    return window
 
 
 def _build_runtime_walkforward_config(
@@ -100,7 +87,7 @@ def _build_runtime_walkforward_config(
     )
 
 
-def _run_oos_permutation_once(
+def _run_validation_permutation_once(
     config: object,
     effective_mode: str,
     nreps: int,
@@ -109,14 +96,13 @@ def _run_oos_permutation_once(
     objective_metric_name: str,
     *,
     label: str | None = None,
-    return_return_matrix: bool = False,
-) -> tuple[float, np.ndarray] | tuple[float, np.ndarray, pd.Index, np.ndarray, pd.Series]:
+) -> tuple[float, np.ndarray]:
     prefix = f"[{label}] " if label else ""
-    window = _effective_oos_window(config)
+    window = _require_validation_window(config)
 
     data_start = min(config.start, window.train_start)
     data_end = max(config.end, window.test_end)
-    config_oos = replace(config, start=data_start, end=data_end)
+    config_validation = replace(config, start=data_start, end=data_end)
 
     (
         reference_candles,
@@ -126,7 +112,7 @@ def _run_oos_permutation_once(
         _research_config,
         feature_data_by_combo,
         portfolio_candles_df,
-    ) = load_research_data(config_oos)
+    ) = load_research_data(config_validation)
 
     train_start = pd.Timestamp(window.train_start)
     train_end = pd.Timestamp(window.train_end)
@@ -147,7 +133,7 @@ def _run_oos_permutation_once(
         min_fold_samples=runtime_config.min_fold_samples,
     )
     if not fold_rows:
-        raise ValueError("OOS fold has insufficient samples. Check oos_window dates and data range.")
+        raise ValueError("Validation fold has insufficient samples. Check validation_window dates and data range.")
 
     module_name = str(getattr(config, "bias_spec", {}).get("module_name", "rsi"))
     _ft = getattr(config, "feature_type", None)
@@ -157,9 +143,9 @@ def _run_oos_permutation_once(
     )
 
     if portfolio_candles_df is None:
-        portfolio_candles_df = load_candles_for_config(config_oos)
+        portfolio_candles_df = load_candles_for_config(config_validation)
 
-    print(f"{prefix}Original (unpermuted) OOS run...")
+    print(f"{prefix}Original (unpermuted) validation run...")
     report0 = run_walkforward_research(
         candles_df=reference_candles,
         target=reference_target,
@@ -180,12 +166,10 @@ def _run_oos_permutation_once(
         treat_no_selection_as_zero=True,
         metric_fn=metric_fn,
     )
-    print(f"{prefix}  Original aggregate OOS metric ({objective_metric_name}): {original_metric:.4f}")
+    print(f"{prefix}  Original aggregate validation metric ({objective_metric_name}): {original_metric:.4f}")
 
     agg_returns = getattr(report0, "aggregate_oos_returns", None)
     agg_returns_clean = agg_returns.dropna() if agg_returns is not None else pd.Series(dtype=float)
-    canonical_oos_index = pd.Index([], dtype="datetime64[ns]")
-    return_matrix: np.ndarray | None = None
     if effective_mode == "vector_shuffle":
         unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
         if feature_data_by_combo is not None:
@@ -196,60 +180,30 @@ def _run_oos_permutation_once(
                 research_config=config,
                 feature_data_by_combo=feature_data_by_combo,
             )
-            canonical_oos_index = (
-                agg_returns_clean.index if agg_returns is not None else pd.Index([], dtype="datetime64[ns]")
-            )
             print(f"{prefix}Running vector shuffle null (nreps={nreps})...")
-            if return_return_matrix:
-                null_result = run_vector_shuffle_null(
-                    reference_candles=reference_candles,
-                    reference_target=reference_target,
-                    fold_rows=fold_rows,
-                    unit1_mask=unit1_mask,
-                    unit2_mask=unit2_mask,
-                    nreps=nreps,
-                    random_seed=random_seed,
-                    initial_report=report0,
-                    research_config=config,
-                    feature_data_by_combo=feature_data_by_combo,
-                    portfolio_candles_df=portfolio_candles_df,
-                    n_jobs=n_jobs,
-                    fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                    objective_metric_name=objective_metric_name,
-                    canonical_oos_index=canonical_oos_index,
-                    return_returns=True,
-                )
-                null_metrics, canonical_oos_index, return_matrix = null_result
-            else:
-                null_metrics = run_vector_shuffle_null(
-                    reference_candles=reference_candles,
-                    reference_target=reference_target,
-                    fold_rows=fold_rows,
-                    unit1_mask=unit1_mask,
-                    unit2_mask=unit2_mask,
-                    nreps=nreps,
-                    random_seed=random_seed,
-                    initial_report=report0,
-                    research_config=config,
-                    feature_data_by_combo=feature_data_by_combo,
-                    portfolio_candles_df=portfolio_candles_df,
-                    n_jobs=n_jobs,
-                    fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                    objective_metric_name=objective_metric_name,
-                    canonical_oos_index=canonical_oos_index,
-                    return_returns=False,
-                )
-                return_matrix = None
+            null_metrics = run_vector_shuffle_null(
+                reference_candles=reference_candles,
+                reference_target=reference_target,
+                fold_rows=fold_rows,
+                unit1_mask=unit1_mask,
+                unit2_mask=unit2_mask,
+                nreps=nreps,
+                random_seed=random_seed,
+                initial_report=report0,
+                research_config=config,
+                feature_data_by_combo=feature_data_by_combo,
+                portfolio_candles_df=portfolio_candles_df,
+                n_jobs=n_jobs,
+                fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
+                objective_metric_name=objective_metric_name,
+                canonical_oos_index=agg_returns_clean.index,
+                return_returns=False,
+            )
         else:
             if agg_returns is None or agg_returns_clean.empty:
-                print(f"{prefix}Rule-based aggregate OOS returns are empty; null distribution set to zeros.")
+                print(f"{prefix}Rule-based aggregate returns are empty; null distribution set to zeros.")
                 null_metrics = np.zeros(nreps, dtype=float)
-                canonical_oos_index = pd.Index([], dtype="datetime64[ns]")
-                return_matrix = np.zeros((nreps, 0), dtype=float) if return_return_matrix else None
             else:
-                canonical_oos_index = (
-                    agg_returns_clean.index if agg_returns is not None else pd.Index([], dtype="datetime64[ns]")
-                )
                 fixed_oos_signal_by_fold = _compute_rule_based_oos_signal_by_fold(
                     fold_rows=fold_rows,
                     reference_candles=reference_candles,
@@ -260,59 +214,37 @@ def _run_oos_permutation_once(
                 )
                 if not fixed_oos_signal_by_fold:
                     print(
-                        f"{prefix}Rule-based fixed OOS signal extraction failed/empty; "
+                        f"{prefix}Rule-based fixed signal extraction failed/empty; "
                         f"falling back to legacy per-rep refit (nreps={nreps})..."
                     )
                     fixed_oos_signal_by_fold = None
                 else:
                     print(
-                        f"{prefix}Running vector shuffle null for rule-based via fixed OOS signal "
+                        f"{prefix}Running vector shuffle null for rule-based via fixed signal "
                         f"(nreps={nreps})..."
                     )
-                if return_return_matrix:
-                    null_result = run_vector_shuffle_null(
-                        reference_candles=reference_candles,
-                        reference_target=reference_target,
-                        fold_rows=fold_rows,
-                        unit1_mask=unit1_mask,
-                        unit2_mask=unit2_mask,
-                        nreps=nreps,
-                        random_seed=random_seed,
-                        initial_report=report0,
-                        research_config=config,
-                        feature_data_by_combo=None,
-                        portfolio_candles_df=portfolio_candles_df,
-                        n_jobs=n_jobs,
-                        fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                        objective_metric_name=objective_metric_name,
-                        canonical_oos_index=canonical_oos_index,
-                        return_returns=True,
-                    )
-                    null_metrics, canonical_oos_index, return_matrix = null_result
-                else:
-                    null_metrics = run_vector_shuffle_null(
-                        reference_candles=reference_candles,
-                        reference_target=reference_target,
-                        fold_rows=fold_rows,
-                        unit1_mask=unit1_mask,
-                        unit2_mask=unit2_mask,
-                        nreps=nreps,
-                        random_seed=random_seed,
-                        initial_report=report0,
-                        research_config=config,
-                        feature_data_by_combo=None,
-                        portfolio_candles_df=portfolio_candles_df,
-                        n_jobs=n_jobs,
-                        fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                        objective_metric_name=objective_metric_name,
-                        canonical_oos_index=canonical_oos_index,
-                        return_returns=False,
-                    )
-                    return_matrix = None
+                null_metrics = run_vector_shuffle_null(
+                    reference_candles=reference_candles,
+                    reference_target=reference_target,
+                    fold_rows=fold_rows,
+                    unit1_mask=unit1_mask,
+                    unit2_mask=unit2_mask,
+                    nreps=nreps,
+                    random_seed=random_seed,
+                    initial_report=report0,
+                    research_config=config,
+                    feature_data_by_combo=None,
+                    portfolio_candles_df=portfolio_candles_df,
+                    n_jobs=n_jobs,
+                    fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
+                    objective_metric_name=objective_metric_name,
+                    canonical_oos_index=agg_returns_clean.index,
+                    return_returns=False,
+                )
     else:
         print(f"{prefix}Running candle shuffle null (nreps={nreps})...")
         null_metrics = run_candle_shuffle_null(
-            config=config_oos,
+            config=config_validation,
             runtime_config=runtime_config,
             reference_target=reference_target,
             fold_rows=fold_rows,
@@ -322,49 +254,25 @@ def _run_oos_permutation_once(
             n_jobs=n_jobs,
         )
 
-    if return_return_matrix:
-        canonical_index = canonical_oos_index if canonical_oos_index is not None else pd.Index([], dtype="datetime64[ns]")
-        matrix = return_matrix if return_matrix is not None else np.zeros((nreps, 0), dtype=float)
-        return original_metric, null_metrics, canonical_index, matrix, agg_returns_clean
     return original_metric, null_metrics
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="OOS permutation test (vector-shuffle only, single fold from config.oos_window)."
+        description="Validation permutation test (single explicit fold from config.validation_window)."
     )
-    parser.add_argument(
-        "--nreps",
-        type=int,
-        default=None,
-        help="Number of replicates (default from config: nreps_stage1 for vector_shuffle, nreps_stage2 for candle_shuffle).",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Random seed (default from config.in_sample_permutation.random_seed).",
-    )
-    parser.add_argument(
-        "--n-jobs",
-        type=int,
-        default=8,
-        help="Parallel jobs for vector-shuffle replicates (default from config or 1). -1 = all CPUs.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=None,
-        help="Directory for report and null distribution (default: output_root/.../oos/permutation/).",
-    )
+    parser.add_argument("--nreps", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--n-jobs", type=int, default=8)
+    parser.add_argument("--output-dir", type=Path, default=None)
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
     config = load_config()
-    if config.oos_window is None:
-        print("Error: config.oos_window is not set. Set it in feature_research.config.load_config().")
+    if config.validation_window is None:
+        print("Error: config.validation_window is not set. Set it in feature_research.config.load_config().")
         return 1
 
     perm_cfg = getattr(config, "in_sample_permutation", None) or getattr(
@@ -379,8 +287,6 @@ def main() -> int:
     )
     run_stage1 = getattr(perm_cfg, "run_stage1", True)
     effective_mode: str = "candle_shuffle" if not run_stage1 else "vector_shuffle"
-    if effective_mode != "vector_shuffle":
-        print("Config run_stage1=False: running candle_shuffle instead of vector_shuffle.")
     nreps = (
         args.nreps
         if args.nreps is not None
@@ -391,14 +297,15 @@ def main() -> int:
         )
     )
 
+    window = _require_validation_window(config)
     objective_metric_name = resolve_objective_metric_name(
         perm_cfg,
         _build_runtime_walkforward_config(
             config,
-            train_start=pd.Timestamp(_effective_oos_window(config).train_start),
-            train_end=pd.Timestamp(_effective_oos_window(config).train_end),
-            test_start=pd.Timestamp(_effective_oos_window(config).test_start),
-            test_end=pd.Timestamp(_effective_oos_window(config).test_end),
+            train_start=pd.Timestamp(window.train_start),
+            train_end=pd.Timestamp(window.train_end),
+            test_start=pd.Timestamp(window.test_start),
+            test_end=pd.Timestamp(window.test_end),
             objective_metric_name=getattr(config, "objective_metric_name", "sharpe"),
         ),
     )
@@ -417,7 +324,7 @@ def main() -> int:
             label = getattr(ticker, "name", str(ticker))
             config_t = replace(config, tickers=[ticker])
             try:
-                original_metric, null_metrics = _run_oos_permutation_once(
+                original_metric, null_metrics = _run_validation_permutation_once(
                     config=config_t,
                     effective_mode=effective_mode,
                     nreps=nreps,
@@ -454,7 +361,7 @@ def main() -> int:
         original_metric = aggregate_per_ticker_metrics(per_ticker_originals)
         null_metrics = aggregate_per_ticker_nulls(per_ticker_nulls)
     else:
-        original_metric, null_metrics = _run_oos_permutation_once(
+        original_metric, null_metrics = _run_validation_permutation_once(
             config=config,
             effective_mode=effective_mode,
             nreps=nreps,
@@ -477,7 +384,7 @@ def main() -> int:
                 feature_type=getattr(config, "feature_type", FeatureType.CONTINUOUS).value,
                 module_name=module_name,
                 root_dir=getattr(config, "output_root", Path("feature_research/shared_results")),
-                output_subdir="oos",
+                output_subdir="validation",
             )
             / "permutation"
         )
@@ -495,25 +402,16 @@ def main() -> int:
     )
     report_path = write_permutation_outputs(
         out_dir=out_dir,
-        report_filename="oos_permutation_report.json",
+        report_filename="validation_permutation_report.json",
         report_payload=report,
         null_metrics=null_metrics,
         per_ticker_nulls=per_ticker_nulls or None,
     )
 
-    print(f"\nOOS permutation ({effective_mode})")
+    print(f"\nValidation permutation ({effective_mode})")
     print(f"  nreps={nreps}  alpha={alpha}")
     print(f"  Original metric: {original_metric:.4f}  Critical: {critical_value:.4f}")
     print(f"  p-value: {p_value:.4f}  Passed: {passed}")
-    if per_ticker_reports:
-        print("  Per-ticker summary:")
-        for label, stats in per_ticker_reports.items():
-            print(
-                f"    {label}: p={stats['p_value']:.4f} "
-                f"critical={stats['critical_value']:.4f} "
-                f"original={stats['original_metric']:.4f} "
-                f"passed={stats['passed']}"
-            )
     print(f"  Report: {report_path}  Null dist: {out_dir / 'null_distribution.npy'}")
     return 0
 

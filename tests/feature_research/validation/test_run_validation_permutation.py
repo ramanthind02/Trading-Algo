@@ -1,4 +1,4 @@
-"""Tests for OOS permutation script (vector-shuffle only, single fold)."""
+"""Tests for validation permutation script (single fold)."""
 from __future__ import annotations
 
 import json
@@ -8,26 +8,23 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from feature_research.config import OOSWindowConfig
-from feature_research.oos.run_oos_permutation import main
+from feature_research.validation.run_validation_permutation import main
 
 
-def test_oos_permutation_main_returns_1_when_oos_window_none() -> None:
-    """When config.oos_window is None, main() exits with code 1."""
+def test_validation_permutation_main_returns_1_when_validation_window_none() -> None:
     with (
-        patch("sys.argv", ["run_oos_permutation.py"]),
-        patch("feature_research.oos.run_oos_permutation.load_config") as m_load,
+        patch("sys.argv", ["run_validation_permutation.py"]),
+        patch("feature_research.validation.run_validation_permutation.load_config") as m_load,
     ):
         config = m_load.return_value
-        config.oos_window = None
+        config.validation_window = None
         exit_code = main()
     assert exit_code == 1
 
 
-def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -> None:
-    """With mocked data and pipeline, main() writes report and null dist; p_value in [0, 1]."""
+def test_validation_permutation_produces_report_and_null_distribution(tmp_path: Path) -> None:
     from dataclasses import replace
 
     from feature_research.in_sample.config import load_config
@@ -35,7 +32,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
     index = pd.date_range("2020-01-01", periods=1100, freq="D")
     reference_target = pd.Series(0.01, index=index, name="walkforward_target")
     reference_candles = pd.DataFrame({"close": reference_target}, index=index)
-    oos = OOSWindowConfig(
+    validation = OOSWindowConfig(
         train_start=datetime(2020, 1, 1),
         train_end=datetime(2021, 12, 31),
         test_start=datetime(2022, 1, 1),
@@ -59,34 +56,33 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
     )
 
     with (
-        patch("sys.argv", ["run_oos_permutation.py", "--nreps", "3"]),
-        patch("feature_research.oos.run_oos_permutation.load_config") as m_load,
+        patch("sys.argv", ["run_validation_permutation.py", "--nreps", "3"]),
+        patch("feature_research.validation.run_validation_permutation.load_config") as m_load,
         patch(
-            "feature_research.oos.run_oos_permutation.load_research_data",
+            "feature_research.validation.run_validation_permutation.load_research_data",
             side_effect=fake_load_research_data,
         ),
         patch(
-            "feature_research.oos.run_oos_permutation.run_walkforward_research",
+            "feature_research.validation.run_validation_permutation.run_walkforward_research",
             return_value=minimal_report,
         ),
         patch(
-            "feature_research.oos.run_oos_permutation.run_vector_shuffle_null",
+            "feature_research.validation.run_validation_permutation.run_vector_shuffle_null",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
     ):
         base_config = load_config()
-        config_with_oos = replace(base_config, validation_window=None, oos_window=oos)
-        m_load.return_value = config_with_oos
-        # Force output to tmp_path
+        config_with_validation = replace(base_config, validation_window=validation)
+        m_load.return_value = config_with_validation
         with patch(
-            "feature_research.oos.run_oos_permutation.resolve_walkforward_output_dir",
-            return_value=tmp_path / "continuous" / "rsi" / "oos",
+            "feature_research.validation.run_validation_permutation.resolve_walkforward_output_dir",
+            return_value=tmp_path / "continuous" / "rsi" / "validation",
         ):
             exit_code = main()
     assert exit_code == 0
-    perm_dir = tmp_path / "continuous" / "rsi" / "oos" / "permutation"
+    perm_dir = tmp_path / "continuous" / "rsi" / "validation" / "permutation"
     assert perm_dir.is_dir()
-    report_path = perm_dir / "oos_permutation_report.json"
+    report_path = perm_dir / "validation_permutation_report.json"
     null_path = perm_dir / "null_distribution.npy"
     assert report_path.exists()
     assert null_path.exists()

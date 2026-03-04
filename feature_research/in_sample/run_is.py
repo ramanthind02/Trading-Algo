@@ -5,7 +5,7 @@ This single script runs the in-sample research pipeline:
   2. Optional in-sample permutation (Stage 1 vector shuffle → Stage 2 candle shuffle)
   3. Optional Phase 2 binning analysis (continuous only)
 
-Walkforward is a separate phase; run ``feature_research/walkforward/run_walkforward.py`` for that.
+Validation is a separate phase; run ``feature_research/validation/run_validation.py`` for that.
 
 Usage
 -----

@@ -1,11 +1,8 @@
-"""Unified out-of-sample entrypoint for both continuous and rule-based research.
+"""Unified validation entrypoint for both continuous and rule-based research.
 
 Run with:
     source /home/raman/repos/Trading-Algo/venv/bin/activate
-    python feature_research/oos/run_oos.py
-
-Uses config.oos_window from feature_research.config.load_config() for the single
-OOS fold (train/test dates). Artifacts are written under output_root/.../oos/.
+    python feature_research/validation/run_validation.py
 """
 from __future__ import annotations
 
@@ -18,18 +15,17 @@ if str(_repo_hint) not in sys.path:
 
 from feature_research.bootstrap import ensure_repo_root_on_syspath
 
-
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 from feature_research.in_sample.config import load_config
-from feature_research.pipeline import run_oos_pipeline
+from feature_research.pipeline import run_validation_pipeline
 
 
 def main() -> None:
     config = load_config()
-    report = run_oos_pipeline(config)
+    report = run_validation_pipeline(config, config.reports_dir / "validation")
     print(
-        f"OOS complete. {len(report.folds_df)} fold(s). "
+        f"Validation complete. {len(report.folds_df)} fold(s). "
         f"Artifacts written to {config.output_root}"
     )
 

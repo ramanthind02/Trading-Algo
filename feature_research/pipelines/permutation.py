@@ -22,7 +22,7 @@ from feature_selection.validation.orchestration import run_permutation_test_suit
 
 if TYPE_CHECKING:
     from feature_research.in_sample.config import ResearchConfig
-    from feature_research.walkforward.runner import WalkforwardRunReport
+    from utils.evaluation.walkforward.runner import WalkforwardRunReport
     from feature_selection.validation.reports import PermutationTestSuite
 
 

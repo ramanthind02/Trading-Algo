@@ -8,7 +8,7 @@ from pathlib import Path
 from matplotlib.figure import Figure
 import pandas as pd
 
-from feature_research.walkforward.runner import WalkforwardRunReport
+from utils.evaluation.walkforward.runner import WalkforwardRunReport
 
 
 _FOLD_SCORE_BASE_COLS = [
