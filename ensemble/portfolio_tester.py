@@ -20,6 +20,92 @@ def _empty_returns_series(name: str) -> pd.Series:
     return pd.Series(dtype=float, name=name, index=pd.DatetimeIndex([]))
 
 
+def resample_positions_to_daily(
+    positions_df: pd.DataFrame,
+    daily_dates_per_ticker: dict[object, pd.DatetimeIndex],
+) -> pd.DataFrame:
+    """Forward-fill position fractions from sparse/non-daily bars to daily datetimes.
+
+    For each ticker, this function reindexes the signal to ticker daily dates, forward-fills
+    active positions, and fills pre-signal dates with 0.0.
+    """
+    required_columns = {"ticker", "datetime", "position_fraction"}
+    missing_columns = required_columns - set(positions_df.columns)
+    if missing_columns:
+        raise ValueError(
+            f"positions_df missing required columns: {sorted(missing_columns)}"
+        )
+
+    if positions_df.empty or not daily_dates_per_ticker:
+        return pd.DataFrame(columns=["ticker", "datetime", "position_fraction"])
+
+    positions = positions_df.loc[:, ["ticker", "datetime", "position_fraction"]].copy()
+    positions["datetime"] = pd.to_datetime(positions["datetime"]).dt.floor("s")
+
+    output_frames = []
+    grouped_positions = {
+        ticker: grp.sort_values("datetime")
+        for ticker, grp in positions.groupby("ticker", sort=False)
+    }
+
+    for ticker, ticker_daily_dates in daily_dates_per_ticker.items():
+        if len(ticker_daily_dates) == 0:
+            continue
+
+        daily_index = pd.DatetimeIndex(pd.to_datetime(ticker_daily_dates)).sort_values()
+        ticker_positions = grouped_positions.get(ticker)
+        if ticker_positions is None or ticker_positions.empty:
+            reindexed = pd.Series(0.0, index=daily_index, dtype=float, name="position_fraction")
+        else:
+            raw_series = (
+                ticker_positions
+                .set_index("datetime")["position_fraction"]
+                .groupby(level=0)
+                .last()
+                .sort_index()
+            )
+            reindexed = raw_series.reindex(daily_index).ffill().fillna(0.0)
+            reindexed.name = "position_fraction"
+
+        output_frames.append(
+            pd.DataFrame(
+                {
+                    "ticker": ticker,
+                    "datetime": reindexed.index,
+                    "position_fraction": reindexed.to_numpy(dtype=float),
+                }
+            )
+        )
+
+    if not output_frames:
+        return pd.DataFrame(columns=["ticker", "datetime", "position_fraction"])
+
+    return (
+        pd.concat(output_frames, ignore_index=True)
+        .sort_values(["ticker", "datetime"])
+        .reset_index(drop=True)
+    )
+
+
+def aggregate_intraday_returns_to_daily(returns: pd.Series) -> pd.Series:
+    """Aggregate intraday log-return observations to daily by summing per calendar day."""
+    if not isinstance(returns, pd.Series):
+        raise TypeError("returns must be a pandas Series")
+    if not isinstance(returns.index, pd.DatetimeIndex):
+        raise TypeError("returns must have a DatetimeIndex")
+    if returns.empty:
+        return returns
+
+    normalized_dates = returns.index.normalize()
+    has_intraday_observations = normalized_dates.duplicated().any()
+    if not has_intraday_observations:
+        return returns
+
+    aggregated = returns.groupby(normalized_dates).sum().sort_index()
+    aggregated.name = returns.name
+    return aggregated
+
+
 def calculate_log_returns_from_candles(candles_df: pd.DataFrame) -> pd.Series:
     """
     Calculate log returns from candles DataFrame.

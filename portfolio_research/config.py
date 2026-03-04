@@ -32,7 +32,9 @@ class PortfolioResearchConfig:
     tickers : list[Ticker]
         Instruments to load candles for.
     timeframe : TimeFrame
-        Bar timeframe (e.g. D for daily).
+        Research-level candle timeframe setting. Ensemble trading timeframes are auto-detected
+        from vault metadata/path (`ensemble.base_tf`), and combined tearsheet aggregation is
+        always daily-aligned.
     start : datetime
         Start of walkforward period (inclusive).
     end : datetime
