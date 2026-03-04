@@ -338,6 +338,7 @@ class ParameterSensitivityReport:
     param_names: List[str]
     metric_name: str
     stability_threshold: float
+    metric_floor: float | None
 
     # Grid analysis results
     grid_results: pd.DataFrame
@@ -374,6 +375,7 @@ def generate_parameter_sensitivity_report(
     top_k: int = 3,
     plot_3d_mode: str = "heatmap_slices",
     smoothing_self_weight: float = 2.0,
+    metric_floor: float | None = 2.0,
 ) -> ParameterSensitivityReport:
     """
     Orchestrate smoothing and parameter sensitivity plots/recommendations.
@@ -439,6 +441,7 @@ def generate_parameter_sensitivity_report(
             metric=metric_col,
             stable_regions=stable_regions,
             stability_threshold=plot_threshold,
+            metric_floor=metric_floor,
             show_plot=False,
         )
     elif n_dims == 2:
@@ -448,6 +451,7 @@ def generate_parameter_sensitivity_report(
             param2=param_names[1],
             metric=metric_col,
             stable_regions=stable_regions,
+            metric_floor=metric_floor,
             show_plot=False,
         )
     else:
@@ -465,6 +469,7 @@ def generate_parameter_sensitivity_report(
             param_names=param_names,
             metric=metric_col,
             plot_type=plot_type,
+            metric_floor=metric_floor,
             show_plot=False,
         )
 
@@ -472,6 +477,7 @@ def generate_parameter_sensitivity_report(
         param_names=param_names,
         metric_name=metric_col,
         stability_threshold=stability_threshold,
+        metric_floor=metric_floor,
         grid_results=smoothed_df,
         stable_regions=stable_regions,
         mean_stability_ratio=mean_ratio,

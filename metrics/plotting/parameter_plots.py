@@ -757,6 +757,7 @@ def plot_parameter_sensitivity_with_stability(
     metric: str = "sortino",
     stable_regions: Optional[List["StableRegion"]] = None,
     stability_threshold: float = 0.8,
+    metric_floor: float | None = None,
     title: Optional[str] = None,
     show_plot: bool = True,
     phase3_selected_mask: Optional[Union[pd.Series, np.ndarray]] = None,
@@ -793,17 +794,48 @@ def plot_parameter_sensitivity_with_stability(
     smoothed_col = f"smoothed_{metric}"
     x_col = "param1_value"
 
-    plot_df = df[[c for c in [x_col, metric, smoothed_col, "stability_ratio", "n_neighbors"]
-                  if c in df.columns]].copy()
+    plot_df = df[
+        [
+            c
+            for c in [x_col, metric, smoothed_col, "stability_ratio", "n_neighbors"]
+            if c in df.columns
+        ]
+    ].copy()
     plot_df[x_col] = pd.to_numeric(plot_df[x_col], errors="coerce")
     plot_df = plot_df.dropna(subset=[x_col, metric]).sort_values(x_col)
+
+    # Visualization-only floor: clip raw/smoothed metrics from below so
+    # sub-tradable regions don't dominate the scale. Underlying df is untouched.
+    metric_plot_col = f"{metric}__plot"
+    plot_df[metric_plot_col] = pd.to_numeric(plot_df[metric], errors="coerce")
+
+    smoothed_plot_col = None
+    if smoothed_col in plot_df.columns:
+        smoothed_plot_col = f"{smoothed_col}__plot"
+        plot_df[smoothed_plot_col] = pd.to_numeric(
+            plot_df[smoothed_col], errors="coerce"
+        )
+
+    if metric_floor is not None:
+        plot_df[metric_plot_col] = np.where(
+            np.isnan(plot_df[metric_plot_col]),
+            plot_df[metric_plot_col],
+            np.maximum(plot_df[metric_plot_col], metric_floor),
+        )
+        if smoothed_plot_col is not None:
+            plot_df[smoothed_plot_col] = np.where(
+                np.isnan(plot_df[smoothed_plot_col]),
+                plot_df[smoothed_plot_col],
+                np.maximum(plot_df[smoothed_plot_col], metric_floor),
+            )
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
     # Raw metric line
     fig.add_trace(
         go.Scatter(
-            x=plot_df[x_col], y=plot_df[metric],
+            x=plot_df[x_col],
+            y=plot_df[metric_plot_col],
             mode="lines+markers",
             name=f"{metric.capitalize()} (raw)",
             line=dict(color="#1f77b4"),
@@ -818,10 +850,11 @@ def plot_parameter_sensitivity_with_stability(
     )
 
     # Smoothed metric line
-    if smoothed_col in plot_df.columns:
+    if smoothed_col in plot_df.columns and smoothed_plot_col is not None:
         fig.add_trace(
             go.Scatter(
-                x=plot_df[x_col], y=plot_df[smoothed_col],
+                x=plot_df[x_col],
+                y=plot_df[smoothed_plot_col],
                 mode="lines+markers",
                 name=f"{metric.capitalize()} (smoothed)",
                 line=dict(color="#ff7f0e", dash="dash"),
@@ -884,7 +917,11 @@ def plot_parameter_sensitivity_with_stability(
             fig.add_trace(
                 go.Scatter(
                     x=sub[x_col],
-                    y=sub[smoothed_col] if smoothed_col in sub.columns else sub[metric],
+                    y=(
+                        sub[smoothed_plot_col]
+                        if smoothed_plot_col is not None
+                        else sub[metric_plot_col]
+                    ),
                     mode="markers",
                     name="Phase 3/4 selected",
                     marker=dict(symbol="star", size=14, color="gold", line=dict(width=1, color="darkorange")),
@@ -952,6 +989,7 @@ def plot_2d_stability_heatmap(
     stable_regions: Optional[List["StableRegion"]] = None,
     base_layers: Optional[List[str]] = None,
     default_layer: str = "smoothed",
+    metric_floor: float | None = None,
     show_stability_contours: bool = False,
     show_region_markers: bool = True,
     enable_controls: bool = True,
@@ -1009,6 +1047,30 @@ def plot_2d_stability_heatmap(
         layer_alias_to_col["delta"] = delta_col
     else:
         working_df = df
+
+    # Visualization-only floor: optionally clip raw/smoothed layers from below so
+    # clearly sub-tradable regions do not dominate the colormap. Underlying
+    # metrics in *df* remain unchanged.
+    if metric_floor is not None:
+        if metric in working_df.columns:
+            raw_plot_col = f"{metric}__plot"
+            working_df[raw_plot_col] = np.where(
+                np.isnan(working_df[metric]),
+                working_df[metric],
+                np.maximum(working_df[metric], metric_floor),
+            )
+            if layer_alias_to_col.get("raw") == metric:
+                layer_alias_to_col["raw"] = raw_plot_col
+
+        if smoothed_col in working_df.columns:
+            smoothed_plot_col = f"{smoothed_col}__plot"
+            working_df[smoothed_plot_col] = np.where(
+                np.isnan(working_df[smoothed_col]),
+                working_df[smoothed_col],
+                np.maximum(working_df[smoothed_col], metric_floor),
+            )
+            if layer_alias_to_col.get("smoothed") == smoothed_col:
+                layer_alias_to_col["smoothed"] = smoothed_plot_col
 
     if base_layers is None:
         base_layers = ["smoothed", "raw", "stability_ratio", "n_neighbors", "delta"]
@@ -1256,6 +1318,7 @@ def plot_3d_slices(
     param_names: List[str],
     metric: str = "sortino",
     plot_type: str = "heatmap",
+    metric_floor: float | None = None,
     title: Optional[str] = None,
     show_plot: bool = True,
 ) -> go.Figure:
@@ -1329,12 +1392,22 @@ def plot_3d_slices(
                 continue
 
             pivot = subset.pivot_table(
-                index=free_cols[0], columns=free_cols[1], values=obj_col,
+                index=free_cols[0],
+                columns=free_cols[1],
+                values=obj_col,
             ).sort_index(axis=0).sort_index(axis=1)
+
+            z_values = pivot.values.astype(float)
+            if metric_floor is not None:
+                z_values = np.where(
+                    np.isnan(z_values),
+                    z_values,
+                    np.maximum(z_values, metric_floor),
+                )
 
             if plot_type == "surface":
                 trace = go.Surface(
-                    z=pivot.values,
+                    z=z_values,
                     x=pivot.columns.values,
                     y=pivot.index.values,
                     colorscale="Viridis",
@@ -1351,7 +1424,7 @@ def plot_3d_slices(
                 )
             elif plot_type == "contour":
                 trace = go.Contour(
-                    z=pivot.values,
+                    z=z_values,
                     x=[str(v) for v in pivot.columns],
                     y=[str(v) for v in pivot.index],
                     colorscale="Viridis",
@@ -1368,7 +1441,7 @@ def plot_3d_slices(
                 )
             else:
                 trace = go.Heatmap(
-                    z=pivot.values,
+                    z=z_values,
                     x=[str(v) for v in pivot.columns],
                     y=[str(v) for v in pivot.index],
                     colorscale="Viridis",
