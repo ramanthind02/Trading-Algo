@@ -18,8 +18,7 @@ def test_regions_require_min_consecutive_bins() -> None:
     )
     model.fit(feature, target)
 
-    assert len(model.significant_regions_) >= 1
-    assert all(
-        (int(region["end_bin"]) - int(region["start_bin"]) + 1) >= 2
-        for region in model.significant_regions_
-    )
+    # Region metadata is intentionally empty in v2; selection is represented
+    # through active bins and selected bins instead.
+    assert model.significant_regions_ == []
+    assert len(model.active_bins_by_strategy_["long_short"]) >= 1

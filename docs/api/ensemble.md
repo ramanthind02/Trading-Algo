@@ -69,7 +69,7 @@ Input(s):
   - `volatility`: per-sample series/array or `dict[ticker, float]`
 - Control file shape (`ensemble_utils.parse_control_file`):
   - Required top-level keys: `metadata`, `base_models`
-  - Each base model in `base_models` must have a `members` array (v2.0.0+)
+  - `members` in each base model is optional (if present, supports legacy and new member schemas)
   - `metadata.is_fit: bool`
   - When `is_fit=True`, required keys: `fitted_base_models`, `fitted_ensemble`
 
@@ -195,6 +195,8 @@ class Portfolio:
     def __init__(
         self,
         ensembles: Optional[List] = None,
+        ensemble_names: Optional[List[str]] = None,
+        vault_root: str = "vault",
         trading_timeframe: TimeFrame = TimeFrame.D,
         target_volatility: Optional[float] = None,
         max_position_pct: float = 2.0,
@@ -218,6 +220,8 @@ def print_diagnostics(self) -> None
 
 Behavior:
 - Combines ensemble outputs using `WeightLayer` (or averaging fallback if not fitted).
+- Auto-loads ensembles from `vault/{D,W,M}/*` when `ensembles=None`; pass
+  `ensemble_names=[...]` to filter by full directory names.
 - Applies instrument weights, IDM, and optional cap to produce `position_fraction`.
 - Supports hierarchical sector allocation configs that resolve to ticker-level instrument weights.
 

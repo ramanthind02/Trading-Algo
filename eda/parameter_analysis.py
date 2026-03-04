@@ -415,10 +415,13 @@ def generate_parameter_sensitivity_report(
     smoothed_df = compute_neighbor_smoothing(
         results_df, param_names, metric_col, self_weight=smoothing_self_weight
     )
-    sorted_smoothed = smoothed_df.sort_values(smoothed_metric_col, ascending=False)
+    # Recommendation ranking: sort by the *raw* objective so the top of the
+    # list reflects peak realised performance, while stability diagnostics and
+    # visualisations continue to use the smoothed surface.
+    sorted_raw = smoothed_df.sort_values(metric_col, ascending=False)
     recommended = [
         tuple(row[f"param{k}_value"] for k in range(1, n_dims + 1))
-        for _, row in sorted_smoothed.iterrows()
+        for _, row in sorted_raw.iterrows()
     ]
     top_k_combos = recommended[:top_k]
     stable_regions: List[StableRegion] = []

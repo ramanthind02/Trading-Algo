@@ -102,6 +102,21 @@ class ContinuousBinningModel(BinningModelBase):
             bin_index_max=self.bin_index_max,
         )
 
+    def get_params(self, deep: bool = True) -> dict[str, object]:
+        """Expose constructor parameters, including bin-index bounds for vault persistence."""
+        params = super().get_params(deep=deep)
+        params.update(
+            {
+                "bin_counts": list(self.bin_counts),
+                "use_coverage_bonus": self.use_coverage_bonus,
+                "coverage_bonus_per_10pct": self.coverage_bonus_per_10pct,
+                "max_coverage_bonus": self.max_coverage_bonus,
+                "bin_index_min": self.bin_index_min,
+                "bin_index_max": self.bin_index_max,
+            }
+        )
+        return params
+
     def fit(
         self,
         feature_data: pd.Series,
