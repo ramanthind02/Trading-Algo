@@ -1,9 +1,9 @@
 """Unified walkforward research entry point for both continuous and rule-based features.
 
 Runs walkforward-only analysis (no EDA). Selection method is controlled by config:
-default is marginal_peak (see WalkforwardResearchConfig); set
-``walkforward_defaults.selection_method`` in ``feature_research/config.py`` to TOP_K,
-ENHANCED, or MARGINAL_PEAK if needed.
+default is top_k (see WalkforwardResearchConfig); set
+``walkforward_defaults.selection_method`` in ``feature_research/config.py`` to TOP_K
+or ENHANCED if needed.
 
 This script dispatches on feature_type to use the appropriate evaluation strategy:
   - CONTINUOUS: uses continuous binning with bin-count expansion

@@ -183,8 +183,7 @@ class WalkforwardResearchConfig:
     objective_metric_name: str = "sortino"
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
-    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.MARGINAL_PEAK
-    marginal_peak: object = None  # MarginalPeakConfig | None (k_max, min_gap, min_cell_size, fallback_k, marginal_dim)
+    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.TOP_K
     trade_freq_min: float = 0.01
 ```
 

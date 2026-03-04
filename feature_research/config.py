@@ -16,7 +16,6 @@ from feature_research.walkforward.config import (
     WalkforwardSelectionMethod,
     WeightLayerAlgorithm,
 )
-from feature_research.walkforward.marginal_peak_selection import MarginalPeakConfig
 from feature_selection.validation.config import OOSCandidateSource, PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.core.enums import Ticker, TimeFrame
@@ -74,7 +73,7 @@ class GlobalResearchDefaults:
     train_window_years: float = 15.0
     test_window_years: float = 2.0
     num_steps: int = 4
-    selection_method: WalkforwardSelectionMethod = WalkforwardSelectionMethod.MARGINAL_PEAK
+    selection_method: WalkforwardSelectionMethod = WalkforwardSelectionMethod.TOP_K
 
 
 @dataclass(frozen=True)
@@ -202,12 +201,7 @@ class WalkforwardDefaultsConfig:
 
 @dataclass(frozen=True)
 class ParamSensitivityConfig:
-    """Settings for parameter sensitivity and Marginal Peak Selection (MPS).
-
-    Used by the param_sensitivity notebook and anywhere that calls
-    generate_parameter_sensitivity_report(). Selection is done via MPS only.
-    See docs/library/Feature_selection/Phase_2_WF/param_stability.md.
-    """
+    """Settings for EDA parameter sensitivity plots and smoothing helpers."""
 
     stability_threshold: float = 0.5  # for plot shading threshold when stable_regions are provided
     plot_3d_mode: str = "surface_slices"  # "heatmap_slices" | "surface_slices"
@@ -215,11 +209,6 @@ class ParamSensitivityConfig:
     # Center param weight for neighbor smoothing.
     # Must match WalkforwardDefaultsConfig.smoothing_self_weight so EDA and WF see the same landscape.
     smoothing_self_weight: float = 3.0
-    # Marginal Peak Selection (MPS): min gap to declare dominant regime; fallback when gap < min_gap.
-    marginal_min_gap: float = 0.10
-    marginal_min_cell_size: int = 2
-    marginal_fallback_k: int = 1
-    marginal_dim: int = 2  # 2 = C(D,2) pairwise tables, 3 = C(D,3) 3D tables (e.g. for 5D+ grids)
 
 
 @dataclass(frozen=True)
@@ -353,6 +342,7 @@ class BaseResearchConfig:
     feature_type: FeatureType = FeatureType.CONTINUOUS
     in_sample_defaults: InSampleDefaultsCatalog = field(default_factory=InSampleDefaultsCatalog)
     param_sensitivity: ParamSensitivityConfig = field(default_factory=ParamSensitivityConfig)
+    validation_window: OOSWindowConfig | None = None
     oos_window: OOSWindowConfig | None = None
 
     def build_walkforward(
@@ -377,17 +367,6 @@ class BaseResearchConfig:
         )
         test_step_days = int(test_years * 365)
         top_k = wf_defaults.top_k  # single source of truth
-        if wf_defaults.selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK:
-            ps = self.param_sensitivity
-            marginal_peak: object = MarginalPeakConfig(
-                k_max=top_k,
-                min_gap=ps.marginal_min_gap,
-                min_cell_size=ps.marginal_min_cell_size,
-                fallback_k=ps.marginal_fallback_k,
-                marginal_dim=ps.marginal_dim,
-            )
-        else:
-            marginal_peak = None
         return WalkforwardResearchConfig(
             train_start=train_start_first,
             train_end=train_end_first,
@@ -397,7 +376,6 @@ class BaseResearchConfig:
             top_k=top_k,
             objective_metric_name=wf_defaults.objective_metric_name,
             selection_method=wf_defaults.selection_method,
-            marginal_peak=marginal_peak,
             weight_layer_algorithm=wf_defaults.weight_layer_algorithm,
             member_prediction_mode=wf_defaults.member_prediction_mode,
             output_root=wf_defaults.output_root,
@@ -421,7 +399,7 @@ def load_config() -> BaseResearchConfig:
         Ticker.NQ
     ]
     start = datetime(2000, 1, 1)
-    end = datetime(2023, 12, 31)
+    end = datetime(2017, 12, 31)
     use_cache = True
     populate_cache = True
 
@@ -435,7 +413,7 @@ def load_config() -> BaseResearchConfig:
         train_window_years=17.0,
         test_window_years=1.0,
         num_steps=8,
-        selection_method=WalkforwardSelectionMethod.MARGINAL_PEAK,
+        selection_method=WalkforwardSelectionMethod.TOP_K,
     )
 
     walkforward_defaults = WalkforwardDefaultsConfig(
@@ -454,13 +432,20 @@ def load_config() -> BaseResearchConfig:
         member_prediction_mode=MemberPredictionMode.BINARY,
     )
 
+    validation_window = OOSWindowConfig(
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2017, 12, 31),
+        test_start=datetime(2018, 1, 1),
+        test_end=datetime(2022, 12, 31),
+    )
+
     # OOS: single fold with explicit train/test dates. test_end must be within
     # available OHLC data (data/ohlc_data); otherwise no tickers pass coverage.
-    # Example with data through 2023: train 2009–2022, test 2023.
+    # Example with data through 2025: train 2000–2022, test 2023–2025.
     # Set to None to disable OOS.
     oos_window = OOSWindowConfig(
-        train_start=datetime(2009, 1, 1),
-        train_end=datetime(2022, 12, 30),
+        train_start=datetime(2000, 1, 1),
+        train_end=datetime(2022, 12, 31),
         test_start=datetime(2023, 1, 1),
         test_end=datetime(2025, 9, 18),
     )
@@ -491,5 +476,6 @@ def load_config() -> BaseResearchConfig:
         in_sample_defaults=in_sample_defaults,
         walkforward_defaults=walkforward_defaults,
         param_sensitivity=param_sensitivity,
+        validation_window=validation_window,
         oos_window=oos_window,
     )

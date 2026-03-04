@@ -808,64 +808,6 @@ def _build_fold_scores(
             selected_summary_feature = float("nan")
             selected_summary_raw = float("nan")
             selected_summary_smoothed = float("nan")
-    elif effective_selection_method == "marginal_peak":
-        from feature_research.walkforward.marginal_peak_selection import (
-            MarginalPeakConfig,
-            run_marginal_peak_selection,
-        )
-        raw_obj_map = {
-            str(row.param_label): float(row.raw_objective)
-            for row in raw_df.itertuples(index=False)
-        }
-        mps_cfg: MarginalPeakConfig = (
-            config.marginal_peak
-            if isinstance(config.marginal_peak, MarginalPeakConfig)
-            else MarginalPeakConfig()
-        )
-        bp = getattr(research_config, "binning_params", None) if research_config else None
-        if (
-            bp is not None
-            and getattr(bp, "bin_index_max", None) is not None
-            and param_grid
-            and "selected_bin" in param_grid[0]
-        ):
-            bin_min = getattr(bp, "bin_index_min", 0)
-            bin_max = getattr(bp, "bin_index_max", 0)
-            mps_cfg = dataclasses.replace(
-                mps_cfg,
-                dimension_ranges={"selected_bin": (bin_min, bin_max)},
-            )
-        mps_result = run_marginal_peak_selection(
-            raw_objectives=raw_obj_map,
-            param_grid=param_grid,
-            config=mps_cfg,
-            strategy=strategy,
-            objective_metric_name=getattr(config, "objective_metric_name", ""),
-        )
-        top_k_features = mps_result.selected_labels
-        if "param_label" in mps_result.per_param_detail.columns:
-            in_peak_map = mps_result.per_param_detail.set_index("param_label")["in_peak_cell"].to_dict()
-        else:
-            in_peak_map = {}
-        fold_scores_df = fold_scores_df.assign(
-            selected_feature=fold_scores_df["param_label"].isin(mps_result.selected_labels),
-            selected_in_top_k=fold_scores_df["param_label"].isin(mps_result.selected_labels),
-            in_peak_cell=fold_scores_df["param_label"].map(in_peak_map),
-        )
-        selected_mask = fold_scores_df["selected_in_top_k"].astype(bool)
-        first_selected = (
-            fold_scores_df.loc[selected_mask].sort_values("rank").iloc[0]
-            if selected_mask.any()
-            else None
-        )
-        if first_selected is not None:
-            selected_summary_feature = str(first_selected["param_label"])
-            selected_summary_raw = float(first_selected["raw_objective"])
-            selected_summary_smoothed = float(first_selected["smoothed_objective"])
-        else:
-            selected_summary_feature = float("nan")
-            selected_summary_raw = float("nan")
-            selected_summary_smoothed = float("nan")
     else:
         # TOP_K selection: mark all top_k params in fold_scores_df so downstream
         # tables (e.g. selected_params_detailed) can show every selected member,

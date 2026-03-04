@@ -362,10 +362,6 @@ class ParameterSensitivityReport:
     n_stable_regions: int = 0
     timestamp: str = ""
 
-    # MPS path (optional); keys are tuple of dim names (length = marginal_dim)
-    marginal_tables: Optional[Dict[Tuple[str, ...], pd.DataFrame]] = None
-    mps_result: Optional[Any] = None
-
     class Config:
         arbitrary_types_allowed = True
 
@@ -378,14 +374,11 @@ def generate_parameter_sensitivity_report(
     top_k: int = 3,
     plot_3d_mode: str = "heatmap_slices",
     smoothing_self_weight: float = 2.0,
-    marginal_peak_config: Optional[Any] = None,
 ) -> ParameterSensitivityReport:
     """
-    Orchestrate smoothing, Marginal Peak Selection (MPS), and plots/recommendations.
+    Orchestrate smoothing and parameter sensitivity plots/recommendations.
 
-    Selection is always done via MPS (pairwise marginal tables, gap-based peak cell).
-    stable_regions is set to [] so plots run without shading. See
-    docs/library/Feature_selection/Phase_2_WF/param_stability.md.
+    Selection recommendations are produced from the smoothed objective surface.
 
     Parameters
     ----------
@@ -403,18 +396,11 @@ def generate_parameter_sensitivity_report(
         3D plot style when ``len(param_names) >= 3``.
     smoothing_self_weight : float, default 2.0
         Weight for param's own value vs. neighbors in neighbor smoothing.
-    marginal_peak_config : Optional[Any], default None
-        MPS config. When None, uses default MarginalPeakConfig().
 
     Returns
     -------
     ParameterSensitivityReport
     """
-    from feature_research.walkforward.marginal_peak_selection import (
-        MarginalPeakConfig,
-        compute_pairwise_marginal_tables,
-        run_marginal_peak_selection,
-    )
     from metrics.plotting.parameter_plots import (
         plot_parameter_sensitivity_with_stability,
         plot_2d_stability_heatmap,
@@ -422,45 +408,19 @@ def generate_parameter_sensitivity_report(
     )
 
     n_dims = len(param_names)
-    param_cols = [f"param{k}_value" for k in range(1, n_dims + 1)]
     smoothed_metric_col = f"smoothed_{metric_col}"
 
-    mps_cfg = marginal_peak_config if marginal_peak_config is not None else MarginalPeakConfig()
-    param_grid = [
-        {param_names[k]: row[f"param{k+1}_value"] for k in range(n_dims)}
-        for _, row in results_df.iterrows()
-    ]
-    raw_objectives = {
-        "|".join(f"{k}={pg[k]}" for k in sorted(pg)): float(
-            results_df.iloc[i][metric_col]
-        )
-        for i, pg in enumerate(param_grid)
-    }
-    marginal_tables = compute_pairwise_marginal_tables(
-        param_grid,
-        raw_objectives,
-        min_cell_size=getattr(mps_cfg, "min_cell_size", 2),
-        marginal_dim=getattr(mps_cfg, "marginal_dim", 2),
-    )
-    mps_result = run_marginal_peak_selection(
-        raw_objectives=raw_objectives,
-        param_grid=param_grid,
-        config=mps_cfg,
-    )
-    label_to_pg = {
-        "|".join(f"{k}={pg[k]}" for k in sorted(pg)): pg
-        for pg in param_grid
-    }
-    recommended = [
-        tuple(label_to_pg[lbl][name] for name in param_names)
-        for lbl in mps_result.selected_labels
-    ]
-    top_k_combos = recommended[:top_k]
-    stable_regions: List[StableRegion] = []
-    pct_stable = len(mps_result.selected_labels) / max(len(results_df), 1)
     smoothed_df = compute_neighbor_smoothing(
         results_df, param_names, metric_col, self_weight=smoothing_self_weight
     )
+    sorted_smoothed = smoothed_df.sort_values(smoothed_metric_col, ascending=False)
+    recommended = [
+        tuple(row[f"param{k}_value"] for k in range(1, n_dims + 1))
+        for _, row in sorted_smoothed.iterrows()
+    ]
+    top_k_combos = recommended[:top_k]
+    stable_regions: List[StableRegion] = []
+    pct_stable = len(top_k_combos) / max(len(results_df), 1)
 
     # Summary statistics (from smoothed grid)
     ratios = smoothed_df["stability_ratio"].dropna()
@@ -525,8 +485,6 @@ def generate_parameter_sensitivity_report(
         n_parameter_combinations=len(smoothed_df),
         n_stable_regions=len(stable_regions),
         timestamp=datetime.now(timezone.utc).isoformat(),
-        marginal_tables=marginal_tables,
-        mps_result=mps_result,
     )
 
 

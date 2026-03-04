@@ -125,7 +125,7 @@ class ResearchConfig:
     # --- Optional fields (with defaults) ---
     feature_type: FeatureType = FeatureType.CONTINUOUS
     walkforward_selection_method: WalkforwardSelectionMethod | str = (
-        WalkforwardSelectionMethod.MARGINAL_PEAK
+        WalkforwardSelectionMethod.TOP_K
     )
     weight_layer_algorithm: WeightLayerAlgorithm | str = (
         WeightLayerAlgorithm.INVERSE_CORRELATION
@@ -142,6 +142,7 @@ class ResearchConfig:
         )
     )
     param_sensitivity: ParamSensitivityConfig = field(default_factory=ParamSensitivityConfig)
+    validation_window: OOSWindowConfig | None = None
     oos_window: OOSWindowConfig | None = None
 
     @property
@@ -227,5 +228,6 @@ def load_config() -> ResearchConfig:
         binning_params=binning_params,
         walkforward=walkforward,
         param_sensitivity=base.param_sensitivity,
+        validation_window=base.validation_window,
         oos_window=base.oos_window,
     )

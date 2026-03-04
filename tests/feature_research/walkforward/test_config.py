@@ -27,7 +27,7 @@ def test_defaults_are_deterministic() -> None:
     assert config.num_steps == 4
     assert config.top_k == 5
     assert config.objective_metric_name == "t_stat"
-    assert config.selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK
+    assert config.selection_method == WalkforwardSelectionMethod.TOP_K
     assert config.min_fold_samples == 10
     assert config.output_root == Path("feature_research/shared_results")
 
@@ -72,7 +72,7 @@ def test_config_selection_method_defaults() -> None:
         train_end=datetime(2015, 1, 1),
     )
 
-    assert config.selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK
+    assert config.selection_method == WalkforwardSelectionMethod.TOP_K
     assert config.trade_freq_min == pytest.approx(0.01)
 
 
@@ -89,7 +89,7 @@ def test_config_rejects_invalid_trade_freq_min() -> None:
     ("selection_method", "expected"),
     [
         (WalkforwardSelectionMethod.ENHANCED, WalkforwardSelectionMethod.ENHANCED),
-        ("marginal_peak", WalkforwardSelectionMethod.MARGINAL_PEAK),
+        ("top_k", WalkforwardSelectionMethod.TOP_K),
     ],
 )
 def test_selection_method_accepts_enum_or_enum_coercible_string(

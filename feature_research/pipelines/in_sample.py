@@ -18,7 +18,6 @@ from feature_research.in_sample.data_loader import (
     populate_cache_if_needed,
 )
 from feature_research.in_sample.metric_helpers import compute_param_sensitivity_metric
-from feature_research.walkforward.marginal_peak_selection import MarginalPeakConfig
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
 from feature_selection.eda.eda_reporter import (
@@ -246,13 +245,6 @@ def run_eda_pipeline(
                 f"selecting top {max_eda_combos} for EDA output..."
             )
             try:
-                mps_config = MarginalPeakConfig(
-                    k_max=max_eda_combos,
-                    min_gap=ps_cfg.marginal_min_gap,
-                    min_cell_size=ps_cfg.marginal_min_cell_size,
-                    fallback_k=ps_cfg.marginal_fallback_k,
-                    marginal_dim=ps_cfg.marginal_dim,
-                )
                 ps_report = generate_parameter_sensitivity_report(
                     results_df=ps_df,
                     param_names=varying_params,
@@ -261,7 +253,6 @@ def run_eda_pipeline(
                     top_k=max_eda_combos,
                     plot_3d_mode="heatmap_slices",
                     smoothing_self_weight=ps_cfg.smoothing_self_weight,
-                    marginal_peak_config=mps_config,
                 )
                 selected_labels: set[str] = {
                     param_combo_label({**fixed_params, **dict(zip(varying_params, values))})

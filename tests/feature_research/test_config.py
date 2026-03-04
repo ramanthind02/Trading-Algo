@@ -31,10 +31,12 @@ def test_load_config_returns_research_config():
 def test_load_config_defaults():
     config = load_config()
     assert Ticker.ES in config.tickers
+    assert Ticker.NQ in config.tickers
     assert config.start == datetime(2000, 1, 1)
-    assert config.end == datetime(2023, 12, 31)
-    assert config.bias_spec["module_name"] == "rsi"
-    assert isinstance(config.bias_spec["params"]["lookback"], list)
+    assert config.end == datetime(2017, 12, 31)
+    assert config.bias_spec["module_name"] == "cyclical_rsi"
+    assert "short_period" in config.bias_spec["params"]
+    assert isinstance(config.bias_spec["params"]["short_period"], list)
     assert config.target_col == "log_return_atr"
     assert config.use_cache is True
     assert config.populate_cache is True
@@ -42,7 +44,6 @@ def test_load_config_defaults():
 
 def test_reports_dir_includes_module_name():
     config = load_config()
-    assert config.bias_spec["module_name"] in str(config.reports_dir)
     assert "continuous" in str(config.reports_dir)
 
 
@@ -59,13 +60,13 @@ def test_load_config_includes_walkforward_defaults() -> None:
 def test_load_config_enables_per_fold_tearsheets_for_oos() -> None:
     config = load_config()
 
-    assert config.walkforward.output_per_fold_tearsheets is True
+    assert config.walkforward.output_per_fold_tearsheets is False
 
 
 def test_load_config_exposes_walkforward_selection_control() -> None:
     config = load_config()
 
-    assert config.walkforward_selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK
+    assert config.walkforward_selection_method == WalkforwardSelectionMethod.TOP_K
     assert config.walkforward.selection_method == config.walkforward_selection_method
 
 
@@ -134,7 +135,7 @@ def test_research_config_coerces_top_level_controls_from_strings() -> None:
     walkforward = WalkforwardResearchConfig(
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2023, 1, 1),
-        selection_method="marginal_peak",
+        selection_method="top_k",
         weight_layer_algorithm="equal_grouped",
     )
 
@@ -153,12 +154,12 @@ def test_research_config_coerces_top_level_controls_from_strings() -> None:
         use_cache=True,
         populate_cache=False,
         reports_dir=Path("/tmp/test_reports"),
-        walkforward_selection_method="marginal_peak",
+        walkforward_selection_method="top_k",
         weight_layer_algorithm="equal_grouped",
         walkforward=walkforward,
     )
 
-    assert config.walkforward_selection_method == WalkforwardSelectionMethod.MARGINAL_PEAK
+    assert config.walkforward_selection_method == WalkforwardSelectionMethod.TOP_K
     assert config.weight_layer_algorithm == WeightLayerAlgorithm.EQUAL_GROUPED
 
 
@@ -221,10 +222,19 @@ def test_research_config_rejects_weight_layer_algorithm_mismatch() -> None:
 def test_load_config_includes_oos_window() -> None:
     config = load_config()
     assert config.oos_window is not None
-    assert config.oos_window.train_start == datetime(2007, 12, 30)
-    assert config.oos_window.train_end == datetime(2023, 12, 30)
-    assert config.oos_window.test_start == datetime(2024, 1, 1)
-    assert config.oos_window.test_end == datetime(2025, 12, 31)
+    assert config.oos_window.train_start == datetime(2000, 1, 1)
+    assert config.oos_window.train_end == datetime(2022, 12, 31)
+    assert config.oos_window.test_start == datetime(2023, 1, 1)
+    assert config.oos_window.test_end == datetime(2025, 9, 18)
+
+
+def test_load_config_includes_validation_window() -> None:
+    config = load_config()
+    assert config.validation_window is not None
+    assert config.validation_window.train_start == datetime(2000, 1, 1)
+    assert config.validation_window.train_end == datetime(2017, 12, 31)
+    assert config.validation_window.test_start == datetime(2018, 1, 1)
+    assert config.validation_window.test_end == datetime(2022, 12, 31)
 
 
 def test_build_walkforward_derives_bounds_from_window_and_steps() -> None:

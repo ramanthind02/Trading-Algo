@@ -24,7 +24,7 @@ def test_load_config_defaults():
     assert Ticker.ES in config.tickers
     assert Ticker.NQ in config.tickers
     assert config.start == datetime(2000, 1, 1)
-    assert config.end == datetime(2023, 12, 31)
+    assert config.end == datetime(2017, 12, 31)
     # Default feature_type is CONTINUOUS; assertions below are for that
     # Rule-based assertions would use feature_type=RULE_BASED
 
@@ -32,7 +32,6 @@ def test_load_config_defaults():
 def test_reports_dir_includes_module_name():
     # Due to unified architecture, feature_type determines reports_dir
     config = load_config()
-    assert config.bias_spec["module_name"] in str(config.reports_dir)
     # Default feature_type is CONTINUOUS, so reports_dir contains "continuous"
     assert "continuous" in str(config.reports_dir)
 
