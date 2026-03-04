@@ -178,6 +178,7 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
         tickers=config.tickers,
         start_date=start_date,
         end_date=end_date,
+        timeframe=timeframes[0],
         show_progress=True,
         overwrite_existing=False,
     )

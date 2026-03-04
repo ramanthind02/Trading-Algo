@@ -13,9 +13,10 @@ import pandas as pd
 
 from ensemble.weight_layer import WeightLayerConfig
 from feature_research.config import FeatureType
+from feature_research.core_helpers import normalize_timeframe_from_bias_spec
 from feature_research.walkforward.config import WalkforwardResearchConfig
 from feature_research.walkforward.metrics import resolve_objective_metric
-from utils.core.enums import Ticker
+from utils.core.enums import Ticker, TimeFrame
 from utils.compute.grid_smoothing import add_smoothed_objective
 
 
@@ -46,6 +47,7 @@ class WalkforwardRunReport:
     )
     aggregate_oos_returns: pd.Series | None = None
     objective_metric_name: str = "objective"
+    timeframe: TimeFrame = TimeFrame.D
 
 
 class _WalkforwardConfigLike(Protocol):
@@ -160,7 +162,7 @@ def run_portfolio_simulation(
     feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
     tearsheets_dir: Path | None = None,
     output_per_fold_tearsheets: bool = True,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series | None]:
     from feature_research.walkforward.portfolio_evaluator import (
         ensure_portfolio_candle_columns,
         evaluate_fold_portfolio,
@@ -180,6 +182,10 @@ def run_portfolio_simulation(
         typed_research_config.bias_spec.get("timeframes", [None]),
     )
     trading_timeframe = trading_timeframes[0] if trading_timeframes else None
+    tearsheet_timeframe = normalize_timeframe_from_bias_spec(
+        typed_research_config.bias_spec,
+        fallback=TimeFrame.D,
+    )
     objective_metric_name = typed_research_config.walkforward.objective_metric_name
     rows: list[dict[str, object]] = []
     signal_rows: list[dict[str, object]] = []
@@ -301,6 +307,7 @@ def run_portfolio_simulation(
                                 fold_tearsheet_dir / f"fold_{fold_id}_train_ensemble_tearsheet.html"
                             ),
                             mode="html",
+                            timeframe=tearsheet_timeframe,
                         )
                     fold_baseline = calculate_baseline_returns(test_candles)
                     generate_tearsheet(
@@ -309,6 +316,7 @@ def run_portfolio_simulation(
                         feature_name=f"Fold {fold_id} Ensemble",
                         output_file=str(fold_tearsheet_dir / f"fold_{fold_id}_ensemble_tearsheet.html"),
                         mode="html",
+                        timeframe=tearsheet_timeframe,
                     )
                     if result.per_signal_oos_returns:
                         for sig_name, ret_ser in result.per_signal_oos_returns.items():
@@ -319,6 +327,7 @@ def run_portfolio_simulation(
                                 feature_name=f"Fold {fold_id} {sig_name}",
                                 output_file=str(fold_tearsheet_dir / f"fold_{fold_id}_{safe_name}_tearsheet.html"),
                                 mode="html",
+                                timeframe=tearsheet_timeframe,
                             )
                 except ValueError as te:
                     if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
@@ -362,6 +371,7 @@ def run_portfolio_simulation(
                     feature_name="Walkforward Ensemble",
                     output_file=str(tearsheets_dir / "walkforward_ensemble_tearsheet.html"),
                     mode="html",
+                    timeframe=tearsheet_timeframe,
                 )
             except ValueError as te:
                 if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
@@ -983,6 +993,15 @@ def run_walkforward_research(
             )
             fold_signal_metrics_df = pd.DataFrame(columns=["fold_id", "signal_name", "oos_sharpe"])
 
+    report_timeframe = TimeFrame.D
+    if research_config is not None:
+        bias_spec_raw = getattr(research_config, "bias_spec", {})
+        if isinstance(bias_spec_raw, Mapping):
+            report_timeframe = normalize_timeframe_from_bias_spec(
+                bias_spec_raw,
+                fallback=TimeFrame.D,
+            )
+
     return WalkforwardRunReport(
         folds_df=folds_df,
         fold_scores_df=fold_scores_df,
@@ -991,4 +1010,5 @@ def run_walkforward_research(
         fold_signal_metrics_df=fold_signal_metrics_df,
         aggregate_oos_returns=aggregate_oos_returns,
         objective_metric_name=config.objective_metric_name,
+        timeframe=report_timeframe,
     )

@@ -25,6 +25,7 @@ from feature_research.walkforward.runner import (
 )
 from feature_research.walkforward.top_k_selection import EnhancedSelectionResult
 from ensemble.weight_layer import WeightLayerConfig
+from utils.core.enums import TimeFrame
 
 
 def _build_inputs() -> tuple[pd.DataFrame, pd.Series]:
@@ -1157,6 +1158,100 @@ def test_run_portfolio_simulation_handles_invalid_top_k_features_json() -> None:
     assert pd.isna(result.loc[0, "oos_portfolio_sharpe"])
     assert result.loc[0, "n_params_selected"] == 0
     assert result.loc[0, "error"] == "no_selected_params"
+
+
+def test_run_portfolio_simulation_forwards_timeframe_to_tearsheets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    index = pd.date_range("2020-01-01", periods=6, freq="D")
+    candles_df = pd.DataFrame(
+        {
+            "datetime": index,
+            "open": np.arange(6) + 100.0,
+            "high": np.arange(6) + 101.0,
+            "low": np.arange(6) + 99.0,
+            "close": np.arange(6) + 100.5,
+            "ticker": ["ES"] * 6,
+        },
+        index=index,
+    )
+    target = pd.Series(np.linspace(-0.01, 0.01, 6), index=index)
+    fold_rows = [
+        {
+            "fold_id": 0,
+            "_train_mask": pd.Series([True, True, True, False, False, False], index=index),
+            "_test_mask": pd.Series([False, False, False, True, True, True], index=index),
+        }
+    ]
+    selection_summary_df = pd.DataFrame(
+        [
+            {
+                "fold_id": 0,
+                "selected_feature": "lookback=5",
+                "selected_raw_objective": 0.1,
+                "selected_smoothed_objective": 0.1,
+                "top_k_features": '["lookback=5"]',
+            }
+        ]
+    )
+
+    captured_timeframes: list[TimeFrame] = []
+
+    def _fake_generate_tearsheet(**kwargs: object) -> None:
+        captured_timeframes.append(kwargs["timeframe"])  # type: ignore[index]
+
+    def _fake_baseline(_candles: pd.DataFrame) -> pd.Series:
+        return pd.Series(0.0, index=index)
+
+    def _fake_evaluate(**_kwargs: object) -> object:
+        return type(
+            "FakeResult",
+            (),
+            {
+                "oos_portfolio_sharpe": 0.42,
+                "n_params_selected": 1,
+                "per_signal_oos_sharpe": {},
+                "oos_portfolio_returns": pd.Series([0.01, -0.01, 0.02], index=index[-3:]),
+                "per_signal_oos_returns": {},
+            },
+        )()
+
+    monkeypatch.setattr(
+        "feature_research.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        _fake_evaluate,
+    )
+    monkeypatch.setattr(
+        "metrics.plotting.graphing.quantstats_reports.generate_tearsheet",
+        _fake_generate_tearsheet,
+    )
+    monkeypatch.setattr(
+        "ensemble.portfolio_tester.calculate_baseline_returns",
+        _fake_baseline,
+    )
+
+    research_config = type(
+        "ResearchCfg",
+        (),
+        {
+            "tickers": [],
+            "binning_params": object(),
+            "walkforward": type("WF", (), {"objective_metric_name": "sharpe"})(),
+            "bias_spec": {"module_name": "rsi", "timeframes": [TimeFrame.H4]},
+        },
+    )()
+
+    run_portfolio_simulation(
+        candles_df=candles_df,
+        target=target,
+        fold_rows=fold_rows,
+        selection_summary_df=selection_summary_df,
+        research_config=research_config,
+        tearsheets_dir=tmp_path / "tearsheets",
+        output_per_fold_tearsheets=False,
+    )
+
+    assert captured_timeframes == [TimeFrame.H4]
 
 
 def test_run_portfolio_simulation_drops_malformed_top_k_labels(

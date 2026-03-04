@@ -7,10 +7,12 @@ import pytest
 from feature_research.config import (
     BaseResearchConfig,
     FeatureType,
+    InSampleDefaultsCatalog,
     OBJECTIVE_METRIC_PRESETS,
     OOSWindowConfig,
     PermutationResearchConfig,
     WalkforwardDefaultsConfig,
+    build_objective_metric_presets,
     load_config as load_base_config,
 )
 from feature_research.in_sample.config import ResearchConfig, load_config
@@ -40,6 +42,25 @@ def test_load_config_defaults():
     assert config.target_col == "log_return_atr"
     assert config.use_cache is True
     assert config.populate_cache is True
+
+
+def test_timeframe_bars_per_year_values() -> None:
+    assert TimeFrame.H1.bars_per_year == 5200
+    assert TimeFrame.H4.bars_per_year == 1300
+    assert TimeFrame.D.bars_per_year == 252
+
+
+def test_build_objective_metric_presets_uses_timeframe_bars_per_year() -> None:
+    weekly_presets = build_objective_metric_presets(TimeFrame.W)
+    assert weekly_presets["sharpe_annualized"].kwargs == {"annualization_factor": 52.0}
+    assert weekly_presets["sortino_annualized"].kwargs == {"annualization_factor": 52.0}
+    assert weekly_presets["calmar_annualized"].kwargs == {"annualization_factor": 52.0}
+
+
+def test_in_sample_defaults_catalog_default_for_timeframe() -> None:
+    weekly_defaults = InSampleDefaultsCatalog.default_for(TimeFrame.W)
+    assert weekly_defaults.continuous.bias_spec["timeframes"] == [TimeFrame.W]
+    assert weekly_defaults.rule_based.bias_spec["timeframes"] == [TimeFrame.W]
 
 
 def test_reports_dir_includes_module_name():

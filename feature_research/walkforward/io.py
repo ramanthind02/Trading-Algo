@@ -182,7 +182,7 @@ def _build_aggregate_walkforward_metrics(report: WalkforwardRunReport) -> pd.Dat
     total_return = float((1 + ret).prod() - 1) if (ret > -1).all() else float("nan")
     mean_ret = float(ret.mean())
     std_ret = float(ret.std(ddof=0))
-    periods_per_year = 252
+    periods_per_year = report.timeframe.bars_per_year
     sharpe_ann = float("nan") if not std_ret or std_ret <= 0 else mean_ret / std_ret * (periods_per_year**0.5)
     downside = ret[ret < 0]
     downside_std = float(downside.std(ddof=0)) if len(downside) > 0 else 0.0
@@ -691,6 +691,7 @@ def write_walkforward_artifacts(
         "tearsheets_dir": str(paths.tearsheets_dir),
         "tearsheet_files": tearsheet_files,
         "objective_metric_name": getattr(report, "objective_metric_name", ""),
+        "timeframe": report.timeframe.name,
         "artifact_files": {
             "folds_csv": str(paths.folds_csv),
             "fold_scores_csv": str(paths.fold_scores_csv),

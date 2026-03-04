@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.cache.cache_manager import CacheManager
+from utils.cache.cache_manager import CacheManager, get_auxiliary_specs_for_timeframe
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -125,6 +125,14 @@ class TestPopulateSingleCache:
 class TestPopulateCache:
     """Tests for bulk cache population."""
 
+    def test_get_auxiliary_specs_for_timeframe_weekly(self):
+        """Auxiliary ATR/EWSD specs should scale with bars_per_year."""
+        specs = get_auxiliary_specs_for_timeframe(TimeFrame.W)
+        assert specs == [
+            {"module_name": "atr", "params": {"period": 52}},
+            {"module_name": "ewsd", "params": {"long_run_window": 520}},
+        ]
+
     def test_populate_cache_single_spec(self, cache_manager):
         """Test populating cache for single spec."""
         specs = [{
@@ -141,8 +149,8 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['total'] == 1
-        assert result['success'] == 1
+        assert result['total'] == 3
+        assert result['success'] == 3
         assert result['failed'] == 0
 
     def test_populate_cache_multiple_tickers(self, cache_manager):
@@ -161,8 +169,8 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['total'] == 2
-        assert result['success'] == 2
+        assert result['total'] == 6
+        assert result['success'] == 6
 
     def test_populate_cache_multiple_specs(self, cache_manager):
         """Test populating cache for multiple specs."""
@@ -179,8 +187,8 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['total'] == 2
-        assert result['success'] == 2
+        assert result['total'] == 4
+        assert result['success'] == 4
 
     def test_populate_cache_overwrite_existing(self, cache_manager):
         """Test overwriting existing cache."""
@@ -210,8 +218,8 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result1['success'] == 1
-        assert result2['success'] == 1
+        assert result1['success'] == 3
+        assert result2['success'] == 3
 
     def test_populate_cache_skip_existing(self, cache_manager):
         """Test skipping existing cache when overwrite_existing=False."""
@@ -241,7 +249,57 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['skipped'] == 1
+        assert result['skipped'] == 3
+
+    def test_populate_cache_uses_timeframe_scaled_aux_specs(self, cache_manager, monkeypatch):
+        """ATR/EWSD auxiliary params should respect the populate_cache timeframe arg."""
+        specs = [{
+            'module_name': 'rsi',
+            'params': {'lookback': 14},
+            'timeframes': [TimeFrame.D]
+        }]
+
+        def _fake_populate_single_cache(
+            module_name: str,
+            params: dict,
+            ticker: Ticker,
+            tf: TimeFrame,
+            start_date: datetime,
+            end_date: datetime,
+            overwrite_existing: bool,
+        ) -> dict:
+            _ = start_date
+            _ = end_date
+            _ = overwrite_existing
+            return {
+                "module_name": module_name,
+                "params": params,
+                "ticker": ticker.name,
+                "tf": tf.name,
+                "status": "success",
+            }
+
+        monkeypatch.setattr(cache_manager, "_populate_single_cache", _fake_populate_single_cache)
+
+        result = cache_manager.populate_cache(
+            bias_node_specs=specs,
+            tickers=[Ticker.ES],
+            start_date=datetime(2020, 1, 1),
+            end_date=datetime(2020, 12, 31),
+            timeframe=TimeFrame.H4,
+            max_workers=1,
+            show_progress=False
+        )
+
+        assert any(
+            d["module_name"] == "atr" and d["params"] == {"period": TimeFrame.H4.bars_per_year}
+            for d in result["details"]
+        )
+        assert any(
+            d["module_name"] == "ewsd"
+            and d["params"] == {"long_run_window": 10 * TimeFrame.H4.bars_per_year}
+            for d in result["details"]
+        )
 
 
 class TestCacheManagement:
@@ -348,9 +406,9 @@ class TestConcurrency:
             show_progress=False
         )
 
-        # Should populate 2 specs x 2 tickers = 4 caches
-        assert result['total'] == 4
-        assert result['success'] == 4
+        # Should populate (2 requested + 2 auxiliary) x 2 tickers = 8 caches
+        assert result['total'] == 8
+        assert result['success'] == 8
 
 
 if __name__ == '__main__':

@@ -25,7 +25,7 @@ _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parent
 RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 
 
-def build_objective_metric_presets() -> dict[str, ObjectiveMetricSpec]:
+def build_objective_metric_presets(tf: TimeFrame = TimeFrame.D) -> dict[str, ObjectiveMetricSpec]:
     """Reusable objective metric presets for research/permutation configs.
 
     Keep this catalog researcher-friendly so in-sample / walkforward / OOS stages can
@@ -37,18 +37,18 @@ def build_objective_metric_presets() -> dict[str, ObjectiveMetricSpec]:
         "calmar": ObjectiveMetricSpec(builtin="calmar"),
         "t_stat": ObjectiveMetricSpec(builtin="t_stat"),
         "profit_factor": ObjectiveMetricSpec(builtin="profit_factor"),
-        # Daily-bar annualized variants (useful when comparing to tearsheet ratios).
-        "sortino_252": ObjectiveMetricSpec(
+        # Timeframe-aware annualized variants (useful when comparing to tearsheet ratios).
+        "sortino_annualized": ObjectiveMetricSpec(
             builtin="sortino",
-            kwargs={"annualization_factor": 252.0},
+            kwargs={"annualization_factor": float(tf.bars_per_year)},
         ),
-        "sharpe_252": ObjectiveMetricSpec(
+        "sharpe_annualized": ObjectiveMetricSpec(
             builtin="sharpe",
-            kwargs={"annualization_factor": 252.0},
+            kwargs={"annualization_factor": float(tf.bars_per_year)},
         ),
-        "calmar_252": ObjectiveMetricSpec(
+        "calmar_annualized": ObjectiveMetricSpec(
             builtin="calmar",
-            kwargs={"annualization_factor": 252.0},
+            kwargs={"annualization_factor": float(tf.bars_per_year)},
         ),
     }
 
@@ -209,6 +209,11 @@ class ParamSensitivityConfig:
     # Center param weight for neighbor smoothing.
     # Must match WalkforwardDefaultsConfig.smoothing_self_weight so EDA and WF see the same landscape.
     smoothing_self_weight: float = 3.0
+    # Visualization-only floor for parameter sensitivity metrics.
+    # When not None, parameter sensitivity plots clip metric values from below
+    # at this threshold (e.g. t-stat ≈ 2) so sub-tradable regions don't
+    # dominate the color scale.
+    metric_floor: float | None = 2.0
 
 
 @dataclass(frozen=True)
@@ -262,11 +267,13 @@ class InSamplePhaseDefaultsConfig:
     walkforward_enabled: bool | None = None
 
 
-def _default_continuous_in_sample_defaults() -> InSamplePhaseDefaultsConfig:
+def _default_continuous_in_sample_defaults(
+    tf: TimeFrame = TimeFrame.D,
+) -> InSamplePhaseDefaultsConfig:
     return InSamplePhaseDefaultsConfig(
         bias_spec={
             "module_name": "cyclical_rsi",
-            "timeframes": [TimeFrame.D],
+            "timeframes": [tf],
             "params": {
                 "short_period": [4],
                 "long_period": [120],
@@ -284,11 +291,13 @@ def _default_continuous_in_sample_defaults() -> InSamplePhaseDefaultsConfig:
     )
 
 
-def _default_rule_based_in_sample_defaults() -> InSamplePhaseDefaultsConfig:
+def _default_rule_based_in_sample_defaults(
+    tf: TimeFrame = TimeFrame.D,
+) -> InSamplePhaseDefaultsConfig:
     return InSamplePhaseDefaultsConfig(
         bias_spec={
             "module_name": "rsi_signal",
-            "timeframes": [TimeFrame.D],
+            "timeframes": [tf],
             "params": {
                 "rsi_period": [2],
                 "oversold": list(range(5, 31, 5)),
@@ -308,12 +317,15 @@ def _default_rule_based_in_sample_defaults() -> InSamplePhaseDefaultsConfig:
 class InSampleDefaultsCatalog:
     """Single source of truth for in-sample phase presets by feature type."""
 
-    continuous: InSamplePhaseDefaultsConfig = field(
-        default_factory=_default_continuous_in_sample_defaults
-    )
-    rule_based: InSamplePhaseDefaultsConfig = field(
-        default_factory=_default_rule_based_in_sample_defaults
-    )
+    continuous: InSamplePhaseDefaultsConfig
+    rule_based: InSamplePhaseDefaultsConfig
+
+    @classmethod
+    def default_for(cls, tf: TimeFrame = TimeFrame.D) -> "InSampleDefaultsCatalog":
+        return cls(
+            continuous=_default_continuous_in_sample_defaults(tf),
+            rule_based=_default_rule_based_in_sample_defaults(tf),
+        )
 
     def for_feature_type(self, feature_type: FeatureType) -> InSamplePhaseDefaultsConfig:
         match feature_type:
@@ -339,8 +351,11 @@ class BaseResearchConfig:
     populate_cache: bool
     permutation: PermutationResearchConfig
     walkforward_defaults: WalkforwardDefaultsConfig
+    timeframe: TimeFrame = TimeFrame.D
     feature_type: FeatureType = FeatureType.CONTINUOUS
-    in_sample_defaults: InSampleDefaultsCatalog = field(default_factory=InSampleDefaultsCatalog)
+    in_sample_defaults: InSampleDefaultsCatalog = field(
+        default_factory=InSampleDefaultsCatalog.default_for
+    )
     param_sensitivity: ParamSensitivityConfig = field(default_factory=ParamSensitivityConfig)
     validation_window: OOSWindowConfig | None = None
     oos_window: OOSWindowConfig | None = None
@@ -400,8 +415,10 @@ def load_config() -> BaseResearchConfig:
     ]
     start = datetime(2000, 1, 1)
     end = datetime(2017, 12, 31)
+    timeframe = TimeFrame.D
     use_cache = True
     populate_cache = True
+    objective_metric_presets = build_objective_metric_presets(timeframe)
 
     # Global shared knobs: one place for top_k, objective, fold_years, windows, etc.
     # Used by both walkforward and permutation so they stay aligned.
@@ -451,7 +468,7 @@ def load_config() -> BaseResearchConfig:
     )
 
     permutation = PermutationResearchConfig(
-        OBJECTIVE_METRIC_PRESETS["t_stat"],
+        objective_metric_presets["t_stat"],
         global_defaults.top_k,
         global_defaults.min_folds_stable,
         global_defaults.fold_years,
@@ -459,7 +476,7 @@ def load_config() -> BaseResearchConfig:
     )
 
     feature_type = FeatureType.CONTINUOUS
-    in_sample_defaults = InSampleDefaultsCatalog()
+    in_sample_defaults = InSampleDefaultsCatalog.default_for(timeframe)
     param_sensitivity = ParamSensitivityConfig()
     # ==========================================================================
     # EDIT ABOVE
@@ -472,6 +489,7 @@ def load_config() -> BaseResearchConfig:
         use_cache=use_cache,
         populate_cache=populate_cache,
         permutation=permutation,
+        timeframe=timeframe,
         feature_type=feature_type,
         in_sample_defaults=in_sample_defaults,
         walkforward_defaults=walkforward_defaults,

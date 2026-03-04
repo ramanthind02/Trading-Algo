@@ -16,6 +16,7 @@ from feature_research.walkforward.io import (
     write_walkforward_artifacts,
 )
 from feature_research.walkforward.runner import WalkforwardRunReport
+from utils.core.enums import TimeFrame
 
 
 def _build_report() -> WalkforwardRunReport:
@@ -435,3 +436,44 @@ def test_write_walkforward_artifacts_includes_portfolio_simulation_section(
     assert "Portfolio Simulation (Stage 2)" in summary_md
     oos_metrics_df = pd.read_csv(paths.oos_metrics_csv)
     assert "mean_oos_portfolio_sharpe" in set(oos_metrics_df["metric"])
+
+
+def test_write_walkforward_artifacts_uses_timeframe_for_aggregate_annualization(
+    tmp_path: Path,
+) -> None:
+    report = _build_report()
+    aggregate_returns = pd.Series(
+        [0.01, -0.01, 0.02, 0.0],
+        index=pd.date_range("2020-01-01", periods=4, freq="W"),
+    )
+    report = WalkforwardRunReport(
+        folds_df=report.folds_df,
+        fold_scores_df=report.fold_scores_df,
+        selection_summary_df=report.selection_summary_df,
+        portfolio_results_df=report.portfolio_results_df,
+        aggregate_oos_returns=aggregate_returns,
+        timeframe=TimeFrame.W,
+    )
+    stability_figure = _build_figure()
+    timeline_figure = _build_figure()
+    try:
+        paths = write_walkforward_artifacts(
+            report=report,
+            walkforward_stability_figure=stability_figure,
+            fold_timeline_figure=timeline_figure,
+            feature_type="continuous",
+            module_name="rsi",
+            root_dir=tmp_path,
+        )
+    finally:
+        plt.close(stability_figure)
+        plt.close(timeline_figure)
+
+    agg_metrics = pd.read_csv(paths.aggregate_walkforward_metrics_csv)
+    sharpe_ann = float(
+        agg_metrics.loc[agg_metrics["metric"] == "sharpe_annualized", "value"].iloc[0]
+    )
+    mean_ret = float(aggregate_returns.mean())
+    std_ret = float(aggregate_returns.std(ddof=0))
+    expected_sharpe = mean_ret / std_ret * (TimeFrame.W.bars_per_year ** 0.5)
+    assert sharpe_ann == pytest.approx(expected_sharpe)

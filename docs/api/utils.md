@@ -78,8 +78,8 @@ print(round(sigma, 4))
 
 `TimeFrame`  
 Type: enum  
-Signature: `class TimeFrame(Enum): D, W, M`  
-Behavior: canonical timeframe enum with ordering and `higher_timeframes(current_tf)`.
+Signature: `class TimeFrame(Enum): H1, H4, D, W, M` with `bars_per_year` property  
+Behavior: canonical timeframe enum with ordering, `higher_timeframes(current_tf)`, and timeframe-aware annualization via `bars_per_year`.
 
 `Ticker`  
 Type: enum  
@@ -210,8 +210,13 @@ Behavior: orchestrates multi-node, multi-ticker cache population.
 
 `CacheManager.populate_cache`  
 Type: method  
-Signature: `populate_cache(bias_node_specs, tickers, start_date, end_date, max_workers=4, overwrite_existing=True, show_progress=True) -> dict`  
-Behavior: computes and persists cache for requested matrix; auto-adds required auxiliary `atr`/`ewsd` specs.
+Signature: `populate_cache(bias_node_specs, tickers, start_date, end_date, max_workers=4, overwrite_existing=True, show_progress=True, timeframe=TimeFrame.D) -> dict`  
+Behavior: computes and persists cache for requested matrix; auto-adds required auxiliary `atr`/`ewsd` specs scaled by `timeframe`.
+
+`get_auxiliary_specs_for_timeframe`  
+Type: function  
+Signature: `get_auxiliary_specs_for_timeframe(tf: TimeFrame) -> list[dict]`  
+Behavior: returns required ATR/EWSD auxiliary specs for volatility-scaled targets using timeframe-aware windows.
 
 `CacheManager.populate_cache_for_vault`  
 Type: method  
@@ -253,7 +258,7 @@ Behavior: lightweight candle representation for performance-critical loops.
 ## Internal but required
 - `helpers._get_functime_function(...)` is private but required when `create_bias_node` receives string transformations for `ts_feature`.
 - `bias_node_cache` filename internals (`_build_params_suffix`, `_hash_params`) are private but operationally important for deterministic cache lookup and collision avoidance.
-- `cache_manager.REQUIRED_AUXILIARY_SPECS` is internal but materially affects `populate_cache(...)` behavior (automatic `atr`/`ewsd` addition).
+- `cache_manager.REQUIRED_AUXILIARY_SPECS` is a backward-compatible alias for the daily auxiliary specs; `populate_cache(...)` now resolves active auxiliary specs via `get_auxiliary_specs_for_timeframe(...)`.
 
 ## Errors & logging
 - Common exceptions:

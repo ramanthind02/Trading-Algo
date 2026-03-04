@@ -3,11 +3,16 @@ from dataclasses import dataclass, field
 
 
 class TimeFrame(Enum):
-    """Simplified TimeFrame enum for daily, weekly, and monthly data only."""
+    """Simplified multi-timeframe enum: H1, H4, D, W, M."""
+    H1 = 60 * 60
+    H4 = 60 * 60 * 4
     D = 60 * 60 * 24
     W = 60 * 60 * 24 * 7
     M = 60 * 60 * 24 * 30
 
+    @property
+    def bars_per_year(self) -> int:
+        return _BARS_PER_YEAR[self]
 
     def __lt__(self, other):
         return tuple(self.__class__).index(self) < tuple(self.__class__).index(other)
@@ -16,6 +21,15 @@ class TimeFrame(Enum):
     def higher_timeframes(cls, current_tf):
         current_index = list(cls).index(current_tf)
         return [tf for tf in cls if list(cls).index(tf) > current_index]
+
+
+_BARS_PER_YEAR: dict[TimeFrame, int] = {
+    TimeFrame.H1: 5200,
+    TimeFrame.H4: 1300,
+    TimeFrame.D: 252,
+    TimeFrame.W: 52,
+    TimeFrame.M: 12,
+}
 
 class Ticker(Enum):
     # Equity Indices

@@ -63,6 +63,7 @@ report = explorer.generate_summary_report(
 Input(s):
 - Candles/price data frames must include `datetime`, `open`, `close`; multi-ticker flows also require `ticker`.
 - Forward-return scaling expects ATR/EWSD feature columns when using `compute_forward_returns(..., features_df=...)`.
+- ATR/EWSD auxiliary extraction is timeframe-aware in feature-research flows (`ATR period = bars_per_year`, `EWSD long_run_window = 10 * bars_per_year`).
 - Feature extraction APIs accept single `Ticker` or `List[Ticker]`; multi-ticker alignment may use millisecond index offsets.
 - EDA APIs require `features_df.index.equals(targets_df.index)`.
 
@@ -137,6 +138,7 @@ Description: computes shifted forward returns so `Feature[t]` predicts `Return[t
 Parameters:
 - `candles_df`: must contain `datetime`, `open`, `close`, `ticker`.
 - `features_df`: required in current implementation; must include ticker-aligned ATR and EWSD columns.
+  ATR detection is keyword-based (not tied to a `252` suffix), so non-daily ATR columns are supported.
 
 Returns:
 - DataFrame indexed by datetime with `raw_return`, `log_return`, `log_return_atr`, `log_return_ewsd`, `ticker`.
@@ -194,6 +196,11 @@ Description: convenience orchestration API that extracts main features plus mand
 
 Raises:
 - `ValueError` for invalid `target_col`, no extracted features, no computed targets, or feature/target merge alignment failures.
+
+Notes / Constraints:
+- In timeframe-aware feature research, auxiliary extraction uses active timeframe scaling:
+  - `atr(period=timeframes[0].bars_per_year)`
+  - `ewsd(long_run_window=10 * timeframes[0].bars_per_year)`
 
 ### `extract_features_for_bias_node`
 Type: function  
