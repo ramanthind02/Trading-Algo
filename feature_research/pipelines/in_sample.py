@@ -111,6 +111,24 @@ def _write_continuous_in_sample_cumsum_plots(
         )
 
 
+def _write_rule_based_in_sample_cumsum_plot(
+    feature: pd.Series,
+    target: pd.Series,
+    combo_output_dir: Path,
+    *,
+    label: str,
+) -> None:
+    """Write in-sample cumulative sum plot for rule-based signal (position * target)."""
+    plots_dir = combo_output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    returns = feature.mul(target).dropna()
+    _write_cumsum_plot(
+        returns=returns,
+        output_path=plots_dir / "in_sample_cumsum.png",
+        title=f"In-sample cumulative sum ({label})",
+    )
+
+
 def run_eda_pipeline(
     config: "ResearchConfig",
     output_dir: Path,
@@ -303,6 +321,12 @@ def run_eda_pipeline(
             combo_output_dir = output_dir / label
             combo_output_dir.mkdir(parents=True, exist_ok=True)
             saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
+            _write_rule_based_in_sample_cumsum_plot(
+                feature=feature,
+                target=target,
+                combo_output_dir=saved_path,
+                label=label,
+            )
             results[label] = saved_path
 
             stats_by_level = report.rule_stats.per_level_stats.stats_by_level

@@ -223,7 +223,7 @@ Behavior:
 - Auto-loads ensembles from `vault/{D,W,M}/*` when `ensembles=None`; pass
   `ensemble_names=[...]` to filter by full directory names.
 - Applies instrument weights, IDM, and optional cap to produce `position_fraction`.
-- Supports hierarchical sector allocation configs that resolve to ticker-level instrument weights.
+- Supports hierarchical sector allocation configs that resolve to ticker-level instrument weights. See [Sector allocation (methodology)](../methodology/sector_allocation.md) for JSON schema, validation rules, and examples.
 
 Risk stack order:
 1. Forecast combination (already volatility-adjusted upstream)

@@ -1,8 +1,8 @@
-"""Portfolio test script: fit on walkforward train, evaluate on walkforward test and OOS.
+"""Portfolio test script: fit on explicit train/validation/test windows and composites.
 
-Uses config from portfolio_research.config (tickers, dates, ensemble_dirs, OOS window).
-Two datasets: (1) in-sample walkforward bounds from compute_first_fold_bounds,
-(2) OOS when config.oos_window is set.
+Uses config from portfolio_research.config (tickers, dates, ensemble_dirs, windows).
+Primary datasets: (1) train, (2) validation, (3) test. Two composite tearsheets:
+(4) validation+test, (5) train+validation+test.
 
 Usage
 -----
@@ -14,6 +14,7 @@ Artifacts are written to config.output_root (walkforward/ and oos/ subdirs).
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,16 @@ def _timeframe_label(timeframe: TimeFrame) -> str:
 def _safe_name(name: str) -> str:
     """Sanitize report names for filesystem-safe filenames."""
     return name.replace(" ", "_").replace("::", "_").replace("/", "_")
+
+
+@dataclass(frozen=True)
+class PhaseResult:
+    """Container for combined portfolio-level returns for a single phase."""
+
+    name: str
+    output_dir: Path
+    combined_strategy_returns: pd.Series
+    combined_baseline_returns: pd.Series
 
 
 def _load_candles(
@@ -180,25 +191,25 @@ def _generate_component_tearsheets(
 
 
 def run_portfolio_test(config: PortfolioResearchConfig) -> None:
-    """Load ensembles, fit portfolios by timeframe, run tearsheets for walkforward and OOS."""
+    """Load ensembles, fit portfolios by timeframe, run tearsheets for windows."""
 
-    wf_train_start, wf_train_end, wf_test_start, wf_test_end = (
-        config.walkforward_train_test_bounds()
-    )
-    wf_train_start_ts = pd.Timestamp(wf_train_start)
-    wf_train_end_ts = pd.Timestamp(wf_train_end)
-    wf_test_start_ts = pd.Timestamp(wf_test_start)
-    wf_test_end_ts = pd.Timestamp(wf_test_end)
+    train_window = config.train_window
+    validation_window = config.validation_window
+    test_window = config.test_window
+
+    train_start_ts = pd.Timestamp(train_window.start)
+    train_end_ts = pd.Timestamp(train_window.end)
+    val_start_ts = pd.Timestamp(validation_window.start)
+    val_end_ts = pd.Timestamp(validation_window.end)
+    test_start_ts = pd.Timestamp(test_window.start)
+    test_end_ts = pd.Timestamp(test_window.end)
 
     print("\n" + "=" * 64)
     print("Portfolio Test")
     print(f"Tickers     : {[t.name for t in config.tickers]}")
-    print(f"WF train    : {wf_train_start_ts.date()} -> {wf_train_end_ts.date()}")
-    print(f"WF test     : {wf_test_start_ts.date()} -> {wf_test_end_ts.date()}")
-    if config.oos_window is not None:
-        oos = config.oos_window
-        print(f"OOS train   : {oos.train_start.date()} -> {oos.train_end.date()}")
-        print(f"OOS test    : {oos.test_start.date()} -> {oos.test_end.date()}")
+    print(f"Train       : {train_start_ts.date()} -> {train_end_ts.date()}")
+    print(f"Validation  : {val_start_ts.date()} -> {val_end_ts.date()}")
+    print(f"Test        : {test_start_ts.date()} -> {test_end_ts.date()}")
     print(f"Output root : {config.output_root}")
     print("=" * 64 + "\n")
 
@@ -234,14 +245,17 @@ def run_portfolio_test(config: PortfolioResearchConfig) -> None:
             weight_method=config.weight_layer_method,
             **dict(config.weight_layer_kwargs),
         )
-        portfolio = Portfolio(
-            ensembles=grouped_ensembles[timeframe],
-            trading_timeframe=timeframe,
-            target_volatility=config.target_volatility,
-            max_position_pct=config.max_position_pct,
-            weight_layer=weight_layer,
-            use_cache=config.use_cache,
-        )
+        portfolio_kw: dict[str, Any] = {
+            "ensembles": grouped_ensembles[timeframe],
+            "trading_timeframe": timeframe,
+            "target_volatility": config.target_volatility,
+            "max_position_pct": config.max_position_pct,
+            "weight_layer": weight_layer,
+            "use_cache": config.use_cache,
+        }
+        if config.sector_allocation_config_path is not None:
+            portfolio_kw["sector_allocation_config_path"] = config.sector_allocation_config_path
+        portfolio = Portfolio(**portfolio_kw)
         return PortfolioTester(portfolio, baseline_mode=config.baseline_mode)
 
     def _evaluate_phase(
@@ -251,7 +265,7 @@ def run_portfolio_test(config: PortfolioResearchConfig) -> None:
         train_end: pd.Timestamp,
         test_start: pd.Timestamp,
         test_end: pd.Timestamp,
-    ) -> None:
+    ) -> PhaseResult:
         phase_out = config.output_root / output_dir_name
         phase_out.mkdir(parents=True, exist_ok=True)
 
@@ -407,25 +421,99 @@ def run_portfolio_test(config: PortfolioResearchConfig) -> None:
 
         print(f"{phase_title} tearsheets written to {phase_out}")
 
-    _evaluate_phase(
-        phase_title="Walkforward",
-        output_dir_name="walkforward",
-        train_start=wf_train_start_ts,
-        train_end=wf_train_end_ts,
-        test_start=wf_test_start_ts,
-        test_end=wf_test_end_ts,
+        return PhaseResult(
+            name=phase_title,
+            output_dir=phase_out,
+            combined_strategy_returns=combined_strategy_returns,
+            combined_baseline_returns=combined_baseline_returns,
+        )
+
+    # Phase 1: Train (fit and test on train window).
+    train_result = _evaluate_phase(
+        phase_title="Train",
+        output_dir_name="train",
+        train_start=train_start_ts,
+        train_end=train_end_ts,
+        test_start=train_start_ts,
+        test_end=train_end_ts,
     )
 
-    if config.oos_window is not None:
-        oos = config.oos_window
-        _evaluate_phase(
-            phase_title="OOS",
-            output_dir_name="oos",
-            train_start=pd.Timestamp(oos.train_start),
-            train_end=pd.Timestamp(oos.train_end),
-            test_start=pd.Timestamp(oos.test_start),
-            test_end=pd.Timestamp(oos.test_end),
-        )
+    # Phase 2: Validation (fit on train, test on validation).
+    validation_result = _evaluate_phase(
+        phase_title="Validation",
+        output_dir_name="validation",
+        train_start=train_start_ts,
+        train_end=train_end_ts,
+        test_start=val_start_ts,
+        test_end=val_end_ts,
+    )
+
+    # Phase 3: Test (fit on train+validation, test on test window).
+    test_result = _evaluate_phase(
+        phase_title="Test",
+        output_dir_name="test",
+        train_start=train_start_ts,
+        train_end=val_end_ts,
+        test_start=test_start_ts,
+        test_end=test_end_ts,
+    )
+
+    # Composite 1: Validation + Test.
+    combined_dir = config.output_root / "combined"
+    combined_dir.mkdir(parents=True, exist_ok=True)
+
+    val_test_strategy = (
+        pd.concat(
+            [
+                validation_result.combined_strategy_returns,
+                test_result.combined_strategy_returns,
+            ]
+        ).sort_index()
+    )
+    val_test_baseline = (
+        pd.concat(
+            [
+                validation_result.combined_baseline_returns,
+                test_result.combined_baseline_returns,
+            ]
+        ).sort_index()
+    )
+    val_test_output = combined_dir / "Portfolio_Validation_Test_tearsheet.html"
+    generate_tearsheet(
+        strategy_returns=val_test_strategy,
+        baseline_returns=val_test_baseline,
+        feature_name="Portfolio Validation+Test",
+        output_file=str(val_test_output),
+        mode="html",
+    )
+
+    # Composite 2: Train + Validation + Test.
+    all_strategy = (
+        pd.concat(
+            [
+                train_result.combined_strategy_returns,
+                validation_result.combined_strategy_returns,
+                test_result.combined_strategy_returns,
+            ]
+        ).sort_index()
+    )
+    all_baseline = (
+        pd.concat(
+            [
+                train_result.combined_baseline_returns,
+                validation_result.combined_baseline_returns,
+                test_result.combined_baseline_returns,
+            ]
+        ).sort_index()
+    )
+    all_output = combined_dir / "Portfolio_Train_Validation_Test_tearsheet.html"
+    generate_tearsheet(
+        strategy_returns=all_strategy,
+        baseline_returns=all_baseline,
+        feature_name="Portfolio Train+Validation+Test",
+        output_file=str(all_output),
+        mode="html",
+    )
 
     print(f"\nDone. Artifacts written to {config.output_root}\n")
 

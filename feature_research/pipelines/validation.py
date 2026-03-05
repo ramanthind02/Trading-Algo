@@ -75,7 +75,6 @@ def _build_runtime_walkforward_config(
         min_fold_samples=10,
         output_root=config.output_root,
         selection_method=WalkforwardSelectionMethod.TOP_K,
-        output_per_fold_tearsheets=False,
         n_jobs=config.n_jobs,
         smoothing_self_weight=config.smoothing_self_weight,
     )
@@ -91,15 +90,7 @@ def run_validation_pipeline(
     config_validation = replace(config, start=data_start, end=data_end)
 
     covered_tickers = get_tickers_with_coverage_for_config(config_validation)
-    if len(covered_tickers) < len(config_validation.tickers):
-        dropped = set(config_validation.tickers) - set(covered_tickers)
-        print(
-            f"[validation] Tickers without full date coverage for "
-            f"{config_validation.start.date()}–{config_validation.end.date()} "
-            f"dropped: {[t.name for t in dropped]}"
-        )
-    config_validation = replace(config_validation, tickers=covered_tickers)
-    if not config_validation.tickers:
+    if not covered_tickers:
         raise ValueError(
             "No tickers have OHLC data covering the validation date range. "
             "Check data/ohlc_data or narrow dates."

@@ -87,7 +87,6 @@ def _build_runtime_walkforward_config(
         min_fold_samples=10,
         output_root=config.output_root,
         selection_method=WalkforwardSelectionMethod.TOP_K,
-        output_per_fold_tearsheets=False,
         n_jobs=config.n_jobs,
         smoothing_self_weight=config.smoothing_self_weight,
     )
@@ -100,14 +99,7 @@ def run_oos_pipeline(config: "ResearchConfig") -> "WalkforwardRunReport":
     config_oos = replace(config, start=data_start, end=data_end)
 
     covered_tickers = get_tickers_with_coverage_for_config(config_oos)
-    if len(covered_tickers) < len(config_oos.tickers):
-        dropped = set(config_oos.tickers) - set(covered_tickers)
-        print(
-            f"[oos] Tickers without full date coverage for "
-            f"{config_oos.start.date()}–{config_oos.end.date()} dropped: {[t.name for t in dropped]}"
-        )
-    config_oos = replace(config_oos, tickers=covered_tickers)
-    if not config_oos.tickers:
+    if not covered_tickers:
         raise ValueError(
             "No tickers have OHLC data covering the OOS date range. "
             "Check data/ohlc_data or narrow dates."

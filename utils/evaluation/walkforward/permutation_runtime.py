@@ -9,18 +9,25 @@ import numpy as np
 
 
 def resolve_objective_metric_name(perm_cfg: object, wf_config: object | None) -> str:
+    """Resolve metric name from permutation config or research config (top-level or legacy walkforward)."""
     perm_objective = getattr(perm_cfg, "objective_metric", None)
     builtin = getattr(perm_objective, "builtin", None) if perm_objective else None
     if builtin is not None:
         return str(builtin)
-    return str(getattr(wf_config, "objective_metric_name", "sharpe")) if wf_config else "sharpe"
+    if wf_config is not None:
+        return str(getattr(wf_config, "objective_metric_name", "sharpe"))
+    # Research pipeline uses top-level objective_metric_name (no walkforward).
+    return str(getattr(perm_cfg, "objective_metric_name", "sharpe"))
 
 
 def apply_objective_metric(config: object, objective_metric_name: str) -> object:
+    """Set objective metric; research pipeline uses top-level objective_metric_name only."""
     wf_config = getattr(config, "walkforward", None)
-    if wf_config is None:
-        return config
-    return replace(config, walkforward=replace(wf_config, objective_metric_name=objective_metric_name))
+    if wf_config is not None:
+        return replace(config, walkforward=replace(wf_config, objective_metric_name=objective_metric_name))
+    if hasattr(config, "objective_metric_name"):
+        return replace(config, objective_metric_name=objective_metric_name)
+    return config
 
 
 def compute_significance(

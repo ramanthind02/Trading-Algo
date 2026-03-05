@@ -46,14 +46,7 @@ def load_research_data(config: object) -> tuple[
     """Build candles, target, param_grid, evaluator, research_config, combo features, portfolio candles."""
     original_tickers = list(config.tickers)
     covered_tickers = get_tickers_with_coverage_for_config(config)
-    if len(covered_tickers) < len(original_tickers):
-        dropped = set(original_tickers) - set(covered_tickers)
-        print(
-            f"[permutation] Tickers without full date coverage for "
-            f"{config.start.date()}–{config.end.date()} dropped: {[t.name for t in dropped]}"
-        )
-    config = replace(config, tickers=covered_tickers)
-    if not config.tickers:
+    if not covered_tickers:
         ranges = get_available_date_ranges_for_tickers(
             replace(config, tickers=original_tickers), original_tickers
         )

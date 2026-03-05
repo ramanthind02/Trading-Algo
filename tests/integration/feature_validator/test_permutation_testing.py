@@ -731,9 +731,9 @@ def test_permutation_suite_runs_in_sample_walkforward_oos(
     ticker: Ticker = DEFAULT_TICKER,
     timeframe: TimeFrame = DEFAULT_TIMEFRAME,
 ) -> None:
-    """Integration test for full 3-phase suite: in-sample, walkforward, OOS."""
+    """Integration test for in-sample (Stage 1 + 2) and OOS permutation; Stage 3 removed."""
     print('\n' + '=' * 60)
-    print('Integration Test: Full 3-Phase Permutation Suite Coverage')
+    print('Integration Test: In-Sample + OOS Permutation Suite Coverage')
     print('=' * 60)
 
     suite, param_grid, feature_col = _run_rule_based_permutation_suite(
@@ -749,7 +749,9 @@ def test_permutation_suite_runs_in_sample_walkforward_oos(
     assert isinstance(suite, PermutationTestSuite)
     assert len(suite.stage1_reports) == len(param_grid)
     assert len(suite.stage2_reports) <= len(suite.stage1_reports)
-    assert len(suite.stage3_report.fold_results) > 0
+    # Stage 3 (walkforward permutation) removed: stub report, no fold results.
+    assert len(suite.stage3_report.fold_results) == 0
+    assert "removed" in suite.stage3_report.stability_verdict.lower()
     assert isinstance(suite.phase3_oos_reports, dict)
 
     if len(suite.phase3_oos_reports) == 0:
@@ -763,7 +765,7 @@ def test_permutation_suite_runs_in_sample_walkforward_oos(
     print(f'Feature: {feature_col}')
     print(f'Stage 1 reports: {len(suite.stage1_reports)}')
     print(f'Stage 2 reports: {len(suite.stage2_reports)}')
-    print(f'Walkforward folds: {len(suite.stage3_report.fold_results)}')
+    print(f'Stage 3: {suite.stage3_report.stability_verdict}')
     print(f'OOS reports: {len(suite.phase3_oos_reports)}')
 
 

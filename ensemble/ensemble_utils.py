@@ -99,6 +99,10 @@ def _create_binning_model_instance(
     if normalized == 'rule_based':
         rule_params = constructor_params.copy()
         rule_params.pop('n_bins', None)
+        # Backward compatibility for legacy control files that still include
+        # continuous-binning-only parameters. RuleBasedModel ignores these.
+        rule_params.pop('t_threshold', None)
+        rule_params.pop('min_region_width', None)
         return RuleBasedModel(**rule_params)
     raise ValueError(f"Unsupported model type: {model_type}")
 

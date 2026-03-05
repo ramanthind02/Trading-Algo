@@ -26,25 +26,6 @@ if TYPE_CHECKING:
     from feature_selection.validation.reports import PermutationTestSuite
 
 
-def _build_fold_structure(
-    start: datetime,
-    end: datetime,
-    fold_years: int,
-) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
-    step_years = max(1, fold_years)
-    fold_start = pd.Timestamp(start).normalize()
-    end_exclusive = pd.Timestamp(end).normalize() + pd.Timedelta(days=1)
-
-    folds: list[tuple[pd.Timestamp, pd.Timestamp]] = []
-    while fold_start < end_exclusive:
-        fold_end = min(fold_start + pd.DateOffset(years=step_years), end_exclusive)
-        if fold_end <= fold_start:
-            break
-        folds.append((fold_start, fold_end))
-        fold_start = fold_end
-    return folds
-
-
 def write_permutation_summary(suite: "PermutationTestSuite", output_dir: Path) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
@@ -178,25 +159,17 @@ def run_permutation_pipeline(
         nreps=config.in_sample_permutation.nreps_stage2,
         alpha=config.in_sample_permutation.alpha,
         metric_threshold=config.in_sample_permutation.metric_threshold,
-        top_k=config.in_sample_permutation.top_k,
         random_seed=config.in_sample_permutation.random_seed,
         permutation_mode_stage2=config.in_sample_permutation.permutation_mode_stage2,
-        min_folds_stable=config.in_sample_permutation.min_folds_stable,
         n_jobs_stage2_reps=config.in_sample_permutation.n_jobs_stage2_reps,
         run_stage1=config.in_sample_permutation.run_stage1,
         run_stage2=config.in_sample_permutation.run_stage2,
-        run_stage3_walkforward=False,
         out_of_sample=OutOfSamplePermutationConfig(
             objective_metric=config.in_sample_permutation.objective_metric,
             run_oos_permutation=False,
         ),
     )
     objective_func = resolve_objective_metric(config.in_sample_permutation.objective_metric)
-    fold_structure = _build_fold_structure(
-        config.start,
-        config.end,
-        config.in_sample_permutation.fold_years,
-    )
 
     if config.feature_type == FeatureType.CONTINUOUS:
         bp = config.binning_params
@@ -232,7 +205,6 @@ def run_permutation_pipeline(
         target=target,
         param_grid=param_grid,
         objective_func=objective_func,
-        fold_structure=fold_structure,
         config=permutation_config,
         extractor_func=extractor_func,
         binning_model_factory=binning_model_factory,

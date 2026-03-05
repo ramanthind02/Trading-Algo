@@ -50,13 +50,9 @@ class WalkforwardRunReport:
     timeframe: TimeFrame = TimeFrame.D
 
 
-class _WalkforwardConfigLike(Protocol):
-    objective_metric_name: str
-
-
 class _ResearchConfigLike(Protocol):
+    """Research config passed into portfolio simulation; walkforward is no longer used."""
     bias_spec: Mapping[str, object]
-    walkforward: _WalkforwardConfigLike
     binning_params: object
     tickers: list[Ticker]
 
@@ -106,6 +102,11 @@ def _parse_top_k_param_labels(top_k_features: str) -> list[dict[str, object]]:
         }
         if parsed_label:
             parsed.append(parsed_label)
+    # Special-case: research pipeline with a single no-param combo
+    # encodes top_k_features as [""] (empty string). Treat this as
+    # a single empty-params dict so portfolio simulation still runs.
+    if not parsed and isinstance(raw_labels, list) and len(raw_labels) == 1 and raw_labels[0] == "":
+        return [{}]
     return parsed
 
 
@@ -161,7 +162,6 @@ def run_portfolio_simulation(
     research_config: object,
     feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
     tearsheets_dir: Path | None = None,
-    output_per_fold_tearsheets: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series | None]:
     from utils.evaluation.walkforward.portfolio_evaluator import (
         ensure_portfolio_candle_columns,
@@ -186,7 +186,10 @@ def run_portfolio_simulation(
         typed_research_config.bias_spec,
         fallback=TimeFrame.D,
     )
-    objective_metric_name = typed_research_config.walkforward.objective_metric_name
+    objective_metric_name = getattr(
+        typed_research_config, "objective_metric_name", "t_stat"
+    )
+
     rows: list[dict[str, object]] = []
     signal_rows: list[dict[str, object]] = []
     collected_oos_returns: list[pd.Series] = []
@@ -246,6 +249,7 @@ def run_portfolio_simulation(
         test_candles = ensure_portfolio_candle_columns(test_candles, trading_timeframe)
 
         try:
+            # Optional nested config no longer used by research pipeline; support if present.
             wf_cfg = getattr(research_config, "walkforward", None)
             weight_layer_config = _resolve_weight_layer_config(wf_cfg)
             member_prediction_mode = _resolve_member_prediction_mode(wf_cfg)
@@ -264,6 +268,7 @@ def run_portfolio_simulation(
                 feature_data_by_combo=feature_data_by_combo,
                 feature_type=feature_type,
             )
+
             rows.append(
                 {
                     "fold_id": fold_id,
@@ -278,7 +283,11 @@ def run_portfolio_simulation(
             if not result.oos_portfolio_returns.empty:
                 collected_oos_returns.append(result.oos_portfolio_returns)
 
-            if output_per_fold_tearsheets and tearsheets_dir is not None and _tearsheet_available:
+            if (
+                tearsheets_dir is not None
+                and _tearsheet_available
+                and not result.oos_portfolio_returns.empty
+            ):
                 try:
                     fold_tearsheet_dir = tearsheets_dir / f"fold_{fold_id}"
                     fold_tearsheet_dir.mkdir(parents=True, exist_ok=True)
@@ -693,13 +702,17 @@ def _build_fold_scores(
         )
 
     raw_df = pd.DataFrame(raw_rows)
-    smoothed_df = add_smoothed_objective(
-        raw_df,
-        param_columns=param_columns,
-        objective_column="raw_objective",
-        output_column="smoothed_objective",
-        self_weight=config.smoothing_self_weight,
-    )
+    if param_columns:
+        smoothed_df = add_smoothed_objective(
+            raw_df,
+            param_columns=param_columns,
+            objective_column="raw_objective",
+            output_column="smoothed_objective",
+            self_weight=config.smoothing_self_weight,
+        )
+    else:
+        smoothed_df = raw_df.copy()
+        smoothed_df["smoothed_objective"] = raw_df["raw_objective"].values
 
     ranked_df = (
         smoothed_df.sort_values(
@@ -965,9 +978,10 @@ def run_walkforward_research(
         portfolio_results_df = _empty_portfolio_results_df()
         fold_signal_metrics_df = pd.DataFrame(columns=["fold_id", "signal_name", "oos_sharpe"])
     else:
+        tearsheets_dir = (output_dir / "tearsheets") if output_dir is not None else None
+        if tearsheets_dir is not None:
+            tearsheets_dir.mkdir(parents=True, exist_ok=True)
         try:
-            tearsheets_dir = (output_dir / "tearsheets") if output_dir is not None else None
-            output_per_fold_tearsheets = getattr(config, "output_per_fold_tearsheets", True)
             portfolio_results_df, fold_signal_metrics_df, aggregate_oos_returns = run_portfolio_simulation(
                 candles_df=portfolio_candles_df if portfolio_candles_df is not None else candles_df,
                 target=target,
@@ -976,9 +990,13 @@ def run_walkforward_research(
                 research_config=research_config,
                 feature_data_by_combo=feature_data_by_combo,
                 tearsheets_dir=tearsheets_dir,
-                output_per_fold_tearsheets=output_per_fold_tearsheets,
             )
         except Exception as exc:  # pragma: no cover - defensive catch
+            warnings.warn(
+                f"Portfolio simulation (and tearsheets) failed: {exc}",
+                UserWarning,
+                stacklevel=2,
+            )
             portfolio_results_df = pd.DataFrame(
                 [
                     {

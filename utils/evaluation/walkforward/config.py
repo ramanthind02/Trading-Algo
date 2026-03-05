@@ -81,8 +81,6 @@ class WalkforwardResearchConfig:
     # --- Configurable weight layer method ---
     weight_layer_algorithm: WeightLayerAlgorithm | str = WeightLayerAlgorithm.INVERSE_CORRELATION
     weight_layer_config: object = field(default=None)  # WeightLayerConfig | None
-    # --- Output: per-fold tearsheets are slow; set False to skip ---
-    output_per_fold_tearsheets: bool = False
     # --- Member forecast strength mapping in walkforward stage-2 fast path ---
     member_prediction_mode: MemberPredictionMode | str = MemberPredictionMode.BINARY
     # --- Parallelism: number of jobs for scoring param combos within each fold; 1 = sequential ---

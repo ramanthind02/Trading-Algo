@@ -16,6 +16,9 @@ from utils.core.enums import Ticker, TimeFrame
 
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parent
 
+# Single place to change default timeframe for research (in_sample, OOS, presets).
+DEFAULT_TIMEFRAME: TimeFrame = TimeFrame.M
+
 RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 
 
@@ -84,13 +87,10 @@ class FeatureType(str, Enum):
 
 @dataclass(frozen=True)
 class PermutationResearchConfig:
-    """Shared permutation settings for in-sample and OOS phases."""
+    """Shared permutation settings for in-sample and OOS phases (Stage 1 + 2 only; no walkforward Stage 3)."""
 
     # Required fields (set in load_config())
     objective_metric: ObjectiveMetricSpec
-    top_k: int
-    min_folds_stable: int = 1
-    fold_years: int = 1
     # Permutation-only
     enabled: bool = False
     nreps_stage1: int = 1000   # vector shuffle (cheaper per rep; 1000 default)
@@ -196,18 +196,12 @@ def _default_continuous_in_sample_defaults(
 def _default_rule_based_in_sample_defaults(
     tf: TimeFrame = TimeFrame.D,
 ) -> InSamplePhaseDefaultsConfig:
+    """Rule-based preset: buy_hold bias node (no params). Uses DEFAULT_TIMEFRAME."""
     return InSamplePhaseDefaultsConfig(
         bias_spec={
-            "module_name": "rsi_signal",
-            "timeframes": [tf],
-            "params": {
-                "rsi_period": [2],
-                "oversold": list(range(5, 31, 5)),
-                "overbought": list(range(95, 64, -5)),
-                "strategy_mode": "long",
-                "exit_policy": "threshold_or_bars",
-                "exit_bars": 5,
-            },
+            "module_name": "buy_hold",
+            "timeframes": [DEFAULT_TIMEFRAME],
+            "params": {},
         },
         target_col="log_return_atr",
         strategy="long",
@@ -239,6 +233,15 @@ class InSampleDefaultsCatalog:
 
 
 @dataclass(frozen=True)
+class VaultSaveConfig:
+    """Optional vault save target. When set, save_to_vault script persists the research model here."""
+
+    ensemble_name: str
+    direction: str  # "long" | "short" | "long_short"
+    params_to_save: dict[str, Any] | None = None  # single param combo; None = first from bias_spec
+
+
+@dataclass(frozen=True)
 class BaseResearchConfig:
     """Shared researcher-editable settings. Phases add reports_dir and phase-specific fields."""
 
@@ -262,6 +265,8 @@ class BaseResearchConfig:
     smoothing_self_weight: float = 3.0
     n_jobs: int = 8
     output_root: Path = field(default_factory=lambda: Path("feature_research/shared_results"))
+    vault_save: VaultSaveConfig | None = None
+    sector_allocation_config_path: str | None = None
 
 
 def load_config() -> BaseResearchConfig:
@@ -272,13 +277,21 @@ def load_config() -> BaseResearchConfig:
     # ==========================================================================
     # EDIT BELOW
     # ==========================================================================
+    # Buy/hold: NQ, YM, RTY (stock indices), TLT (bonds), GC (gold)
     tickers = [
+        Ticker.NQ,
+        Ticker.YM,
+        Ticker.RTY,
         Ticker.ES,
-        Ticker.NQ
+        Ticker.TLT,
+        Ticker.GC,
     ]
+    sector_allocation_config_path = str(
+        _FEATURE_RESEARCH_DIR / "config" / "sector_buy_hold_60_20_20.json"
+    )
     start = datetime(2000, 1, 1)
     end = datetime(2017, 12, 31)
-    timeframe = TimeFrame.D
+    timeframe = DEFAULT_TIMEFRAME
     use_cache = True
     populate_cache = True
     objective_metric_presets = build_objective_metric_presets(timeframe)
@@ -303,15 +316,23 @@ def load_config() -> BaseResearchConfig:
 
     permutation = PermutationResearchConfig(
         objective_metric=objective_metric_presets["t_stat"],
-        top_k=1,
-        min_folds_stable=1,
-        fold_years=1,
         enabled=True,
     )
 
-    feature_type = FeatureType.CONTINUOUS
+    feature_type = FeatureType.RULE_BASED
     in_sample_defaults = InSampleDefaultsCatalog.default_for(timeframe)
     param_sensitivity = ParamSensitivityConfig()
+    # Optional: set to save research model to vault after satisfying results.
+    # vault_save = VaultSaveConfig(
+    #     ensemble_name="mean_reversion_indices",
+    #     direction="long",
+    #     params_to_save={"short_period": 4, "long_period": 120, "rsi_period": 2},
+    # )
+    vault_save = VaultSaveConfig(
+        ensemble_name="buy_hold",
+        direction="long",
+        params_to_save={},
+    )
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -334,4 +355,6 @@ def load_config() -> BaseResearchConfig:
         smoothing_self_weight=3.0,
         n_jobs=8,
         output_root=Path("feature_research/shared_results"),
+        vault_save=vault_save,
+        sector_allocation_config_path=sector_allocation_config_path,
     )

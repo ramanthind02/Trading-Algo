@@ -94,7 +94,6 @@ def _build_runtime_walkforward_config(
         min_fold_samples=10,
         output_root=getattr(config, "output_root", Path("feature_research/shared_results")),
         selection_method=WalkforwardSelectionMethod.TOP_K,
-        output_per_fold_tearsheets=False,
         n_jobs=getattr(config, "n_jobs", 1),
         smoothing_self_weight=getattr(config, "smoothing_self_weight", 1.0),
     )

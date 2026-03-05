@@ -17,6 +17,7 @@ import pytest
 
 matplotlib.use("Agg")
 
+from feature_research.config import OBJECTIVE_METRIC_PRESETS
 from feature_research.in_sample.config import (
     PermutationResearchConfig,
     ResearchConfig,
@@ -178,7 +179,11 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
-            in_sample_permutation=PermutationResearchConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+            in_sample_permutation=PermutationResearchConfig(
+                objective_metric=OBJECTIVE_METRIC_PRESETS["t_stat"],
+                enabled=True,
+                nreps_stage1=10,
+            ),
         )
 
         try:
@@ -188,5 +193,6 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
             raise
 
         assert suite.feature_type == "continuous"
-        assert suite.funnel_stats.total_params == len(lookbacks)
-        assert len(suite.stage1_reports) == len(lookbacks)
+        # Param grid is (bin_count × lookback), so total_params can exceed len(lookbacks).
+        assert suite.funnel_stats.total_params == len(suite.stage1_reports)
+        assert len(suite.stage1_reports) >= len(lookbacks)

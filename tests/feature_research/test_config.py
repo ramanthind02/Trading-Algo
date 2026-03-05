@@ -26,13 +26,17 @@ def test_load_config_returns_research_config():
 
 def test_load_config_defaults():
     config = load_config()
-    assert Ticker.ES in config.tickers
+    # Default is buy/hold universe: NQ, YM, RTY, TLT, GC
     assert Ticker.NQ in config.tickers
+    assert Ticker.YM in config.tickers
+    assert Ticker.RTY in config.tickers
+    assert Ticker.TLT in config.tickers
+    assert Ticker.GC in config.tickers
     assert config.start == datetime(2000, 1, 1)
     assert config.end == datetime(2017, 12, 31)
-    assert config.bias_spec["module_name"] == "cyclical_rsi"
-    assert "short_period" in config.bias_spec["params"]
-    assert isinstance(config.bias_spec["params"]["short_period"], list)
+    assert config.bias_spec["module_name"] == "buy_hold"
+    assert config.bias_spec["params"] == {}
+    assert config.bias_spec["timeframes"] == [TimeFrame.D]
     assert config.target_col == "log_return_atr"
     assert config.use_cache is True
     assert config.populate_cache is True
@@ -54,12 +58,14 @@ def test_build_objective_metric_presets_uses_timeframe_bars_per_year() -> None:
 def test_in_sample_defaults_catalog_default_for_timeframe() -> None:
     weekly_defaults = InSampleDefaultsCatalog.default_for(TimeFrame.W)
     assert weekly_defaults.continuous.bias_spec["timeframes"] == [TimeFrame.W]
-    assert weekly_defaults.rule_based.bias_spec["timeframes"] == [TimeFrame.W]
+    # Rule-based preset uses DEFAULT_TIMEFRAME (same as config global)
+    assert weekly_defaults.rule_based.bias_spec["timeframes"] == [TimeFrame.D]
 
 
 def test_reports_dir_includes_module_name():
     config = load_config()
-    assert "continuous" in str(config.reports_dir)
+    # Default is buy_hold (rule_based path)
+    assert "rule_based" in str(config.reports_dir)
 
 
 def _make_research_config(*, tickers: list[Ticker], target_col: str) -> ResearchConfig:

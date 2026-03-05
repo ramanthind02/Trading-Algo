@@ -1,10 +1,10 @@
 """
 T016: Early Stopping Orchestration
 
-Coordinates the three-stage permutation testing funnel with early stopping:
+Coordinates the two-stage permutation testing funnel with early stopping:
   Stage 1 (vector shuffle) -> filter passers
   Stage 2 (pipeline permutation) -> filter passers (only from Stage 1 passers)
-  Stage 3 (walkforward stability) -> uses ALL params for neighbor smoothing
+  Stage 3 (walkforward stability) has been removed.
 """
 from __future__ import annotations
 
@@ -36,10 +36,7 @@ from feature_selection.validation.reports import (
     VectorShuffleReport,
     WalkforwardStabilityReport,
 )
-from feature_selection.validation.stability_analysis import (
-    _param_combo_name,
-    run_walkforward_stability,
-)
+from feature_selection.validation.stability_analysis import _param_combo_name
 
 
 def _build_summary(
@@ -71,7 +68,7 @@ def _build_summary(
         "",
         f"Stage 1 (Vector Shuffle): {n_total} tested -> {n1} passed ({100*n1//max(n_total,1)}%)",
         f"Stage 2 (Pipeline Permutation): {n1} tested -> {n2} passed",
-        f"Stage 3 (Walkforward Stability): {n_total} evaluated -> {n_stable} stable params",
+        "Stage 3 (Walkforward Stability): removed",
         oos_line,
         "",
         f"Ensemble candidates: {ensemble_candidates}",
@@ -130,14 +127,14 @@ def run_permutation_test_suite(
     target: pd.Series,
     param_grid: List[Dict],
     objective_func: Callable[[pd.Series], float],
-    fold_structure: List[Tuple[pd.Timestamp, pd.Timestamp]],
     config: PermutationTestConfig,
     extractor_func: Callable[[pd.DataFrame, Dict], pd.Series],
     binning_model_factory: Optional[Callable[[Dict], BinningModelBase]] = None,
     feature_type: str = 'continuous',
     feature_name: str = 'unknown',
+    fold_structure: Optional[List[Tuple[pd.Timestamp, pd.Timestamp]]] = None,
 ) -> PermutationTestSuite:
-    """Run the full three-stage permutation testing funnel with early stopping.
+    """Run the two-stage permutation testing funnel (Stage 1 + 2; Stage 3 removed).
 
     Args:
         candles_df: OHLCV DataFrame with DatetimeIndex.
@@ -145,16 +142,17 @@ def run_permutation_test_suite(
         target: Forward-return Series.
         param_grid: All parameter combinations (as list of dicts).
         objective_func: (returns: pd.Series) -> float.
-        fold_structure: List of (start, end) Timestamp tuples for Stage 3.
         config: PermutationTestConfig with nreps, alpha, etc.
         extractor_func: (candles_df, params) -> named pd.Series.
         binning_model_factory: Optional (params) -> BinningModelBase factory.
         feature_type: 'continuous' or 'rule_based'.
         feature_name: Display name.
+        fold_structure: Unused (Stage 3 removed). Kept for backward compatibility.
 
     Returns:
         PermutationTestSuite with all stage reports and funnel statistics.
     """
+    fold_structure = fold_structure or []
     # ---------- Stage 1: Vector Shuffle (all param combos) ----------
     stage1_reports: Dict[str, VectorShuffleReport] = {}
     if config.run_stage1:
@@ -298,50 +296,19 @@ def run_permutation_test_suite(
         print(f"\nStage 2: skipped (0 Stage 1 passers)")
         stage2_passers = set()
 
-    # ---------- Stage 3: Walkforward Stability (skip in in-sample phase) ----------
-    stable_params: Set[str]
-    if config.run_stage3_walkforward:
-        print(f"\n{'='*60}")
-        print(f"Stage 3: Walkforward Stability — evaluating all {len(param_grid)} params")
-        print(f"{'='*60}")
-
-        stage3_report = run_walkforward_stability(
-            candles_df=candles_df,
-            extractor_func=extractor_func,
-            target=target,
-            objective_func=objective_func,
-            param_grid=param_grid,
-            fold_structure=fold_structure,
-            top_k=config.top_k,
-            permutation_passers=stage2_passers,
-            feature_type=feature_type,
-            feature_name=feature_name,
-            binning_model_factory=binning_model_factory,
-        )
-
-        param_fold_counts: Dict[str, int] = {}
-        for fold_result in stage3_report.fold_results:
-            for param in fold_result.top_k_params:
-                param_fold_counts[param] = param_fold_counts.get(param, 0) + 1
-
-        stable_params = {
-            p for p, count in param_fold_counts.items()
-            if count >= config.min_folds_stable
-        }
-        ensemble_candidates = sorted(stage2_passers & stable_params)
-    else:
-        print(f"\nStage 3: skipped (in-sample phase; run walkforward phase for stability)")
-        stage3_report = WalkforwardStabilityReport(
-            feature_name=feature_name,
-            feature_type=feature_type,  # type: ignore[arg-type]
-            fold_results=[],
-            consistency_metrics={},
-            is_stable=False,
-            stability_verdict="Skipped (in-sample phase; run walkforward phase for stability).",
-            top_k=config.top_k,
-        )
-        stable_params = set()
-        ensemble_candidates = sorted(stage2_passers)
+    # ---------- Stage 3: removed (was walkforward stability) ----------
+    stable_params: Set[str] = set()
+    ensemble_candidates = sorted(stage2_passers)
+    stage3_report = WalkforwardStabilityReport(
+        feature_name=feature_name,
+        feature_type=feature_type,  # type: ignore[arg-type]
+        fold_results=[],
+        consistency_metrics={},
+        is_stable=False,
+        stability_verdict="Stage 3 (walkforward permutation) removed.",
+        top_k=0,
+    )
+    print("\nStage 3: removed (walkforward permutation no longer run)")
 
     # ---------- Phase 3: OOS permutation (optional; skipped in in-sample phase) ----------
     phase3_oos_reports: Dict[str, OutOfSamplePermutationReport] = {}
@@ -452,11 +419,11 @@ def run_permutation_test_suite(
     n_stable = len(stable_params)
     n_cand = len(final_candidates)
 
-    # Savings = Stage 2 evaluations saved by Stage 1 early stopping
-    total_without = n_total * config.nreps * 2 + n_total * len(fold_structure)
+    # Savings = Stage 2 evaluations saved by Stage 1 early stopping (Stage 3 removed)
+    total_without = n_total * config.nreps * 2
     actual_stage1_cost = (n_total * config.nreps) if config.run_stage1 else 0
     actual_stage2_cost = (n1 * config.nreps) if config.run_stage2 else 0
-    actual = actual_stage1_cost + actual_stage2_cost + n_total * len(fold_structure)
+    actual = actual_stage1_cost + actual_stage2_cost
     savings_pct = max(0.0, (total_without - actual) / max(total_without, 1) * 100.0)
 
     funnel_stats = FunnelStatistics(

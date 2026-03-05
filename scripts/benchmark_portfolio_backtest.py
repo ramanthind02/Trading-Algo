@@ -118,14 +118,17 @@ def _build_portfolio_and_tester(config, ensembles: list) -> tuple:
         weight_method=config.weight_layer_method,
         **dict(config.weight_layer_kwargs),
     )
-    portfolio = Portfolio(
-        ensembles=ensembles,
-        trading_timeframe=config.timeframe,
-        target_volatility=config.target_volatility,
-        max_position_pct=config.max_position_pct,
-        weight_layer=weight_layer,
-        use_cache=config.use_cache,
-    )
+    portfolio_kw = {
+        "ensembles": ensembles,
+        "trading_timeframe": config.timeframe,
+        "target_volatility": config.target_volatility,
+        "max_position_pct": config.max_position_pct,
+        "weight_layer": weight_layer,
+        "use_cache": config.use_cache,
+    }
+    if getattr(config, "sector_allocation_config_path", None) is not None:
+        portfolio_kw["sector_allocation_config_path"] = config.sector_allocation_config_path
+    portfolio = Portfolio(**portfolio_kw)
     tester = PortfolioTester(portfolio=portfolio, baseline_mode=config.baseline_mode)
     return portfolio, tester
 

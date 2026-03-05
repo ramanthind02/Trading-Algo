@@ -109,9 +109,6 @@ class ResearchConfig:
     in_sample_permutation: PermutationResearchConfig = field(
         default_factory=lambda: PermutationResearchConfig(
             objective_metric=OBJECTIVE_METRIC_PRESETS["t_stat"],
-            top_k=1,
-            min_folds_stable=1,
-            fold_years=1,
         )
     )
     binning_params: BinningAnalysisConfig = field(default_factory=BinningAnalysisConfig)

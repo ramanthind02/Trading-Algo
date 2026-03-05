@@ -1248,10 +1248,9 @@ def test_run_portfolio_simulation_forwards_timeframe_to_tearsheets(
         selection_summary_df=selection_summary_df,
         research_config=research_config,
         tearsheets_dir=tmp_path / "tearsheets",
-        output_per_fold_tearsheets=False,
     )
 
-    assert captured_timeframes == [TimeFrame.H4]
+    assert all(t == TimeFrame.H4 for t in captured_timeframes) and len(captured_timeframes) >= 1
 
 
 def test_run_portfolio_simulation_drops_malformed_top_k_labels(
