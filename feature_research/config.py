@@ -263,6 +263,7 @@ class ResearchConfig:
     smoothing_self_weight: float = 3.0
     n_jobs: int = 8
     output_root: Path = field(default_factory=lambda: Path("feature_research/shared_results"))
+    generate_ticker_tearsheets: bool = False
     vault_save: VaultSaveConfig | None = None
     sector_allocation_config_path: str | None = None
 
@@ -358,6 +359,7 @@ def load_config() -> ResearchConfig:
         smoothing_self_weight=3.0,
         n_jobs=8,
         output_root=Path("feature_research/shared_results"),
+        generate_ticker_tearsheets=False,
         vault_save=vault_save,
         sector_allocation_config_path=sector_allocation_config_path,
     )

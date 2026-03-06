@@ -35,6 +35,7 @@ class FoldPortfolioResult:
     n_params_selected: int
     per_signal_oos_sharpe: dict[str, float] | None = None
     per_signal_oos_returns: dict[str, pd.Series] | None = None
+    per_ticker_oos_returns: dict[str, pd.Series] | None = None
 
 
 def _normalize_strategy(strategy: str) -> str:
@@ -104,6 +105,40 @@ def _calculate_oos_returns_from_positions(
         full_dates = full_dates.tz_localize(None)
     returns = returns.reindex(full_dates, fill_value=0.0).rename(series_name)
     return returns
+
+
+def _normalize_ticker_label(value: object) -> str:
+    if isinstance(value, Ticker):
+        return value.name
+    raw_name = getattr(value, "name", None)
+    if isinstance(raw_name, str) and raw_name:
+        return raw_name
+    text = str(value)
+    return text.replace("Ticker.", "")
+
+
+def _calculate_per_ticker_oos_returns(
+    positions_df: pd.DataFrame,
+    candles_df: pd.DataFrame,
+) -> dict[str, pd.Series]:
+    if "ticker" not in positions_df.columns or "ticker" not in candles_df.columns:
+        return {}
+
+    position_tickers = positions_df["ticker"].map(_normalize_ticker_label)
+    candle_tickers = candles_df["ticker"].map(_normalize_ticker_label)
+    labels = sorted(set(candle_tickers.dropna().unique()).intersection(set(position_tickers.dropna().unique())))
+    if not labels:
+        return {}
+
+    return {
+        label: _calculate_oos_returns_from_positions(
+            positions_df=positions_df.loc[position_tickers == label],
+            candles_df=candles_df.loc[candle_tickers == label],
+            series_name=f"{label}_returns",
+        )
+        for label in labels
+        if not positions_df.loc[position_tickers == label].empty and not candles_df.loc[candle_tickers == label].empty
+    }
 
 
 def _build_control_file_payload(
@@ -454,6 +489,7 @@ def evaluate_fold_portfolio(
     metric = resolve_objective_metric(objective_metric_name)
     per_signal_oos_sharpe: dict[str, float] | None = None
     per_signal_oos_returns: dict[str, pd.Series] | None = None
+    per_ticker_oos_returns: dict[str, pd.Series] | None = None
 
     if feature_data_by_combo and len(selected_params) > 0:
         base_model, train_features_df, test_features_df = _build_one_base_model_with_members(
@@ -502,6 +538,10 @@ def evaluate_fold_portfolio(
             test_ready,
             series_name="portfolio_returns",
         )
+        per_ticker_oos_returns = _calculate_per_ticker_oos_returns(
+            positions_df=portfolio_predictions,
+            candles_df=test_ready,
+        )
         active_returns = oos_returns[oos_returns != 0.0]
         oos_sharpe = float(metric(active_returns)) if not active_returns.empty else float("nan")
         base_models = (predictions or {}).get("base_models", {})
@@ -528,6 +568,7 @@ def evaluate_fold_portfolio(
             n_params_selected=len(selected_params),
             per_signal_oos_sharpe=per_signal_oos_sharpe,
             per_signal_oos_returns=per_signal_oos_returns if base_models else None,
+            per_ticker_oos_returns=per_ticker_oos_returns or None,
         )
 
     portfolio = build_research_portfolio(
@@ -553,6 +594,10 @@ def evaluate_fold_portfolio(
         test_ready,
         series_name="portfolio_returns",
     )
+    per_ticker_oos_returns = _calculate_per_ticker_oos_returns(
+        positions_df=portfolio_predictions,
+        candles_df=test_ready,
+    )
     active_returns = oos_returns[oos_returns != 0.0]
     oos_sharpe = float(metric(active_returns)) if not active_returns.empty else float("nan")
     return FoldPortfolioResult(
@@ -560,4 +605,5 @@ def evaluate_fold_portfolio(
         oos_portfolio_sharpe=oos_sharpe,
         oos_portfolio_returns=oos_returns,
         n_params_selected=len(selected_params),
+        per_ticker_oos_returns=per_ticker_oos_returns or None,
     )

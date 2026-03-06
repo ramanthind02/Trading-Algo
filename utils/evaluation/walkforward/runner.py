@@ -55,6 +55,7 @@ class _ResearchConfigLike(Protocol):
     bias_spec: Mapping[str, object]
     binning_params: object
     tickers: list[Ticker]
+    generate_ticker_tearsheets: bool
 
 
 def _empty_portfolio_results_df() -> pd.DataFrame:
@@ -154,6 +155,16 @@ def _sanitize_tearsheet_name(name: str) -> str:
     return name.replace(" ", "_").replace("::", "_").replace("/", "_").strip("_") or "signal"
 
 
+def _normalize_ticker_label(value: object) -> str:
+    if isinstance(value, Ticker):
+        return value.name
+    raw_name = getattr(value, "name", None)
+    if isinstance(raw_name, str) and raw_name:
+        return raw_name
+    text = str(value)
+    return text.replace("Ticker.", "")
+
+
 def run_portfolio_simulation(
     candles_df: pd.DataFrame,
     target: pd.Series,
@@ -189,10 +200,14 @@ def run_portfolio_simulation(
     objective_metric_name = getattr(
         typed_research_config, "objective_metric_name", "t_stat"
     )
+    generate_ticker_tearsheets = bool(
+        getattr(typed_research_config, "generate_ticker_tearsheets", False)
+    )
 
     rows: list[dict[str, object]] = []
     signal_rows: list[dict[str, object]] = []
     collected_oos_returns: list[pd.Series] = []
+    collected_per_ticker_returns: dict[str, list[pd.Series]] = {}
 
     _tearsheet_available = False
     if tearsheets_dir is not None:
@@ -282,6 +297,13 @@ def run_portfolio_simulation(
                     signal_rows.append({"fold_id": fold_id, "signal_name": sig_name, "oos_sharpe": sharpe})
             if not result.oos_portfolio_returns.empty:
                 collected_oos_returns.append(result.oos_portfolio_returns)
+            if generate_ticker_tearsheets and result.per_ticker_oos_returns:
+                for ticker_label, ticker_returns in sorted(result.per_ticker_oos_returns.items()):
+                    if ticker_returns.empty:
+                        continue
+                    collected_per_ticker_returns.setdefault(ticker_label, []).append(
+                        ticker_returns
+                    )
 
             if (
                 tearsheets_dir is not None
@@ -338,6 +360,27 @@ def run_portfolio_simulation(
                                 mode="html",
                                 timeframe=tearsheet_timeframe,
                             )
+                    if generate_ticker_tearsheets and result.per_ticker_oos_returns:
+                        ticker_labels = test_candles["ticker"].map(_normalize_ticker_label)
+                        for ticker_label, ret_ser in sorted(result.per_ticker_oos_returns.items()):
+                            ticker_test_candles = test_candles.loc[ticker_labels == ticker_label]
+                            if ticker_test_candles.empty:
+                                continue
+                            ticker_baseline = calculate_baseline_returns(ticker_test_candles)
+                            ticker_strategy = ret_ser.reindex(
+                                ticker_baseline.index, fill_value=0.0
+                            )
+                            safe_ticker = _sanitize_tearsheet_name(ticker_label)
+                            generate_tearsheet(
+                                strategy_returns=ticker_strategy,
+                                baseline_returns=ticker_baseline,
+                                feature_name=f"Fold {fold_id} {ticker_label}",
+                                output_file=str(
+                                    fold_tearsheet_dir / f"fold_{fold_id}_{safe_ticker}_tearsheet.html"
+                                ),
+                                mode="html",
+                                timeframe=tearsheet_timeframe,
+                            )
                 except ValueError as te:
                     if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
                         warnings.warn(
@@ -382,6 +425,45 @@ def run_portfolio_simulation(
                     mode="html",
                     timeframe=tearsheet_timeframe,
                 )
+                if (
+                    generate_ticker_tearsheets
+                    and collected_per_ticker_returns
+                    and "ticker" in candles_df.columns
+                ):
+                    candle_ticker_labels = candles_df["ticker"].map(_normalize_ticker_label)
+                    for ticker_label, per_fold_series in sorted(collected_per_ticker_returns.items()):
+                        if not per_fold_series:
+                            continue
+                        ticker_returns = pd.concat(per_fold_series, axis=0).sort_index()
+                        ticker_candles = candles_df.loc[candle_ticker_labels == ticker_label]
+                        if ticker_returns.empty or ticker_candles.empty:
+                            continue
+                        try:
+                            ticker_baseline_returns = calculate_baseline_returns(ticker_candles)
+                            ticker_baseline_returns = ticker_baseline_returns.loc[oos_start:oos_end]
+                            ticker_strategy = ticker_returns.reindex(
+                                ticker_baseline_returns.index, fill_value=0.0
+                            )
+                            safe_ticker = _sanitize_tearsheet_name(ticker_label)
+                            generate_tearsheet(
+                                strategy_returns=ticker_strategy,
+                                baseline_returns=ticker_baseline_returns,
+                                feature_name=f"Walkforward {ticker_label}",
+                                output_file=str(
+                                    tearsheets_dir / f"walkforward_{safe_ticker}_tearsheet.html"
+                                ),
+                                mode="html",
+                                timeframe=tearsheet_timeframe,
+                            )
+                        except ValueError as te:
+                            if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
+                                warnings.warn(
+                                    f"Skipping walkforward ticker tearsheet for {ticker_label} (constant returns): {te}",
+                                    UserWarning,
+                                    stacklevel=2,
+                                )
+                            else:
+                                raise
             except ValueError as te:
                 if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
                     warnings.warn(

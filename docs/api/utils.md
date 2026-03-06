@@ -22,6 +22,8 @@ This document includes public API from these modules:
 - `utils.cache.bias_node_cache`
 - `utils.cache.cache_manager`
 - `utils.compute.fast_nodes`, `utils.compute.fast_stats`, `utils.compute.fast_volatility`, `utils.compute.fast_candle`
+- `utils.evaluation.walkforward.runner`
+- `utils.evaluation.walkforward.portfolio_evaluator`
 
 Included symbols are:
 - public names (not prefixed with `_`)
@@ -254,6 +256,23 @@ Behavior: Carver-style blended annualized volatility estimate from close series.
 Type: dataclass/function  
 Signature: `FastCandle.from_numpy(...) -> FastCandle`, `create_fast_candle_from_numpy(...) -> FastCandle`  
 Behavior: lightweight candle representation for performance-critical loops.
+
+### `utils.evaluation.walkforward.runner` / `portfolio_evaluator`
+
+`run_portfolio_simulation`  
+Type: function  
+Signature: `run_portfolio_simulation(candles_df, target, fold_rows, selection_summary_df, research_config, feature_data_by_combo=None, tearsheets_dir=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series | None]`  
+Behavior: runs fold-level portfolio evaluation and optionally writes walkforward tearsheets.  
+Ticker tearsheet behavior:
+- reads `research_config.generate_ticker_tearsheets` (default `False`)
+- when enabled, writes per-fold ticker tearsheets at `tearsheets/fold_{fold_id}/fold_{fold_id}_{ticker}_tearsheet.html`
+- when enabled, writes aggregate OOS ticker tearsheets at `tearsheets/walkforward_{ticker}_tearsheet.html`
+- existing ensemble/per-signal tearsheets are unchanged
+
+`FoldPortfolioResult`  
+Type: dataclass  
+Signature: includes `oos_portfolio_returns`, optional `per_signal_oos_returns`, optional `per_ticker_oos_returns`  
+Behavior: carries fold OOS return series used by runner tearsheet generation for ensemble, signal, and ticker-level reports.
 
 ## Internal but required
 - `helpers._get_functime_function(...)` is private but required when `create_bias_node` receives string transformations for `ts_feature`.
