@@ -44,25 +44,8 @@ def _build_bin_count_specific_returns(
     bin_count: int,
     config: "ResearchConfig",
 ) -> pd.Series:
-    model = ContinuousBinningModel(
-        n_bins=bin_count,
-        bin_counts=[bin_count],
-        selection_metric=config.binning_params.selection_metric,
-        strategy=config.binning_params.strategy,
-        metric_threshold=config.binning_params.metric_threshold,
-        t_threshold=config.binning_params.t_threshold,
-        min_region_width=config.binning_params.min_region_width,
-        shrinkage_k=config.binning_params.shrinkage_k,
-        long_clip_min=config.binning_params.long_clip_min,
-        long_clip_max=config.binning_params.long_clip_max,
-        short_clip_min=config.binning_params.short_clip_min,
-        short_clip_max=config.binning_params.short_clip_max,
-        use_coverage_bonus=config.binning_params.use_coverage_bonus,
-        coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
-        max_coverage_bonus=config.binning_params.max_coverage_bonus,
-        bin_index_min=config.binning_params.bin_index_min,
-        bin_index_max=config.binning_params.bin_index_max,
-    )
+    from feature_research.in_sample.binning_analysis import binning_model_from_config
+    model = binning_model_from_config(config.binning_params, bin_count)
     model.fit(feature, target)
     signal = model.predict(feature, strategy=config.binning_params.strategy)
     return normalize_series_datetime_index(signal.mul(target))
@@ -235,7 +218,7 @@ def run_eda_pipeline(
                 selected_returns = target.values[signals]
                 if len(selected_returns) >= 5:
                     try:
-                        metric_value = compute_param_sensitivity_metric(selected_returns, metric_col)
+                        metric_value = compute_param_sensitivity_metric(selected_returns, metric_col, timeframe)
                         row: dict[str, object] = {
                             f"param{k + 1}_value": combo[key]
                             for k, key in enumerate(varying_params)

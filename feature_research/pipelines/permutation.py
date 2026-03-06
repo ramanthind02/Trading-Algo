@@ -96,8 +96,8 @@ def run_permutation_pipeline(
     config: "ResearchConfig",
     output_dir: Path,
 ) -> "PermutationTestSuite":
-    if not config.in_sample_permutation.enabled:
-        raise ValueError("Permutation suite is disabled; set config.in_sample_permutation.enabled=True.")
+    if not config.permutation.enabled:
+        raise ValueError("Permutation suite is disabled; set config.permutation.enabled=True.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     populate_cache_if_needed(config)
@@ -156,45 +156,28 @@ def run_permutation_pipeline(
         return feature.rename(feature_name)
 
     permutation_config = PermutationTestConfig(
-        nreps=config.in_sample_permutation.nreps_stage2,
-        alpha=config.in_sample_permutation.alpha,
-        metric_threshold=config.in_sample_permutation.metric_threshold,
-        random_seed=config.in_sample_permutation.random_seed,
-        permutation_mode_stage2=config.in_sample_permutation.permutation_mode_stage2,
-        n_jobs_stage2_reps=config.in_sample_permutation.n_jobs_stage2_reps,
-        run_stage1=config.in_sample_permutation.run_stage1,
-        run_stage2=config.in_sample_permutation.run_stage2,
+        nreps=config.permutation.nreps_stage2,
+        alpha=config.permutation.alpha,
+        metric_threshold=config.permutation.metric_threshold,
+        random_seed=config.permutation.random_seed,
+        permutation_mode_stage2=config.permutation.permutation_mode_stage2,
+        n_jobs_stage2_reps=config.permutation.n_jobs_stage2_reps,
+        run_stage1=config.permutation.run_stage1,
+        run_stage2=config.permutation.run_stage2,
         out_of_sample=OutOfSamplePermutationConfig(
-            objective_metric=config.in_sample_permutation.objective_metric,
+            objective_metric=config.permutation.objective_metric,
             run_oos_permutation=False,
         ),
     )
-    objective_func = resolve_objective_metric(config.in_sample_permutation.objective_metric)
+    objective_func = resolve_objective_metric(config.permutation.objective_metric)
 
     if config.feature_type == FeatureType.CONTINUOUS:
+        from feature_research.in_sample.binning_analysis import binning_model_from_config
         bp = config.binning_params
 
         def binning_model_factory(params: dict[str, Any]) -> ContinuousBinningModel:
             bin_count = int(cast(int, params.get("bin_count", bp.bin_counts[0])))
-            return ContinuousBinningModel(
-                n_bins=bin_count,
-                bin_counts=[bin_count],
-                selection_metric=bp.selection_metric,
-                strategy=bp.strategy,
-                metric_threshold=bp.metric_threshold,
-                t_threshold=bp.t_threshold,
-                min_region_width=bp.min_region_width,
-                shrinkage_k=bp.shrinkage_k,
-                long_clip_min=bp.long_clip_min,
-                long_clip_max=bp.long_clip_max,
-                short_clip_min=bp.short_clip_min,
-                short_clip_max=bp.short_clip_max,
-                use_coverage_bonus=bp.use_coverage_bonus,
-                coverage_bonus_per_10pct=bp.coverage_bonus_per_10pct,
-                max_coverage_bonus=bp.max_coverage_bonus,
-                bin_index_min=bp.bin_index_min,
-                bin_index_max=bp.bin_index_max,
-            )
+            return binning_model_from_config(bp, bin_count)
     else:
         def binning_model_factory(_params: dict[str, Any]) -> None:
             return None

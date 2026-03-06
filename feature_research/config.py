@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from feature_selection.validation.config import OOSCandidateSource, PermutationModeStage2
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
@@ -48,9 +48,6 @@ def build_objective_metric_presets(tf: TimeFrame = TimeFrame.D) -> dict[str, Obj
             kwargs={"annualization_factor": float(tf.bars_per_year)},
         ),
     }
-
-
-OBJECTIVE_METRIC_PRESETS: Mapping[str, ObjectiveMetricSpec] = build_objective_metric_presets()
 
 
 @dataclass(frozen=True)
@@ -139,10 +136,6 @@ class BinningAnalysisConfig:
     strategy: str = "long"  # For continuous long-only research, keep "long".
     metric_threshold: float = 0.0
     t_threshold: float = 2.0
-    min_region_width: int = 2  # Legacy, ignored by new approach
-    use_coverage_bonus: bool = False
-    coverage_bonus_per_10pct: float = 0.02
-    max_coverage_bonus: float = 0.2
     shrinkage_k: float = 20.0
     long_clip_min: float = 0.5
     long_clip_max: float = 2.0
@@ -242,8 +235,11 @@ class VaultSaveConfig:
 
 
 @dataclass(frozen=True)
-class BaseResearchConfig:
-    """Shared researcher-editable settings. Phases add reports_dir and phase-specific fields."""
+class ResearchConfig:
+    """Unified research configuration for all phases (in-sample, OOS, validation).
+
+    Edit load_config() below to customize for your research.
+    """
 
     tickers: list[Ticker]
     start: datetime
@@ -251,6 +247,8 @@ class BaseResearchConfig:
     use_cache: bool
     populate_cache: bool
     permutation: PermutationResearchConfig
+    objective_metric_presets: dict[str, ObjectiveMetricSpec]
+    binning_params: BinningAnalysisConfig
     timeframe: TimeFrame = TimeFrame.D
     feature_type: FeatureType = FeatureType.CONTINUOUS
     in_sample_defaults: InSampleDefaultsCatalog = field(
@@ -269,10 +267,10 @@ class BaseResearchConfig:
     sector_allocation_config_path: str | None = None
 
 
-def load_config() -> BaseResearchConfig:
+def load_config() -> ResearchConfig:
     """Single source of truth for tickers, date range, cache, and phase defaults.
 
-    Edit here; in_sample and OOS phases import and extend this.
+    Edit here; all phases (in-sample, OOS, validation) use this config.
     """
     # ==========================================================================
     # EDIT BELOW
@@ -294,6 +292,7 @@ def load_config() -> BaseResearchConfig:
     timeframe = DEFAULT_TIMEFRAME
     use_cache = True
     populate_cache = True
+    # Build metric presets with correct timeframe (not hardcoded daily)
     objective_metric_presets = build_objective_metric_presets(timeframe)
 
     validation_window = OOSWindowConfig(
@@ -337,13 +336,17 @@ def load_config() -> BaseResearchConfig:
     # EDIT ABOVE
     # ==========================================================================
 
-    return BaseResearchConfig(
+    binning_params = BinningAnalysisConfig()  # Use defaults; can override in specific research runs
+
+    return ResearchConfig(
         tickers=tickers,
         start=start,
         end=end,
         use_cache=use_cache,
         populate_cache=populate_cache,
         permutation=permutation,
+        objective_metric_presets=objective_metric_presets,
+        binning_params=binning_params,
         timeframe=timeframe,
         feature_type=feature_type,
         in_sample_defaults=in_sample_defaults,

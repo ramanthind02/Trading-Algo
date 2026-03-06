@@ -17,12 +17,10 @@ if TYPE_CHECKING:
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_research.bootstrap import find_repo_root
-from feature_research.config import FeatureType
+from feature_research.config import FeatureType, RAW_TARGET_COLS
 from utils.cache.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
-
-_UNNORMALIZED_RETURN_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 
 
 def _resolve_project_root() -> Path | None:
@@ -336,7 +334,7 @@ def load_features_for_combo(
     # For CONTINUOUS: all validations are ok
     # For RULE_BASED: skip multi-ticker raw return check (already checked at config level)
     if config.feature_type == FeatureType.CONTINUOUS:
-        if target_col_name in _UNNORMALIZED_RETURN_COLS:
+        if target_col_name in RAW_TARGET_COLS:
             unique_tickers = (
                 int(features_df["ticker"].nunique())
                 if "ticker" in features_df.columns

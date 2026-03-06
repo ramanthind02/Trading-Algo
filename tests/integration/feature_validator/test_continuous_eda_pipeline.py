@@ -17,7 +17,6 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.config import OBJECTIVE_METRIC_PRESETS
 from feature_research.in_sample.config import (
     PermutationResearchConfig,
     ResearchConfig,
@@ -179,8 +178,7 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
-            in_sample_permutation=PermutationResearchConfig(
-                objective_metric=OBJECTIVE_METRIC_PRESETS["t_stat"],
+            permutation=PermutationResearchConfig(
                 enabled=True,
                 nreps_stage1=10,
             ),
