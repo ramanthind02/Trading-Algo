@@ -6,45 +6,71 @@ from typing import cast
 
 import pandas as pd
 
-from feature_research.config import FeatureType, OOSWindowConfig
-from feature_research.in_sample.config import ResearchConfig
+from feature_research.config import (
+    FeatureType,
+    InSampleDefaultsCatalog,
+    InSamplePhaseDefaultsConfig,
+    OOSWindowConfig,
+)
+from feature_research.in_sample.config import ResearchConfig, load_config
 from feature_research.pipeline import run_validation_pipeline
 from utils.core.enums import Ticker, TimeFrame
 from utils.evaluation.walkforward.runner import WalkforwardRunReport
 
 
 def _build_config(tmp_path: Path) -> ResearchConfig:
-    return ResearchConfig(
-        feature_type=FeatureType.RULE_BASED,
+    base = load_config()
+    bias_spec = {
+        "module_name": "rsi_signal",
+        "timeframes": [TimeFrame.D],
+        "params": {
+            "rsi_period": [2, 3],
+            "oversold": 25.0,
+            "overbought": 65.0,
+            "strategy_mode": "long",
+            "exit_policy": "threshold_or_bars",
+            "exit_bars": 5,
+        },
+    }
+    rule_based_defaults = InSamplePhaseDefaultsConfig(
+        bias_spec=bias_spec,
+        target_col="log_return",
+        strategy="long",
+        reports_dir=tmp_path / "reports",
+        binning_params_overrides={},
+    )
+    in_sample_defaults = InSampleDefaultsCatalog(
+        continuous=base.in_sample_defaults.continuous,
+        rule_based=rule_based_defaults,
+    )
+    return base.__class__(
         tickers=[Ticker.ES],
         start=datetime(2020, 1, 1),
         end=datetime(2020, 4, 29),
-        bias_spec={
-            "module_name": "rsi_signal",
-            "timeframes": [TimeFrame.D],
-            "params": {
-                "rsi_period": [2, 3],
-                "oversold": 25.0,
-                "overbought": 65.0,
-                "strategy_mode": "long",
-                "exit_policy": "threshold_or_bars",
-                "exit_bars": 5,
-            },
-        },
-        target_col="log_return",
-        strategy="long",
         use_cache=True,
         populate_cache=False,
-        reports_dir=tmp_path / "reports",
+        permutation=base.permutation,
+        objective_metric_presets=base.objective_metric_presets,
+        binning_params=base.binning_params,
+        timeframe=TimeFrame.D,
+        feature_type=FeatureType.RULE_BASED,
+        in_sample_defaults=in_sample_defaults,
+        param_sensitivity=base.param_sensitivity,
         validation_window=OOSWindowConfig(
             train_start=datetime(2020, 1, 1),
             train_end=datetime(2020, 2, 10),
             test_start=datetime(2020, 2, 11),
             test_end=datetime(2020, 3, 10),
         ),
+        oos_window=base.oos_window,
         top_k=1,
-        objective_metric_name="mean_return",
+        objective_metric_key="mean_return",
+        smoothing_self_weight=base.smoothing_self_weight,
+        n_jobs=base.n_jobs,
         output_root=tmp_path / "shared_results",
+        generate_ticker_tearsheets=base.generate_ticker_tearsheets,
+        vault_save=base.vault_save,
+        sector_allocation_config_path=base.sector_allocation_config_path,
     )
 
 
@@ -80,11 +106,11 @@ def test_run_rule_based_validation_pipeline_returns_report_and_writes_artifacts(
     config = _build_config(tmp_path)
 
     monkeypatch.setattr(
-        "feature_research.pipelines.validation.populate_cache_if_needed",
+        "feature_research.pipelines._shared.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.validation.expand_bias_specs",
+        "feature_research.pipelines._shared.expand_bias_specs",
         lambda _bias_spec: [
             {
                 "module_name": "rsi_signal",
@@ -117,7 +143,7 @@ def test_run_rule_based_validation_pipeline_returns_report_and_writes_artifacts(
         lambda single_spec, _config, **_kwargs: _series_for_combo(single_spec["params"]),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.validation.load_portfolio_candles",
+        "feature_research.pipelines._shared.load_portfolio_candles",
         lambda _config: _mock_candles_for_config(),
     )
 

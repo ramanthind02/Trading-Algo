@@ -17,7 +17,7 @@ from utils.core.enums import Ticker, TimeFrame
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parent
 
 # Single place to change default timeframe for research (in_sample, OOS, presets).
-DEFAULT_TIMEFRAME: TimeFrame = TimeFrame.M
+DEFAULT_TIMEFRAME: TimeFrame = TimeFrame.D
 
 RAW_TARGET_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 
@@ -136,11 +136,15 @@ class BinningAnalysisConfig:
     strategy: str = "long"  # For continuous long-only research, keep "long".
     metric_threshold: float = 0.0
     t_threshold: float = 2.0
+    min_region_width: int = 2
     shrinkage_k: float = 20.0
     long_clip_min: float = 0.5
     long_clip_max: float = 2.0
     short_clip_min: float = 0.5
     short_clip_max: float = 2.0
+    use_coverage_bonus: bool = False
+    coverage_bonus_per_10pct: float = 0.02
+    max_coverage_bonus: float = 0.2
     bin_index_min: int = 0
     bin_index_max: int | None = 0
 
@@ -159,12 +163,25 @@ class InSamplePhaseDefaultsConfig:
     target_col: str
     strategy: str
     reports_dir: Path
-    binning_params_overrides: Mapping[str, Any] = field(default_factory=dict)
+    binning_params_overrides: dict[str, Any] = field(default_factory=dict)
+    eval_bias_spec: dict[str, Any] | None = None
 
 
 def _default_continuous_in_sample_defaults(
     tf: TimeFrame = TimeFrame.D,
 ) -> InSamplePhaseDefaultsConfig:
+    """Default continuous in-sample research settings.
+
+    After running IS EDA, you can optionally set eval_bias_spec (via
+    InSampleDefaultsCatalog in load_config()) to pin a specific param combo
+    for validation+OOS. For example:
+
+        eval_bias_spec={
+            "module_name": "cyclical_rsi",
+            "timeframes": [tf],
+            "params": {"short_period": [4], "long_period": [120], "rsi_period": [2]},
+        }
+    """
     return InSamplePhaseDefaultsConfig(
         bias_spec={
             "module_name": "cyclical_rsi",
@@ -192,7 +209,7 @@ def _default_rule_based_in_sample_defaults(
     """Rule-based preset: buy_hold bias node (no params). Uses DEFAULT_TIMEFRAME."""
     return InSamplePhaseDefaultsConfig(
         bias_spec={
-            "module_name": "buy_hold",
+            "module_name": "seasonal_indices_eof",
             "timeframes": [DEFAULT_TIMEFRAME],
             "params": {},
         },
@@ -267,6 +284,37 @@ class ResearchConfig:
     vault_save: VaultSaveConfig | None = None
     sector_allocation_config_path: str | None = None
 
+    @property
+    def _phase_defaults(self) -> InSamplePhaseDefaultsConfig:
+        return self.in_sample_defaults.for_feature_type(self.feature_type)
+
+    @property
+    def bias_spec(self) -> dict[str, Any]:
+        """Full EDA grid — used by in-sample pipeline."""
+        return self._phase_defaults.bias_spec
+
+    @property
+    def eval_bias_spec(self) -> dict[str, Any]:
+        """Narrowed spec for validation+OOS. Falls back to bias_spec when not set."""
+        phase_defaults = self._phase_defaults
+        return phase_defaults.eval_bias_spec or phase_defaults.bias_spec
+
+    @property
+    def target_col(self) -> str:
+        return self._phase_defaults.target_col
+
+    @property
+    def strategy(self) -> str:
+        return self._phase_defaults.strategy
+
+    @property
+    def reports_dir(self) -> Path:
+        return self._phase_defaults.reports_dir
+
+
+# Backwards-compatible alias for older code/tests.
+BaseResearchConfig = ResearchConfig
+
 
 def load_config() -> ResearchConfig:
     """Single source of truth for tickers, date range, cache, and phase defaults.
@@ -319,8 +367,33 @@ def load_config() -> ResearchConfig:
         enabled=True,
     )
 
-    feature_type = FeatureType.RULE_BASED
+    feature_type = FeatureType.CONTINUOUS
     in_sample_defaults = InSampleDefaultsCatalog.default_for(timeframe)
+    # Example: after IS EDA, set eval_bias_spec to pin specific param combos
+    # for validation+OOS:
+    #
+    # in_sample_defaults = InSampleDefaultsCatalog(
+    #     continuous=InSamplePhaseDefaultsConfig(
+    #         bias_spec={
+    #             "module_name": "cyclical_rsi",
+    #             "timeframes": [timeframe],
+    #             "params": {
+    #                 "short_period": [3, 4, 5, 6, 7],   # wide EDA grid
+    #                 "long_period": [100, 120, 140],
+    #                 "rsi_period": [2, 3, 4],
+    #             },
+    #         },
+    #         eval_bias_spec={  # narrowed after IS analysis
+    #             "module_name": "cyclical_rsi",
+    #             "timeframes": [timeframe],
+    #             "params": {"short_period": [4], "long_period": [120], "rsi_period": [2]},
+    #         },
+    #         target_col="log_return_atr",
+    #         strategy="long",
+    #         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
+    #     ),
+    #     rule_based=_default_rule_based_in_sample_defaults(timeframe),
+    # )
     param_sensitivity = ParamSensitivityConfig()
     # Optional: set to save research model to vault after satisfying results.
     # vault_save = VaultSaveConfig(

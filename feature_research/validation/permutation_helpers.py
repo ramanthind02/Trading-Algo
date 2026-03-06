@@ -69,7 +69,7 @@ def load_research_data(config: object) -> tuple[
         )
 
     populate_cache_if_needed(config)
-    expanded = expand_bias_specs(config.bias_spec)
+    expanded = expand_bias_specs(config.eval_bias_spec)
     feature_type = getattr(config, "feature_type", FeatureType.CONTINUOUS)
 
     if feature_type == FeatureType.CONTINUOUS:
@@ -261,7 +261,7 @@ def run_candle_shuffle_null(
     if not train_windows:
         return np.array([])
 
-    expanded = expand_bias_specs(config.bias_spec)
+    expanded = expand_bias_specs(config.eval_bias_spec)
     module_name = str(getattr(config, "bias_spec", {}).get("module_name", "rsi"))
     feature_type = getattr(config, "feature_type", FeatureType.CONTINUOUS)
     rng = np.random.default_rng(random_seed)
@@ -467,15 +467,15 @@ def run_permutation_for_phase(
 
     # Local function for single permutation run
     def _run_permutation_once(
-        cfg: object,
+        config: object,
         lbl: str | None = None,
         return_return_matrix: bool = False,
     ) -> tuple[float, np.ndarray] | tuple[float, np.ndarray, pd.Index, np.ndarray, pd.Series]:
         prefix = f"[{lbl}] " if lbl else ""
 
-        data_start = min(cfg.start, window.train_start)
-        data_end = max(cfg.end, window.test_end)
-        config_phase = replace(cfg, start=data_start, end=data_end)
+        data_start = min(config.start, window.train_start)
+        data_end = max(config.end, window.test_end)
+        config_phase = replace(config, start=data_start, end=data_end)
 
         (
             reference_candles,
@@ -492,7 +492,7 @@ def run_permutation_for_phase(
         test_start = pd.Timestamp(window.test_start)
         test_end = pd.Timestamp(window.test_end)
         runtime_config = _build_runtime_walkforward_config_for_permutation(
-            cfg,
+            config,
             train_start=train_start,
             train_end=train_end,
             test_start=test_start,
@@ -508,7 +508,7 @@ def run_permutation_for_phase(
         if not fold_rows:
             raise ValueError(f"{phase_label} fold has insufficient samples. Check {phase} window dates and data range.")
 
-        _ft = getattr(cfg, "feature_type", None)
+        _ft = getattr(config, "feature_type", None)
         feature_type = (
             _ft.value if isinstance(_ft, FeatureType) else
             ("continuous" if feature_data_by_combo is not None else "rule_based")
@@ -526,7 +526,7 @@ def run_permutation_for_phase(
             config=runtime_config,
             param_grid=param_grid,
             evaluate_param_combo=evaluator,
-            research_config=cfg,
+            research_config=config,
             portfolio_candles_df=portfolio_candles_df,
             feature_data_by_combo=feature_data_by_combo,
             output_dir=None,
@@ -569,7 +569,7 @@ def run_permutation_for_phase(
                         nreps=nreps,
                         random_seed=random_seed,
                         initial_report=report0,
-                        research_config=cfg,
+                        research_config=config,
                         feature_data_by_combo=feature_data_by_combo,
                         portfolio_candles_df=portfolio_candles_df,
                         n_jobs=n_jobs,
@@ -589,7 +589,7 @@ def run_permutation_for_phase(
                         nreps=nreps,
                         random_seed=random_seed,
                         initial_report=report0,
-                        research_config=cfg,
+                        research_config=config,
                         feature_data_by_combo=feature_data_by_combo,
                         portfolio_candles_df=portfolio_candles_df,
                         n_jobs=n_jobs,
@@ -614,7 +614,7 @@ def run_permutation_for_phase(
                         reference_candles=reference_candles,
                         reference_target=reference_target,
                         selection_summary_df=report0.selection_summary_df,
-                        research_config=cfg,
+                        research_config=config,
                         portfolio_candles_df=portfolio_candles_df,
                     )
                     if not fixed_oos_signal_by_fold:
@@ -638,7 +638,7 @@ def run_permutation_for_phase(
                             nreps=nreps,
                             random_seed=random_seed,
                             initial_report=report0,
-                            research_config=cfg,
+                            research_config=config,
                             feature_data_by_combo=None,
                             portfolio_candles_df=portfolio_candles_df,
                             n_jobs=n_jobs,
@@ -658,7 +658,7 @@ def run_permutation_for_phase(
                             nreps=nreps,
                             random_seed=random_seed,
                             initial_report=report0,
-                            research_config=cfg,
+                            research_config=config,
                             feature_data_by_combo=None,
                             portfolio_candles_df=portfolio_candles_df,
                             n_jobs=n_jobs,

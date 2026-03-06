@@ -137,7 +137,7 @@ def _run_evaluation_pipeline(
     if output_dir is None:
         output_dir_path = resolve_walkforward_output_dir(
             feature_type=config.feature_type.value,
-            module_name=str(config.bias_spec["module_name"]),
+            module_name=str(config.eval_bias_spec["module_name"]),
             root_dir=config.output_root,
             output_subdir=phase_subdir,
         )
@@ -147,11 +147,11 @@ def _run_evaluation_pipeline(
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
     populate_cache_if_needed(config_phase)
-    expanded = expand_bias_specs(config.bias_spec)
+    expanded = expand_bias_specs(config.eval_bias_spec)
     feature_type_label = config.feature_type.value.upper()
     window_label = "Val" if phase == "validation" else "Test"
     print(f"\n{'='*64}")
-    print(f"{phase_label} Pipeline: {config.bias_spec['module_name'].upper()} ({feature_type_label})")
+    print(f"{phase_label} Pipeline: {config.eval_bias_spec['module_name'].upper()} ({feature_type_label})")
     print(f"Tickers : {[t.name for t in config_phase.tickers]}")
     print(f"Train   : {window.train_start.date()} -> {window.train_end.date()}")
     print(f"{window_label}     : {window.test_start.date()} -> {window.test_end.date()}")
@@ -196,7 +196,7 @@ def _run_evaluation_pipeline(
             candles_df=reference_candles,
             target=reference_target,
             feature_type="continuous",
-            module_name=str(config.bias_spec["module_name"]),
+            module_name=str(config.eval_bias_spec["module_name"]),
             config=runtime_config,
             param_grid=successful_param_grid,
             evaluate_param_combo=build_continuous_walkforward_evaluator(data.combo_feature_target, config),
@@ -233,7 +233,7 @@ def _run_evaluation_pipeline(
             candles_df=reference_candles,
             target=reference_target,
             feature_type="rule_based",
-            module_name=str(config.bias_spec["module_name"]),
+            module_name=str(config.eval_bias_spec["module_name"]),
             config=runtime_config,
             param_grid=data.successful_param_grid,
             evaluate_param_combo=build_rule_based_walkforward_evaluator(data.combo_returns),
@@ -256,7 +256,7 @@ def _run_evaluation_pipeline(
         walkforward_stability_figure=stability_figure,
         fold_timeline_figure=timeline_figure,
         feature_type=config.feature_type.value,
-        module_name=str(config.bias_spec["module_name"]),
+        module_name=str(config.eval_bias_spec["module_name"]),
         root_dir=config.output_root,
         research_context={
             "tickers": [ticker.name for ticker in config.tickers],

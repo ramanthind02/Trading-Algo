@@ -1,0 +1,8 @@
+{
+  "feature_name": "seasonalindiceseof_signal_D_smaPeriod_200",
+  "param_combo": {},
+  "report_type": "rule_based",
+  "ticker": "NQ",
+  "timeframe": "D",
+  "timestamp": "2026-03-05T22:59:15.766070"
+}

@@ -59,15 +59,15 @@ def test_validation_permutation_produces_report_and_null_distribution(tmp_path: 
         patch("sys.argv", ["run_validation_permutation.py", "--nreps", "3"]),
         patch("feature_research.validation.run_validation_permutation.load_config") as m_load,
         patch(
-            "feature_research.validation.run_validation_permutation.load_research_data",
+            "feature_research.validation.permutation_helpers.load_research_data",
             side_effect=fake_load_research_data,
         ),
         patch(
-            "feature_research.validation.run_validation_permutation.run_walkforward_research",
+            "utils.evaluation.walkforward.runner.run_walkforward_research",
             return_value=minimal_report,
         ),
         patch(
-            "feature_research.validation.run_validation_permutation.run_vector_shuffle_null",
+            "utils.evaluation.walkforward.permutation_core.run_vector_shuffle_null",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
     ):
@@ -75,7 +75,7 @@ def test_validation_permutation_produces_report_and_null_distribution(tmp_path: 
         config_with_validation = replace(base_config, validation_window=validation)
         m_load.return_value = config_with_validation
         with patch(
-            "feature_research.validation.run_validation_permutation.resolve_walkforward_output_dir",
+            "utils.evaluation.walkforward.io.resolve_walkforward_output_dir",
             return_value=tmp_path / "continuous" / "rsi" / "validation",
         ):
             exit_code = main()
