@@ -1,6 +1,8 @@
+from datetime import datetime
 from itertools import product
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -8,10 +10,11 @@ import pytest
 from feature_research.in_sample.config import ResearchConfig
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
+    get_effective_range_and_tickers,
     load_features_for_combo,
     param_combo_label,
 )
-from utils.core.enums import TimeFrame
+from utils.core.enums import TimeFrame, Ticker
 
 
 def test_expand_bias_specs_single_param():
@@ -105,3 +108,89 @@ def test_load_features_for_combo_rejects_raw_return_with_multi_ticker(
             },
             config=config,
         )
+
+
+def _config(start: datetime, end: datetime, tickers: list[Ticker]) -> SimpleNamespace:
+    return cast(
+        ResearchConfig,
+        SimpleNamespace(start=start, end=end, tickers=tickers),
+    )
+
+
+def test_get_effective_range_and_tickers_no_ranges_returns_none() -> None:
+    """When no OHLC ranges exist, returns None."""
+    config = _config(
+        datetime(2000, 1, 1), datetime(2025, 12, 31), [Ticker.ES, Ticker.NQ]
+    )
+    with patch(
+        "feature_research.in_sample.data_loader.get_available_date_ranges_for_tickers",
+        return_value={},
+    ):
+        assert get_effective_range_and_tickers(config) is None
+
+
+def test_get_effective_range_and_tickers_full_coverage_returns_intersection() -> None:
+    """When all tickers cover the full config range, returns that range and all tickers."""
+    config = _config(
+        datetime(2000, 1, 1), datetime(2025, 12, 31), [Ticker.ES, Ticker.NQ]
+    )
+    start = pd.Timestamp("2000-01-01")
+    end = pd.Timestamp("2025-12-31")
+    with patch(
+        "feature_research.in_sample.data_loader.get_available_date_ranges_for_tickers",
+        return_value={Ticker.ES: (start, end), Ticker.NQ: (start, end)},
+    ):
+        result = get_effective_range_and_tickers(config)
+    assert result is not None
+    eff_start, eff_end, tickers = result
+    assert eff_start == start and eff_end == end
+    assert set(tickers) == {Ticker.ES, Ticker.NQ}
+
+
+def test_get_effective_range_and_tickers_partial_overlap_narrows_range() -> None:
+    """When tickers have partial overlap, returns intersection and only covering tickers."""
+    config = _config(
+        datetime(2000, 1, 1), datetime(2030, 12, 31), [Ticker.ES, Ticker.NQ]
+    )
+    # ES 2000-2015, NQ 2010-2030 → intersection 2010-2015; both cover it
+    es_start, es_end = pd.Timestamp("2000-01-01"), pd.Timestamp("2015-12-31")
+    nq_start, nq_end = pd.Timestamp("2010-01-01"), pd.Timestamp("2030-12-31")
+    with patch(
+        "feature_research.in_sample.data_loader.get_available_date_ranges_for_tickers",
+        return_value={
+            Ticker.ES: (es_start, es_end),
+            Ticker.NQ: (nq_start, nq_end),
+        },
+    ):
+        result = get_effective_range_and_tickers(config)
+    assert result is not None
+    eff_start, eff_end, tickers = result
+    assert eff_start == pd.Timestamp("2010-01-01")
+    assert eff_end == pd.Timestamp("2015-12-31")
+    assert set(tickers) == {Ticker.ES, Ticker.NQ}
+
+
+def test_get_effective_range_and_tickers_disjoint_fallback_to_single_ticker() -> None:
+    """When ranges are disjoint, fallback to single ticker with largest overlap."""
+    config = _config(
+        datetime(2000, 1, 1), datetime(2025, 12, 31), [Ticker.ES, Ticker.NQ]
+    )
+    # ES 2000-2005, NQ 2020-2025 → no intersection; each has 5y overlap
+    es_start, es_end = pd.Timestamp("2000-01-01"), pd.Timestamp("2005-12-31")
+    nq_start, nq_end = pd.Timestamp("2020-01-01"), pd.Timestamp("2025-12-31")
+    with patch(
+        "feature_research.in_sample.data_loader.get_available_date_ranges_for_tickers",
+        return_value={
+            Ticker.ES: (es_start, es_end),
+            Ticker.NQ: (nq_start, nq_end),
+        },
+    ):
+        result = get_effective_range_and_tickers(config)
+    assert result is not None
+    eff_start, eff_end, tickers = result
+    assert len(tickers) == 1
+    assert tickers[0] in (Ticker.ES, Ticker.NQ)
+    if tickers[0] == Ticker.ES:
+        assert eff_start == es_start and eff_end == es_end
+    else:
+        assert eff_start == nq_start and eff_end == nq_end

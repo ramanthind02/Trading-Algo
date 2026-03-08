@@ -63,9 +63,6 @@ def _build_config(tmp_path: Path) -> ResearchConfig:
             test_end=datetime(2020, 3, 10),
         ),
         oos_window=base.oos_window,
-        top_k=1,
-        objective_metric_key="mean_return",
-        smoothing_self_weight=base.smoothing_self_weight,
         n_jobs=base.n_jobs,
         output_root=tmp_path / "shared_results",
         generate_ticker_tearsheets=base.generate_ticker_tearsheets,
@@ -151,9 +148,7 @@ def test_run_rule_based_validation_pipeline_returns_report_and_writes_artifacts(
 
     assert isinstance(report, WalkforwardRunReport)
     validation_dir = (
-        config.output_root / "rule_based" / config.bias_spec["module_name"] / "validation"
+        config.output_root / "rule_based" / config.eval_bias_spec["module_name"] / "validation"
     )
     assert validation_dir.exists()
-    assert (validation_dir / "tables" / "selection_summary.csv").exists()
-    assert (validation_dir / "tables" / "fold_scores.csv").exists()
-    assert (validation_dir / "tables" / "folds.csv").exists()
+    assert (validation_dir / "report.json").exists()

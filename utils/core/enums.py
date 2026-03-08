@@ -1,5 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass, field
+from typing import TypeAlias
 
 
 class TimeFrame(Enum):
@@ -124,12 +125,12 @@ class Direction(Enum):
     @classmethod
     def from_string(cls, direction_str: str) -> 'Direction':
         """
-        Convert string to Direction enum (case-insensitive).
+        Convert canonical string to Direction enum (case-insensitive).
         
         Parameters
         ----------
         direction_str : str
-            Direction string ('long', 'short', or 'long_short' / 'both')
+            Direction string ('long', 'short', or 'long_short')
             
         Returns
         -------
@@ -142,12 +143,26 @@ class Direction(Enum):
             If direction string is invalid
         """
         direction_lower = direction_str.lower().strip()
-        if direction_lower in ('both', 'long_short'):
+        if direction_lower == cls.LONG_SHORT.value:
             return cls.LONG_SHORT
         for direction in cls:
             if direction.value == direction_lower:
                 return direction
         raise ValueError(
             f"Invalid direction: '{direction_str}'. "
-            f"Must be 'long', 'short', or 'long_short'/'both'"
+            f"Must be 'long', 'short', or 'long_short'"
         )
+
+
+DirectionInput: TypeAlias = Direction | str
+
+
+def coerce_direction(direction: DirectionInput, field_name: str = "direction") -> Direction:
+    """Coerce a direction input to Direction using canonical values only."""
+    if isinstance(direction, Direction):
+        return direction
+    if isinstance(direction, str):
+        return Direction.from_string(direction)
+    raise TypeError(
+        f"{field_name} must be a Direction or str, got {type(direction).__name__}"
+    )

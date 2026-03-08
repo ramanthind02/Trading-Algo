@@ -91,7 +91,7 @@ Behavior: canonical instrument universe enum used in nodes, ensembles, and deplo
 `Bias` / `PositionMode` / `ResamplingMethod`  
 Type: enum  
 Signature: `class Bias(Enum)`, `class PositionMode(Enum)`, `class ResamplingMethod(Enum)`  
-Behavior: direction/bias, long-short mode constraints, and robustness resampling mode constants.
+Behavior: direction/bias, long_short mode constraints, and robustness resampling mode constants.
 
 `Direction`  
 Type: enum  

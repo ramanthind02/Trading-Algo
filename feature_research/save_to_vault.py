@@ -26,6 +26,7 @@ from feature_research.in_sample.data_loader import (
     load_features_for_combo,
     populate_cache_if_needed,
 )
+from utils.core.enums import coerce_direction
 
 
 def _resolve_single_combo(
@@ -60,15 +61,7 @@ def _binning_params_to_constructor_params(
     return {
         "n_bins": binning_params.bin_counts[0] if binning_params.bin_counts else 10,
         "bin_counts": list(binning_params.bin_counts),
-        "selection_metric": binning_params.selection_metric,
-        "strategy": binning_params.strategy,
-        "metric_threshold": binning_params.metric_threshold,
-        "t_threshold": binning_params.t_threshold,
-        "shrinkage_k": binning_params.shrinkage_k,
-        "long_clip_min": binning_params.long_clip_min,
-        "long_clip_max": binning_params.long_clip_max,
-        "short_clip_min": binning_params.short_clip_min,
-        "short_clip_max": binning_params.short_clip_max,
+        "strategy": binning_params.strategy.value,
         "bin_index_min": binning_params.bin_index_min,
         "bin_index_max": binning_params.bin_index_max,
     }
@@ -112,14 +105,17 @@ def _run() -> None:
         "params": bias_spec_for_combo["params"],
     }
 
+    strategy = coerce_direction(research_config.strategy, field_name="research_config.strategy")
+    vault_direction = coerce_direction(base.vault_save.direction, field_name="vault_save.direction")
+
     if base.feature_type == FeatureType.CONTINUOUS:
         constructor_params = _binning_params_to_constructor_params(research_config.binning_params)
         binning_model = ContinuousBinningModel(**constructor_params)
         binning_model.fit(feature_series, target_series)
     else:
         rule_params = {
-            "strategy": research_config.strategy,
-            "selection_metric": research_config.binning_params.selection_metric,
+            "strategy": strategy,
+            "selection_metric": "t_stat",
         }
         binning_model = RuleBasedModel(**rule_params)
 
@@ -127,7 +123,7 @@ def _run() -> None:
         "bias_node_spec": bias_node_spec,
         "model_type": "continuous_binning" if base.feature_type == FeatureType.CONTINUOUS else "rule_based",
         "constructor_params": binning_model.get_params(),
-        "strategy": research_config.strategy,
+        "strategy": strategy.value,
     }
     base_model = BaseModel(
         feature_config=feature_config,
@@ -140,7 +136,7 @@ def _run() -> None:
     ensemble_dir = create_ensemble_directory(
         base.timeframe,
         base.vault_save.ensemble_name,
-        base.vault_save.direction,
+        vault_direction,
         research_config.tickers,
     )
     add_feature_to_ensemble(

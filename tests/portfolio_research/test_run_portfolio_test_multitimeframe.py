@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -16,6 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 rpt = importlib.import_module("portfolio_research.run_portfolio_test")
+pipeline = importlib.import_module("portfolio_research.pipelines.portfolio_test")
+from portfolio_research.config import ResearchWindow
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -34,6 +36,25 @@ class _DummyConfig:
     baseline_mode: str
     output_root: Path
     oos_window: None = None
+    sector_allocation_config_path: str | None = None
+    train_window: ResearchWindow = field(
+        default_factory=lambda: ResearchWindow(
+            start=datetime(2024, 1, 1),
+            end=datetime(2024, 1, 2),
+        )
+    )
+    validation_window: ResearchWindow = field(
+        default_factory=lambda: ResearchWindow(
+            start=datetime(2024, 1, 3),
+            end=datetime(2024, 1, 4),
+        )
+    )
+    test_window: ResearchWindow = field(
+        default_factory=lambda: ResearchWindow(
+            start=datetime(2024, 1, 4),
+            end=datetime(2024, 1, 5),
+        )
+    )
 
     def walkforward_train_test_bounds(self) -> tuple[datetime, datetime, datetime, datetime]:
         return (
@@ -186,7 +207,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
         TimeFrame.D,
         ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"],
     )
-    weekly_candles = _make_candles(TimeFrame.W, ["2024-01-01", "2024-01-03"])
+    weekly_candles = _make_candles(TimeFrame.W, ["2024-01-01", "2024-01-03", "2024-01-05"])
 
     def _mock_load_candles(_config, timeframe, start=None, end=None):  # noqa: ANN001
         if timeframe == TimeFrame.D:
@@ -235,29 +256,34 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     ) -> None:
         generated_output_files.append(output_file)
 
-    monkeypatch.setattr(rpt, "_load_candles", _mock_load_candles)
-    monkeypatch.setattr(rpt, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
-    monkeypatch.setattr(rpt, "WeightLayer", _DummyWeightLayer)
-    monkeypatch.setattr(rpt, "Portfolio", _DummyPortfolio)
-    monkeypatch.setattr(rpt, "PortfolioTester", _DummyTester)
-    monkeypatch.setattr(rpt, "calculate_strategy_returns_from_positions", _mock_calculate_strategy_returns_from_positions)
-    monkeypatch.setattr(rpt, "calculate_baseline_returns", _mock_calculate_baseline_returns)
-    monkeypatch.setattr(rpt, "aggregate_intraday_returns_to_daily", _mock_aggregate_intraday_returns_to_daily)
-    monkeypatch.setattr(rpt, "generate_tearsheet", _mock_generate_tearsheet)
+    monkeypatch.setattr(pipeline, "_load_candles", _mock_load_candles)
+    monkeypatch.setattr(pipeline, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
+    monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
+    monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
+    monkeypatch.setattr(pipeline, "PortfolioTester", _DummyTester)
+    monkeypatch.setattr(pipeline, "calculate_strategy_returns_from_positions", _mock_calculate_strategy_returns_from_positions)
+    monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
+    monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", _mock_aggregate_intraday_returns_to_daily)
+    monkeypatch.setattr(pipeline, "generate_tearsheet", _mock_generate_tearsheet)
 
     rpt.run_portfolio_test(config)
 
-    assert sorted(_DummyPortfolio.created_timeframes) == [TimeFrame.D, TimeFrame.W]
+    # Three phases (Train, Validation, Test), each with D and W portfolios.
+    assert _DummyPortfolio.created_timeframes.count(TimeFrame.D) == 3
+    assert _DummyPortfolio.created_timeframes.count(TimeFrame.W) == 3
 
     generated_names = {Path(path).name for path in generated_output_files}
-    assert "Portfolio_Walkforward_Test_tearsheet.html" in generated_names
-    assert "daily_Portfolio_Walkforward_Test_tearsheet.html" in generated_names
-    assert "weekly_Portfolio_Walkforward_Test_tearsheet.html" in generated_names
+    generated_paths = [Path(p) for p in generated_output_files]
+    assert "Portfolio_Train_Test_tearsheet.html" in generated_names
+    assert "daily_Portfolio_Train_Test_tearsheet.html" in generated_names
+    assert "weekly_Portfolio_Train_Test_tearsheet.html" in generated_names
 
-    assert "daily_ensemble_0_tearsheet.html" in generated_names
-    assert "weekly_ensemble_0_tearsheet.html" in generated_names
-    assert "daily_ensemble_0_model_a_tearsheet.html" in generated_names
-    assert "weekly_ensemble_0_model_a_tearsheet.html" in generated_names
+    # Component tearsheets live in timeframe subfolders (daily/, weekly/) with un-prefixed filenames.
+    assert "ensemble_0_tearsheet.html" in generated_names
+    assert "ensemble_0_model_a_tearsheet.html" in generated_names
+    assert any("portfolio" in p.parts for p in generated_paths), "Expected portfolio/ subfolder"
+    assert any("daily" in p.parts for p in generated_paths), "Expected daily/ subfolder"
+    assert any("weekly" in p.parts for p in generated_paths), "Expected weekly/ subfolder"
 
     assert aggregation_counter["n"] >= 6
 

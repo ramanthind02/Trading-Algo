@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import inspect
 import json
@@ -16,7 +16,7 @@ from feature_research.config import FeatureType
 from feature_research.core_helpers import normalize_timeframe_from_bias_spec
 from utils.evaluation.walkforward.config import WalkforwardResearchConfig
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import DirectionInput, Ticker, TimeFrame
 from utils.compute.grid_smoothing import add_smoothed_objective
 
 
@@ -222,6 +222,19 @@ def run_portfolio_simulation(
                 stacklevel=2,
             )
 
+    n_folds = len(fold_rows)
+    single_fold = n_folds == 1
+
+    # Use phase default strategy so portfolio build matches research_context (e.g. long_short for rule-based).
+    try:
+        binning_config = replace(
+            typed_research_config.binning_params,
+            strategy=typed_research_config.strategy,
+        )
+    except (TypeError, AttributeError):
+        # Fallback when binning_params is not a dataclass (e.g. test mocks).
+        binning_config = typed_research_config.binning_params
+
     for fold_row in fold_rows:
         fold_id = int(cast(int, fold_row["fold_id"]))
         summary = selection_summary_df.loc[selection_summary_df["fold_id"] == fold_id]
@@ -273,7 +286,7 @@ def run_portfolio_simulation(
                 test_candles=test_candles,
                 selected_params=selected_params,
                 target_series=target,
-                binning_config=typed_research_config.binning_params,
+                binning_config=binning_config,
                 tickers=typed_research_config.tickers,
                 trading_timeframe=trading_timeframe,
                 module_name=str(typed_research_config.bias_spec.get("module_name", "rsi")),
@@ -311,8 +324,12 @@ def run_portfolio_simulation(
                 and not result.oos_portfolio_returns.empty
             ):
                 try:
-                    fold_tearsheet_dir = tearsheets_dir / f"fold_{fold_id}"
-                    fold_tearsheet_dir.mkdir(parents=True, exist_ok=True)
+                    if single_fold:
+                        fold_tearsheet_dir = tearsheets_dir
+                    else:
+                        fold_tearsheet_dir = tearsheets_dir / f"fold_{fold_id}"
+                        fold_tearsheet_dir.mkdir(parents=True, exist_ok=True)
+                    train_result = None
                     if fold_id == 0:
                         train_baseline = calculate_baseline_returns(train_candles)
                         train_result = evaluate_fold_portfolio(
@@ -320,7 +337,7 @@ def run_portfolio_simulation(
                             test_candles=train_candles,
                             selected_params=selected_params,
                             target_series=target,
-                            binning_config=typed_research_config.binning_params,
+                            binning_config=binning_config,
                             tickers=typed_research_config.tickers,
                             trading_timeframe=trading_timeframe,
                             module_name=str(typed_research_config.bias_spec.get("module_name", "rsi")),
@@ -330,33 +347,75 @@ def run_portfolio_simulation(
                             feature_data_by_combo=feature_data_by_combo,
                             feature_type=feature_type,
                         )
+                        train_file = (
+                            fold_tearsheet_dir / "train_ensemble_tearsheet.html"
+                            if single_fold
+                            else fold_tearsheet_dir / f"fold_{fold_id}_train_ensemble_tearsheet.html"
+                        )
                         generate_tearsheet(
                             strategy_returns=train_result.oos_portfolio_returns,
                             baseline_returns=train_baseline,
-                            feature_name=f"Fold {fold_id} Ensemble (train)",
-                            output_file=str(
-                                fold_tearsheet_dir / f"fold_{fold_id}_train_ensemble_tearsheet.html"
-                            ),
+                            feature_name="Train Ensemble" if single_fold else f"Fold {fold_id} Ensemble (train)",
+                            output_file=str(train_file),
                             mode="html",
                             timeframe=tearsheet_timeframe,
                         )
                     fold_baseline = calculate_baseline_returns(test_candles)
+                    validation_file = (
+                        fold_tearsheet_dir / "validation_ensemble_tearsheet.html"
+                        if single_fold
+                        else fold_tearsheet_dir / f"fold_{fold_id}_ensemble_tearsheet.html"
+                    )
                     generate_tearsheet(
                         strategy_returns=result.oos_portfolio_returns,
                         baseline_returns=fold_baseline,
-                        feature_name=f"Fold {fold_id} Ensemble",
-                        output_file=str(fold_tearsheet_dir / f"fold_{fold_id}_ensemble_tearsheet.html"),
+                        feature_name="Validation Ensemble" if single_fold else f"Fold {fold_id} Ensemble",
+                        output_file=str(validation_file),
                         mode="html",
                         timeframe=tearsheet_timeframe,
                     )
-                    if result.per_signal_oos_returns:
+                    if train_result is not None:
+                        full_candles = pd.concat([train_candles, test_candles], axis=0)
+                        combined_returns = pd.concat(
+                            [train_result.oos_portfolio_returns, result.oos_portfolio_returns],
+                            axis=0,
+                        ).sort_index()
+                        if combined_returns.index.duplicated().any():
+                            combined_returns = combined_returns[~combined_returns.index.duplicated(keep="first")]
+                        combined_baseline = calculate_baseline_returns(full_candles)
+                        strategy_for_combined = combined_returns.reindex(
+                            combined_baseline.index, fill_value=0.0
+                        )
+                        combined_file = (
+                            fold_tearsheet_dir / "train_and_validation_ensemble_tearsheet.html"
+                            if single_fold
+                            else fold_tearsheet_dir / f"fold_{fold_id}_train_and_validation_ensemble_tearsheet.html"
+                        )
+                        generate_tearsheet(
+                            strategy_returns=strategy_for_combined,
+                            baseline_returns=combined_baseline,
+                            feature_name="Train + Validation Ensemble",
+                            output_file=str(combined_file),
+                            mode="html",
+                            timeframe=tearsheet_timeframe,
+                        )
+                    skip_per_signal = single_fold and (
+                        result.per_signal_oos_returns is None
+                        or len(result.per_signal_oos_returns) <= 1
+                    )
+                    if result.per_signal_oos_returns and not skip_per_signal:
                         for sig_name, ret_ser in result.per_signal_oos_returns.items():
                             safe_name = _sanitize_tearsheet_name(sig_name)
+                            signal_file = (
+                                fold_tearsheet_dir / f"{safe_name}_tearsheet.html"
+                                if single_fold
+                                else fold_tearsheet_dir / f"fold_{fold_id}_{safe_name}_tearsheet.html"
+                            )
                             generate_tearsheet(
                                 strategy_returns=ret_ser,
                                 baseline_returns=fold_baseline,
-                                feature_name=f"Fold {fold_id} {sig_name}",
-                                output_file=str(fold_tearsheet_dir / f"fold_{fold_id}_{safe_name}_tearsheet.html"),
+                                feature_name=sig_name if single_fold else f"Fold {fold_id} {sig_name}",
+                                output_file=str(signal_file),
                                 mode="html",
                                 timeframe=tearsheet_timeframe,
                             )
@@ -371,13 +430,16 @@ def run_portfolio_simulation(
                                 ticker_baseline.index, fill_value=0.0
                             )
                             safe_ticker = _sanitize_tearsheet_name(ticker_label)
+                            ticker_file = (
+                                fold_tearsheet_dir / f"{safe_ticker}_tearsheet.html"
+                                if single_fold
+                                else fold_tearsheet_dir / f"fold_{fold_id}_{safe_ticker}_tearsheet.html"
+                            )
                             generate_tearsheet(
                                 strategy_returns=ticker_strategy,
                                 baseline_returns=ticker_baseline,
-                                feature_name=f"Fold {fold_id} {ticker_label}",
-                                output_file=str(
-                                    fold_tearsheet_dir / f"fold_{fold_id}_{safe_ticker}_tearsheet.html"
-                                ),
+                                feature_name=ticker_label if single_fold else f"Fold {fold_id} {ticker_label}",
+                                output_file=str(ticker_file),
                                 mode="html",
                                 timeframe=tearsheet_timeframe,
                             )
@@ -404,7 +466,11 @@ def run_portfolio_simulation(
     if collected_oos_returns:
         walkforward_portfolio_returns = pd.concat(collected_oos_returns, axis=0).sort_index()
         aggregate_oos_returns = walkforward_portfolio_returns
-        if tearsheets_dir is not None and _tearsheet_available:
+        if (
+            not single_fold
+            and tearsheets_dir is not None
+            and _tearsheet_available
+        ):
             try:
                 tearsheets_dir.mkdir(parents=True, exist_ok=True)
                 baseline_returns = calculate_baseline_returns(candles_df)
@@ -660,7 +726,7 @@ def _build_fold_scores(
     objective_metric: Callable[[pd.Series], float],
     top_k: int,
     config: WalkforwardResearchConfig,
-    strategy: str | None = None,
+    strategy: DirectionInput | None = None,
     n_jobs: int = 1,
     research_config: object | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
@@ -950,6 +1016,7 @@ def run_walkforward_research(
     feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
     output_dir: Path | None = None,
     fold_rows_override: list[dict[str, object]] | None = None,
+    phase_label: str | None = None,
 ) -> WalkforwardRunReport:
     if not isinstance(feature_type, str) or not feature_type.strip():
         raise ValueError("feature_type must be a non-empty string")
@@ -998,14 +1065,22 @@ def run_walkforward_research(
 
     fold_score_parts: list[pd.DataFrame] = []
     selection_rows: list[dict[str, object]] = []
-    strategy: str | None = None
+    strategy: DirectionInput | None = None
     if research_config is not None:
         bp = getattr(research_config, "binning_params", None)
         strategy = getattr(bp, "strategy", None) if bp is not None else None
 
     n_folds = len(fold_rows)
     n_params = len(param_grid)
-    print(f"Running walkforward: {n_folds} folds, {n_params} param combos.", flush=True)
+    run_label = (phase_label.strip() if phase_label and phase_label.strip() else None) or "walkforward"
+    # #region agent log
+    try:
+        import json
+        _log = {"sessionId": "1a52b7", "hypothesisId": "H3", "location": "runner.py:run_walkforward_research", "message": "Running walkforward print", "data": {"n_folds": n_folds, "n_params": n_params, "run_label": run_label}, "timestamp": int(__import__("time").time() * 1000)}
+        open("/home/raman/repos/Trading-Algo/.cursor/debug-1a52b7.log", "a").write(json.dumps(_log) + "\n")
+    except Exception: pass
+    # #endregion
+    print(f"Running {run_label}: {n_folds} folds, {n_params} param combos.", flush=True)
     for fold_idx, fold_row in enumerate(fold_rows):
         print(f"  Fold {fold_idx + 1}/{n_folds} ({n_params} params)...", flush=True)
         n_jobs = getattr(config, "n_jobs", 1)

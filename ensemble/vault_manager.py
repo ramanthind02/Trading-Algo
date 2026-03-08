@@ -36,7 +36,7 @@ try:
 except ImportError:
     TwoBinBinningModel = None
 
-from utils.core.enums import Direction, TimeFrame, Ticker
+from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
 
 # Type hint for forward reference
 if TYPE_CHECKING:
@@ -474,7 +474,7 @@ def generate_model_id(
 def create_ensemble_directory(
     timeframe: Any,
     ensemble_name: Any,
-    direction: Any,
+    direction: DirectionInput,
     tickers: Optional[List[Ticker]] = None,
     vault_root: Optional[str] = None,
 ) -> str:
@@ -537,8 +537,7 @@ def create_ensemble_directory(
 
     if isinstance(timeframe, str):
         timeframe = TimeFrame[timeframe]
-    if isinstance(direction, str):
-        direction = Direction.from_string(direction)
+    direction = coerce_direction(direction, field_name="direction")
 
     # Default tickers if not provided
     if tickers is None:
@@ -638,7 +637,7 @@ def create_ensemble_directory(
 def get_ensemble_path(
     timeframe: Any,
     ensemble_name: Any,
-    direction: Any,
+    direction: DirectionInput,
     vault_root: Optional[str] = None,
 ) -> str:
     """
@@ -673,8 +672,7 @@ def get_ensemble_path(
 
     if isinstance(timeframe, str):
         timeframe = TimeFrame[timeframe]
-    if isinstance(direction, str):
-        direction = Direction.from_string(direction)
+    direction = coerce_direction(direction, field_name="direction")
 
     ensemble_dir_name = f"{ensemble_name}_{direction.value}"
     root = vault_root or VAULT_ROOT
@@ -837,16 +835,19 @@ def add_feature_to_ensemble(
         with open(ensemble_config_file, 'r') as f:
             ensemble_config = json.load(f)
         expected_ticker_names = sorted(ensemble_config.get('tickers', []))
-        expected_direction = ensemble_config.get('direction', 'long')
+        expected_direction = coerce_direction(
+            ensemble_config.get('direction', Direction.LONG.value),
+            field_name="ensemble_config.direction",
+        )
     else:
         # Backward compatibility: infer from directory name
         ensemble_dir_name = ensemble_path.name
         if ensemble_dir_name.endswith('_long_short'):
-            expected_direction = 'long_short'
+            expected_direction = Direction.LONG_SHORT
         elif ensemble_dir_name.endswith('_long'):
-            expected_direction = 'long'
+            expected_direction = Direction.LONG
         elif ensemble_dir_name.endswith('_short'):
-            expected_direction = 'short'
+            expected_direction = Direction.SHORT
         else:
             raise ValueError(
                 f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}. "
@@ -855,10 +856,14 @@ def add_feature_to_ensemble(
         expected_ticker_names = None  # No ticker validation for old ensembles
 
     # Validate ensemble direction matches base model strategy
-    if base_model.binning_model.strategy != expected_direction:
+    model_strategy = coerce_direction(
+        base_model.binning_model.strategy,
+        field_name="base_model.binning_model.strategy",
+    )
+    if model_strategy != expected_direction:
         raise ValueError(
-            f"Base model strategy '{base_model.binning_model.strategy}' does not match "
-            f"ensemble direction '{expected_direction}'"
+            f"Base model strategy '{model_strategy.value}' does not match "
+            f"ensemble direction '{expected_direction.value}'"
         )
     
     # Validate tickers match ensemble tickers (if ensemble config exists)
@@ -975,7 +980,7 @@ def add_feature_to_ensemble(
         'model_name': f"{feature_name}::{model_id}",
         'bias_node_params': bias_node_params,
         'binning_model_type': binning_model_type,
-        'strategy': base_model.binning_model.strategy,
+        'strategy': model_strategy.value,
         'binning_model_params': binning_model_params,
         'requires_fit': _requires_fit(binning_model_type),
         'is_fitted': binning_model.is_fitted_,
@@ -1843,17 +1848,20 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
     if ensemble_config_file.exists():
         with open(ensemble_config_file, 'r') as f:
             ensemble_config = json.load(f)
-        expected_direction = ensemble_config.get('direction', 'long')
+        expected_direction = coerce_direction(
+            ensemble_config.get('direction', Direction.LONG.value),
+            field_name="ensemble_config.direction",
+        )
         expected_ticker_names = sorted(ensemble_config.get('tickers', []))
     else:
         # Backward compatibility: infer from directory name
         ensemble_dir_name = ensemble_path.name
         if ensemble_dir_name.endswith('_long_short'):
-            expected_direction = 'long_short'
+            expected_direction = Direction.LONG_SHORT
         elif ensemble_dir_name.endswith('_long'):
-            expected_direction = 'long'
+            expected_direction = Direction.LONG
         elif ensemble_dir_name.endswith('_short'):
-            expected_direction = 'short'
+            expected_direction = Direction.SHORT
         else:
             raise ValueError(
                 f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}. "
@@ -1921,10 +1929,14 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
             model_ids.append(model_id)
             
             # Check strategy matches ensemble direction
-            if model_config['strategy'] != expected_direction:
+            model_strategy = coerce_direction(
+                model_config['strategy'],
+                field_name=f"{feature_file.name} strategy",
+            )
+            if model_strategy != expected_direction:
                 raise ValueError(
-                    f"Model strategy '{model_config['strategy']}' does not match "
-                    f"ensemble direction '{expected_direction}' in {feature_file}"
+                    f"Model strategy '{model_strategy.value}' does not match "
+                    f"ensemble direction '{expected_direction.value}' in {feature_file}"
                 )
             
             # Validate model_name format

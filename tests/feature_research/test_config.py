@@ -112,11 +112,8 @@ def test_load_config_includes_validation_window() -> None:
 
 
 def test_load_config_has_flat_eval_fields() -> None:
-    """New flat evaluation fields replace WalkforwardDefaultsConfig complexity."""
+    """Flat evaluation fields: n_jobs, output_root (walkforward params removed)."""
     config = load_config()
-    assert config.top_k == 1
-    assert config.objective_metric_key == "t_stat"
-    assert config.smoothing_self_weight == 3.0
     assert config.n_jobs == 8
     assert config.output_root == Path("feature_research/shared_results")
 
@@ -124,9 +121,6 @@ def test_load_config_has_flat_eval_fields() -> None:
 def test_base_config_has_flat_eval_fields() -> None:
     """ResearchConfig exposes the same flat eval fields."""
     base = load_base_config()
-    assert base.top_k == 1
-    assert base.objective_metric_key == "t_stat"
-    assert base.smoothing_self_weight == 3.0
     assert base.n_jobs == 8
     assert base.output_root == Path("feature_research/shared_results")
 

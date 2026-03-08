@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Union
 from dataclasses import dataclass
 import logging
 
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import Direction, DirectionInput, Ticker, TimeFrame
 from utils.core.models import Candle
 from utils.core import helpers
 from feature_selection.base_models.base_model import BinningModelBase
@@ -338,7 +338,8 @@ class BaseModel:
         # List of attributes to delegate to binning_model
         delegated_attrs = {
             'is_fitted_', 'strategy', 'n_bins', 'thresholds_',
-            'best_long_bin_', 'best_short_bin_', 'bin_stats_'
+            'best_long_bin_', 'best_short_bin_', 'bin_stats_', 'bin_edges_',
+            'active_bins_by_strategy_',
         }
         
         if name in delegated_attrs:
@@ -779,7 +780,7 @@ class BaseModel:
     def predict(
         self,
         candles_df: pd.DataFrame,
-        strategy: str = 'long',
+        strategy: DirectionInput = Direction.LONG,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
     ) -> pd.Series:
@@ -792,8 +793,8 @@ class BaseModel:
         ----------
         candles_df : pd.DataFrame
             DataFrame with candles. Must have columns: datetime, open, high, low, close, volume, ticker, timeframe
-        strategy : str, default='long'
-            Strategy to use: 'long' or 'short'
+        strategy : DirectionInput, default=Direction.LONG
+            Strategy to use.
         start_date : datetime, optional
             Start date for vectorized predict (required if use_cache=True)
         end_date : datetime, optional
@@ -812,7 +813,7 @@ class BaseModel:
     def stream_predict(
         self,
         candles_df: pd.DataFrame,
-        strategy: str = 'long'
+        strategy: DirectionInput = Direction.LONG
     ) -> pd.Series:
         """
         Predict using streaming candle-by-candle processing.
@@ -823,8 +824,8 @@ class BaseModel:
         ----------
         candles_df : pd.DataFrame
             DataFrame with candles.
-        strategy : str, default='long'
-            Strategy to use: 'long' or 'short'
+        strategy : DirectionInput, default=Direction.LONG
+            Strategy to use.
 
         Returns
         -------
@@ -944,7 +945,7 @@ class BaseModel:
     def vectorized_predict(
         self,
         candles_df: pd.DataFrame,
-        strategy: str = 'long',
+        strategy: DirectionInput = Direction.LONG,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
     ) -> pd.Series:
@@ -957,8 +958,8 @@ class BaseModel:
         ----------
         candles_df : pd.DataFrame
             DataFrame with candles. Used for extracting date range if not provided.
-        strategy : str, default='long'
-            Strategy to use: 'long' or 'short'
+        strategy : DirectionInput, default=Direction.LONG
+            Strategy to use.
         start_date : datetime, optional
             Start date for cached data. If None, inferred from candles_df.
         end_date : datetime, optional
@@ -1058,7 +1059,7 @@ class BaseModel:
     def emit_member_signals(
         self,
         feature_data: Optional[Union[pd.Series, pd.DataFrame]] = None,
-        strategy: str = "long",
+        strategy: DirectionInput = Direction.LONG,
     ) -> pd.DataFrame:
         """
         Emit flattened member-level signal outputs.
@@ -1077,8 +1078,8 @@ class BaseModel:
             Feature data for prediction. If DataFrame, columns should match
             member feature columns (or primary). If not provided, uses the
             training feature data from the primary binning model (backward compat).
-        strategy : str, default='long'
-            Strategy to use: 'long', 'short', or 'long_short'
+        strategy : DirectionInput, default=Direction.LONG
+            Strategy to use.
 
         Returns
         -------
@@ -1267,7 +1268,7 @@ class BaseModel:
     def predict_members_from_candles(
         self,
         candles_df: pd.DataFrame,
-        strategy: str = "long",
+        strategy: DirectionInput = Direction.LONG,
     ) -> pd.DataFrame:
         """Predict member-level signals directly from candles."""
         if not self.members:

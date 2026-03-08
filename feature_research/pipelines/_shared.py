@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from feature_research.config import FeatureType, OOSWindowConfig
@@ -14,6 +13,7 @@ from feature_research.core_helpers import (
 )
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
+    get_effective_range_and_tickers,
     get_tickers_with_coverage_for_config,
     populate_cache_if_needed,
 )
@@ -34,10 +34,6 @@ from utils.evaluation.walkforward.research_data import (
 from utils.evaluation.walkforward.runner import (
     build_fold_rows_from_explicit_specs,
     run_walkforward_research,
-)
-from utils.evaluation.walkforward.visualization import (
-    plot_fold_timeline,
-    plot_selection_stability,
 )
 
 if TYPE_CHECKING:
@@ -129,9 +125,37 @@ def _run_evaluation_pipeline(
 
     covered_tickers = get_tickers_with_coverage_for_config(config_phase)
     if not covered_tickers:
-        raise ValueError(
-            f"No tickers have OHLC data covering the {phase} date range. "
-            "Check data/ohlc_data or narrow dates."
+        effective = get_effective_range_and_tickers(config_phase)
+        if effective is None:
+            raise ValueError(
+                "No OHLC data found for the requested range. "
+                "Check data/ohlc_data or narrow dates."
+            )
+        effective_start, effective_end, effective_tickers = effective
+        config_phase = replace(
+            config_phase,
+            start=effective_start.to_pydatetime(),
+            end=effective_end.to_pydatetime(),
+            tickers=effective_tickers,
+        )
+        train_start_c = max(window.train_start, effective_start.to_pydatetime())
+        train_end_c = min(window.train_end, effective_end.to_pydatetime())
+        test_start_c = max(window.test_start, effective_start.to_pydatetime())
+        test_end_c = min(window.test_end, effective_end.to_pydatetime())
+        if train_start_c >= train_end_c or test_start_c >= test_end_c or train_end_c > test_start_c:
+            raise ValueError(
+                "Insufficient data after narrowing to available range "
+                "(train/test window would be empty or invalid)."
+            )
+        window = OOSWindowConfig(
+            train_start=train_start_c,
+            train_end=train_end_c,
+            test_start=test_start_c,
+            test_end=test_end_c,
+        )
+        print(
+            f"[{phase_label}] No full coverage; using narrowed range "
+            f"{effective_start.date()}–{effective_end.date()} and tickers {[t.name for t in effective_tickers]}."
         )
 
     if output_dir is None:
@@ -205,20 +229,21 @@ def _run_evaluation_pipeline(
             feature_data_by_combo=data.combo_feature_target,
             output_dir=output_dir_path,
             fold_rows_override=fold_rows,
+            phase_label=phase_label,
         )
     elif config.feature_type == FeatureType.RULE_BASED or config.feature_type.value == "rule_based":
         data = load_rule_based_research_data(
             config_phase,
             expanded,
             dedupe_before_multiply=False,
-            capture_target_as_reference=False,
+            capture_target_as_reference=True,
             print_loaded=True,
         )
         if not data.successful_param_grid or data.reference_index is None:
             raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
 
         reference_index = data.reference_index
-        reference_target = build_reference_target(reference_index, None)
+        reference_target = build_reference_target(reference_index, data.reference_target_series)
         reference_candles = pd.DataFrame({"close": reference_target}, index=reference_index)
         portfolio_candles = load_portfolio_candles(config_phase)
         fold_rows = build_fold_rows_from_explicit_specs(
@@ -242,24 +267,18 @@ def _run_evaluation_pipeline(
             feature_data_by_combo=data.combo_feature_target,
             output_dir=output_dir_path,
             fold_rows_override=fold_rows,
+            phase_label=phase_label,
         )
     else:
         raise ValueError(f"Unknown feature_type: {config.feature_type}")
 
-    stability_figure, _ = plot_selection_stability(
-        selection_summary_df=report.selection_summary_df,
-        top_k=config.top_k,
-    )
-    timeline_figure, _ = plot_fold_timeline(folds_df=report.folds_df)
     write_walkforward_artifacts(
         report=report,
-        walkforward_stability_figure=stability_figure,
-        fold_timeline_figure=timeline_figure,
         feature_type=config.feature_type.value,
         module_name=str(config.eval_bias_spec["module_name"]),
         root_dir=config.output_root,
         research_context={
-            "tickers": [ticker.name for ticker in config.tickers],
+            "tickers": [ticker.name for ticker in config_phase.tickers],
             "period_start": str(window.train_start.date()),
             "period_end": str(window.test_end.date()),
             "target_col": config.target_col,
@@ -268,12 +287,10 @@ def _run_evaluation_pipeline(
             f"{context_prefix}_train_end": str(window.train_end.date()),
             f"{context_prefix}_test_start": str(window.test_start.date()),
             f"{context_prefix}_test_end": str(window.test_end.date()),
-            f"{context_prefix}_top_k": config.top_k,
+            f"{context_prefix}_top_k": 1,
             f"{context_prefix}_selection_method": "top_k",
         },
         output_subdir=phase_subdir,
     )
-    plt.close(stability_figure)
-    plt.close(timeline_figure)
     print(f"\nDone. {phase_label} artifacts written to {output_dir_path}\n")
     return report

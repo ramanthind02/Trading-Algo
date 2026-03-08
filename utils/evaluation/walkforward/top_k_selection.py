@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Callable
 
 import pandas as pd
 
+from utils.core.enums import DirectionInput, coerce_direction
+
 if TYPE_CHECKING:
     from utils.evaluation.walkforward.config import WalkforwardResearchConfig
 
@@ -73,7 +75,7 @@ def run_enhanced_selection(
     smoothed_objectives: dict[str, float],
     config: "WalkforwardResearchConfig",
     precomputed_trade_frequencies: dict[str, float] | None = None,
-    strategy: str | None = None,
+    strategy: DirectionInput | None = None,
 ) -> EnhancedSelectionResult:
     """Select top-k params filtered by trade frequency.
 
@@ -82,8 +84,8 @@ def run_enhanced_selection(
     precomputed_trade_frequencies : dict, optional
         If provided, skip signal evaluation and use these frequencies directly.
         Allows sharing the evaluation cost with MPS or other selection.
-    strategy : str, optional
-        When "long" and objective is t_stat, only params with positive smoothed_objective are considered.
+    strategy : DirectionInput, optional
+        When long and objective is t_stat, only params with positive smoothed_objective are considered.
     """
     if precomputed_trade_frequencies is not None:
         trade_frequencies = precomputed_trade_frequencies
@@ -97,7 +99,11 @@ def run_enhanced_selection(
         label for label in param_labels if trade_frequencies.get(label, 0.0) >= config.trade_freq_min
     ]
     # Long-only + t_stat: exclude params with non-positive objective so we never select a short-biased combo.
-    if strategy == "long" and getattr(config, "objective_metric_name", "") == "t_stat":
+    strategy_is_long = (
+        strategy is not None
+        and coerce_direction(strategy, field_name="strategy").value == "long"
+    )
+    if strategy_is_long and getattr(config, "objective_metric_name", "") == "t_stat":
         surviving_labels = [
             label for label in surviving_labels
             if smoothed_objectives.get(label, float("-inf")) > 0

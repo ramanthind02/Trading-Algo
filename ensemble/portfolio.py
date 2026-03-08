@@ -711,6 +711,14 @@ class Portfolio:
         
         # Fit IDM if we have return data
         if target_data is not None:
+            # #region agent log
+            _tickers = tf_candles["ticker"].unique().tolist()
+            try:
+                import json
+                _log = {"sessionId": "1a52b7", "hypothesisId": "H1", "location": "portfolio.py:fit_from_candles", "message": "before _calculate_returns_from_candles", "data": {"n_tickers": len(_tickers), "tickers": [str(t) for t in _tickers]}, "timestamp": int(__import__("time").time() * 1000)}
+                open("/home/raman/repos/Trading-Algo/.cursor/debug-1a52b7.log", "a").write(json.dumps(_log) + "\n")
+            except Exception: pass
+            # #endregion
             # Calculate returns from candles for IDM calculation
             returns_df = self._calculate_returns_from_candles(tf_candles)
             
@@ -1293,10 +1301,17 @@ class Portfolio:
                     f"columns={list(returns_df.columns)}"
                 )
         else:
-            # If we have fewer than 2 tickers, return empty
-            logger.warning(f"Only {len(returns_df.columns)} ticker(s) in returns DataFrame")
-            return pd.DataFrame()
-        
+            # Fewer than 2 tickers: return 1-column returns (non-empty); fit_from_candles
+            # will set IDM=1.0 and log the "Only N instrument(s)" warning.
+            # #region agent log
+            try:
+                import json
+                _log = {"sessionId": "1a52b7", "hypothesisId": "H1", "location": "portfolio.py:_calculate_returns_from_candles", "message": "returning 1-column returns (columns < 2)", "data": {"n_columns": len(returns_df.columns), "columns": list(returns_df.columns)}, "timestamp": int(__import__("time").time() * 1000)}
+                open("/home/raman/repos/Trading-Algo/.cursor/debug-1a52b7.log", "a").write(json.dumps(_log) + "\n")
+            except Exception: pass
+            # #endregion
+            return returns_df
+
         return returns_df
 
     @staticmethod

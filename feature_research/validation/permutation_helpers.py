@@ -15,6 +15,7 @@ from feature_research.core_helpers import expand_params_with_selected_bin
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     get_available_date_ranges_for_tickers,
+    get_effective_range_and_tickers,
     get_tickers_with_coverage_for_config,
     load_candles_for_config,
     populate_cache_if_needed,
@@ -51,22 +52,32 @@ def load_research_data(config: object) -> tuple[
     original_tickers = list(config.tickers)
     covered_tickers = get_tickers_with_coverage_for_config(config)
     if not covered_tickers:
-        ranges = get_available_date_ranges_for_tickers(
-            replace(config, tickers=original_tickers), original_tickers
-        )
-        hint = (
-            " Available ranges: "
-            + ", ".join(
-                f"{t.name}: {r[0].date()}–{r[1].date()}" for t, r in ranges.items()
+        effective = get_effective_range_and_tickers(config)
+        if effective is not None:
+            effective_start, effective_end, effective_tickers = effective
+            config = replace(
+                config,
+                start=effective_start.to_pydatetime(),
+                end=effective_end.to_pydatetime(),
+                tickers=effective_tickers,
             )
-            + ". Narrow config.start/end or oos_window.test_end to match."
-            if ranges
-            else " Check data/ohlc_data or narrow config.start/end."
-        )
-        raise ValueError(
-            "No tickers have OHLC data covering the config date range."
-            + hint
-        )
+        else:
+            ranges = get_available_date_ranges_for_tickers(
+                replace(config, tickers=original_tickers), original_tickers
+            )
+            hint = (
+                " Available ranges: "
+                + ", ".join(
+                    f"{t.name}: {r[0].date()}–{r[1].date()}" for t, r in ranges.items()
+                )
+                + ". Narrow config.start/end or oos_window.test_end to match."
+                if ranges
+                else " Check data/ohlc_data or narrow config.start/end."
+            )
+            raise ValueError(
+                "No tickers have OHLC data covering the config date range."
+                + hint
+            )
 
     populate_cache_if_needed(config)
     expanded = expand_bias_specs(config.eval_bias_spec)
@@ -446,6 +457,9 @@ def run_permutation_for_phase(
             smoothing_self_weight=getattr(cfg, "smoothing_self_weight", 1.0),
         )
 
+    perm_obj = getattr(perm_cfg, "objective_metric", None)
+    builtin = getattr(perm_obj, "builtin", None) if perm_obj else None
+    _objective_from_perm = str(builtin) if builtin is not None else "sharpe"
     objective_metric_name = resolve_objective_metric_name(
         perm_cfg,
         _build_runtime_walkforward_config_for_permutation(
@@ -454,7 +468,7 @@ def run_permutation_for_phase(
             train_end=pd.Timestamp(window.train_end),
             test_start=pd.Timestamp(window.test_start),
             test_end=pd.Timestamp(window.test_end),
-            objective_metric_name=getattr(config, "objective_metric_key", "sharpe"),
+            objective_metric_name=_objective_from_perm,
         ),
     )
 

@@ -11,7 +11,7 @@ Output: Rule-based -1, 0, or 1
 from typing import List, Optional
 import numpy as np
 from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
 from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
 from nodes import BiasNode
 
@@ -32,7 +32,7 @@ class RSISignal(BiasNode):
     - rsi_period: RSI calculation period (default: 14)
     - oversold: RSI threshold for long signal (default: 30)
     - overbought: RSI threshold for short signal (default: 70)
-    - strategy_mode: "long", "short", or "long-short" (default: "long")
+    - strategy_mode: "long", "short", or "long_short" (default: "long")
     - exit_policy: "threshold" or "threshold_or_bars" (default: "threshold_or_bars")
     - exit_bars: bars in position before fixed exit (default: 5)
     """
@@ -44,7 +44,7 @@ class RSISignal(BiasNode):
         rsi_period: int = 14,
         oversold: float = 30.0,
         overbought: float = 70.0,
-        strategy_mode: str = "long",
+        strategy_mode: DirectionInput = "long",
         exit_policy: str = "threshold_or_bars",
         exit_bars: int = 5,
     ):
@@ -154,15 +154,8 @@ class RSISignal(BiasNode):
         self.output.append(float(signal))
         return [float(signal)]
 
-    def _normalize_strategy_mode(self, strategy_mode: str) -> str:
-        normalized = strategy_mode.lower().strip()
-        if normalized == "long_short":
-            normalized = "long-short"
-        if normalized not in {"long", "short", "long-short"}:
-            raise ValueError(
-                "strategy_mode must be 'long', 'short', or 'long-short'"
-            )
-        return normalized
+    def _normalize_strategy_mode(self, strategy_mode: DirectionInput) -> str:
+        return coerce_direction(strategy_mode, field_name="strategy_mode").value
 
     def _crossed_below(self, prev_rsi: float, rsi: float) -> bool:
         return prev_rsi > self.oversold and rsi <= self.oversold

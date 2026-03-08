@@ -139,7 +139,7 @@ Example:
 ```python
 base_model = BaseModel(feature_config=feature_config, tickers=[Ticker.ES], use_cache=True)
 base_model.fit(candles_df, target_series)
-long_short = base_model.predict(candles_df, strategy="long-short")
+long_short = base_model.predict(candles_df, strategy="long_short")
 ```
 
 ### BinningModelBase
@@ -186,7 +186,7 @@ def score(self, X: pd.Series, y: pd.Series, strategy: str = "long") -> float
 
 Constraints:
 - `feature_data` passed to `fit()` must be a named series (`feature_data.name` required).
-- Strategy must be one of `long`, `short`, `long_short` (or `long-short`, normalized internally).
+- Strategy must be one of `long`, `short`, or `long_short`.
 - `selection_metric` must be one of `sharpe`, `mean`, `t_stat`, `sortino`.
 - `fit()` requires sufficient data (`>= max(10, n_bins*5)` after dropping NaNs).
 - For scaled prediction (`scaled=True`) with `normalize_by` set, `normalization_data` is required.

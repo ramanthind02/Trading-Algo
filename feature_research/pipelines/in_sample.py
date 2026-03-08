@@ -84,7 +84,7 @@ def _write_continuous_in_sample_cumsum_plots(
     plots_dir = combo_output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    bin_counts = config.binning_params.bin_counts or [config.binning_params.n_bins]
+    bin_counts = config.binning_params.bin_counts
     for bin_count in sorted({int(bin_count) for bin_count in bin_counts}, reverse=True):
         returns = _build_bin_count_specific_returns(feature, target, bin_count, config)
         _write_cumsum_plot(
@@ -186,7 +186,7 @@ def run_eda_pipeline(
             )
     else:
         combo_store: dict[str, tuple[pd.Series, pd.Series, str]] = {}
-        metric_col = config.binning_params.selection_metric
+        metric_col = "t_stat"
         varying_params = [
             key
             for key, values in config.bias_spec["params"].items()

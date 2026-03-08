@@ -1,2 +1,0 @@
-fold_id,param_label,raw_objective,oos_objective,smoothed_objective,rank,selected_feature,trade_frequency,selected_in_top_k,selected_long_bin
-0,,-0.8867140962278429,0.13985420553879274,-0.8867140962278429,1,True,0.29482683033757123,True,

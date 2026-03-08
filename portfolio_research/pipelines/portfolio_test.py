@@ -235,6 +235,8 @@ def _evaluate_phase(
     """Evaluate a portfolio phase: fit on train window, test on test window."""
     phase_out = config.output_root / output_dir_name
     phase_out.mkdir(parents=True, exist_ok=True)
+    portfolio_dir = phase_out / "portfolio"
+    portfolio_dir.mkdir(parents=True, exist_ok=True)
 
     candles_by_timeframe: dict[TimeFrame, pd.DataFrame] = {
         TimeFrame.D: _load_candles(config, TimeFrame.D, start=train_start, end=test_end)
@@ -356,7 +358,7 @@ def _evaluate_phase(
     combined_strategy_returns = aggregate_intraday_returns_to_daily(combined_strategy_returns)
     combined_baseline_returns = aggregate_intraday_returns_to_daily(combined_baseline_returns)
 
-    combined_output_file = phase_out / f"Portfolio_{phase_title}_Test_tearsheet.html"
+    combined_output_file = portfolio_dir / f"Portfolio_{phase_title}_Test_tearsheet.html"
     generate_tearsheet(
         strategy_returns=combined_strategy_returns,
         baseline_returns=combined_baseline_returns,
@@ -368,7 +370,7 @@ def _evaluate_phase(
     if has_multiple_timeframes:
         for timeframe in unique_timeframes:
             tf_label = _timeframe_label(timeframe)
-            tf_output_file = phase_out / f"{tf_label}_Portfolio_{phase_title}_Test_tearsheet.html"
+            tf_output_file = portfolio_dir / f"{tf_label}_Portfolio_{phase_title}_Test_tearsheet.html"
             generate_tearsheet(
                 strategy_returns=per_tf_strategy_returns[timeframe],
                 baseline_returns=per_tf_baseline_returns[timeframe],
@@ -379,13 +381,14 @@ def _evaluate_phase(
 
     for timeframe in unique_timeframes:
         tf_label = _timeframe_label(timeframe)
-        filename_prefix = tf_label if has_multiple_timeframes else None
+        tf_dir = phase_out / tf_label
+        tf_dir.mkdir(parents=True, exist_ok=True)
         _generate_component_tearsheets(
             tester=testers_by_timeframe[timeframe],
             candles_df=test_candles_by_timeframe[timeframe],
-            output_dir=phase_out,
+            output_dir=tf_dir,
             baseline_returns=per_tf_baseline_returns[timeframe],
-            filename_prefix=filename_prefix,
+            filename_prefix=None,
         )
 
     print(f"{phase_title} tearsheets written to {phase_out}")
@@ -480,9 +483,11 @@ def run_portfolio_test_pipeline(config: Any) -> None:
         unique_timeframes=unique_timeframes,
     )
 
-    # Composite 1: Validation + Test.
+    # Composite: Validation+Test and Train+Validation+Test tearsheets.
     combined_dir = config.output_root / "combined"
     combined_dir.mkdir(parents=True, exist_ok=True)
+    combined_portfolio_dir = combined_dir / "portfolio"
+    combined_portfolio_dir.mkdir(parents=True, exist_ok=True)
 
     val_test_strategy = (
         pd.concat(
@@ -503,13 +508,13 @@ def run_portfolio_test_pipeline(config: Any) -> None:
     _generate_composite_tearsheet(
         [validation_result, test_result],
         "Validation_Test",
-        combined_dir,
+        combined_portfolio_dir,
     )
 
     _generate_composite_tearsheet(
         [train_result, validation_result, test_result],
         "Train_Validation_Test",
-        combined_dir,
+        combined_portfolio_dir,
     )
 
     print(f"\nDone. Artifacts written to {config.output_root}\n")

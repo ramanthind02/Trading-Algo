@@ -69,18 +69,14 @@ def test_resolve_single_combo_raises_when_no_combos() -> None:
 def test_binning_params_to_constructor_params() -> None:
     binning_params = BinningAnalysisConfig(
         bin_counts=[10, 8],
-        selection_metric="t_stat",
         strategy="long",
-        t_threshold=2.0,
         bin_index_min=0,
         bin_index_max=2,
     )
     out = _binning_params_to_constructor_params(binning_params)
     assert out["n_bins"] == 10
     assert out["bin_counts"] == [10, 8]
-    assert out["selection_metric"] == "t_stat"
     assert out["strategy"] == "long"
-    assert out["t_threshold"] == 2.0
     assert out["bin_index_min"] == 0
     assert out["bin_index_max"] == 2
 

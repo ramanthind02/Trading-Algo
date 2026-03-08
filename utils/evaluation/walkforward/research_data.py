@@ -145,13 +145,18 @@ def load_rule_based_research_data(
         combo_feature_target[key] = pd.DataFrame({"feature": feature_norm, "target": target_norm})
         successful_param_grid.append(dict(combo))
 
+        target_reference = (
+            target_norm.groupby(level=0).mean()
+            if target_norm.index.duplicated().any()
+            else target_norm
+        )
         if reference_index is None:
             reference_index = unique_sorted_datetime_index(target_norm.index)
             if capture_target_as_reference:
-                reference_target_series = target_norm.reindex(reference_index).fillna(0.0)
+                reference_target_series = target_reference.reindex(reference_index).fillna(0.0)
                 reference_target_series.name = "walkforward_target"
         if reference_target_series is None and capture_target_as_reference:
-            reference_target_series = target_norm
+            reference_target_series = target_reference
 
         if print_loaded:
             print(f"  [{label}] loaded n={len(feature_series):,}")

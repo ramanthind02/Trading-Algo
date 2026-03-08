@@ -4,10 +4,13 @@ import json
 from datetime import datetime
 from math import log
 
+import numpy as np
 import pandas as pd
 from feature_research.config import FeatureType
 from feature_research.in_sample.config import BinningAnalysisConfig
+from feature_selection.base_models.rule_based import RuleBasedModel
 from utils.evaluation.walkforward.portfolio_evaluator import (
+    _enforce_rule_based_signed_multipliers,
     _calculate_oos_returns_from_positions,
     build_research_portfolio,
     ensure_portfolio_candle_columns,
@@ -144,3 +147,17 @@ def test_calculate_oos_returns_from_positions_preserves_multi_ticker_aggregation
     )
 
     pd.testing.assert_series_equal(returns, expected)
+
+
+def test_enforce_rule_based_signed_multipliers_preserves_cached_signal_direction() -> None:
+    index = pd.date_range("2020-01-01", periods=240, freq="D")
+    feature = pd.Series(np.tile([-1, 1], 120), index=index, name="seasonal_signal_D")
+    target = pd.Series(-0.01, index=index)
+
+    model = RuleBasedModel(strategy="long_short")
+    model.fit(feature, target)
+    _enforce_rule_based_signed_multipliers(model, "long_short")
+    pred = model.predict(feature, strategy="long_short")
+
+    assert (pred[feature == 1] > 0).all()
+    assert (pred[feature == -1] < 0).all()

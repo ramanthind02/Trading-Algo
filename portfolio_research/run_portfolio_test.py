@@ -31,10 +31,16 @@ _repo_root = _find_repo_root(Path(__file__).resolve())
 if _repo_root is not None and str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
-from portfolio_research.config import load_config
+from portfolio_research.config import PortfolioResearchConfig, load_config
 from portfolio_research.pipelines.portfolio_test import run_portfolio_test_pipeline
 
 
-if __name__ == "__main__":
-    config = load_config()
+def run_portfolio_test(config: PortfolioResearchConfig | None = None) -> None:
+    """Load config (if not provided) and run the portfolio test pipeline."""
+    if config is None:
+        config = load_config()
     run_portfolio_test_pipeline(config)
+
+
+if __name__ == "__main__":
+    run_portfolio_test()

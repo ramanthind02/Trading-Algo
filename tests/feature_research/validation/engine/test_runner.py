@@ -1354,8 +1354,12 @@ def test_run_portfolio_simulation_generates_per_fold_ticker_tearsheets_when_enab
         tearsheets_dir=tmp_path / "tearsheets",
     )
 
-    assert any("fold_0/fold_0_ES_tearsheet.html" in path for path in output_files)
-    assert any("fold_0/fold_0_NQ_tearsheet.html" in path for path in output_files)
+    # Single fold: tearsheets written at tearsheets/ root (no fold_0/), clear names.
+    assert any("ES_tearsheet.html" in path for path in output_files)
+    assert any("NQ_tearsheet.html" in path for path in output_files)
+    assert any("train_ensemble_tearsheet.html" in path for path in output_files)
+    assert any("validation_ensemble_tearsheet.html" in path for path in output_files)
+    assert any("train_and_validation_ensemble_tearsheet.html" in path for path in output_files)
 
 
 def test_run_portfolio_simulation_generates_aggregate_ticker_tearsheets_when_enabled(
@@ -1463,35 +1467,35 @@ def test_run_portfolio_simulation_skips_ticker_tearsheets_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    index = pd.date_range("2020-01-01", periods=6, freq="D")
+    index = pd.date_range("2020-01-01", periods=10, freq="D")
     candles_df = pd.DataFrame(
         {
             "datetime": index,
-            "open": np.arange(6) + 100.0,
-            "high": np.arange(6) + 101.0,
-            "low": np.arange(6) + 99.0,
-            "close": np.arange(6) + 100.5,
-            "ticker": ["ES", "NQ", "ES", "NQ", "ES", "NQ"],
+            "open": np.arange(10) + 100.0,
+            "high": np.arange(10) + 101.0,
+            "low": np.arange(10) + 99.0,
+            "close": np.arange(10) + 100.5,
+            "ticker": ["ES", "NQ"] * 5,
         },
         index=index,
     )
-    target = pd.Series(np.linspace(-0.01, 0.01, 6), index=index)
+    target = pd.Series(np.linspace(-0.01, 0.01, 10), index=index)
     fold_rows = [
         {
             "fold_id": 0,
-            "_train_mask": pd.Series([True, True, True, False, False, False], index=index),
-            "_test_mask": pd.Series([False, False, False, True, True, True], index=index),
-        }
+            "_train_mask": pd.Series([True, True, True, True, False, False, False, False, False, False], index=index),
+            "_test_mask": pd.Series([False, False, False, False, True, True, False, False, False, False], index=index),
+        },
+        {
+            "fold_id": 1,
+            "_train_mask": pd.Series([True, True, True, True, True, True, False, False, False, False], index=index),
+            "_test_mask": pd.Series([False, False, False, False, False, False, True, True, True, True], index=index),
+        },
     ]
     selection_summary_df = pd.DataFrame(
         [
-            {
-                "fold_id": 0,
-                "selected_feature": "lookback=5",
-                "selected_raw_objective": 0.1,
-                "selected_smoothed_objective": 0.1,
-                "top_k_features": '["lookback=5"]',
-            }
+            {"fold_id": 0, "selected_feature": "x=1", "selected_raw_objective": 0.1, "selected_smoothed_objective": 0.1, "top_k_features": '["x=1"]'},
+            {"fold_id": 1, "selected_feature": "x=1", "selected_raw_objective": 0.1, "selected_smoothed_objective": 0.1, "top_k_features": '["x=1"]'},
         ]
     )
     output_files: list[str] = []
@@ -1503,7 +1507,9 @@ def test_run_portfolio_simulation_skips_ticker_tearsheets_when_disabled(
         idx = pd.DatetimeIndex(pd.to_datetime(candles["datetime"]).unique()).sort_values()
         return pd.Series(0.0, index=idx)
 
-    def _fake_evaluate(**_kwargs: object) -> object:
+    def _fake_evaluate(**kwargs: object) -> object:
+        test_candles = cast(pd.DataFrame, kwargs["test_candles"])
+        test_index = pd.DatetimeIndex(pd.to_datetime(test_candles["datetime"]).unique()).sort_values()
         return type(
             "FakeResult",
             (),
@@ -1511,12 +1517,9 @@ def test_run_portfolio_simulation_skips_ticker_tearsheets_when_disabled(
                 "oos_portfolio_sharpe": 0.42,
                 "n_params_selected": 1,
                 "per_signal_oos_sharpe": {},
-                "oos_portfolio_returns": pd.Series([0.01, -0.01, 0.02], index=index[-3:]),
+                "oos_portfolio_returns": pd.Series(0.01, index=test_index),
                 "per_signal_oos_returns": {},
-                "per_ticker_oos_returns": {
-                    "ES": pd.Series([0.01, 0.02], index=[index[4], index[5]]),
-                    "NQ": pd.Series([-0.01], index=[index[3]]),
-                },
+                "per_ticker_oos_returns": {},
             },
         )()
 
@@ -1554,10 +1557,12 @@ def test_run_portfolio_simulation_skips_ticker_tearsheets_when_disabled(
         tearsheets_dir=tmp_path / "tearsheets",
     )
 
+    # Ticker tearsheets disabled: no per-fold and no walkforward ticker files.
     assert not any("fold_0/fold_0_ES_tearsheet.html" in path for path in output_files)
     assert not any("fold_0/fold_0_NQ_tearsheet.html" in path for path in output_files)
     assert not any("walkforward_ES_tearsheet.html" in path for path in output_files)
     assert not any("walkforward_NQ_tearsheet.html" in path for path in output_files)
+    # Multi-fold: walkforward aggregate is written.
     assert any("walkforward_ensemble_tearsheet.html" in path for path in output_files)
 
 

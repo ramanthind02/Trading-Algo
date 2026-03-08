@@ -23,7 +23,8 @@ from feature_research.pipeline import run_validation_pipeline
 
 def main() -> None:
     config = load_config()
-    report = run_validation_pipeline(config, config.reports_dir / "validation")
+    # Use default output path: output_root/feature_type/module_name/validation
+    report = run_validation_pipeline(config, output_dir=None)
     print(
         f"Validation complete. {len(report.folds_df)} fold(s). "
         f"Artifacts written to {config.output_root}"

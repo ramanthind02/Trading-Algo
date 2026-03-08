@@ -93,6 +93,5 @@
 ## Docs Landscape
 
 - `docs/api/` - auto-generated API docs guided by `docs/api/_template.md` and `_scope.md`; update relevant module pages whenever you touch public interfaces.
-- `docs/kanban/` - the new kanban workflow, with `README.md` enforcing scope/interfaces/tests, plus templates under `docs/kanban/templates/` for feature, bugfix, and docs tasks; put every coding intent here before modifying code.
 - `docs/library/`, `docs/methodology/`, `docs/plans/`, `docs/complete/`, and related subfolders hold domain research, validation philosophy, operational playbooks, and project plans—cite them when describing designs or documenting decisions.
 - Keep `docs/to-do/` (existing specs) and `docs/methodology/` in sync with new kanban tasks so implementation artifacts remain traceable.

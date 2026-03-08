@@ -28,7 +28,7 @@ try:
     from feature_selection.base_models import TwoBinBinningModel
 except ImportError:  # pragma: no cover - optional model
     TwoBinBinningModel = None
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import Direction, Ticker, TimeFrame, coerce_direction
 
 
 _MODEL_TYPE_ALIASES: Dict[str, str] = {
@@ -82,7 +82,15 @@ def _create_binning_model_instance(
     """Create a binning model instance from canonical/legacy model type ids."""
     normalized = _normalize_model_type(model_type)
     if normalized == 'continuous_binning':
-        return ContinuousBinningModel(**constructor_params)
+        # Only pass params accepted by ContinuousBinningModel (binary output; no clipping/coverage).
+        continuous_params = {
+            k: constructor_params[k]
+            for k in ('n_bins', 'bin_counts', 'strategy', 'bin_index_min', 'bin_index_max')
+            if k in constructor_params
+        }
+        if 'bin_counts' not in continuous_params and 'n_bins' in continuous_params:
+            continuous_params['bin_counts'] = [continuous_params['n_bins']]
+        return ContinuousBinningModel(**continuous_params)
     if normalized == 'decision_tree_binning':
         if DecisionTreeBinningModel is None:
             raise ValueError("decision_tree_binning is not available in this repository build")
@@ -476,12 +484,14 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
         )
     
     # Validate strategy
-    valid_strategies = ['long', 'short', 'long_short']
-    if config['strategy'] not in valid_strategies:
+    try:
+        strategy = coerce_direction(config['strategy'], field_name=f"{prefix}strategy")
+    except (TypeError, ValueError) as exc:
         raise ValueError(
             f"{prefix}Invalid strategy: {config['strategy']}. "
-            f"Must be one of: {valid_strategies}"
-        )
+            f"Must be one of: {[d.value for d in Direction]}"
+        ) from exc
+    config['strategy'] = strategy.value
     
     # Validate constructor_params is a dict
     if not isinstance(config['constructor_params'], dict):

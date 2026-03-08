@@ -79,7 +79,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
     def test_base_model_save_to_feature_list(self):
         """Test saving a base model to feature_list file."""
         # Create a base model
-        model = ContinuousBinningModel(n_bins=3, selection_metric='sortino', strategy='long')
+        model = ContinuousBinningModel(n_bins=3, strategy='long')
         
         # Fit the model first to set feature_column from Series name
         feature_series = pd.Series(self.feature_data['rsi_signal_D_lookback_14'], name='rsi_signal_D_lookback_14')
@@ -116,7 +116,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         self.assertEqual(model_config['strategy'], 'long')
         self.assertIn('constructor_params', model_config)
         self.assertEqual(model_config['constructor_params']['n_bins'], 3)
-        self.assertEqual(model_config['constructor_params']['selection_metric'], 'sortino')
+        self.assertEqual(model_config['constructor_params']['strategy'], 'long')
         
         # Check tickers
         self.assertIn('ES', control_file['tickers'])
@@ -131,8 +131,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         # Create a base model with short strategy
         model = ContinuousBinningModel(
             n_bins=5,
-            selection_metric='sortino',
-            strategy='short'
+            strategy='short',
         )
         
         # Fit the model first to set feature_column
@@ -681,8 +680,8 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             'strategy': 'long',
             'constructor_params': {
                 'n_bins': 5,
-                'selection_metric': 'sortino',
-                'min_samples_leaf_pct': 0.05
+                'bin_counts': [5],
+                'strategy': 'long',
             }
         }
         add_feature_to_control_file(

@@ -31,33 +31,11 @@ from feature_selection.validation.binning import (
 
 
 def binning_model_from_config(bp: "BinningAnalysisConfig", bin_count: int) -> ContinuousBinningModel:
-    """Factory to build a ContinuousBinningModel from BinningAnalysisConfig + bin_count.
-
-    Eliminates 12+ parameter manual construction across 3 callsites.
-
-    Parameters
-    ----------
-    bp : BinningAnalysisConfig
-        Config with selection_metric, strategy, thresholds, clipping, bin indices.
-    bin_count : int
-        Number of bins for this specific model instance.
-
-    Returns
-    -------
-    ContinuousBinningModel
-    """
+    """Factory to build a ContinuousBinningModel from BinningAnalysisConfig + bin_count."""
     return ContinuousBinningModel(
         n_bins=bin_count,
         bin_counts=[bin_count],
-        selection_metric=bp.selection_metric,
         strategy=bp.strategy,
-        metric_threshold=bp.metric_threshold,
-        t_threshold=bp.t_threshold,
-        shrinkage_k=bp.shrinkage_k,
-        long_clip_min=bp.long_clip_min,
-        long_clip_max=bp.long_clip_max,
-        short_clip_min=bp.short_clip_min,
-        short_clip_max=bp.short_clip_max,
         bin_index_min=bp.bin_index_min,
         bin_index_max=bp.bin_index_max,
     )
@@ -111,12 +89,9 @@ def run_binning_analysis_pipeline(
 
     params = _extract_binning_params(config)
     bin_counts = params.get("bin_counts", [10, 8, 5, 3])
-    selection_metric = str(params.get("selection_metric", "sharpe"))
     strategy = str(params.get("strategy", "long"))
-    metric_threshold = float(params.get("metric_threshold", 0.0))
-    t_threshold = float(params.get("t_threshold", 2.0))
     bin_index_min = int(params.get("bin_index_min", 0))
-    bin_index_max = params.get("bin_index_max")  # None = no cap
+    bin_index_max = params.get("bin_index_max")
     if bin_index_max is not None:
         bin_index_max = int(bin_index_max)
 
@@ -137,23 +112,15 @@ def run_binning_analysis_pipeline(
 
         model = ContinuousBinningModel(
             bin_counts=bin_counts,
-            selection_metric=selection_metric,
             strategy=strategy,
-            metric_threshold=metric_threshold,
-            t_threshold=t_threshold,
-            shrinkage_k=float(params.get("shrinkage_k", 20.0)),
-            long_clip_min=float(params.get("long_clip_min", 0.5)),
-            long_clip_max=float(params.get("long_clip_max", 2.0)),
-            short_clip_min=float(params.get("short_clip_min", 0.5)),
-            short_clip_max=float(params.get("short_clip_max", 2.0)),
             bin_index_min=bin_index_min,
             bin_index_max=bin_index_max,
         )
         model.fit(feature, target)
 
         criteria = BinningSuccessCriteria(
-            metric_threshold=metric_threshold,
-            t_threshold=t_threshold,
+            metric_threshold=0.0,
+            t_threshold=2.0,
         )
         report, diagnostic_plots = generate_binning_report(
             model=model,

@@ -4,19 +4,17 @@ import json
 from pathlib import Path
 import sys
 
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure
 import pandas as pd
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.io import (
+    _build_selected_params_detailed,
     resolve_walkforward_output_dir,
     write_walkforward_artifacts,
 )
 from utils.evaluation.walkforward.runner import WalkforwardRunReport
-from utils.core.enums import TimeFrame
 
 
 def _build_report() -> WalkforwardRunReport:
@@ -106,166 +104,70 @@ def _build_enhanced_report() -> WalkforwardRunReport:
     )
 
 
-def _build_figure() -> Figure:
-    fig, ax = plt.subplots(figsize=(4, 2))
-    ax.plot([0, 1], [0, 1])
-    return fig
-
-
 def test_write_walkforward_artifacts_writes_required_files_and_columns(tmp_path: Path) -> None:
     report = _build_report()
-    stability_figure = _build_figure()
-    timeline_figure = _build_figure()
-
-    try:
-        paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure,
-            fold_timeline_figure=timeline_figure,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure)
-        plt.close(timeline_figure)
+    paths = write_walkforward_artifacts(
+        report=report,
+        feature_type="continuous",
+        module_name="rsi",
+        root_dir=tmp_path,
+    )
 
     assert paths.output_dir == tmp_path / "continuous" / "rsi" / "walkforward"
-    assert paths.folds_csv.exists()
-    assert paths.fold_scores_csv.exists()
-    assert paths.selection_summary_csv.exists()
-    assert paths.selected_params_detailed_csv.exists()
-    assert paths.oos_metrics_csv.exists()
+    assert paths.tearsheets_dir == paths.output_dir / "tearsheets"
     assert paths.report_json.exists()
-    assert paths.walkforward_stability_png.exists()
-    assert paths.fold_timeline_png.exists()
-    assert paths.summary_md.exists()
-    assert paths.summary_html.exists()
-    assert paths.tables_report_html.exists()
 
-    folds_df = pd.read_csv(paths.folds_csv)
-    assert folds_df.columns.tolist() == [
-        "fold_id",
-        "train_start",
-        "train_end",
-        "test_start",
-        "test_end",
-        "train_samples",
-        "test_samples",
-    ]
-
-    fold_scores_df = pd.read_csv(paths.fold_scores_csv)
-    assert fold_scores_df.columns.tolist() == [
-        "fold_id",
-        "param_label",
-        "raw_objective",
-        "oos_objective",
-        "smoothed_objective",
-        "rank",
-        "selected_feature",
-    ]
-
-    selection_summary_df = pd.read_csv(paths.selection_summary_csv)
-    assert selection_summary_df.columns.tolist() == [
-        "fold_id",
-        "selected_feature",
-        "selected_raw_objective",
-        "selected_smoothed_objective",
-        "top_k_features",
-    ]
-
-    detailed_df = pd.read_csv(paths.selected_params_detailed_csv)
-    assert "param_x" in detailed_df.columns
-
-    oos_metrics_df = pd.read_csv(paths.oos_metrics_csv)
-    assert oos_metrics_df.columns.tolist() == ["metric", "value"]
+    payload = json.loads(paths.report_json.read_text(encoding="utf-8"))
+    assert payload["feature_type"] == "continuous"
+    assert payload["module_name"] == "rsi"
+    assert payload["output_dir"] == str(paths.output_dir)
+    assert payload["tearsheets_dir"] == str(paths.tearsheets_dir)
+    assert "tearsheet_files" in payload
+    assert isinstance(payload["tearsheet_files"], list)
+    assert "research_context" in payload
+    assert "objective_metric_name" in payload
+    assert "timeframe" in payload
 
 
 def test_write_walkforward_artifacts_is_deterministic_for_same_inputs(tmp_path: Path) -> None:
     report = _build_report()
-    stability_figure_first = _build_figure()
-    timeline_figure_first = _build_figure()
-    stability_figure_second = _build_figure()
-    timeline_figure_second = _build_figure()
+    first_paths = write_walkforward_artifacts(
+        report=report,
+        feature_type="continuous",
+        module_name="rsi",
+        root_dir=tmp_path,
+    )
+    first_json_bytes = first_paths.report_json.read_bytes()
 
-    try:
-        first_paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure_first,
-            fold_timeline_figure=timeline_figure_first,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-        first_json_bytes = first_paths.report_json.read_bytes()
-        first_folds_csv = first_paths.folds_csv.read_text(encoding="utf-8")
-        first_fold_scores_csv = first_paths.fold_scores_csv.read_text(encoding="utf-8")
-        first_summary_csv = first_paths.selection_summary_csv.read_text(encoding="utf-8")
-        first_selected_params_csv = first_paths.selected_params_detailed_csv.read_text(encoding="utf-8")
-        first_oos_metrics_csv = first_paths.oos_metrics_csv.read_text(encoding="utf-8")
-        first_summary_md = first_paths.summary_md.read_text(encoding="utf-8")
-        first_summary_html = first_paths.summary_html.read_text(encoding="utf-8")
-        first_tables_report_html = first_paths.tables_report_html.read_text(encoding="utf-8")
-
-        second_paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure_second,
-            fold_timeline_figure=timeline_figure_second,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure_first)
-        plt.close(timeline_figure_first)
-        plt.close(stability_figure_second)
-        plt.close(timeline_figure_second)
+    second_paths = write_walkforward_artifacts(
+        report=report,
+        feature_type="continuous",
+        module_name="rsi",
+        root_dir=tmp_path,
+    )
 
     assert first_json_bytes == second_paths.report_json.read_bytes()
-    assert first_folds_csv == second_paths.folds_csv.read_text(encoding="utf-8")
-    assert first_fold_scores_csv == second_paths.fold_scores_csv.read_text(encoding="utf-8")
-    assert first_summary_csv == second_paths.selection_summary_csv.read_text(encoding="utf-8")
-    assert first_selected_params_csv == second_paths.selected_params_detailed_csv.read_text(encoding="utf-8")
-    assert first_oos_metrics_csv == second_paths.oos_metrics_csv.read_text(encoding="utf-8")
-    assert first_summary_md == second_paths.summary_md.read_text(encoding="utf-8")
-    assert first_summary_html == second_paths.summary_html.read_text(encoding="utf-8")
-    assert first_tables_report_html == second_paths.tables_report_html.read_text(encoding="utf-8")
 
 
 def test_write_walkforward_artifacts_normalizes_metadata_identifiers_to_match_output_path(
     tmp_path: Path,
 ) -> None:
     report = _build_report()
-    stability_figure_with_whitespace = _build_figure()
-    timeline_figure_with_whitespace = _build_figure()
-    stability_figure_trimmed = _build_figure()
-    timeline_figure_trimmed = _build_figure()
+    whitespace_paths = write_walkforward_artifacts(
+        report=report,
+        feature_type="  continuous  ",
+        module_name="  rsi  ",
+        root_dir=tmp_path,
+    )
+    whitespace_json_bytes = whitespace_paths.report_json.read_bytes()
+    whitespace_payload = json.loads(whitespace_json_bytes.decode("utf-8"))
 
-    try:
-        whitespace_paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure_with_whitespace,
-            fold_timeline_figure=timeline_figure_with_whitespace,
-            feature_type="  continuous  ",
-            module_name="  rsi  ",
-            root_dir=tmp_path,
-        )
-        whitespace_json_bytes = whitespace_paths.report_json.read_bytes()
-        whitespace_payload = json.loads(whitespace_json_bytes.decode("utf-8"))
-
-        trimmed_paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure_trimmed,
-            fold_timeline_figure=timeline_figure_trimmed,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure_with_whitespace)
-        plt.close(timeline_figure_with_whitespace)
-        plt.close(stability_figure_trimmed)
-        plt.close(timeline_figure_trimmed)
+    trimmed_paths = write_walkforward_artifacts(
+        report=report,
+        feature_type="continuous",
+        module_name="rsi",
+        root_dir=tmp_path,
+    )
 
     assert whitespace_paths.output_dir == tmp_path / "continuous" / "rsi" / "walkforward"
     assert whitespace_payload["feature_type"] == "continuous"
@@ -291,189 +193,34 @@ def test_write_walkforward_artifacts_rejects_blank_identifiers(
     module_name: str,
 ) -> None:
     report = _build_report()
-    stability_figure = _build_figure()
-    timeline_figure = _build_figure()
-
-    try:
-        with pytest.raises(ValueError):
-            write_walkforward_artifacts(
-                report=report,
-                walkforward_stability_figure=stability_figure,
-                fold_timeline_figure=timeline_figure,
-                feature_type=feature_type,
-                module_name=module_name,
-                root_dir=tmp_path,
-            )
-    finally:
-        plt.close(stability_figure)
-        plt.close(timeline_figure)
+    with pytest.raises(ValueError):
+        write_walkforward_artifacts(
+            report=report,
+            feature_type=feature_type,
+            module_name=module_name,
+            root_dir=tmp_path,
+        )
 
 
-def test_write_walkforward_artifacts_includes_enhanced_columns_when_present(
-    tmp_path: Path,
-) -> None:
+def test_build_selected_params_detailed_uses_selected_in_top_k_rows() -> None:
+    """Unit test: _build_selected_params_detailed includes rows where selected_in_top_k is True."""
     report = _build_enhanced_report()
-    stability_figure = _build_figure()
-    timeline_figure = _build_figure()
-    try:
-        paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure,
-            fold_timeline_figure=timeline_figure,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure)
-        plt.close(timeline_figure)
-
-    written = pd.read_csv(paths.fold_scores_csv)
-    assert written.columns.tolist() == [
-        "fold_id",
-        "param_label",
-        "raw_objective",
-        "oos_objective",
-        "smoothed_objective",
-        "rank",
-        "selected_feature",
-        "trade_frequency",
-        "selected_in_top_k",
-    ]
+    detailed = _build_selected_params_detailed(report, {})
+    assert set(detailed["param_label"]) == {"x=2", "x=3"}
 
 
-def test_write_walkforward_artifacts_legacy_report_omits_enhanced_columns(
+def test_write_walkforward_artifacts_includes_research_context_and_last_fold_test_end(
     tmp_path: Path,
 ) -> None:
     report = _build_report()
-    stability_figure = _build_figure()
-    timeline_figure = _build_figure()
-    try:
-        paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure,
-            fold_timeline_figure=timeline_figure,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure)
-        plt.close(timeline_figure)
-
-    written = pd.read_csv(paths.fold_scores_csv)
-    assert "trade_frequency" not in written.columns
-    assert "selected_in_top_k" not in written.columns
-    assert written.columns.tolist() == [
-        "fold_id",
-        "param_label",
-        "raw_objective",
-        "oos_objective",
-        "smoothed_objective",
-        "rank",
-        "selected_feature",
-    ]
-
-
-def test_write_walkforward_artifacts_selected_params_detailed_uses_selected_in_top_k_rows(
-    tmp_path: Path,
-) -> None:
-    report = _build_enhanced_report()
-    stability_figure = _build_figure()
-    timeline_figure = _build_figure()
-    try:
-        paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure,
-            fold_timeline_figure=timeline_figure,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure)
-        plt.close(timeline_figure)
-
-    selected_params = pd.read_csv(paths.selected_params_detailed_csv)
-    assert set(selected_params["param_label"]) == {"x=2", "x=3"}
-
-
-def test_write_walkforward_artifacts_includes_portfolio_simulation_section(
-    tmp_path: Path,
-) -> None:
-    report = _build_report()
-    report = WalkforwardRunReport(
-        folds_df=report.folds_df,
-        fold_scores_df=report.fold_scores_df,
-        selection_summary_df=report.selection_summary_df,
-        portfolio_results_df=pd.DataFrame(
-            [
-                {
-                    "fold_id": 0,
-                    "oos_portfolio_sharpe": 0.42,
-                    "n_params_selected": 2,
-                    "error": "",
-                }
-            ]
-        ),
+    paths = write_walkforward_artifacts(
+        report=report,
+        feature_type="continuous",
+        module_name="rsi",
+        root_dir=tmp_path,
+        research_context={"custom_key": "custom_value"},
     )
-    stability_figure = _build_figure()
-    timeline_figure = _build_figure()
-    try:
-        paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure,
-            fold_timeline_figure=timeline_figure,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure)
-        plt.close(timeline_figure)
-
-    summary_md = paths.summary_md.read_text(encoding="utf-8")
-    assert "Portfolio Simulation (Stage 2)" in summary_md
-    oos_metrics_df = pd.read_csv(paths.oos_metrics_csv)
-    assert "mean_oos_portfolio_sharpe" in set(oos_metrics_df["metric"])
-
-
-def test_write_walkforward_artifacts_uses_timeframe_for_aggregate_annualization(
-    tmp_path: Path,
-) -> None:
-    report = _build_report()
-    aggregate_returns = pd.Series(
-        [0.01, -0.01, 0.02, 0.0],
-        index=pd.date_range("2020-01-01", periods=4, freq="W"),
-    )
-    report = WalkforwardRunReport(
-        folds_df=report.folds_df,
-        fold_scores_df=report.fold_scores_df,
-        selection_summary_df=report.selection_summary_df,
-        portfolio_results_df=report.portfolio_results_df,
-        aggregate_oos_returns=aggregate_returns,
-        timeframe=TimeFrame.W,
-    )
-    stability_figure = _build_figure()
-    timeline_figure = _build_figure()
-    try:
-        paths = write_walkforward_artifacts(
-            report=report,
-            walkforward_stability_figure=stability_figure,
-            fold_timeline_figure=timeline_figure,
-            feature_type="continuous",
-            module_name="rsi",
-            root_dir=tmp_path,
-        )
-    finally:
-        plt.close(stability_figure)
-        plt.close(timeline_figure)
-
-    agg_metrics = pd.read_csv(paths.aggregate_walkforward_metrics_csv)
-    sharpe_ann = float(
-        agg_metrics.loc[agg_metrics["metric"] == "sharpe_annualized", "value"].iloc[0]
-    )
-    mean_ret = float(aggregate_returns.mean())
-    std_ret = float(aggregate_returns.std(ddof=0))
-    expected_sharpe = mean_ret / std_ret * (TimeFrame.W.bars_per_year ** 0.5)
-    assert sharpe_ann == pytest.approx(expected_sharpe)
+    payload = json.loads(paths.report_json.read_text(encoding="utf-8"))
+    ctx = payload["research_context"]
+    assert ctx["custom_key"] == "custom_value"
+    assert ctx["last_fold_test_end"] == "2020-03-31"

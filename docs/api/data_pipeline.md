@@ -363,7 +363,7 @@ generate_node_tearsheet(
     features_df: Optional[pd.DataFrame] = None,
     targets_df: Optional[pd.DataFrame] = None,
     bias_spec: Optional[Dict[str, Any]] = None,
-    strategy: str = "long-short",
+    strategy: str = "long_short",
     target_col: str = "log_return",
     tickers: Optional[Union[Ticker, List[Ticker]]] = None,
     binning_model: Optional[BinningModelBase] = None,

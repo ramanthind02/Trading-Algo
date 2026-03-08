@@ -303,19 +303,11 @@ Signature:
 @dataclass(frozen=True)
 class WalkforwardArtifactPaths:
     output_dir: Path
-    folds_csv: Path
-    fold_scores_csv: Path
-    selection_summary_csv: Path
-    selected_params_detailed_csv: Path
-    oos_metrics_csv: Path
+    tearsheets_dir: Path
     report_json: Path
-    walkforward_stability_png: Path
-    fold_timeline_png: Path
-    summary_md: Path
-    summary_html: Path
 ```
 
-Description: immutable output-path contract for persisted walkforward artifacts under the shared-results layout.
+Description: immutable output-path contract for persisted walkforward artifacts. Only `report.json` is written by this module; tearsheets are produced by the walkforward runner and are the single source of truth for performance metrics.
 
 #### `resolve_walkforward_output_dir`
 Type: function
@@ -326,10 +318,11 @@ def resolve_walkforward_output_dir(
     feature_type: str,
     module_name: str,
     root_dir: Path = Path("feature_research/shared_results"),
+    output_subdir: str = "walkforward",
 ) -> Path
 ```
 
-Description: resolves deterministic output directory path as `feature_research/shared_results/{feature_type}/{module_name}/walkforward/` (or equivalent path rooted at `root_dir`).
+Description: resolves deterministic output directory path as `{root_dir}/{feature_type}/{module_name}/{output_subdir}/` (e.g. `feature_research/shared_results/{feature_type}/{module_name}/validation/`).
 
 Validation behavior:
 - Raises `ValueError` when `feature_type` or `module_name` is blank.
@@ -341,42 +334,21 @@ Signature:
 ```python
 def write_walkforward_artifacts(
     report: WalkforwardRunReport,
-    walkforward_stability_figure: Figure,
-    fold_timeline_figure: Figure,
     feature_type: str,
     module_name: str,
     root_dir: Path = Path("feature_research/shared_results"),
+    research_context: dict[str, object] | None = None,
+    output_subdir: str = "walkforward",
 ) -> WalkforwardArtifactPaths
 ```
 
-Description: writes walkforward report tables, deterministic metadata JSON, and figures to the resolved shared-results output directory and returns all artifact paths.
+Description: writes only `report.json` to the resolved output directory. Tearsheets (QuantStats HTML reports) are written by the walkforward runner under `tearsheets/` and are the single source of truth for performance metrics; this function does not write tables, figures, or summary files.
 
-Output-file contract (exact filenames):
-- `folds.csv`
-- `fold_scores.csv`
-- `selection_summary.csv`
-- `selected_params_detailed.csv`
-- `oos_metrics.csv`
-- `report.json`
-- `walkforward_stability.png`
-- `fold_timeline.png`
-- `summary.md`
-- `summary.html`
+Output-file contract:
+- `report.json` (only file written by this function)
 
-Table schema contract (exact columns):
-- `folds.csv`: `fold_id`, `train_start`, `train_end`, `test_start`, `test_end`, `train_samples`, `test_samples`
-- `fold_scores.csv` base: `fold_id`, `param_label`, `raw_objective`, `oos_objective`, `smoothed_objective`, `rank`, `selected_feature`
-- `fold_scores.csv` enhanced (when `selection_method="enhanced"`): add `trade_frequency`, `selected_in_top_k`
-- `selection_summary.csv`: `fold_id`, `selected_feature`, `selected_raw_objective`, `selected_smoothed_objective`, `top_k_features`
-- `portfolio_results_df` columns: `fold_id`, `oos_portfolio_sharpe`, `n_params_selected`, `error`
-- `selected_params_detailed.csv`: selected parameter rows per fold; uses `selected_in_top_k=True` when present, otherwise `selected_feature=True`
-
-`report.json` minimum keys:
-- `feature_type`
-- `module_name`
-- `output_dir`
-- `artifact_files`
-- `row_counts`
+`report.json` keys:
+- `feature_type`, `module_name`, `output_dir`, `tearsheets_dir`, `tearsheet_files` (list of relative paths under tearsheets_dir), `objective_metric_name`, `timeframe`, `research_context` (includes `last_fold_test_end`, `aggregate_returns_last_date` when available)
 
 Serialization guarantees:
 - UTF-8 text output

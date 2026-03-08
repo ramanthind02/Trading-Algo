@@ -49,6 +49,7 @@ from utils.evaluation.permutation_test.permutation_engine import (
     PermutationEngine,
     FeaturePermutationStrategy
 )
+from utils.core.enums import DirectionInput, coerce_direction
 
 
 
@@ -1559,7 +1560,7 @@ class FeatureExplorer:
         features: Optional[List[str]] = None,
         binning_model: Optional[Any] = None,
         metric: Optional[Any] = None,
-        strategy: str = 'long',
+        strategy: DirectionInput = "long",
         figsize: Tuple[int, int] = (12, 6),
         save_dir: Optional[str] = None,
         show_plot: bool = True,
@@ -1586,11 +1587,11 @@ class FeatureExplorer:
         metric : Optional[Any], default=None
             Metric object with compute(returns) -> float for title/summary.
             If None, metric computation is skipped.
-        strategy : str, default='long'
-            Strategy flag: 'long', 'short', or 'long-short'.
+        strategy : DirectionInput, default='long'
+            Strategy flag: 'long', 'short', or 'long_short'.
             - 'long': Only take long positions when long bin is selected
             - 'short': Only take short positions when short bin is selected
-            - 'long-short': Take long positions when long bin is selected, short positions when short bin is selected
+            - 'long_short': Take long positions when long bin is selected, short positions when short bin is selected
             Only used if binning_model is provided
         figsize : Tuple[int, int], default=(12, 6)
             Figure size
@@ -1629,8 +1630,7 @@ class FeatureExplorer:
         target_series = self.targets_df[target_col]
         
         # Validate strategy
-        if strategy not in ['long', 'short', 'long-short']:
-            raise ValueError(f"strategy must be 'long', 'short', or 'long-short', got '{strategy}'")
+        strategy = coerce_direction(strategy, field_name="strategy").value
         
         if verbose:
             print(f"\n{'='*70}")
@@ -1820,7 +1820,7 @@ class FeatureExplorer:
                 if len(common_idx_clean) >= 10:
                     model_clone = copy.deepcopy(binning_model)
                     model_clone.fit(X_clean.reindex(common_idx_clean), y_clean.reindex(common_idx_clean))
-                    if hasattr(model_clone, 'strategy') and model_clone.strategy == 'short':
+                    if hasattr(model_clone, 'strategy') and getattr(model_clone.strategy, 'value', model_clone.strategy) == 'short':
                         selected_bin = model_clone.best_short_bin_
                     else:
                         selected_bin = model_clone.best_long_bin_
@@ -1884,7 +1884,7 @@ class FeatureExplorer:
         target_col: str = 'log_return',
         binning_model: Optional[Any] = None,
         metric: Optional[Any] = None,
-        strategy: str = 'long',
+        strategy: DirectionInput = "long",
         figsize: Tuple[int, int] = (12, 6),
         save_dir: Optional[str] = None,
         show_plot: bool = True,
@@ -1908,8 +1908,8 @@ class FeatureExplorer:
         metric : Optional[Any], default=None
             Metric object with compute(returns) -> float for title/summary.
             If None, metric computation is skipped.
-        strategy : str, default='long'
-            Strategy flag: 'long', 'short', or 'long-short'
+        strategy : DirectionInput, default='long'
+            Strategy flag: 'long', 'short', or 'long_short'
         figsize : Tuple[int, int], default=(12, 6)
             Figure size
         save_dir : Optional[str], default=None
@@ -1938,8 +1938,7 @@ class FeatureExplorer:
             raise ValueError(f"Feature '{feature_name}' not found")
         if target_col not in self.targets_df.columns:
             raise ValueError(f"Target '{target_col}' not found")
-        if strategy not in ['long', 'short', 'long-short']:
-            raise ValueError(f"strategy must be 'long', 'short', or 'long-short', got '{strategy}'")
+        strategy = coerce_direction(strategy, field_name="strategy").value
         
         import os
         
@@ -2168,7 +2167,7 @@ class FeatureExplorer:
         metric : Optional[Any], default=None
             Metric object with compute(returns) -> float for title/summary.
         strategy : str, default='long'
-            Strategy flag: 'long', 'short', or 'long-short'
+            Strategy flag: 'long', 'short', or 'long_short'
         figsize : Tuple[int, int], default=(12, 6)
             Figure size
         save_dir : Optional[str], default=None
@@ -2267,7 +2266,7 @@ class FeatureExplorer:
         target_col : str, default='log_return'
             Target column to use for analysis
         strategy : str, default='long'
-            Strategy for signal generation: 'long', 'short', or 'long-short'
+            Strategy for signal generation: 'long', 'short', or 'long_short'
         metric : Optional[Any], default=None
             Metric object from metrics.performance (e.g., SortinoRatio, SharpeRatio).
             Must have a .compute() method. If None, defaults to SortinoRatio.
@@ -2447,7 +2446,7 @@ class FeatureExplorer:
                         if len(common_idx) >= 10:  # Minimum samples needed
                             model_clone.fit(X_clean.reindex(common_idx), y_clean.reindex(common_idx))
                             # Get selected bin based on strategy
-                            if hasattr(model_clone, 'strategy') and model_clone.strategy == 'short':
+                            if hasattr(model_clone, 'strategy') and getattr(model_clone.strategy, 'value', model_clone.strategy) == 'short':
                                 selected_bin = model_clone.best_short_bin_
                             else:
                                 selected_bin = model_clone.best_long_bin_

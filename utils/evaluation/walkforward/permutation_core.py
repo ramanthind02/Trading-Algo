@@ -21,7 +21,6 @@ from utils.evaluation.walkforward.permutation_helpers import (
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from utils.evaluation.walkforward.portfolio_evaluator import (
     _build_one_base_model_with_members,
-    _normalize_strategy,
     _normalize_timeframe,
     build_research_portfolio,
 )
@@ -30,7 +29,7 @@ from utils.evaluation.walkforward.runner import (
     _resolve_feature_type,
     run_portfolio_simulation,
 )
-from utils.core.enums import TimeFrame
+from utils.core.enums import Direction, TimeFrame, coerce_direction
 
 
 def _compute_metrics_from_returns_matrix(
@@ -270,7 +269,10 @@ def _compute_fixed_oos_signal_by_fold(
     trading_timeframe = (
         _normalize_timeframe(tf_raw) if tf_raw is not None else TimeFrame.D
     )
-    strategy = _normalize_strategy(str(getattr(binning_config, "strategy", "long")))
+    strategy = coerce_direction(
+        getattr(binning_config, "strategy", Direction.LONG.value),
+        field_name="binning_config.strategy",
+    ).value
 
     for fold_row in fold_rows:
         fold_id = int(fold_row["fold_id"])

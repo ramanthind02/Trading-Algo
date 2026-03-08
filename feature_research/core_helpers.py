@@ -95,11 +95,14 @@ def build_runtime_walkforward_config(
 ) -> "WalkforwardResearchConfig":
     """Build runtime walkforward configuration from date bounds.
 
+    Uses fixed defaults for top_k, objective metric, and smoothing so that
+    OOS/validation single-fold runs do not depend on removed ResearchConfig
+    fields. Permutation objective is specified via PermutationResearchConfig.
+
     Parameters
     ----------
     config : ResearchConfig
-        Research configuration with top_k, objective_metric_key, output_root,
-        n_jobs, and smoothing_self_weight.
+        Research configuration with output_root and n_jobs.
     train_start : pd.Timestamp
         Training period start date.
     train_end : pd.Timestamp
@@ -126,11 +129,11 @@ def build_runtime_walkforward_config(
         enabled=True,
         test_step=test_step,
         num_steps=1,
-        top_k=config.top_k,
-        objective_metric_name=config.objective_metric_key,
+        top_k=1,
+        objective_metric_name="t_stat",
         min_fold_samples=10,
         output_root=config.output_root,
         selection_method=WalkforwardSelectionMethod.TOP_K,
         n_jobs=config.n_jobs,
-        smoothing_self_weight=config.smoothing_self_weight,
+        smoothing_self_weight=3.0,
     )
