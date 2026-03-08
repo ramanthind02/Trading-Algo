@@ -517,14 +517,24 @@ def create_base_model_from_config(
         binning_model.bin_edges_ = fitted_params.get('bin_edges')
         binning_model.bin_stats_ = fitted_params.get('bin_stats', {})
         binning_model.significant_regions_ = fitted_params.get('significant_regions', [])
-        binning_model.active_bins_by_strategy_ = fitted_params.get(
+        # Convert string bin indices to int (JSON serializes int keys as strings)
+        raw_active_bins = fitted_params.get(
             'active_bins_by_strategy',
             {'long': [], 'short': [], 'long_short': []},
         )
-        binning_model.position_multipliers_by_strategy_ = fitted_params.get(
+        binning_model.active_bins_by_strategy_ = {
+            strategy: [int(b) for b in bins]
+            for strategy, bins in raw_active_bins.items()
+        }
+        # Convert string keys to int for position_multipliers (JSON serializes int keys as strings)
+        raw_multipliers = fitted_params.get(
             'position_multipliers_by_strategy',
             {'long': {}, 'short': {}, 'long_short': {}},
         )
+        binning_model.position_multipliers_by_strategy_ = {
+            strategy: {int(float(k)): v for k, v in mults.items()}
+            for strategy, mults in raw_multipliers.items()
+        }
         binning_model.fit_config_ = fitted_params.get('fit_config', {})
         binning_model.model_version_ = fitted_params.get('model_version', 'binning_v2')
         binning_model.is_fitted_ = True

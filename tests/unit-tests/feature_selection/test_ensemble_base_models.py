@@ -286,9 +286,9 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify base model is fitted
         self.assertTrue(ensemble.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNotNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
+        self.assertIsNotNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].binning_model.bin_edges_)
         self.assertTrue(
-            len(ensemble.base_models['rsi_signal_D_lookback_14_long'].active_bins_by_strategy_['long']) >= 0
+            len(ensemble.base_models['rsi_signal_D_lookback_14_long'].binning_model.active_bins_by_strategy_['long']) >= 0
         )
         self.assertEqual(ensemble.base_models['rsi_signal_D_lookback_14_long'].feature_column, 'rsi_signal_D_lookback_14')
         
@@ -436,7 +436,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify base model is fitted
         self.assertTrue(ensemble2.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNotNone(ensemble2.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
+        self.assertIsNotNone(ensemble2.base_models['rsi_signal_D_lookback_14_long'].binning_model.bin_edges_)
         
         # Verify ensemble is fitted
         self.assertTrue(ensemble2.is_fitted_)
@@ -682,8 +682,10 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             'constructor_params': {
                 'n_bins': 5,
                 'selection_metric': 'sortino',
-                'min_samples_leaf_pct': 0.05
-            }
+            },
+            'members': [
+                {'member_name': 'momentum_signal_D_lookback_20_long', 'params': {'n_bins': 5, 'selection_metric': 'sortino'}}
+            ]
         }
         add_feature_to_control_file(
             filepath=self.control_file_path,
@@ -760,6 +762,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         }
         
         control_file['metadata']['is_fit'] = True
+        control_file['metadata']['selection_method'] = 'manual'
         control_file['fitted_base_models'] = fitted_base_models
         control_file['fitted_ensemble'] = {
             'weights': ensemble.weights_,
@@ -783,11 +786,11 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify model1 is fitted (has fitted params)
         self.assertTrue(ensemble_loaded.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNotNone(ensemble_loaded.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
-        
+        self.assertIsNotNone(ensemble_loaded.base_models['rsi_signal_D_lookback_14_long'].binning_model.bin_edges_)
+
         # Verify model2 is NOT fitted (no fitted params)
         self.assertFalse(ensemble_loaded.base_models['momentum_signal_D_lookback_20_long'].is_fitted_)
-        self.assertIsNone(ensemble_loaded.base_models['momentum_signal_D_lookback_20_long'].bin_edges_)
+        self.assertIsNone(ensemble_loaded.base_models['momentum_signal_D_lookback_20_long'].binning_model.bin_edges_)
         
         # Verify ensemble is fitted
         self.assertTrue(ensemble_loaded.is_fitted_)
@@ -895,6 +898,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
             control_file = json.load(f)
         
         control_file['metadata']['is_fit'] = True
+        control_file['metadata']['selection_method'] = 'manual'
         control_file['fitted_base_models'] = {}  # Empty dict
         control_file['fitted_ensemble'] = {
             'weights': {'rsi_signal_D_lookback_14_long': 1.0},
@@ -920,7 +924,7 @@ class TestEnsembleBaseModelsWorkflow(unittest.TestCase):
         
         # Verify base model is NOT fitted (no fitted params)
         self.assertFalse(ensemble.base_models['rsi_signal_D_lookback_14_long'].is_fitted_)
-        self.assertIsNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].bin_edges_)
+        self.assertIsNone(ensemble.base_models['rsi_signal_D_lookback_14_long'].binning_model.bin_edges_)
         
         # Verify we can still fit the base model
         ensemble.fit(

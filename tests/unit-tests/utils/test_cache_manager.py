@@ -126,7 +126,11 @@ class TestPopulateCache:
     """Tests for bulk cache population."""
 
     def test_populate_cache_single_spec(self, cache_manager):
-        """Test populating cache for single spec."""
+        """Test populating cache for single spec.
+
+        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd)
+        for volatility-scaled targets, so 1 user spec + 2 aux = 3 total.
+        """
         specs = [{
             'module_name': 'rsi',
             'params': {'lookback': 14},
@@ -141,12 +145,17 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['total'] == 1
-        assert result['success'] == 1
+        # 1 user spec + 2 auxiliary (atr, ewsd) = 3 total, each for 1 ticker
+        assert result['total'] == 3
+        assert result['success'] == 3
         assert result['failed'] == 0
 
     def test_populate_cache_multiple_tickers(self, cache_manager):
-        """Test populating cache for multiple tickers."""
+        """Test populating cache for multiple tickers.
+
+        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd).
+        1 user spec + 2 aux = 3 specs, each for 2 tickers = 6 total.
+        """
         specs = [{
             'module_name': 'momentum',
             'params': {'lookback': 20},
@@ -161,11 +170,16 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['total'] == 2
-        assert result['success'] == 2
+        # (1 user + 2 aux) * 2 tickers = 6
+        assert result['total'] == 6
+        assert result['success'] == 6
 
     def test_populate_cache_multiple_specs(self, cache_manager):
-        """Test populating cache for multiple specs."""
+        """Test populating cache for multiple specs.
+
+        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd).
+        2 user specs + 2 aux = 4 specs, each for 1 ticker = 4 total.
+        """
         specs = [
             {'module_name': 'rsi', 'params': {'lookback': 14}, 'timeframes': [TimeFrame.D]},
             {'module_name': 'rsi', 'params': {'lookback': 21}, 'timeframes': [TimeFrame.D]},
@@ -179,8 +193,9 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['total'] == 2
-        assert result['success'] == 2
+        # (2 user + 2 aux) * 1 ticker = 4
+        assert result['total'] == 4
+        assert result['success'] == 4
 
     def test_populate_cache_overwrite_existing(self, cache_manager):
         """Test overwriting existing cache."""
@@ -210,8 +225,9 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result1['success'] == 1
-        assert result2['success'] == 1
+        # 1 user spec + 2 aux = 3
+        assert result1['success'] == 3
+        assert result2['success'] == 3
 
     def test_populate_cache_skip_existing(self, cache_manager):
         """Test skipping existing cache when overwrite_existing=False."""
@@ -241,7 +257,8 @@ class TestPopulateCache:
             show_progress=False
         )
 
-        assert result['skipped'] == 1
+        # 1 user spec + 2 aux = 3 all skipped
+        assert result['skipped'] == 3
 
 
 class TestCacheManagement:
@@ -348,9 +365,9 @@ class TestConcurrency:
             show_progress=False
         )
 
-        # Should populate 2 specs x 2 tickers = 4 caches
-        assert result['total'] == 4
-        assert result['success'] == 4
+        # (2 user specs + 2 aux) x 2 tickers = 8 caches
+        assert result['total'] == 8
+        assert result['success'] == 8
 
 
 if __name__ == '__main__':

@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 from ensemble.portfolio_tester import (

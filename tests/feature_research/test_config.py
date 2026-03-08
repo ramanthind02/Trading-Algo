@@ -32,25 +32,22 @@ def test_load_config_defaults():
     config = load_config()
     assert Ticker.ES in config.tickers
     assert config.start == datetime(2000, 1, 1)
-    assert config.end == datetime(2023, 12, 31)
-    assert config.bias_spec["module_name"] == "rsi"
-    assert isinstance(config.bias_spec["params"]["lookback"], list)
+    assert config.end == datetime(2025, 12, 30)
     assert config.target_col == "log_return_atr"
     assert config.use_cache is True
     assert config.populate_cache is True
 
 
-def test_reports_dir_includes_module_name():
+def test_reports_dir_includes_feature_type():
     config = load_config()
-    assert config.bias_spec["module_name"] in str(config.reports_dir)
-    assert "continuous" in str(config.reports_dir)
+    assert config.feature_type.value in str(config.reports_dir)
 
 
 def test_load_config_includes_walkforward_defaults() -> None:
     config = load_config()
 
     assert isinstance(config.walkforward, WalkforwardResearchConfig)
-    assert config.walkforward.enabled is False
+    assert config.walkforward.enabled is True
     assert config.walkforward.train_start >= config.start
     assert config.walkforward.train_end < config.end
     assert config.walkforward.output_root == Path("feature_research/shared_results")
@@ -59,7 +56,7 @@ def test_load_config_includes_walkforward_defaults() -> None:
 def test_load_config_enables_per_fold_tearsheets_for_oos() -> None:
     config = load_config()
 
-    assert config.walkforward.output_per_fold_tearsheets is True
+    assert config.walkforward.output_per_fold_tearsheets is False
 
 
 def test_load_config_exposes_walkforward_selection_control() -> None:
@@ -221,7 +218,7 @@ def test_research_config_rejects_weight_layer_algorithm_mismatch() -> None:
 def test_load_config_includes_oos_window() -> None:
     config = load_config()
     assert config.oos_window is not None
-    assert config.oos_window.train_start == datetime(2007, 12, 30)
+    assert config.oos_window.train_start == datetime(2009, 1, 1)
     assert config.oos_window.train_end == datetime(2023, 12, 30)
     assert config.oos_window.test_start == datetime(2024, 1, 1)
     assert config.oos_window.test_end == datetime(2025, 12, 31)

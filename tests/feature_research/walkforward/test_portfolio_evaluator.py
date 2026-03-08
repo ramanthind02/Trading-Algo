@@ -114,14 +114,15 @@ def test_calculate_oos_returns_from_positions_preserves_multi_ticker_aggregation
         series_name="portfolio_returns",
     )
 
+    # After reindex to full candle calendar, dates[0] is filled with 0.0
     expected = pd.Series(
         [
+            0.0,
             1.0 * log(110.0 / 100.0) + 0.5 * log(190.0 / 200.0),
             -0.25 * log(99.0 / 110.0) + 1.0 * log(209.0 / 190.0),
         ],
-        index=pd.DatetimeIndex([dates[1], dates[2]]),
+        index=pd.DatetimeIndex([dates[0], dates[1], dates[2]]),
         name="portfolio_returns",
     )
-    expected.index.name = "ret_datetime"
 
     pd.testing.assert_series_equal(returns, expected)

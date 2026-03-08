@@ -1226,7 +1226,7 @@ Each feature has its own control file (`features/{feature_column}.json`) contain
 
 See `docs/to-do/vault_specs.md` for complete documentation.
 """
-        with open(readme_path, 'w') as f:
+        with open(readme_path, 'w', encoding='utf-8') as f:
             f.write(readme_content)
 
 

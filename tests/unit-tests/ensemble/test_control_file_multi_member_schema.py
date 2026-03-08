@@ -72,8 +72,8 @@ class TestControlFileMultiMemberSchema:
             'strategy': 'long',
             'constructor_params': {'n_bins': 3},
             'members': [
-                {'member_id': 'member_1', 'bin_index': 0},
-                {'member_id': 'member_2', 'bin_index': 1},
+                {'member_name': 'member_1', 'params': {'bin_index': 0}},
+                {'member_name': 'member_2', 'params': {'bin_index': 1}},
             ]
         }
         
@@ -117,8 +117,8 @@ class TestControlFileMultiMemberSchema:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'member_1', 'bin_index': 0},
-                        {'member_id': 'member_2', 'bin_index': 1},
+                        {'member_name': 'member_1', 'params': {'bin_index': 0}},
+                        {'member_name': 'member_2', 'params': {'bin_index': 1}},
                     ]
                 }
             ]
@@ -142,7 +142,7 @@ class TestControlFileMultiMemberSchema:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'member_1', 'bin_index': 0},
+                        {'member_name': 'member_1', 'params': {'bin_index': 0}},
                     ]
                 }
             ]
@@ -165,7 +165,8 @@ class TestControlFileMultiMemberSchema:
         control_file = {
             'metadata': {
                 'is_fit': True,
-                'version': '2.0.0'
+                'version': '2.0.0',
+                'selection_method': 'manual'
             },
             'base_models': [
                 {
@@ -175,7 +176,7 @@ class TestControlFileMultiMemberSchema:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'member_1', 'bin_index': 0},
+                        {'member_name': 'member_1', 'params': {'bin_index': 0}},
                     ]
                 }
             ],

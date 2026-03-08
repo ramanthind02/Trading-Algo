@@ -178,7 +178,7 @@ class TestBaseModel:
         assert base_model.binning_model == binning_model
         assert base_model.ticker == Ticker.ES
         assert len(base_model.bias_nodes) == 1
-        assert TimeFrame.D in base_model.bias_nodes
+        assert (Ticker.ES, TimeFrame.D) in base_model.bias_nodes
     
     def test_add_candle(self, bias_node_spec, sample_candles):
         """Test adding candles to BaseModel."""
@@ -223,7 +223,8 @@ class TestBaseModel:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         # Fit model
@@ -239,7 +240,8 @@ class TestBaseModel:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         # Fit first
@@ -258,27 +260,30 @@ class TestVaultManager:
     
     @pytest.fixture
     def temp_vault(self):
-        """Create a temporary vault directory for testing."""
+        """Create a temporary vault directory for testing, patching VAULT_ROOT."""
+        import ensemble.vault_manager as vm
         temp_dir = tempfile.mkdtemp()
         vault_root = Path(temp_dir) / 'vault'
         vault_root.mkdir()
+        original_vault_root = vm.VAULT_ROOT
+        vm.VAULT_ROOT = str(vault_root)
         yield str(vault_root)
+        vm.VAULT_ROOT = original_vault_root
         shutil.rmtree(temp_dir)
     
     def test_initialize_vault(self, temp_vault):
         """Test vault initialization."""
-        initialize_vault(temp_vault)
-        
+        initialize_vault()
+
         vault_path = Path(temp_vault)
         assert vault_path.exists()
         assert (vault_path / 'README.md').exists()
-    
+
     def test_create_ensemble_directory(self, temp_vault):
         """Test ensemble directory creation."""
-        initialize_vault(temp_vault)
-        
+        initialize_vault()
+
         ensemble_dir = create_ensemble_directory(
-            vault_root=temp_vault,
             timeframe=TimeFrame.D,
             ensemble_name='test_ensemble',
             direction=Direction.LONG
@@ -288,63 +293,70 @@ class TestVaultManager:
         assert ensemble_path.exists()
         assert (ensemble_path / 'features').exists()
         assert ensemble_path.name == 'test_ensemble_long'
-    
+
     def test_create_ensemble_directory_duplicate(self, temp_vault):
-        """Test that creating duplicate ensemble raises error."""
-        initialize_vault(temp_vault)
-        
-        create_ensemble_directory(
-            vault_root=temp_vault,
+        """Test that creating duplicate ensemble with same tickers returns existing path,
+        and duplicate with different tickers raises error."""
+        initialize_vault()
+
+        first_dir = create_ensemble_directory(
             timeframe=TimeFrame.D,
             ensemble_name='test_ensemble',
             direction=Direction.LONG
         )
-        
-        # Try to create again
+
+        # Same tickers should succeed and return the same path
+        second_dir = create_ensemble_directory(
+            timeframe=TimeFrame.D,
+            ensemble_name='test_ensemble',
+            direction=Direction.LONG
+        )
+        assert first_dir == second_dir
+
+        # Different tickers should raise
         with pytest.raises(ValueError, match="already exists"):
             create_ensemble_directory(
-                vault_root=temp_vault,
                 timeframe=TimeFrame.D,
                 ensemble_name='test_ensemble',
-                direction=Direction.LONG
+                direction=Direction.LONG,
+                tickers=[Ticker.NQ]
             )
-    
+
     def test_get_ensemble_path(self, temp_vault):
         """Test getting ensemble path."""
-        initialize_vault(temp_vault)
-        
+        initialize_vault()
+
         path = get_ensemble_path(
-            vault_root=temp_vault,
             timeframe=TimeFrame.D,
             ensemble_name='test_ensemble',
             direction=Direction.LONG
         )
-        
+
         expected = Path(temp_vault) / 'D' / 'test_ensemble_long'
         assert path == str(expected)
-    
+
     def test_list_ensembles(self, temp_vault):
         """Test listing ensembles."""
-        initialize_vault(temp_vault)
-        
+        initialize_vault()
+
         # Create multiple ensembles
-        create_ensemble_directory(temp_vault, TimeFrame.D, 'ensemble1', Direction.LONG)
-        create_ensemble_directory(temp_vault, TimeFrame.D, 'ensemble2', Direction.SHORT)
-        create_ensemble_directory(temp_vault, TimeFrame.W, 'ensemble3', Direction.LONG)
-        
+        create_ensemble_directory(TimeFrame.D, 'ensemble1', Direction.LONG)
+        create_ensemble_directory(TimeFrame.D, 'ensemble2', Direction.SHORT)
+        create_ensemble_directory(TimeFrame.W, 'ensemble3', Direction.LONG)
+
         df = list_ensembles(temp_vault)
-        
+
         assert isinstance(df, pd.DataFrame)
         assert len(df) == 3
         assert 'ensemble_name' in df.columns
         assert 'timeframe' in df.columns
         assert 'direction' in df.columns
-    
+
     def test_add_feature_to_ensemble(self, temp_vault, bias_node_spec):
         """Test adding feature to ensemble."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Create and fit a base model
@@ -352,25 +364,30 @@ class TestVaultManager:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
-        
+
         # Create minimal candles and targets for fitting
         np.random.seed(42)
         np.random.seed(42)
-        dates = pd.date_range('2020-01-01', periods=50, freq='D')
+        n_points = 200
+        dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
+        # Use oscillating prices so RSI varies across bins
+        close_prices = 100.0 + np.cumsum(np.random.randn(n_points) * 2.0)
         candles_df = pd.DataFrame({
             'datetime': dates,
-            'open': 100.0,
-            'high': 101.0,
-            'low': 99.0,
-            'close': 100.0 + np.arange(50) * 0.1,
+            'open': close_prices - 0.5,
+            'high': close_prices + 1.0,
+            'low': close_prices - 1.0,
+            'close': close_prices,
             'volume': 1000000.0,
             'ticker': Ticker.ES,
             'timeframe': TimeFrame.D
         })
-        target_data = pd.Series(np.random.randn(50) * 0.01, index=dates)
-        
+        # Target returns correlated with price direction for robust binning
+        target_data = pd.Series(np.diff(close_prices, prepend=close_prices[0]) / 100.0, index=dates)
+
         base_model.fit(candles_df, target_data)
         
         # Add to vault
@@ -397,9 +414,9 @@ class TestVaultManager:
     
     def test_add_feature_strategy_mismatch(self, temp_vault, bias_node_spec):
         """Test that strategy mismatch raises error."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Create model with wrong strategy
@@ -407,7 +424,8 @@ class TestVaultManager:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         # Try to add - should fail
@@ -421,9 +439,9 @@ class TestVaultManager:
     
     def test_load_feature_base_models(self, temp_vault, bias_node_spec):
         """Test loading base models from vault."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Create and save a model
@@ -431,23 +449,28 @@ class TestVaultManager:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         np.random.seed(42)
-        dates = pd.date_range('2020-01-01', periods=50, freq='D')
+        n_points = 200
+        dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
+        # Use oscillating prices so RSI varies across bins
+        close_prices = 100.0 + np.cumsum(np.random.randn(n_points) * 2.0)
         candles_df = pd.DataFrame({
             'datetime': dates,
-            'open': 100.0,
-            'high': 101.0,
-            'low': 99.0,
-            'close': 100.0 + np.arange(50) * 0.1,
+            'open': close_prices - 0.5,
+            'high': close_prices + 1.0,
+            'low': close_prices - 1.0,
+            'close': close_prices,
             'volume': 1000000.0,
             'ticker': Ticker.ES,
             'timeframe': TimeFrame.D
         })
-        target_data = pd.Series(np.random.randn(50) * 0.01, index=dates)
-        
+        # Target returns correlated with price direction for robust binning
+        target_data = pd.Series(np.diff(close_prices, prepend=close_prices[0]) / 100.0, index=dates)
+
         base_model.fit(candles_df, target_data)
         
         model_id = add_feature_to_ensemble(
@@ -473,9 +496,9 @@ class TestVaultManager:
     
     def test_update_base_model_fitted_params(self, temp_vault, bias_node_spec):
         """Test updating fitted parameters."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Create and save unfitted model
@@ -483,23 +506,26 @@ class TestVaultManager:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         np.random.seed(42)
-        dates = pd.date_range('2020-01-01', periods=50, freq='D')
+        n_points = 200
+        dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
+        close_prices = 100.0 + np.cumsum(np.random.randn(n_points) * 2.0)
         candles_df = pd.DataFrame({
             'datetime': dates,
-            'open': 100.0,
-            'high': 101.0,
-            'low': 99.0,
-            'close': 100.0 + np.arange(50) * 0.1,
+            'open': close_prices - 0.5,
+            'high': close_prices + 1.0,
+            'low': close_prices - 1.0,
+            'close': close_prices,
             'volume': 1000000.0,
             'ticker': Ticker.ES,
             'timeframe': TimeFrame.D
         })
-        target_data = pd.Series(np.random.randn(50) * 0.01, index=dates)
-        
+        target_data = pd.Series(np.diff(close_prices, prepend=close_prices[0]) / 100.0, index=dates)
+
         model_id = add_feature_to_ensemble(
             ensemble_dir=ensemble_dir,
             feature_column='test_feature',
@@ -516,26 +542,28 @@ class TestVaultManager:
             feature_column='test_feature',
             model_id=model_id,
             fitted_params={
-                'thresholds': base_model.binning_model.thresholds_.tolist(),
-                'best_long_bin': base_model.binning_model.best_long_bin_,
-                'best_short_bin': base_model.binning_model.best_short_bin_,
-                'bin_stats': base_model.binning_model.bin_stats_
+                'model_version': 'binning_v2',
+                'bin_edges': base_model.binning_model.bin_edges_,
+                'bin_stats': base_model.binning_model.bin_stats_,
+                'significant_regions': base_model.binning_model.significant_regions_,
+                'active_bins_by_strategy': base_model.binning_model.active_bins_by_strategy_,
+                'position_multipliers_by_strategy': base_model.binning_model.position_multipliers_by_strategy_,
             },
             train_start='2020-01-01',
             train_end='2020-02-20'
         )
         
         # Verify update
-        models = load_feature_base_models(ensemble_dir, 'test_feature', fitted_only=True)
+        models = load_feature_base_models('test_feature', ensemble_dir=ensemble_dir, fitted_only=True)
         key = (Ticker.ES, model_id)
         assert key in models
         assert models[key].binning_model.is_fitted_
     
     def test_remove_base_model_variant(self, temp_vault, bias_node_spec):
         """Test removing base model variant."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Add a model
@@ -543,7 +571,8 @@ class TestVaultManager:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         model_id = add_feature_to_ensemble(
@@ -561,15 +590,15 @@ class TestVaultManager:
         )
         
         # Verify removal
-        models = load_feature_base_models(ensemble_dir, 'test_feature')
+        models = load_feature_base_models('test_feature', ensemble_dir=ensemble_dir)
         key = (Ticker.ES, model_id)
         assert key not in models
     
     def test_list_features(self, temp_vault, bias_node_spec):
         """Test listing features in ensemble."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Add multiple features
@@ -578,22 +607,26 @@ class TestVaultManager:
             base_model = BaseModel(
                 feature_config={'bias_node_spec': bias_node_spec},
                 binning_model=binning_model,
-                tickers=[Ticker.ES]
+                tickers=[Ticker.ES],
+                use_cache=False
             )
             
-            dates = pd.date_range('2020-01-01', periods=50, freq='D')
+            np.random.seed(42)
+            n_points = 200
+            dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
+            close_prices = 100.0 + np.cumsum(np.random.randn(n_points) * 2.0)
             candles_df = pd.DataFrame({
                 'datetime': dates,
-                'open': 100.0,
-                'high': 101.0,
-                'low': 99.0,
-                'close': 100.0 + np.arange(50) * 0.1,
+                'open': close_prices - 0.5,
+                'high': close_prices + 1.0,
+                'low': close_prices - 1.0,
+                'close': close_prices,
                 'volume': 1000000.0,
                 'ticker': Ticker.ES,
                 'timeframe': TimeFrame.D
             })
-            target_data = pd.Series(np.random.randn(50) * 0.01, index=dates)
-            
+            target_data = pd.Series(np.diff(close_prices, prepend=close_prices[0]) / 100.0, index=dates)
+
             base_model.fit(candles_df, target_data)
             
             add_feature_to_ensemble(
@@ -613,9 +646,9 @@ class TestVaultManager:
     
     def test_get_bias_node_specs(self, temp_vault, bias_node_spec):
         """Test getting bias node specs."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Add a feature
@@ -623,23 +656,28 @@ class TestVaultManager:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         np.random.seed(42)
-        dates = pd.date_range('2020-01-01', periods=50, freq='D')
+        n_points = 200
+        dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
+        # Use oscillating prices so RSI varies across bins
+        close_prices = 100.0 + np.cumsum(np.random.randn(n_points) * 2.0)
         candles_df = pd.DataFrame({
             'datetime': dates,
-            'open': 100.0,
-            'high': 101.0,
-            'low': 99.0,
-            'close': 100.0 + np.arange(50) * 0.1,
+            'open': close_prices - 0.5,
+            'high': close_prices + 1.0,
+            'low': close_prices - 1.0,
+            'close': close_prices,
             'volume': 1000000.0,
             'ticker': Ticker.ES,
             'timeframe': TimeFrame.D
         })
-        target_data = pd.Series(np.random.randn(50) * 0.01, index=dates)
-        
+        # Target returns correlated with price direction for robust binning
+        target_data = pd.Series(np.diff(close_prices, prepend=close_prices[0]) / 100.0, index=dates)
+
         base_model.fit(candles_df, target_data)
         
         add_feature_to_ensemble(
@@ -657,9 +695,9 @@ class TestVaultManager:
     
     def test_get_all_base_model_names(self, temp_vault, bias_node_spec):
         """Test getting all base model names."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Add multiple models to same feature
@@ -668,22 +706,26 @@ class TestVaultManager:
             base_model = BaseModel(
                 feature_config={'bias_node_spec': bias_node_spec},
                 binning_model=binning_model,
-                tickers=[Ticker.ES]
+                tickers=[Ticker.ES],
+                use_cache=False
             )
             
-            dates = pd.date_range('2020-01-01', periods=50, freq='D')
+            np.random.seed(42)
+            n_points = 200
+            dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
+            close_prices = 100.0 + np.cumsum(np.random.randn(n_points) * 2.0)
             candles_df = pd.DataFrame({
                 'datetime': dates,
-                'open': 100.0,
-                'high': 101.0,
-                'low': 99.0,
-                'close': 100.0 + np.arange(50) * 0.1,
+                'open': close_prices - 0.5,
+                'high': close_prices + 1.0,
+                'low': close_prices - 1.0,
+                'close': close_prices,
                 'volume': 1000000.0,
                 'ticker': Ticker.ES,
                 'timeframe': TimeFrame.D
             })
-            target_data = pd.Series(np.random.randn(50) * 0.01, index=dates)
-            
+            target_data = pd.Series(np.diff(close_prices, prepend=close_prices[0]) / 100.0, index=dates)
+
             base_model.fit(candles_df, target_data)
             
             add_feature_to_ensemble(
@@ -703,9 +745,9 @@ class TestVaultManager:
     
     def test_validate_ensemble_directory(self, temp_vault, bias_node_spec):
         """Test ensemble directory validation."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG
         )
         
         # Add a valid feature
@@ -713,23 +755,28 @@ class TestVaultManager:
         base_model = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         np.random.seed(42)
-        dates = pd.date_range('2020-01-01', periods=50, freq='D')
+        n_points = 200
+        dates = pd.date_range('2020-01-01', periods=n_points, freq='D')
+        # Use oscillating prices so RSI varies across bins
+        close_prices = 100.0 + np.cumsum(np.random.randn(n_points) * 2.0)
         candles_df = pd.DataFrame({
             'datetime': dates,
-            'open': 100.0,
-            'high': 101.0,
-            'low': 99.0,
-            'close': 100.0 + np.arange(50) * 0.1,
+            'open': close_prices - 0.5,
+            'high': close_prices + 1.0,
+            'low': close_prices - 1.0,
+            'close': close_prices,
             'volume': 1000000.0,
             'ticker': Ticker.ES,
             'timeframe': TimeFrame.D
         })
-        target_data = pd.Series(np.random.randn(50) * 0.01, index=dates)
-        
+        # Target returns correlated with price direction for robust binning
+        target_data = pd.Series(np.diff(close_prices, prepend=close_prices[0]) / 100.0, index=dates)
+
         base_model.fit(candles_df, target_data)
         
         add_feature_to_ensemble(
@@ -748,9 +795,10 @@ class TestVaultManager:
     
     def test_multiple_tickers_in_feature_spec(self, temp_vault, bias_node_spec):
         """Test storing and loading multiple tickers in feature spec."""
-        initialize_vault(temp_vault)
+        initialize_vault()
         ensemble_dir = create_ensemble_directory(
-            temp_vault, TimeFrame.D, 'test_ensemble', Direction.LONG
+            TimeFrame.D, 'test_ensemble', Direction.LONG,
+            tickers=[Ticker.ES, Ticker.NQ, Ticker.YM]
         )
         
         # Create base model for ES
@@ -758,7 +806,8 @@ class TestVaultManager:
         base_model_es = BaseModel(
             feature_config={'bias_node_spec': bias_node_spec},
             binning_model=binning_model,
-            tickers=[Ticker.ES]
+            tickers=[Ticker.ES],
+            use_cache=False
         )
         
         # Add feature with multiple tickers
@@ -779,7 +828,7 @@ class TestVaultManager:
         assert set(config['tickers']) == {'ES', 'NQ', 'YM'}
         
         # Load models - should create instances for all tickers
-        models = load_feature_base_models(ensemble_dir, 'test_feature')
+        models = load_feature_base_models('test_feature', ensemble_dir=ensemble_dir)
         
         # Should have 3 models (one per ticker)
         assert len(models) == 3

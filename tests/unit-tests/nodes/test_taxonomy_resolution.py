@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,12 @@ from utils.core.helpers import (
 )
 
 
-NODES_ROOT = Path(__file__).resolve().parents[3] / "nodes"
+# Compute NODES_ROOT the same way the source code does so that Path equality
+# comparisons in the monkeypatched rglob match the actual code path.
+_HELPERS_FILE = Path(os.path.dirname(os.path.dirname(os.path.abspath(
+    __import__("utils.core.helpers", fromlist=["_resolve_bias_node_import_path"]).__file__
+))))
+NODES_ROOT = _HELPERS_FILE / "nodes"
 
 
 def test_taxonomy_mapping_resolves_rsi_to_canonical_import() -> None:
@@ -21,7 +27,8 @@ def test_taxonomy_mapping_resolves_rsi_to_canonical_import() -> None:
 
 def test_recursive_fallback_resolves_non_mapped_module(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_rglob(self: Path, pattern: str) -> list[Path]:
-        if self == NODES_ROOT and pattern == "temporary_node.py":
+        # Compare resolved paths to handle any platform-specific differences
+        if self.resolve() == NODES_ROOT.resolve() and pattern == "temporary_node.py":
             return [NODES_ROOT / "experimental" / "temporary_node.py"]
         return []
 
@@ -31,7 +38,7 @@ def test_recursive_fallback_resolves_non_mapped_module(monkeypatch: pytest.Monke
 
 def test_recursive_fallback_ambiguity_raises_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_rglob(self: Path, pattern: str) -> list[Path]:
-        if self == NODES_ROOT and pattern == "dupe_node.py":
+        if self.resolve() == NODES_ROOT.resolve() and pattern == "dupe_node.py":
             return [
                 NODES_ROOT / "group_a" / "dupe_node.py",
                 NODES_ROOT / "group_b" / "dupe_node.py",

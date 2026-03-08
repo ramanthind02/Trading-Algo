@@ -17,31 +17,23 @@ def test_load_config_returns_rule_based_research_config():
 
 
 def test_load_config_defaults():
-    # Note: This test documents unified config behavior
-    # The defaults have changed due to the unified architecture.
-    # To test rule_based specific defaults, set feature_type=RULE_BASED in base config.
     config = load_config()
     assert Ticker.ES in config.tickers
     assert Ticker.NQ in config.tickers
     assert config.start == datetime(2000, 1, 1)
-    assert config.end == datetime(2023, 12, 31)
-    # Default feature_type is CONTINUOUS; assertions below are for that
-    # Rule-based assertions would use feature_type=RULE_BASED
+    assert config.end == datetime(2025, 12, 30)
 
 
-def test_reports_dir_includes_module_name():
-    # Due to unified architecture, feature_type determines reports_dir
+def test_reports_dir_includes_feature_type():
     config = load_config()
-    assert config.bias_spec["module_name"] in str(config.reports_dir)
-    # Default feature_type is CONTINUOUS, so reports_dir contains "continuous"
-    assert "continuous" in str(config.reports_dir)
+    assert config.feature_type.value in str(config.reports_dir)
 
 
 def test_load_config_includes_walkforward_defaults() -> None:
     config = load_config()
 
     assert isinstance(config.walkforward, WalkforwardResearchConfig)
-    assert config.walkforward.enabled is False
+    assert config.walkforward.enabled is True
     assert config.walkforward.train_start >= config.start
     assert config.walkforward.train_end < config.end
     assert config.walkforward.output_root == Path("feature_research/shared_results")

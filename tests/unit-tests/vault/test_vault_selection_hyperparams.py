@@ -41,7 +41,7 @@ class TestVaultSelectionHyperparams:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'member_1', 'bin_index': 0},
+                        {'member_name': 'member_1', 'params': {'bin_index': 0}},
                     ]
                 }
             ]
@@ -94,7 +94,7 @@ class TestVaultSelectionHyperparams:
                         'strategy': 'long',
                         'constructor_params': {'n_bins': 3},
                         'members': [
-                            {'member_id': 'member_1', 'bin_index': 0},
+                            {'member_name': 'member_1', 'params': {'bin_index': 0}},
                         ]
                     }
                 ],
@@ -139,8 +139,8 @@ class TestVaultMemberMetadata:
                     'constructor_params': {'n_bins': 3},
                     'members': [
                         {
-                            'member_id': 'member_1',
-                            'bin_index': 0,
+                            'member_name': 'member_1',
+                            'params': {'bin_index': 0},
                             'metadata': {
                                 'bin_range': [0.0, 0.33],
                                 'stability_score': 0.85,
@@ -148,8 +148,8 @@ class TestVaultMemberMetadata:
                             }
                         },
                         {
-                            'member_id': 'member_2',
-                            'bin_index': 1,
+                            'member_name': 'member_2',
+                            'params': {'bin_index': 1},
                             'metadata': {
                                 'bin_range': [0.33, 0.66],
                                 'stability_score': 0.72,
@@ -188,7 +188,8 @@ class TestVaultMemberMetadata:
             control_file = {
                 'metadata': {
                     'is_fit': True,
-                    'version': '2.0.0'
+                    'version': '2.0.0',
+                    'selection_method': 'manual'
                 },
                 'base_models': [
                     {
@@ -198,8 +199,8 @@ class TestVaultMemberMetadata:
                         'strategy': 'long',
                         'constructor_params': {'n_bins': 3},
                         'members': [
-                            {'member_id': 'member_1', 'bin_index': 0},
-                            {'member_id': 'member_2', 'bin_index': 1},
+                            {'member_name': 'member_1', 'params': {'bin_index': 0}},
+                            {'member_name': 'member_2', 'params': {'bin_index': 1}},
                         ]
                     }
                 ],
@@ -269,7 +270,7 @@ class TestVaultSelectionHyperparamsValidation:
                         'strategy': 'long',
                         'constructor_params': {'n_bins': 3},
                         'members': [
-                            {'member_id': 'member_1', 'bin_index': 0},
+                            {'member_name': 'member_1', 'params': {'bin_index': 0}},
                         ]
                     }
                 ],
@@ -288,9 +289,7 @@ class TestVaultSelectionHyperparamsValidation:
             
             with open(control_file_path, 'w') as f:
                 json.dump(control_file, f)
-            
-            loaded = parse_control_file(control_file_path)
-            
-            # selection_method should be optional but recommended
-            # The test verifies it can be loaded even if missing
-            assert loaded['metadata']['is_fit'] == True
+
+            # selection_method is now required for fitted ensembles
+            with pytest.raises(ValueError, match="selection_method"):
+                parse_control_file(control_file_path)

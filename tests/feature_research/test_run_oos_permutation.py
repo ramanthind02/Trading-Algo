@@ -57,6 +57,9 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
     minimal_report.selection_summary_df = pd.DataFrame(
         [{"fold_id": 0, "top_k_features": "[]"}],
     )
+    minimal_report.aggregate_oos_returns = pd.Series(
+        [0.01, -0.005, 0.003], index=pd.date_range("2022-01-01", periods=3, freq="D")
+    )
 
     with (
         patch("sys.argv", ["run_oos_permutation.py"]),
@@ -70,7 +73,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
             return_value=minimal_report,
         ),
         patch(
-            "feature_research.oos.run_oos_permutation.run_vector_shuffle_null",
+            "feature_research.oos.run_oos_permutation.run_return_shuffle_null",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
     ):

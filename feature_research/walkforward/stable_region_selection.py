@@ -17,6 +17,7 @@ has no dependency on the walkforward runner or config.
 """
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
@@ -343,6 +344,8 @@ def run_stable_region_selection(
         return _empty_result(all_labels, smoothed_objectives, raw_objectives, trade_frequencies, passed_hard)
 
     surviving_scores = [smoothed_objectives.get(lbl, float("-inf")) for lbl in surviving]
+    # Filter out -inf values for statistical calculations
+    finite_scores = [s for s in surviving_scores if math.isfinite(s)]
     best = max(surviving_scores)
 
     if config.floor_method == "relative":
@@ -350,8 +353,8 @@ def run_stable_region_selection(
     else:
         # adaptive: floor = best − multiplier × σ
         import statistics
-        if len(surviving_scores) >= 2:
-            sigma = statistics.stdev(surviving_scores)
+        if len(finite_scores) >= 2:
+            sigma = statistics.stdev(finite_scores)
         else:
             sigma = 0.0
         floor = best - config.adaptive_sigma_multiplier * sigma

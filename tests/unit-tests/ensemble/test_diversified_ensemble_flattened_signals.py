@@ -38,8 +38,8 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'member_0', 'bin_index': 0},
-                        {'member_id': 'member_1', 'bin_index': 1},
+                        {'member_name': 'member_0', 'params': {'bin_index': 0}},
+                        {'member_name': 'member_1', 'params': {'bin_index': 1}},
                     ]
                 },
                 {
@@ -49,7 +49,7 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
                     'strategy': 'short',
                     'constructor_params': {'n_bins': 2},
                     'members': [
-                        {'member_id': 'variant_a', 'bin_index': 0},
+                        {'member_name': 'variant_a', 'params': {'bin_index': 0}},
                     ]
                 }
             ]
@@ -63,7 +63,7 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
         for model in control_file['base_models']:
             if 'members' in model:
                 for member in model['members']:
-                    member_ids.append(f"{model['name']}::{member['member_id']}")
+                    member_ids.append(f"{model['name']}::{member['member_name']}")
         
         # Should have flattened names
         assert len(member_ids) == 3  # 2 + 1
@@ -86,8 +86,8 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'm1', 'bin_index': 0},
-                        {'member_id': 'm2', 'bin_index': 1},
+                        {'member_name': 'm1', 'params': {'bin_index': 0}},
+                        {'member_name': 'm2', 'params': {'bin_index': 1}},
                     ]
                 }
             ]
@@ -111,9 +111,9 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'bin_0', 'bin_index': 0},
-                        {'member_id': 'bin_1', 'bin_index': 1},
-                        {'member_id': 'bin_2', 'bin_index': 2},
+                        {'member_name': 'bin_0', 'params': {'bin_index': 0}},
+                        {'member_name': 'bin_1', 'params': {'bin_index': 1}},
+                        {'member_name': 'bin_2', 'params': {'bin_index': 2}},
                     ]
                 }
             ]
@@ -128,7 +128,7 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
             model_name = model['name']
             if 'members' in model:
                 for member in model['members']:
-                    member_id = member['member_id']
+                    member_id = member['member_name']
                     flattened_features.append(f"{model_name}::{member_id}")
         
         assert len(flattened_features) == 3
@@ -149,9 +149,9 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
                     'strategy': 'long_short',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_id': 'q33', 'bin_index': 0},
-                        {'member_id': 'q66', 'bin_index': 1},
-                        {'member_id': 'q100', 'bin_index': 2},
+                        {'member_name': 'q33', 'params': {'bin_index': 0}},
+                        {'member_name': 'q66', 'params': {'bin_index': 1}},
+                        {'member_name': 'q100', 'params': {'bin_index': 2}},
                     ]
                 },
                 {
@@ -161,8 +161,8 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
                     'strategy': 'long_short',
                     'constructor_params': {'n_bins': 2},
                     'members': [
-                        {'member_id': 'lower', 'bin_index': 0},
-                        {'member_id': 'upper', 'bin_index': 1},
+                        {'member_name': 'lower', 'params': {'bin_index': 0}},
+                        {'member_name': 'upper', 'params': {'bin_index': 1}},
                     ]
                 }
             ]
@@ -175,7 +175,7 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
         for model in control_file['base_models']:
             model_name = model['name']
             for member in model['members']:
-                unique_id = f"{model_name}::{member['member_id']}"
+                unique_id = f"{model_name}::{member['member_name']}"
                 unique_ids.add(unique_id)
         
         assert len(unique_ids) == 5  # 3 + 2
