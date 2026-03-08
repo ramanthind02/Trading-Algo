@@ -18,6 +18,7 @@ from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.base_models.rule_based import RuleBasedModel
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.helpers import build_feature_column_name
+from utils.data.cross_ticker_store import CrossTickerDataStore, extract_cross_ticker_names
 
 # RuleBasedModel has exactly 3 bins (-1, 0, 1 -> indices 0, 1, 2).
 RULE_BASED_BIN_COUNT: int = 3
@@ -25,6 +26,33 @@ RULE_BASED_BIN_COUNT: int = 3
 
 # Param keys that belong to the binning model only; never pass to the bias node (e.g. RSI).
 BINNING_ONLY_PARAM_KEYS: frozenset[str] = frozenset({"bin_count", "selected_bin"})
+
+
+def _ensure_cross_ticker_data(
+    selected_params: list[dict[str, Any]],
+    timeframes: list[TimeFrame],
+) -> None:
+    """Ensure cross-ticker data is loaded into the store for all selected params.
+
+    Called before ``BaseModel`` creation to make cross-ticker loading explicit
+    rather than relying on prior singleton state.  Safe to call multiple times
+    — already-loaded (ticker, tf) pairs are skipped.
+    """
+    cross_names: set[str] = set()
+    for params in selected_params:
+        cross_names.update(extract_cross_ticker_names(params))
+    if not cross_names:
+        return
+
+    store = CrossTickerDataStore.get_instance()
+    for name in cross_names:
+        try:
+            ct = Ticker[name]
+        except KeyError:
+            continue
+        for tf in timeframes:
+            if not store.is_loaded(ct, tf):
+                store.load(ct, tf)
 
 
 def _combo_key(params: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
@@ -459,6 +487,8 @@ def evaluate_fold_portfolio(
     metric = resolve_objective_metric(objective_metric_name)
     per_signal_oos_sharpe: dict[str, float] | None = None
     per_signal_oos_returns: dict[str, pd.Series] | None = None
+
+    _ensure_cross_ticker_data(selected_params, [timeframe])
 
     if feature_data_by_combo and len(selected_params) > 0:
         base_model, train_features_df, test_features_df = _build_one_base_model_with_members(

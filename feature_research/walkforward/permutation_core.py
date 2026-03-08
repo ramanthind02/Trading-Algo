@@ -19,6 +19,7 @@ from feature_research.walkforward.permutation_helpers import (
 from feature_research.walkforward.metrics import resolve_objective_metric
 from feature_research.walkforward.portfolio_evaluator import (
     _build_one_base_model_with_members,
+    _ensure_cross_ticker_data,
     _normalize_strategy,
     _normalize_timeframe,
 )
@@ -91,6 +92,7 @@ def _compute_fixed_oos_signal_by_fold(
 
         try:
             feature_type = _resolve_feature_type(research_config)
+            _ensure_cross_ticker_data(selected_params, [trading_timeframe])
             base_model, _train_df, test_features_df = _build_one_base_model_with_members(
                 selected_params=selected_params,
                 binning_config=binning_config,

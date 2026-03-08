@@ -53,6 +53,7 @@ import pandas as pd
 import utils.core.helpers as helpers
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.models import Candle
+from utils.data.cross_ticker_store import extract_cross_ticker_names
 
 
 def _expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -135,6 +136,8 @@ def _prepare_candles_override(
     """Validate and normalize override candles for forward-return computation.
 
     Primary key is (datetime, ticker). use_millisecond_offset is ignored (no offset).
+    Extra tickers are allowed (for cross-ticker nodes) as long as requested
+    tickers are present.
     """
     required_columns = {"datetime", "open", "high", "low", "close", "ticker"}
     missing_columns = sorted(required_columns.difference(candles_override.columns))
@@ -157,13 +160,6 @@ def _prepare_candles_override(
         raise ValueError(
             "candles_override missing ticker data for requested tickers: "
             f"{missing_tickers}. Available tickers: {sorted(override_ticker_set)}"
-        )
-
-    unexpected_tickers = sorted(override_ticker_set.difference(requested_set))
-    if unexpected_tickers:
-        raise ValueError(
-            "candles_override contains unexpected tickers not requested: "
-            f"{unexpected_tickers}. Requested tickers: {sorted(requested_set)}"
         )
 
     # Primary key is (datetime, ticker); no millisecond offset applied
@@ -418,6 +414,62 @@ def compute_forward_returns(
     return targets_df
 
 
+def _preload_cross_ticker_data(
+    param_combos: List[Dict[str, Any]],
+    timeframes: List['TimeFrame'],
+    start: datetime,
+    end: datetime,
+) -> None:
+    """Scan param combos for ``cross_tickers`` and pre-load referenced tickers."""
+    from utils.core.enums import Ticker as _Ticker
+
+    cross_names: set[str] = set()
+    for combo in param_combos:
+        cross_names.update(extract_cross_ticker_names(combo))
+
+    if not cross_names:
+        return
+
+    from utils.data.cross_ticker_store import CrossTickerDataStore
+    store = CrossTickerDataStore.get_instance()
+    for name in cross_names:
+        try:
+            ct = _Ticker[name]
+        except KeyError:
+            continue
+        for tf in timeframes:
+            if not store.is_loaded(ct, tf):
+                store.load(ct, tf, start=start, end=end)
+
+
+def _preload_cross_ticker_override_data(
+    candles_override: pd.DataFrame,
+    timeframes: List[TimeFrame],
+) -> None:
+    """Load override candles into CrossTickerDataStore via set_data()."""
+    if candles_override.empty or "ticker" not in candles_override.columns:
+        return
+
+    from utils.data.cross_ticker_store import CrossTickerDataStore
+
+    normalized = candles_override.copy()
+    normalized["ticker"] = _normalize_ticker_series(normalized["ticker"])
+
+    store = CrossTickerDataStore.get_instance()
+    for ticker_name, ticker_df in normalized.groupby("ticker"):
+        try:
+            ticker_enum = Ticker[ticker_name]
+        except KeyError:
+            continue
+
+        payload = ticker_df.drop(
+            columns=["ticker", "timeframe", "timestamp"],
+            errors="ignore",
+        )
+        for tf in timeframes:
+            store.set_data(ticker_enum, tf, payload)
+
+
 def _extract_features_single_ticker(
     module_name: str,
     params: Dict[str, Any],
@@ -456,6 +508,9 @@ def _extract_features_single_ticker(
     
     # Expand parameter grid
     param_combos = _expand_param_grid(params)
+    
+    # Pre-load cross-ticker data if any param combo references a secondary ticker
+    _preload_cross_ticker_data(param_combos, timeframes, start, end)
     
     # Create bias nodes for each parameter combination
     # Store tuples of (bias_node, param_combo, tf) to preserve original params for cache lookup
@@ -743,6 +798,7 @@ def extract_features(
     # Build per-ticker override when provided (for permutation: features from shuffled candles)
     override_by_ticker: Dict[Ticker, pd.DataFrame] = {}
     if candles_override is not None and not candles_override.empty and 'ticker' in candles_override.columns:
+        _preload_cross_ticker_override_data(candles_override, timeframes)
         for t in tickers:
             ticker_str = getattr(t, 'name', str(t))
             mask = candles_override['ticker'].astype(str) == ticker_str
@@ -1002,7 +1058,14 @@ def extract_features_with_forward_returns(
     # Pass features_df to enable ATR/EWSD normalization for multi-ticker scenarios
     # Note: features_df may have more rows than candles_df (before forward return filtering)
     # We'll align them properly in STEP 3
-    targets_df = compute_forward_returns(candles_df, features_df=features_df)
+    candles_for_targets = candles_df.copy()
+    if "ticker" in candles_for_targets.columns:
+        requested_ticker_names = {_normalize_ticker_str(t) for t in tickers}
+        candles_for_targets["ticker"] = _normalize_ticker_series(candles_for_targets["ticker"])
+        candles_for_targets = candles_for_targets[
+            candles_for_targets["ticker"].isin(requested_ticker_names)
+        ]
+    targets_df = compute_forward_returns(candles_for_targets, features_df=features_df)
     
     if len(targets_df) == 0:
         raise ValueError(
