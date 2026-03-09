@@ -1,12 +1,21 @@
 # Weight Layer
 
-> **Role:** Receives per-model vol-scaled forecasts from one or more DiversifiedEnsembles → combines into a single `forecast_score` per ticker → applies FDM.
->
-> **Defaults:** FDM cap is **2.0** (per project spec). Use `WeightLayerConfig(fdm_max=...)` or `WeightLayer(..., fdm_max=...)` to override.
+There are two weight-layer classes in `ensemble/`:
+
+| Class | Scope | File |
+|---|---|---|
+| `WeightLayer` | Per-timeframe: combines model forecasts → single `forecast_score` + intra-TF FDM | `weight_layer.py` |
+| `GlobalWeightLayer` | Cross-timeframe: combines TF `forecast_score` streams → global `forecast_score` + cross-TF FDM | `global_weight_layer.py` |
+
+> **Defaults:** FDM cap is **2.0** for both layers (per project spec).
 
 ```
-Base Models → DiversifiedEnsemble → WeightLayer → Portfolio → PositionSizer
+Base Models → DiversifiedEnsemble → WeightLayer → TFPortfolio (D) ──┐
+                                                   TFPortfolio (W) ──┼→ GlobalWeightLayer → GlobalPortfolio → PositionSizer
+                                                   TFPortfolio (M) ──┘
 ```
+
+The rest of this page covers `WeightLayer` (per-TF). See the [GlobalWeightLayer](#globalweightlayer) section at the bottom for the cross-TF combiner.
 
 ---
 
@@ -148,3 +157,57 @@ Diagnostics logged per fold: `group_weights`, `fdm`, `mean_downside_corr`, `down
 ---
 
 **See also:** [[portfolio]], [[param_stability]], [[base_model]]
+
+---
+
+## GlobalWeightLayer
+
+> **Role:** Receives per-timeframe `forecast_score` streams from multiple `TFPortfolio` instances → resamples to a common daily grid → combines using downside HRP → applies a cross-TF FDM.
+>
+> **File:** `ensemble/global_weight_layer.py`
+> **Config:** `GlobalWeightLayerConfig` (same `fdm_max=2.0` default)
+
+### Purpose
+
+`WeightLayer` diversifies across models within a single timeframe. `GlobalWeightLayer` applies the same HRP logic one level up: diversifying across timeframes (D, W, M). The two are structurally identical — same downside semi-covariance + HRP recursive bisection + FDM formula.
+
+### Input Schema
+
+```python
+Dict[TimeFrame, DataFrame]   # key: TimeFrame.D / .W / .M
+                              # value: DataFrame with columns ["ticker", "datetime", "forecast_score"]
+```
+
+Non-daily timeframe streams are forward-filled onto the daily grid before any correlation or weight estimation. No lookahead bias is introduced — only previously observed values are propagated forward.
+
+### Algorithm
+
+1. **Resample:** forward-fill W/M streams to daily frequency aligned with the D stream.
+2. **Downside semi-covariance** across TF streams (same `Σ^down` formula as `WeightLayer`).
+3. **HRP recursive bisection** on `Σ^down` to produce per-TF weights.
+4. **Combine:** `raw_forecast(t) = Σ_tf  w_tf × forecast_score_tf(t)`
+5. **Cross-TF FDM:**
+   ```
+   mean_corr = mean of off-diagonal entries of C^down (across TF streams)
+   FDM = min(sqrt(1 / (mean_corr + 0.01)), fdm_max)
+   scaled_forecast(t) = raw_forecast(t) × FDM
+   ```
+
+### Fallback
+
+When only one timeframe is provided: `weight = 1.0`, `FDM = 1.0`. No estimation performed.
+
+### Output Contract
+
+| Field | Type | Description |
+|---|---|---|
+| `ticker` | str | Instrument identifier |
+| `datetime` | datetime | Daily timestamp |
+| `forecast_score` | float | Cross-TF FDM-scaled combined forecast |
+
+### Key Config Params (`GlobalWeightLayerConfig`)
+
+| Parameter | Default | Description |
+|---|---|---|
+| `fdm_max` | `2.0` | Cap on cross-TF FDM |
+| `shrinkage` | `ledoit_wolf` | Shrinkage estimator for `Σ^down` |

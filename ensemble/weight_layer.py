@@ -938,6 +938,8 @@ def _compute_downside_semi_covariance(
     Applies Ledoit-Wolf shrinkage if requested.
     """
     data = group_returns_df.values.copy()
+    # Replace NaN/inf with 0 — missing dates have no downside contribution
+    data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
     # Lower semi-returns: clip positive values to zero
     semi = np.minimum(data, 0.0)
     T = semi.shape[0]
@@ -991,6 +993,9 @@ def _hrp_weights_from_semi_cov(
     np.fill_diagonal(dist, 0.0)
     n = dist.shape[0]
     condensed = dist[np.triu_indices(n, k=1)]
+    # Guard: if any non-finite values slipped through, fall back to equal weights
+    if not np.all(np.isfinite(condensed)):
+        return np.ones(K) / K
     Z = _scipy_linkage(condensed, method=linkage_method)
 
     # Leaf order from dendrogram

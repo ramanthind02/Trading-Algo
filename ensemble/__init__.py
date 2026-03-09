@@ -10,7 +10,8 @@ Date: 2025-11-23
 """
 
 from .diversified_ensemble import DiversifiedEnsemble
-from .portfolio import Portfolio
+from .global_weight_layer import GlobalWeightLayer, GlobalWeightLayerConfig
+from .portfolio import GlobalPortfolio, Portfolio, TFPortfolio
 from .portfolio_manager import PortfolioManager
 from .weight_layer import (
     BaseWeightLayer,
@@ -21,7 +22,11 @@ from .weight_layer import (
 
 __all__ = [
     'DiversifiedEnsemble',
+    'GlobalPortfolio',
+    'GlobalWeightLayer',
+    'GlobalWeightLayerConfig',
     'Portfolio',
+    'TFPortfolio',
     'PortfolioManager',
     'WeightLayer',
     'BaseWeightLayer',

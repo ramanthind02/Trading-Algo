@@ -38,7 +38,7 @@ def _normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame
     return normalize_candles_datetime_column(candles_df)
 
 
-class Portfolio:
+class TFPortfolio:
     """
     Portfolio class for applying instrument weighting and IDM to combined forecasts.
 
@@ -101,17 +101,17 @@ class Portfolio:
     Examples
     --------
     >>> # Using default WeightLayer
-    >>> portfolio = Portfolio(
+    >>> portfolio = TFPortfolio(
     ...     ensembles=[ensemble1, ensemble2],
     ...     trading_timeframe=TimeFrame.D,
     ...     max_position_pct=2.0
     ... )
     >>> portfolio.fit_from_candles(candles_df, target_data)
     >>> positions = portfolio.predict_from_candles(test_candles)
-    >>> 
+    >>>
     >>> # Using custom WeightLayer
     >>> custom_weight_layer = WeightLayer(weight_method='inverse_correlation', fdm_max=2.0)
-    >>> portfolio = Portfolio(
+    >>> portfolio = TFPortfolio(
     ...     ensembles=[ensemble1, ensemble2],
     ...     weight_layer=custom_weight_layer,
     ...     trading_timeframe=TimeFrame.D
@@ -405,7 +405,7 @@ class Portfolio:
         self,
         instrument_returns: pd.DataFrame,
         idm_override: Optional[float] = None
-    ) -> 'Portfolio':
+    ) -> 'TFPortfolio':
         """
         Fit IDM from historical instrument returns.
 
@@ -577,6 +577,158 @@ class Portfolio:
 
         return result
 
+    def predict_raw(
+        self,
+        combined_forecasts: pd.DataFrame
+    ) -> pd.DataFrame:
+        """
+        Apply instrument weights to combined forecasts WITHOUT IDM and WITHOUT position cap.
+
+        This is the pre-IDM counterpart of ``predict()``.  It is useful for
+        multi-timeframe aggregation layers that want to combine TF-level signals
+        before applying a global IDM.
+
+        Parameters
+        ----------
+        combined_forecasts : pd.DataFrame
+            Combined forecasts from WeightLayer.
+            Required columns: ['ticker', 'forecast_score']
+            forecast_score should already be FDM-scaled.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns:
+            - ticker: Instrument identifier
+            - forecast_score: Original forecast from WeightLayer (passed through)
+            - position_weighted: forecast_score * instrument_weight (no IDM, no cap)
+
+        Raises
+        ------
+        ValueError
+            If Portfolio has not been fitted or input is invalid
+        """
+        if not self.is_fitted_:
+            raise ValueError(
+                "Portfolio must be fitted before calling predict_raw(). "
+                "Call fit() with instrument returns first."
+            )
+
+        if not isinstance(combined_forecasts, pd.DataFrame):
+            raise ValueError(
+                f"combined_forecasts must be pd.DataFrame, got {type(combined_forecasts)}"
+            )
+
+        required_cols = ['ticker', 'forecast_score']
+        missing_cols = set(required_cols) - set(combined_forecasts.columns)
+        if missing_cols:
+            raise ValueError(f"Missing required columns: {missing_cols}")
+
+        if combined_forecasts.empty:
+            return pd.DataFrame(columns=['ticker', 'forecast_score', 'position_weighted'])
+
+        # Apply instrument weights only — skip IDM and position cap
+        weighted = self._apply_instrument_weights(combined_forecasts)
+
+        return weighted[['ticker', 'forecast_score', 'position_weighted']]
+
+    def predict_from_candles_raw(
+        self,
+        candles_df: pd.DataFrame,
+        return_ensemble_predictions: bool = False,
+        return_base_model_predictions: bool = False,
+        start_date=None,
+        end_date=None
+    ) -> Union[pd.DataFrame, Dict[str, Any]]:
+        """
+        Generate pre-IDM position fractions using candles DataFrame.
+
+        Mirrors ``predict_from_candles`` but calls ``predict_raw`` instead of
+        ``predict`` so the returned ``position_weighted`` column reflects
+        instrument-weighted forecasts WITHOUT IDM scaling or position capping.
+
+        Parameters
+        ----------
+        candles_df : pd.DataFrame
+            DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+            Should contain candles for the trading_timeframe of this portfolio
+        return_ensemble_predictions : bool, default=False
+            If True, return ensemble-level predictions in result dict
+        return_base_model_predictions : bool, default=False
+            If True, return base model-level predictions in result dict
+        start_date : datetime, optional
+            Start date for cached data. If None, inferred from candles_df.
+        end_date : datetime, optional
+            End date for cached data. If None, inferred from candles_df.
+
+        Returns
+        -------
+        pd.DataFrame or Dict[str, Any]
+            If both flags are False: DataFrame with columns
+            ['ticker', 'datetime', 'forecast_score', 'position_weighted']
+            If either flag is True: Dict with structure:
+            {
+                'portfolio': pd.DataFrame,
+                'ensembles': Dict[str, pd.DataFrame],  # only if requested
+                'base_models': Dict[str, pd.DataFrame]  # only if requested
+            }
+        """
+        if not self.ensembles:
+            raise ValueError("No ensembles provided. Cannot predict without ensembles.")
+
+        # Filter candles for this portfolio's trading timeframe
+        tf_candles = candles_df[candles_df['timeframe'] == self.trading_timeframe].copy()
+
+        if tf_candles.empty:
+            empty_df = pd.DataFrame(
+                columns=['ticker', 'datetime', 'forecast_score', 'position_weighted']
+            )
+            if return_ensemble_predictions or return_base_model_predictions:
+                result: Dict[str, Any] = {'portfolio': empty_df}
+                if return_ensemble_predictions:
+                    result['ensembles'] = {}
+                if return_base_model_predictions:
+                    result['base_models'] = {}
+                return result
+            return empty_df
+
+        # Delegate to predict_from_candles to collect the intra-TF pipeline result
+        full_result = self.predict_from_candles(
+            candles_df,
+            return_ensemble_predictions=True,
+            return_base_model_predictions=return_base_model_predictions,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        # full_result is always a dict here because we requested ensemble predictions
+        portfolio_df: pd.DataFrame = full_result['portfolio'] if isinstance(full_result, dict) else full_result
+
+        # Re-derive pre-IDM positions from the combined forecast_score column
+        # portfolio_df has columns: ticker, datetime, forecast_score, position_fraction
+        if not portfolio_df.empty and 'forecast_score' in portfolio_df.columns:
+            weights_by_ticker = self._get_effective_instrument_weights(
+                portfolio_df['ticker'].tolist()
+            )
+            raw_df = portfolio_df[['ticker', 'datetime', 'forecast_score']].copy()
+            raw_df['position_weighted'] = (
+                raw_df['forecast_score'] * raw_df['ticker'].map(weights_by_ticker)
+            )
+        else:
+            raw_df = pd.DataFrame(
+                columns=['ticker', 'datetime', 'forecast_score', 'position_weighted']
+            )
+
+        if return_ensemble_predictions or return_base_model_predictions:
+            out: Dict[str, Any] = {'portfolio': raw_df}
+            if return_ensemble_predictions:
+                out['ensembles'] = full_result.get('ensembles', {}) if isinstance(full_result, dict) else {}
+            if return_base_model_predictions:
+                out['base_models'] = full_result.get('base_models', {}) if isinstance(full_result, dict) else {}
+            return out
+
+        return raw_df
+
     def _apply_instrument_weights(
         self,
         combined_forecasts: pd.DataFrame
@@ -659,7 +811,7 @@ class Portfolio:
         target_data: Optional[pd.Series] = None,
         start_date=None,
         end_date=None
-    ) -> 'Portfolio':
+    ) -> 'TFPortfolio':
         """
         Fit all ensembles using candles DataFrame.
         
@@ -2007,3 +2159,428 @@ class Portfolio:
             f"  Instruments: {self.instruments_}"
         ]
         return "\n".join(lines)
+
+
+class GlobalPortfolio:
+    """Global multi-timeframe portfolio combining TFPortfolio streams via GlobalWeightLayer.
+
+    This is the top-level portfolio object in the multi-TF pipeline:
+
+        TFPortfolio (per-TF) → GlobalWeightLayer → GlobalPortfolio → PositionSizer
+
+    It:
+    1. Fits and runs each TFPortfolio to obtain per-TF forecast streams.
+    2. Fits / calls GlobalWeightLayer to combine them into a single daily forecast.
+    3. Applies global instrument weights and a global IDM.
+    4. Clips to ``[-max_position_pct, +max_position_pct]``.
+
+    Parameters
+    ----------
+    tf_portfolios : list of TFPortfolio
+        One per trading timeframe.
+    global_weight_layer : GlobalWeightLayer
+        Fitted (or to-be-fitted) cross-TF weight layer.
+    instrument_weights : dict mapping ticker → weight, optional
+        Global instrument weights. If None, equal weight is applied.
+    sector_allocation_config_path : str, optional
+        Path to a JSON sector allocation tree. When provided, the resolved
+        ticker-level weights supersede ``instrument_weights``.
+    idm_max : float, default 2.5
+        Maximum global IDM (Carver's cap).
+    max_position_pct : float, default 2.0
+        Position-fraction clip bound.
+
+    Fitted attributes
+    -----------------
+    global_idm_ : float
+    mean_instrument_return_correlation_ : float
+    instruments_ : list of str
+    is_fitted_ : bool
+    """
+
+    def __init__(
+        self,
+        tf_portfolios: List["TFPortfolio"],
+        global_weight_layer: "GlobalWeightLayer",
+        instrument_weights: Optional[Dict[str, float]] = None,
+        sector_allocation_config_path: Optional[str] = None,
+        idm_max: float = 2.5,
+        max_position_pct: float = 2.0,
+    ) -> None:
+        self.tf_portfolios = tf_portfolios
+        self.global_weight_layer = global_weight_layer
+        self.idm_max = idm_max
+        self.max_position_pct = max_position_pct
+
+        # Sector-allocation config resolution (same pattern as TFPortfolio)
+        self.sector_allocation_config_path = sector_allocation_config_path
+        self.sector_allocation_config_: Optional[Dict[str, Any]] = None
+        if sector_allocation_config_path is not None:
+            self.sector_allocation_config_ = self._load_sector_allocation_config(
+                sector_allocation_config_path
+            )
+            self.instrument_weights: Optional[Dict[str, float]] = (
+                self._resolve_sector_allocation(self.sector_allocation_config_)
+            )
+        else:
+            self.instrument_weights = instrument_weights
+
+        # Fitted attributes
+        self.global_idm_: Optional[float] = None
+        self.mean_instrument_return_correlation_: Optional[float] = None
+        self.instruments_: Optional[List[str]] = None
+        self.is_fitted_: bool = False
+
+    # ------------------------------------------------------------------
+    # Sector allocation helpers (delegated from TFPortfolio logic)
+    # ------------------------------------------------------------------
+
+    def _load_sector_allocation_config(self, config_path: str) -> Dict[str, Any]:
+        """Load a sector allocation JSON config (identical logic to TFPortfolio)."""
+        try:
+            with open(config_path, "r", encoding="utf-8") as handle:
+                config = json.load(handle)
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Sector allocation configuration file not found: {config_path}"
+            )
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid JSON in sector allocation configuration file: {exc}"
+            ) from exc
+
+        if not isinstance(config, dict):
+            raise ValueError("Sector allocation root must be a JSON object")
+
+        self._validate_sector_allocation_node(config, seen_tickers=set(), node_path="root")
+        return config
+
+    def _validate_sector_allocation_node(
+        self,
+        node: Dict[str, Any],
+        seen_tickers: Set[str],
+        node_path: str,
+    ) -> None:
+        """Recursively validate a sector allocation node."""
+        weight = node.get("weight")
+        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
+            raise ValueError(f"Node '{node_path}' weight must be > 0")
+
+        has_children = "children" in node
+        has_tickers = "tickers" in node
+        if has_children == has_tickers:
+            raise ValueError(
+                f"Node '{node_path}' must define exactly one of 'children' or 'tickers'"
+            )
+
+        if has_children:
+            children = node["children"]
+            if not isinstance(children, list) or len(children) == 0:
+                raise ValueError(f"Node '{node_path}' children must be a non-empty list")
+            for idx, child in enumerate(children):
+                if not isinstance(child, dict):
+                    raise ValueError(f"Node '{node_path}.children[{idx}]' must be an object")
+                self._validate_sector_allocation_node(
+                    child,
+                    seen_tickers=seen_tickers,
+                    node_path=f"{node_path}.children[{idx}]",
+                )
+            return
+
+        tickers = node["tickers"]
+        if not isinstance(tickers, list) or len(tickers) == 0:
+            raise ValueError(f"Node '{node_path}' must define at least one ticker")
+        if not all(isinstance(t, str) and t for t in tickers):
+            raise ValueError(f"Node '{node_path}' tickers must be non-empty strings")
+        if len(set(tickers)) != len(tickers):
+            raise ValueError(f"Node '{node_path}' contains duplicate tickers within a leaf")
+
+        duplicates = [t for t in tickers if t in seen_tickers]
+        if duplicates:
+            raise ValueError(
+                f"Duplicate ticker in sector allocation config: {duplicates[0]}"
+            )
+        seen_tickers.update(tickers)
+
+        ticker_weights = node.get("ticker_weights")
+        if ticker_weights is None:
+            return
+
+        if not isinstance(ticker_weights, dict):
+            raise ValueError(f"Node '{node_path}' ticker_weights must be an object")
+        if set(ticker_weights.keys()) != set(tickers):
+            raise ValueError(
+                f"Node '{node_path}' ticker_weights keys must match tickers exactly"
+            )
+        for ticker, tw in ticker_weights.items():
+            if (
+                not isinstance(tw, (int, float))
+                or isinstance(tw, bool)
+                or tw <= 0
+            ):
+                raise ValueError(
+                    f"Node '{node_path}' ticker_weights values must be > 0 (ticker={ticker})"
+                )
+
+    def _resolve_sector_allocation(self, config: Dict[str, Any]) -> Dict[str, float]:
+        """Resolve sector tree into a normalised ticker → weight mapping."""
+        resolved: Dict[str, float] = {}
+        if "children" in config:
+            children = config["children"]
+            total_weight = sum(child["weight"] for child in children)
+            for child in children:
+                contribution = child["weight"] / total_weight
+                self._resolve_sector_allocation_node(child, contribution, resolved)
+        elif "tickers" in config:
+            self._resolve_sector_allocation_node(config, 1.0, resolved)
+        else:
+            raise ValueError(
+                "Sector allocation root must define exactly one of 'children' or 'tickers'"
+            )
+
+        total_resolved = sum(resolved.values())
+        if total_resolved <= 0:
+            raise ValueError("Resolved sector allocation produced zero total weight")
+        return {t: w / total_resolved for t, w in resolved.items()}
+
+    def _resolve_sector_allocation_node(
+        self,
+        node: Dict[str, Any],
+        parent_contribution: float,
+        resolved: Dict[str, float],
+    ) -> None:
+        """Recursively accumulate ticker contributions from a validated node tree."""
+        if "children" in node:
+            children = node["children"]
+            total_weight = sum(child["weight"] for child in children)
+            for child in children:
+                contribution = parent_contribution * (child["weight"] / total_weight)
+                self._resolve_sector_allocation_node(child, contribution, resolved)
+            return
+
+        tickers = node["tickers"]
+        ticker_weights = node.get("ticker_weights")
+        if ticker_weights is None:
+            equal_share = parent_contribution / len(tickers)
+            for ticker in tickers:
+                resolved[ticker] = resolved.get(ticker, 0.0) + equal_share
+            return
+
+        total_ticker_weight = sum(ticker_weights[t] for t in tickers)
+        for ticker in tickers:
+            ticker_share = parent_contribution * (ticker_weights[ticker] / total_ticker_weight)
+            resolved[ticker] = resolved.get(ticker, 0.0) + ticker_share
+
+    # ------------------------------------------------------------------
+    # Instrument weight helper
+    # ------------------------------------------------------------------
+
+    def _get_effective_instrument_weights(self, tickers: List[str]) -> Dict[str, float]:
+        """Return global instrument weights for the given tickers (equal-weight fallback)."""
+        unique_tickers = list(dict.fromkeys(tickers))
+        if not unique_tickers:
+            return {}
+
+        if self.instrument_weights is None:
+            eq = 1.0 / len(unique_tickers)
+            return {t: eq for t in unique_tickers}
+
+        configured = self.instrument_weights
+        missing = [t for t in unique_tickers if t not in configured]
+        used_w = sum(configured[t] for t in unique_tickers if t in configured)
+        remaining = max(1.0 - used_w, 0.0)
+        fallback = remaining / len(missing) if missing else 0.0
+        return {t: configured.get(t, fallback) for t in unique_tickers}
+
+    # ------------------------------------------------------------------
+    # IDM calculation
+    # ------------------------------------------------------------------
+
+    def _calculate_global_idm(self, instrument_returns: pd.DataFrame) -> None:
+        """Compute and store global IDM from instrument return correlations.
+
+        Formula: ``IDM = min(sqrt(1 / (mean_corr + 0.01)), idm_max)``
+        where ``mean_corr`` is the mean of off-diagonal return correlations,
+        floored at 0.
+
+        Parameters
+        ----------
+        instrument_returns : pd.DataFrame
+            Daily returns; columns = tickers.
+        """
+        self.instruments_ = list(instrument_returns.columns)
+
+        if instrument_returns.empty or len(instrument_returns.columns) < 2:
+            self.mean_instrument_return_correlation_ = 1.0
+            self.global_idm_ = 1.0
+            return
+
+        corr_matrix = instrument_returns.corr().clip(lower=0.0)
+        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
+        off_diag = corr_matrix.where(mask).stack()
+
+        if len(off_diag) == 0:
+            self.mean_instrument_return_correlation_ = 1.0
+            self.global_idm_ = 1.0
+            return
+
+        mean_corr = float(off_diag.mean())
+        self.mean_instrument_return_correlation_ = mean_corr
+
+        epsilon = 0.01
+        idm = float(np.sqrt(1.0 / (mean_corr + epsilon)))
+        self.global_idm_ = min(idm, self.idm_max)
+
+    # ------------------------------------------------------------------
+    # fit
+    # ------------------------------------------------------------------
+
+    def fit(
+        self,
+        candles_per_tf: Dict[TimeFrame, pd.DataFrame],
+        instrument_returns: pd.DataFrame,
+    ) -> "GlobalPortfolio":
+        """Fit all TFPortfolios, GlobalWeightLayer, and global IDM.
+
+        Parameters
+        ----------
+        candles_per_tf : dict mapping TimeFrame → DataFrame
+            Candles for each TF's portfolio.  Each DataFrame must contain at
+            least the columns expected by ``TFPortfolio.fit_from_candles``.
+        instrument_returns : pd.DataFrame
+            Daily instrument returns; ``columns`` = tickers.
+
+        Returns
+        -------
+        self
+        """
+        # Step 1 — fit each TFPortfolio
+        for tf_p in self.tf_portfolios:
+            tf_candles = candles_per_tf.get(tf_p.trading_timeframe)
+            if tf_candles is None:
+                raise ValueError(
+                    f"No candles provided for timeframe {tf_p.trading_timeframe.name}"
+                )
+            tf_p.fit_from_candles(tf_candles)
+
+        # Step 2 — collect per-TF forecast streams
+        tf_forecast_streams: Dict[TimeFrame, pd.DataFrame] = {}
+        for tf_p in self.tf_portfolios:
+            tf_candles = candles_per_tf[tf_p.trading_timeframe]
+            raw = tf_p.predict_from_candles_raw(tf_candles)
+            # raw has columns ['ticker', 'datetime', 'forecast_score', 'position_weighted']
+            # GlobalWeightLayer.fit() expects ['ticker', 'datetime', 'forecast_score']
+            if isinstance(raw, dict):
+                stream_df = raw['portfolio'][['ticker', 'datetime', 'forecast_score']]
+            else:
+                stream_df = raw[['ticker', 'datetime', 'forecast_score']]
+            tf_forecast_streams[tf_p.trading_timeframe] = stream_df
+
+        # Step 3 — fit GlobalWeightLayer
+        self.global_weight_layer.fit(tf_forecast_streams, instrument_returns)
+
+        # Step 4 — compute global IDM
+        self._calculate_global_idm(instrument_returns)
+
+        # Step 5 — mark fitted
+        self.is_fitted_ = True
+        return self
+
+    # ------------------------------------------------------------------
+    # predict
+    # ------------------------------------------------------------------
+
+    def predict(
+        self,
+        candles_per_tf: Dict[TimeFrame, pd.DataFrame],
+    ) -> pd.DataFrame:
+        """Generate global position fractions for all instruments.
+
+        Parameters
+        ----------
+        candles_per_tf : dict mapping TimeFrame → DataFrame
+            Current candles for each TF.
+
+        Returns
+        -------
+        pd.DataFrame with columns
+            ``['ticker', 'datetime', 'forecast_score', 'position_fraction']``
+        """
+        if not self.is_fitted_:
+            raise RuntimeError(
+                "GlobalPortfolio must be fitted before calling predict(). "
+                "Call fit() first."
+            )
+
+        # Step 1 — collect per-TF forecast streams (pre-IDM, instrument-weighted)
+        tf_forecast_streams: Dict[TimeFrame, pd.DataFrame] = {}
+        for tf_p in self.tf_portfolios:
+            tf_candles = candles_per_tf.get(tf_p.trading_timeframe)
+            if tf_candles is None:
+                raise ValueError(
+                    f"No candles provided for timeframe {tf_p.trading_timeframe.name}"
+                )
+            raw = tf_p.predict_from_candles_raw(tf_candles)
+            if isinstance(raw, dict):
+                stream_df = raw['portfolio'][['ticker', 'datetime', 'forecast_score']]
+            else:
+                stream_df = raw[['ticker', 'datetime', 'forecast_score']]
+            tf_forecast_streams[tf_p.trading_timeframe] = stream_df
+
+        # Step 2 — combine via GlobalWeightLayer → ['ticker', 'datetime', 'forecast_score']
+        combined = self.global_weight_layer.combine(tf_forecast_streams)
+
+        if combined.empty:
+            return pd.DataFrame(
+                columns=['ticker', 'datetime', 'forecast_score', 'position_fraction']
+            )
+
+        # Step 3 — apply global instrument weights
+        tickers = combined['ticker'].tolist()
+        weights_by_ticker = self._get_effective_instrument_weights(tickers)
+        result = combined.copy()
+        result['position_weighted'] = (
+            result['forecast_score'] * result['ticker'].map(weights_by_ticker)
+        )
+
+        # Step 4 — apply global IDM
+        result['idm_scaled'] = result['position_weighted'] * self.global_idm_
+
+        # Step 5 — clip to [-max_position_pct, +max_position_pct]
+        result['position_fraction'] = result['idm_scaled'].clip(
+            lower=-self.max_position_pct,
+            upper=self.max_position_pct,
+        )
+
+        return result[['ticker', 'datetime', 'forecast_score', 'position_fraction']].reset_index(
+            drop=True
+        )
+
+    # ------------------------------------------------------------------
+    # diagnostics
+    # ------------------------------------------------------------------
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """Return a snapshot of fitted state for inspection / logging."""
+        return {
+            "is_fitted": self.is_fitted_,
+            "global_idm": self.global_idm_,
+            "mean_instrument_return_correlation": self.mean_instrument_return_correlation_,
+            "instruments": self.instruments_,
+            "idm_max": self.idm_max,
+            "max_position_pct": self.max_position_pct,
+            "n_tf_portfolios": len(self.tf_portfolios),
+            "global_weight_layer": self.global_weight_layer.get_diagnostics(),
+        }
+
+    def __repr__(self) -> str:
+        fitted_str = "fitted" if self.is_fitted_ else "not fitted"
+        n = len(self.tf_portfolios)
+        return f"GlobalPortfolio({fitted_str}, n_tf_portfolios={n}, idm={self.global_idm_})"
+
+
+# ``Portfolio`` remains a backward-compatible alias for TFPortfolio so that
+# existing call sites (sector allocation tests, vault auto-load, etc.) continue
+# to work without changes.  GlobalPortfolio is the new top-level multi-TF class
+# and is exported separately from ensemble/__init__.py.
+Portfolio = TFPortfolio

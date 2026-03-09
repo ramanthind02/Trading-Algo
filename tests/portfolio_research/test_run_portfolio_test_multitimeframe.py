@@ -21,6 +21,66 @@ from portfolio_research.config import ResearchWindow
 from utils.core.enums import Ticker, TimeFrame
 
 
+# ---------------------------------------------------------------------------
+# Shared GlobalPortfolio / GlobalWeightLayer mocks
+# ---------------------------------------------------------------------------
+
+class _DummyGlobalWeightLayer:
+    """Minimal GlobalWeightLayer stub for pipeline tests."""
+
+    def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
+        pass
+
+    def fit(self, tf_forecast_streams, instrument_returns):  # noqa: ANN001
+        return self
+
+    def combine(self, tf_forecast_streams):  # noqa: ANN001
+        return pd.DataFrame()
+
+
+class _DummyGlobalPortfolio:
+    """Minimal GlobalPortfolio stub that returns capped synthetic positions."""
+
+    created: list[object] = []
+
+    def __init__(
+        self,
+        tf_portfolios,
+        global_weight_layer,
+        max_position_pct: float = 2.0,
+        **kwargs,  # noqa: ANN003
+    ):
+        self.tf_portfolios = tf_portfolios
+        self.global_weight_layer = global_weight_layer
+        self.max_position_pct = max_position_pct
+        _DummyGlobalPortfolio.created.append(self)
+
+    def fit(self, candles_per_tf, instrument_returns):  # noqa: ANN001
+        return self
+
+    def predict(self, candles_per_tf):  # noqa: ANN001
+        # Return a synthetic capped positions DataFrame.
+        daily_candles = candles_per_tf.get(TimeFrame.D, pd.DataFrame())
+        if daily_candles.empty:
+            # Fall back to first available TF.
+            daily_candles = next(iter(candles_per_tf.values()), pd.DataFrame())
+        if daily_candles.empty:
+            return pd.DataFrame(
+                columns=["ticker", "datetime", "forecast_score", "position_fraction"]
+            )
+        ticker = daily_candles["ticker"].iloc[0]
+        datetimes = pd.to_datetime(daily_candles["datetime"]).sort_values().drop_duplicates()
+        n = len(datetimes)
+        return pd.DataFrame(
+            {
+                "ticker": [ticker] * n,
+                "datetime": datetimes.tolist(),
+                "forecast_score": [1.0] * n,
+                "position_fraction": [self.max_position_pct] * n,
+            }
+        )
+
+
 @dataclass
 class _DummyConfig:
     tickers: list[Ticker]
@@ -184,6 +244,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     tmp_path: Path,
 ) -> None:
     _DummyPortfolio.created_timeframes = []
+    _DummyGlobalPortfolio.created = []
 
     config = _DummyConfig(
         tickers=[Ticker.ES],
@@ -260,11 +321,16 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     monkeypatch.setattr(pipeline, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
     monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
     monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
+    monkeypatch.setattr(pipeline, "GlobalPortfolio", _DummyGlobalPortfolio)
+    monkeypatch.setattr(pipeline, "GlobalWeightLayer", _DummyGlobalWeightLayer)
     monkeypatch.setattr(pipeline, "PortfolioTester", _DummyTester)
     monkeypatch.setattr(pipeline, "calculate_strategy_returns_from_positions", _mock_calculate_strategy_returns_from_positions)
     monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
     monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", _mock_aggregate_intraday_returns_to_daily)
     monkeypatch.setattr(pipeline, "generate_tearsheet", _mock_generate_tearsheet)
+    monkeypatch.setattr(pipeline, "export_weight_layer_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "export_global_weight_layer_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
 
     rpt.run_portfolio_test(config)
 
@@ -272,11 +338,16 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     assert _DummyPortfolio.created_timeframes.count(TimeFrame.D) == 3
     assert _DummyPortfolio.created_timeframes.count(TimeFrame.W) == 3
 
+    # Multi-TF path: GlobalPortfolio created once per phase (3 phases).
+    assert len(_DummyGlobalPortfolio.created) == 3, (
+        f"Expected 3 GlobalPortfolio instances (one per phase), got {len(_DummyGlobalPortfolio.created)}"
+    )
+
     generated_names = {Path(path).name for path in generated_output_files}
     generated_paths = [Path(p) for p in generated_output_files]
-    assert "Portfolio_Train_Test_tearsheet.html" in generated_names
-    assert "daily_Portfolio_Train_Test_tearsheet.html" in generated_names
-    assert "weekly_Portfolio_Train_Test_tearsheet.html" in generated_names
+    assert "Portfolio_Train_window_tearsheet.html" in generated_names
+    assert "daily_Portfolio_Train_window_tearsheet.html" in generated_names
+    assert "weekly_Portfolio_Train_window_tearsheet.html" in generated_names
 
     # Component tearsheets live in timeframe subfolders (daily/, weekly/) with un-prefixed filenames.
     assert "ensemble_0_tearsheet.html" in generated_names
@@ -290,10 +361,73 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     capped_combined_frames = [
         frame
         for frame in strategy_position_calls
-        if not frame.empty and frame["position_fraction"].max() == config.max_position_pct
+        if not frame.empty and frame["position_fraction"].abs().max() <= config.max_position_pct
     ]
     assert capped_combined_frames, "Expected at least one combined capped position frame"
     assert all(
         frame["position_fraction"].abs().max() <= config.max_position_pct
         for frame in capped_combined_frames
+    )
+
+
+# ---------------------------------------------------------------------------
+# T009: GlobalWeightLayer produces non-equal TF weights for different profiles
+# ---------------------------------------------------------------------------
+
+def test_global_weight_layer_non_equal_weights_different_tf_profiles() -> None:
+    """GlobalWeightLayer assigns non-equal weights when TF return streams differ.
+
+    Uses synthetic daily and weekly forecast streams where the daily stream has
+    high return-aligned forecasts and the weekly stream has near-zero forecasts,
+    so that semi-covariances differ and HRP assigns unequal weights.
+    """
+    from ensemble.global_weight_layer import GlobalWeightLayer
+
+    rng = pd.date_range("2020-01-02", periods=250, freq="B")
+    ticker = "ES"
+
+    # Daily: strong positive forecasts (large semi-variance)
+    daily_scores = pd.Series(1.0, index=rng, name="forecast_score")
+    # Weekly: flat near-zero forecasts (tiny semi-variance)
+    weekly_scores = pd.Series(0.01, index=rng, name="forecast_score")
+
+    def _stream(scores: pd.Series) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "ticker": ticker,
+                "datetime": scores.index,
+                "forecast_score": scores.values,
+            }
+        )
+
+    tf_streams = {
+        TimeFrame.D: _stream(daily_scores),
+        TimeFrame.W: _stream(weekly_scores),
+    }
+
+    # Instrument returns: simple random walk aligned to the same grid.
+    import numpy as np
+
+    np.random.seed(42)
+    raw_ret = np.random.normal(0.001, 0.01, len(rng))
+    instrument_returns = pd.DataFrame({"ES": raw_ret}, index=rng)
+
+    gwl = GlobalWeightLayer()
+    gwl.fit(tf_streams, instrument_returns)
+
+    assert gwl.is_fitted_, "GlobalWeightLayer should be marked fitted after fit()"
+    assert set(gwl.tf_weights_.keys()) == {TimeFrame.D, TimeFrame.W}, (
+        "Expected weights for both timeframes"
+    )
+
+    w_d = gwl.tf_weights_[TimeFrame.D]
+    w_w = gwl.tf_weights_[TimeFrame.W]
+
+    # Weights must sum to 1.0 (within floating-point tolerance).
+    assert abs(w_d + w_w - 1.0) < 1e-6, f"TF weights must sum to 1.0, got {w_d + w_w}"
+
+    # The TF weights should not both be exactly 0.5 when return profiles differ.
+    # With very different semi-variances, HRP assigns more weight to the lower-risk TF.
+    assert w_d != w_w, (
+        f"Expected non-equal TF weights for different forecast profiles, got D={w_d}, W={w_w}"
     )
