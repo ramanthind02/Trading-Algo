@@ -22,6 +22,8 @@ This document includes public API from these modules:
 - `utils.cache.bias_node_cache`
 - `utils.cache.cache_manager`
 - `utils.compute.fast_nodes`, `utils.compute.fast_stats`, `utils.compute.fast_volatility`, `utils.compute.fast_candle`
+- `utils.evaluation.walkforward.runner`
+- `utils.evaluation.walkforward.portfolio_evaluator`
 
 Included symbols are:
 - public names (not prefixed with `_`)
@@ -78,8 +80,8 @@ print(round(sigma, 4))
 
 `TimeFrame`  
 Type: enum  
-Signature: `class TimeFrame(Enum): D, W, M`  
-Behavior: canonical timeframe enum with ordering and `higher_timeframes(current_tf)`.
+Signature: `class TimeFrame(Enum): H1, H4, D, W, M` with `bars_per_year` property  
+Behavior: canonical timeframe enum with ordering, `higher_timeframes(current_tf)`, and timeframe-aware annualization via `bars_per_year`.
 
 `Ticker`  
 Type: enum  
@@ -89,7 +91,7 @@ Behavior: canonical instrument universe enum used in nodes, ensembles, and deplo
 `Bias` / `PositionMode` / `ResamplingMethod`  
 Type: enum  
 Signature: `class Bias(Enum)`, `class PositionMode(Enum)`, `class ResamplingMethod(Enum)`  
-Behavior: direction/bias, long-short mode constraints, and robustness resampling mode constants.
+Behavior: direction/bias, long_short mode constraints, and robustness resampling mode constants.
 
 `Direction`  
 Type: enum  
@@ -210,8 +212,13 @@ Behavior: orchestrates multi-node, multi-ticker cache population.
 
 `CacheManager.populate_cache`  
 Type: method  
-Signature: `populate_cache(bias_node_specs, tickers, start_date, end_date, max_workers=4, overwrite_existing=True, show_progress=True) -> dict`  
-Behavior: computes and persists cache for requested matrix; auto-adds required auxiliary `atr`/`ewsd` specs.
+Signature: `populate_cache(bias_node_specs, tickers, start_date, end_date, max_workers=4, overwrite_existing=True, show_progress=True, timeframe=TimeFrame.D) -> dict`  
+Behavior: computes and persists cache for requested matrix; auto-adds required auxiliary `atr`/`ewsd` specs scaled by `timeframe`.
+
+`get_auxiliary_specs_for_timeframe`  
+Type: function  
+Signature: `get_auxiliary_specs_for_timeframe(tf: TimeFrame) -> list[dict]`  
+Behavior: returns required ATR/EWSD auxiliary specs for volatility-scaled targets using timeframe-aware windows.
 
 `CacheManager.populate_cache_for_vault`  
 Type: method  
@@ -250,10 +257,27 @@ Type: dataclass/function
 Signature: `FastCandle.from_numpy(...) -> FastCandle`, `create_fast_candle_from_numpy(...) -> FastCandle`  
 Behavior: lightweight candle representation for performance-critical loops.
 
+### `utils.evaluation.walkforward.runner` / `portfolio_evaluator`
+
+`run_portfolio_simulation`  
+Type: function  
+Signature: `run_portfolio_simulation(candles_df, target, fold_rows, selection_summary_df, research_config, feature_data_by_combo=None, tearsheets_dir=None) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series | None]`  
+Behavior: runs fold-level portfolio evaluation and optionally writes walkforward tearsheets.  
+Ticker tearsheet behavior:
+- reads `research_config.generate_ticker_tearsheets` (default `False`)
+- when enabled, writes per-fold ticker tearsheets at `tearsheets/fold_{fold_id}/fold_{fold_id}_{ticker}_tearsheet.html`
+- when enabled, writes aggregate OOS ticker tearsheets at `tearsheets/walkforward_{ticker}_tearsheet.html`
+- existing ensemble/per-signal tearsheets are unchanged
+
+`FoldPortfolioResult`  
+Type: dataclass  
+Signature: includes `oos_portfolio_returns`, optional `per_signal_oos_returns`, optional `per_ticker_oos_returns`  
+Behavior: carries fold OOS return series used by runner tearsheet generation for ensemble, signal, and ticker-level reports.
+
 ## Internal but required
 - `helpers._get_functime_function(...)` is private but required when `create_bias_node` receives string transformations for `ts_feature`.
 - `bias_node_cache` filename internals (`_build_params_suffix`, `_hash_params`) are private but operationally important for deterministic cache lookup and collision avoidance.
-- `cache_manager.REQUIRED_AUXILIARY_SPECS` is internal but materially affects `populate_cache(...)` behavior (automatic `atr`/`ewsd` addition).
+- `cache_manager.REQUIRED_AUXILIARY_SPECS` is a backward-compatible alias for the daily auxiliary specs; `populate_cache(...)` now resolves active auxiliary specs via `get_auxiliary_specs_for_timeframe(...)`.
 
 ## Errors & logging
 - Common exceptions:

@@ -18,7 +18,6 @@ from feature_research.in_sample.data_loader import (
     populate_cache_if_needed,
 )
 from feature_research.in_sample.metric_helpers import compute_param_sensitivity_metric
-from feature_research.walkforward.marginal_peak_selection import MarginalPeakConfig
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
 from feature_selection.eda.eda_reporter import (
@@ -45,25 +44,8 @@ def _build_bin_count_specific_returns(
     bin_count: int,
     config: "ResearchConfig",
 ) -> pd.Series:
-    model = ContinuousBinningModel(
-        n_bins=bin_count,
-        bin_counts=[bin_count],
-        selection_metric=config.binning_params.selection_metric,
-        strategy=config.binning_params.strategy,
-        metric_threshold=config.binning_params.metric_threshold,
-        t_threshold=config.binning_params.t_threshold,
-        min_region_width=config.binning_params.min_region_width,
-        shrinkage_k=config.binning_params.shrinkage_k,
-        long_clip_min=config.binning_params.long_clip_min,
-        long_clip_max=config.binning_params.long_clip_max,
-        short_clip_min=config.binning_params.short_clip_min,
-        short_clip_max=config.binning_params.short_clip_max,
-        use_coverage_bonus=config.binning_params.use_coverage_bonus,
-        coverage_bonus_per_10pct=config.binning_params.coverage_bonus_per_10pct,
-        max_coverage_bonus=config.binning_params.max_coverage_bonus,
-        bin_index_min=config.binning_params.bin_index_min,
-        bin_index_max=config.binning_params.bin_index_max,
-    )
+    from feature_research.in_sample.binning_analysis import binning_model_from_config
+    model = binning_model_from_config(config.binning_params, bin_count)
     model.fit(feature, target)
     signal = model.predict(feature, strategy=config.binning_params.strategy)
     return normalize_series_datetime_index(signal.mul(target))
@@ -102,7 +84,7 @@ def _write_continuous_in_sample_cumsum_plots(
     plots_dir = combo_output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    bin_counts = config.binning_params.bin_counts or [config.binning_params.n_bins]
+    bin_counts = config.binning_params.bin_counts
     for bin_count in sorted({int(bin_count) for bin_count in bin_counts}, reverse=True):
         returns = _build_bin_count_specific_returns(feature, target, bin_count, config)
         _write_cumsum_plot(
@@ -110,6 +92,24 @@ def _write_continuous_in_sample_cumsum_plots(
             output_path=plots_dir / f"in_sample_cumsum_bin_count_{bin_count}.png",
             title=f"In-sample cumulative sum ({label}, bin_count={bin_count})",
         )
+
+
+def _write_rule_based_in_sample_cumsum_plot(
+    feature: pd.Series,
+    target: pd.Series,
+    combo_output_dir: Path,
+    *,
+    label: str,
+) -> None:
+    """Write in-sample cumulative sum plot for rule-based signal (position * target)."""
+    plots_dir = combo_output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    returns = feature.mul(target).dropna()
+    _write_cumsum_plot(
+        returns=returns,
+        output_path=plots_dir / "in_sample_cumsum.png",
+        title=f"In-sample cumulative sum ({label})",
+    )
 
 
 def run_eda_pipeline(
@@ -186,7 +186,7 @@ def run_eda_pipeline(
             )
     else:
         combo_store: dict[str, tuple[pd.Series, pd.Series, str]] = {}
-        metric_col = config.binning_params.selection_metric
+        metric_col = "t_stat"
         varying_params = [
             key
             for key, values in config.bias_spec["params"].items()
@@ -218,7 +218,7 @@ def run_eda_pipeline(
                 selected_returns = target.values[signals]
                 if len(selected_returns) >= 5:
                     try:
-                        metric_value = compute_param_sensitivity_metric(selected_returns, metric_col)
+                        metric_value = compute_param_sensitivity_metric(selected_returns, metric_col, timeframe)
                         row: dict[str, object] = {
                             f"param{k + 1}_value": combo[key]
                             for k, key in enumerate(varying_params)
@@ -246,13 +246,6 @@ def run_eda_pipeline(
                 f"selecting top {max_eda_combos} for EDA output..."
             )
             try:
-                mps_config = MarginalPeakConfig(
-                    k_max=max_eda_combos,
-                    min_gap=ps_cfg.marginal_min_gap,
-                    min_cell_size=ps_cfg.marginal_min_cell_size,
-                    fallback_k=ps_cfg.marginal_fallback_k,
-                    marginal_dim=ps_cfg.marginal_dim,
-                )
                 ps_report = generate_parameter_sensitivity_report(
                     results_df=ps_df,
                     param_names=varying_params,
@@ -261,7 +254,6 @@ def run_eda_pipeline(
                     top_k=max_eda_combos,
                     plot_3d_mode="heatmap_slices",
                     smoothing_self_weight=ps_cfg.smoothing_self_weight,
-                    marginal_peak_config=mps_config,
                 )
                 selected_labels: set[str] = {
                     param_combo_label({**fixed_params, **dict(zip(varying_params, values))})
@@ -312,6 +304,12 @@ def run_eda_pipeline(
             combo_output_dir = output_dir / label
             combo_output_dir.mkdir(parents=True, exist_ok=True)
             saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
+            _write_rule_based_in_sample_cumsum_plot(
+                feature=feature,
+                target=target,
+                combo_output_dir=saved_path,
+                label=label,
+            )
             results[label] = saved_path
 
             stats_by_level = report.rule_stats.per_level_stats.stats_by_level

@@ -10,6 +10,7 @@ Date: 2025-10-24
 import pandas as pd
 from typing import Optional
 import warnings
+from utils.core.enums import TimeFrame
 
 # Import QuantStats
 try:
@@ -20,12 +21,20 @@ except ImportError:
     warnings.warn("QuantStats not installed. Install with: pip install quantstats")
 
 
+def _resample_to_daily_if_needed(returns: pd.Series, tf: TimeFrame) -> pd.Series:
+    """For sub-daily timeframes, sum returns within each day to produce a daily series."""
+    if tf in (TimeFrame.H1, TimeFrame.H4):
+        return returns.resample("D").sum().dropna(how="all")
+    return returns
+
+
 def generate_tearsheet(
     strategy_returns: pd.Series,
     baseline_returns: Optional[pd.Series] = None,
     feature_name: str = "Strategy",
     output_file: Optional[str] = None,
-    mode: str = "full"
+    mode: str = "full",
+    timeframe: TimeFrame = TimeFrame.D,
 ):
     """
     Generate QuantStats tearsheet for walk-forward analysis results.
@@ -80,7 +89,7 @@ def generate_tearsheet(
             "QuantStats is required for tearsheet generation. "
             "Install with: pip install quantstats"
         )
-    
+
     # Validate inputs - must be daily returns series
     if not isinstance(strategy_returns, pd.Series):
         raise TypeError("strategy_returns must be a pandas Series of daily returns")
@@ -92,6 +101,7 @@ def generate_tearsheet(
     if hasattr(strategy_returns.index, 'tz') and strategy_returns.index.tz is not None:
         strategy_returns = strategy_returns.copy()
         strategy_returns.index = strategy_returns.index.tz_localize(None)
+    strategy_returns = _resample_to_daily_if_needed(strategy_returns, timeframe)
     
     strategy_returns.name = feature_name
     
@@ -105,6 +115,7 @@ def generate_tearsheet(
         if hasattr(baseline_returns.index, 'tz') and baseline_returns.index.tz is not None:
             baseline_returns = baseline_returns.copy()
             baseline_returns.index = baseline_returns.index.tz_localize(None)
+        baseline_returns = _resample_to_daily_if_needed(baseline_returns, timeframe)
         
         baseline_returns.name = "Baseline (Always-In)"
         benchmark = baseline_returns

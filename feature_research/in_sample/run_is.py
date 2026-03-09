@@ -5,7 +5,7 @@ This single script runs the in-sample research pipeline:
   2. Optional in-sample permutation (Stage 1 vector shuffle → Stage 2 candle shuffle)
   3. Optional Phase 2 binning analysis (continuous only)
 
-Walkforward is a separate phase; run ``feature_research/walkforward/run_walkforward.py`` for that.
+Validation is a separate phase; run ``feature_research/validation/run_validation.py`` for that.
 
 Usage
 -----
@@ -16,8 +16,8 @@ To customize tickers, dates, bias_spec, or phase presets, edit
 ``feature_research/config.py`` (single source of truth). ``feature_research/in_sample/config.py``
 mainly defines the runtime dataclasses and assembles shared defaults.
 
-To enable permutation: set ``in_sample_permutation.enabled=True`` in ``feature_research/config.py``.
-To speed up Stage 2: set ``in_sample_permutation.n_jobs_stage2_reps`` to the number of
+To enable permutation: set ``permutation.enabled=True`` in ``feature_research/config.py``.
+To speed up Stage 2: set ``permutation.n_jobs_stage2_reps`` to the number of
 CPU cores to use (e.g. 4); reps run in separate processes (real parallelism, no GIL).
 
 To profile Stage 2 (find bottlenecks): run
@@ -47,6 +47,8 @@ from feature_research.bootstrap import ensure_repo_root_on_syspath
 
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
+from feature_research.config import FeatureType
+from feature_research.in_sample.binning_analysis import run_binning_analysis_pipeline
 from feature_research.in_sample.config import load_config
 from feature_research.pipeline import (
     run_eda_pipeline,
@@ -58,7 +60,7 @@ from feature_research.pipeline import (
 if __name__ == "__main__":
     config = load_config()
 
-    print(f"\nPermutation suite: enabled={config.in_sample_permutation.enabled}")
+    print(f"\nPermutation enabled: {config.permutation.enabled}")
     print(f"Reports dir: {config.reports_dir.resolve()}")
 
     # Run EDA for all param combos
@@ -67,8 +69,15 @@ if __name__ == "__main__":
     print(f"{'*'*70}")
     eda_results = run_eda_pipeline(config, config.reports_dir)
 
+    # Run optional continuous binning analysis (Phase 2, continuous features only)
+    if config.feature_type == FeatureType.CONTINUOUS:
+        print(f"\n{'*'*70}")
+        print(f"PHASE 2: Continuous Binning Analysis")
+        print(f"{'*'*70}")
+        run_binning_analysis_pipeline(config, config.reports_dir)
+
     # Run optional in-sample permutation test (Stage 1 vector shuffle → Stage 2 candle shuffle)
-    if config.in_sample_permutation.enabled:
+    if config.permutation.enabled:
         print(f"\n{'*'*70}")
         print(f"PHASE 2: In-Sample Permutation ({config.feature_type.value.upper()})")
         print(f"{'*'*70}")
@@ -83,6 +92,6 @@ if __name__ == "__main__":
             raise
 
     msg = f"\nIn-sample research complete. {len(eda_results)} EDA combos. Artifacts in {config.reports_dir}"
-    if config.in_sample_permutation.enabled:
+    if config.permutation.enabled:
         msg += " Permutation summary CSV/MD in reports_dir."
     print(msg)

@@ -43,10 +43,15 @@ logger = logging.getLogger(__name__)
 
 # Required for volatility-scaled targets (log_return_atr, log_return_ewsd).
 # extract_features_with_forward_returns always requests these when building targets.
-REQUIRED_AUXILIARY_SPECS = [
-    {"module_name": "atr", "params": {"period": 252}},
-    {"module_name": "ewsd", "params": {}},
-]
+def get_auxiliary_specs_for_timeframe(tf: TimeFrame) -> list[dict]:
+    """Return ATR + EWSD auxiliary specs for volatility-scaled targets."""
+    return [
+        {"module_name": "atr", "params": {"period": tf.bars_per_year}},
+        {"module_name": "ewsd", "params": {"long_run_window": 10 * tf.bars_per_year}},
+    ]
+
+
+REQUIRED_AUXILIARY_SPECS = get_auxiliary_specs_for_timeframe(TimeFrame.D)
 
 
 def _spec_matches(spec: Dict[str, Any], module_name: str, params: Dict[str, Any]) -> bool:
@@ -535,7 +540,8 @@ class CacheManager:
         end_date: datetime,
         max_workers: int = 4,
         overwrite_existing: bool = True,
-        show_progress: bool = True
+        show_progress: bool = True,
+        timeframe: TimeFrame = TimeFrame.D,
     ) -> Dict[str, Any]:
         """
         Populate caches for multiple bias node specifications.
@@ -559,6 +565,8 @@ class CacheManager:
             Whether to overwrite existing caches
         show_progress : bool
             Whether to print progress
+        timeframe : TimeFrame
+            Active research timeframe used to scale required ATR/EWSD auxiliary specs.
 
         Returns
         -------
@@ -578,7 +586,7 @@ class CacheManager:
 
         # Ensure required auxiliary bias nodes (atr, ewsd) are included for volatility-scaled targets
         specs_to_use = list(bias_node_specs)
-        for aux in REQUIRED_AUXILIARY_SPECS:
+        for aux in get_auxiliary_specs_for_timeframe(timeframe):
             if not any(
                 _spec_matches(spec, aux["module_name"], aux["params"])
                 for spec in bias_node_specs

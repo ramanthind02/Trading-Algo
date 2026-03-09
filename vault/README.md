@@ -24,3 +24,11 @@ Each feature has its own control file (`features/{feature_column}.json`) contain
 ## Usage
 
 See `docs/to-do/vault_specs.md` for complete documentation.
+
+### Saving from feature research
+
+To save a research model to the vault after you are satisfied with results, set `vault_save` in `feature_research.config.load_config()` (ensemble name, direction, and optional `params_to_save`), then run:
+
+```bash
+python -m feature_research.save_to_vault
+```

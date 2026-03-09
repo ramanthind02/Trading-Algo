@@ -73,16 +73,16 @@ def _run_with_reps(
 ) -> None:
     """Run permutation pipeline with config using config_reps for Stage 2."""
     config = load_config()
-    if not config.in_sample_permutation.enabled:
+    if not config.permutation.enabled:
         raise ValueError(
-            "Permutation suite is disabled. Set in_sample_permutation.enabled=True in config."
+            "Permutation suite is disabled. Set permutation.enabled=True in config."
         )
     perm_suite = replace(
-        config.in_sample_permutation,
+        config.permutation,
         nreps_stage2=config_reps,
         n_jobs_stage2_reps=n_jobs_stage2_reps,
     )
-    config = replace(config, in_sample_permutation=perm_suite)
+    config = replace(config, permutation=perm_suite)
     run_permutation_pipeline(config, output_dir)
 
 

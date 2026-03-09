@@ -17,12 +17,10 @@ if TYPE_CHECKING:
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_research.bootstrap import find_repo_root
-from feature_research.config import FeatureType
+from feature_research.config import FeatureType, RAW_TARGET_COLS
 from utils.cache.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
-
-_UNNORMALIZED_RETURN_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
 
 
 def _resolve_project_root() -> Path | None:
@@ -178,6 +176,7 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
         tickers=config.tickers,
         start_date=start_date,
         end_date=end_date,
+        timeframe=timeframes[0],
         show_progress=True,
         overwrite_existing=False,
     )
@@ -261,6 +260,57 @@ def get_available_date_ranges_for_tickers(
     }
 
 
+def get_effective_range_and_tickers(
+    config: "ResearchConfig",
+) -> tuple[pd.Timestamp, pd.Timestamp, list[Ticker]] | None:
+    """Return effective date range and tickers when no ticker has full coverage.
+
+    Used as fallback so pipelines can run with whatever OHLC data is available
+    instead of raising. Intersection of all tickers' ranges (clipped to config)
+    is used when non-empty; otherwise the single ticker with largest overlap.
+
+    Returns
+    -------
+    tuple of (effective_start, effective_end, tickers) or None
+        None if no OHLC data exists (e.g. no data/ohlc_data or empty ranges).
+    """
+    ranges = get_available_date_ranges_for_tickers(config, list(config.tickers))
+    if not ranges:
+        return None
+    start_ts = pd.Timestamp(config.start)
+    end_ts = pd.Timestamp(config.end)
+    # Intersection clipped to requested range: all tickers have data in [s, e]
+    effective_start = max(start_ts, max(r[0] for r in ranges.values()))
+    effective_end = min(end_ts, min(r[1] for r in ranges.values()))
+    if effective_start < effective_end:
+        covering = [
+            t
+            for t in config.tickers
+            if t in ranges
+            and ranges[t][0] <= effective_start
+            and ranges[t][1] >= effective_end
+        ]
+        if covering:
+            return (effective_start, effective_end, covering)
+    # Fallback: single ticker with largest overlap with [config.start, config.end]
+    def overlap_seconds(ticker: Ticker) -> float:
+        r0, r1 = ranges[ticker][0], ranges[ticker][1]
+        low = max(start_ts.to_pydatetime(), r0)
+        high = min(end_ts.to_pydatetime(), r1)
+        return (pd.Timestamp(high) - pd.Timestamp(low)).total_seconds()
+
+    best = max(
+        (t for t in ranges),
+        key=overlap_seconds,
+    )
+    if overlap_seconds(best) <= 0:
+        return None
+    r0, r1 = ranges[best][0], ranges[best][1]
+    eff_start = max(start_ts, pd.Timestamp(r0))
+    eff_end = min(end_ts, pd.Timestamp(r1))
+    return (eff_start, eff_end, [best])
+
+
 def load_features_for_combo(
     single_combo_spec: dict[str, Any],
     config: "ResearchConfig",
@@ -335,7 +385,7 @@ def load_features_for_combo(
     # For CONTINUOUS: all validations are ok
     # For RULE_BASED: skip multi-ticker raw return check (already checked at config level)
     if config.feature_type == FeatureType.CONTINUOUS:
-        if target_col_name in _UNNORMALIZED_RETURN_COLS:
+        if target_col_name in RAW_TARGET_COLS:
             unique_tickers = (
                 int(features_df["ticker"].nunique())
                 if "ticker" in features_df.columns

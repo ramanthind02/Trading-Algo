@@ -215,7 +215,7 @@ class RSISignal(BiasNode):
 
 Observable behavior:
 - Outputs `-1`, `0`, or `1` based on RSI threshold crosses.
-- `strategy_mode` controls long-only, short-only, or long-short behavior.
+- `strategy_mode` controls long-only, short-only, or long_short behavior.
 - `exit_policy="threshold_or_bars"` exits after `exit_bars` or threshold cross.
 - Warmup outputs `0` until `rsi_period` candles.
 

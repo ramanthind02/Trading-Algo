@@ -32,6 +32,7 @@ from feature_selection.validation.binning.plots import (
     plot_position_multiplier_curve,
     plot_region_boundaries,
 )
+from utils.core.enums import Direction, DirectionInput
 
 
 def _build_region_metadata(model: BinningModelBase, bins: list[int]) -> RegionMetadata:
@@ -186,7 +187,7 @@ def generate_binning_report(
     model: BinningModelBase,
     feature_data: pd.Series,
     criteria: BinningSuccessCriteria,
-    strategy: str = "long",
+    strategy: DirectionInput = Direction.LONG,
     max_regions: int = 1,
     direction_filter: Literal["long", "short", "both"] = "both",
 ) -> tuple[BinningDiagnosticsReport, dict[str, Figure]]:
@@ -196,7 +197,7 @@ def generate_binning_report(
         model: Fitted binning model
         feature_data: Original feature values
         criteria: Success criteria for validation
-        strategy: Trading strategy ("long" or "short")
+        strategy: Trading strategy direction
         max_regions: Maximum number of regions to include (default 1)
         direction_filter: Direction filter ("long", "short", or "both")
 

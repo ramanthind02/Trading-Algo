@@ -5,8 +5,7 @@ Run with:
     python feature_research/oos/run_oos.py
 
 Uses config.oos_window from feature_research.config.load_config() for the single
-OOS fold (train/test dates). Reuses the same evaluation and selection logic as
-walkforward; artifacts are written under output_root/.../oos/.
+OOS fold (train/test dates). Artifacts are written under output_root/.../oos/.
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ def main() -> None:
     report = run_oos_pipeline(config)
     print(
         f"OOS complete. {len(report.folds_df)} fold(s). "
-        f"Artifacts written to {config.walkforward.output_root}"
+        f"Artifacts written to {config.output_root}"
     )
 
 

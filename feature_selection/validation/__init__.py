@@ -5,7 +5,6 @@ from feature_selection.validation.config import (
     OutOfSamplePermutationConfig,
     PermutationReportConfig,
     PermutationTestConfig,
-    WalkforwardPermutationConfig,
 )
 from feature_selection.validation.objective_metrics import (
     ObjectiveMetricSpec,
@@ -17,7 +16,6 @@ __all__ = [
     'OutOfSamplePermutationConfig',
     'PermutationReportConfig',
     'PermutationTestConfig',
-    'WalkforwardPermutationConfig',
     'ObjectiveMetricSpec',
     'resolve_objective_metric',
 ]

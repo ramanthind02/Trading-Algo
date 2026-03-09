@@ -16,9 +16,10 @@ import pytest
 
 matplotlib.use("Agg")
 
+from feature_research.config import FeatureType
 from feature_research.in_sample.config import (
     PermutationResearchConfig,
-    RuleBasedResearchConfig,
+    ResearchConfig,
 )
 from feature_research.pipeline import (
     run_eda_pipeline,
@@ -68,7 +69,8 @@ def test_rule_based_eda_pipeline_smoke(
     _skip_if_no_data()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = RuleBasedResearchConfig(
+        config = ResearchConfig(
+            feature_type=FeatureType.RULE_BASED,
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -129,7 +131,8 @@ def test_rule_based_eda_pipeline_multi_combo(
     rsi_periods = rsi_periods or [2, 3]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = RuleBasedResearchConfig(
+        config = ResearchConfig(
+            feature_type=FeatureType.RULE_BASED,
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -170,7 +173,8 @@ def test_rule_based_pipeline_can_run_permutation_suite_mode(
     rsi_periods = rsi_periods or [2, 3]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = RuleBasedResearchConfig(
+        config = ResearchConfig(
+            feature_type=FeatureType.RULE_BASED,
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -191,7 +195,10 @@ def test_rule_based_pipeline_can_run_permutation_suite_mode(
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
-            in_sample_permutation=PermutationResearchConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+            permutation=PermutationResearchConfig(
+                enabled=True,
+                nreps_stage1=10,
+            ),
         )
 
         try:

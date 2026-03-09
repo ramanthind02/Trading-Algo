@@ -103,6 +103,8 @@ def predict(self, candles_df: pd.DataFrame, strategy: str = "long",
 def stream_predict(self, candles_df: pd.DataFrame, strategy: str = "long") -> pd.Series
 def vectorized_predict(self, candles_df: pd.DataFrame, strategy: str = "long",
                        start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> pd.Series
+def predict_members_from_candles(self, candles_df: pd.DataFrame, strategy: str = "long") -> pd.DataFrame
+def get_fitted_params_for_members(self) -> Dict[str, Dict[str, Any]]
 def save_to_vault(self, ensemble_dir: Optional[str] = None,
                   tickers: Optional[List[Ticker]] = None) -> str
 def update_fitted_params_in_vault(self, ensemble_dir: str, model_id: str,
@@ -115,6 +117,8 @@ Notes / Constraints:
 - Tickers in `candles_df` must be a subset of model tickers.
 - Cached mode (`use_cache=True`) requires complete cache coverage or raises cache miss errors.
 - `predict()` preserves model state in streaming mode (no automatic reset).
+- `fit()` also fits attached members on the same aligned feature/target data;
+  pre-fitted members with `requires_fit=False` are skipped.
 
 No-lookahead / time alignment:
 - Streaming fit/predict sorts candles by `datetime` before per-candle processing to preserve causal feature state.
@@ -135,7 +139,7 @@ Example:
 ```python
 base_model = BaseModel(feature_config=feature_config, tickers=[Ticker.ES], use_cache=True)
 base_model.fit(candles_df, target_series)
-long_short = base_model.predict(candles_df, strategy="long-short")
+long_short = base_model.predict(candles_df, strategy="long_short")
 ```
 
 ### BinningModelBase
@@ -182,7 +186,7 @@ def score(self, X: pd.Series, y: pd.Series, strategy: str = "long") -> float
 
 Constraints:
 - `feature_data` passed to `fit()` must be a named series (`feature_data.name` required).
-- Strategy must be one of `long`, `short`, `long_short` (or `long-short`, normalized internally).
+- Strategy must be one of `long`, `short`, or `long_short`.
 - `selection_metric` must be one of `sharpe`, `mean`, `t_stat`, `sortino`.
 - `fit()` requires sufficient data (`>= max(10, n_bins*5)` after dropping NaNs).
 - For scaled prediction (`scaled=True`) with `normalize_by` set, `normalization_data` is required.

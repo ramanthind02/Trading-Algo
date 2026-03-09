@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from feature_selection.base_models.base_model import BinningModelBase
+from utils.core.enums import Direction, DirectionInput
 
 
 class RuleBasedModel(BinningModelBase):
@@ -19,7 +20,7 @@ class RuleBasedModel(BinningModelBase):
     def __init__(
         self,
         selection_metric: str = "sharpe",
-        strategy: str = "long",
+        strategy: DirectionInput = Direction.LONG,
         normalize_by: str | None = None,
         metric_threshold: float = 0.0,
         shrinkage_k: float = 20.0,

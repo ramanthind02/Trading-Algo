@@ -22,27 +22,8 @@ from feature_selection.validation.orchestration import run_permutation_test_suit
 
 if TYPE_CHECKING:
     from feature_research.in_sample.config import ResearchConfig
-    from feature_research.walkforward.runner import WalkforwardRunReport
+    from utils.evaluation.walkforward.runner import WalkforwardRunReport
     from feature_selection.validation.reports import PermutationTestSuite
-
-
-def _build_fold_structure(
-    start: datetime,
-    end: datetime,
-    fold_years: int,
-) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
-    step_years = max(1, fold_years)
-    fold_start = pd.Timestamp(start).normalize()
-    end_exclusive = pd.Timestamp(end).normalize() + pd.Timedelta(days=1)
-
-    folds: list[tuple[pd.Timestamp, pd.Timestamp]] = []
-    while fold_start < end_exclusive:
-        fold_end = min(fold_start + pd.DateOffset(years=step_years), end_exclusive)
-        if fold_end <= fold_start:
-            break
-        folds.append((fold_start, fold_end))
-        fold_start = fold_end
-    return folds
 
 
 def write_permutation_summary(suite: "PermutationTestSuite", output_dir: Path) -> tuple[Path, Path]:
@@ -115,8 +96,8 @@ def run_permutation_pipeline(
     config: "ResearchConfig",
     output_dir: Path,
 ) -> "PermutationTestSuite":
-    if not config.in_sample_permutation.enabled:
-        raise ValueError("Permutation suite is disabled; set config.in_sample_permutation.enabled=True.")
+    if not config.permutation.enabled:
+        raise ValueError("Permutation suite is disabled; set config.permutation.enabled=True.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     populate_cache_if_needed(config)
@@ -175,53 +156,28 @@ def run_permutation_pipeline(
         return feature.rename(feature_name)
 
     permutation_config = PermutationTestConfig(
-        nreps=config.in_sample_permutation.nreps_stage2,
-        alpha=config.in_sample_permutation.alpha,
-        metric_threshold=config.in_sample_permutation.metric_threshold,
-        top_k=config.in_sample_permutation.top_k,
-        random_seed=config.in_sample_permutation.random_seed,
-        permutation_mode_stage2=config.in_sample_permutation.permutation_mode_stage2,
-        min_folds_stable=config.in_sample_permutation.min_folds_stable,
-        n_jobs_stage2_reps=config.in_sample_permutation.n_jobs_stage2_reps,
-        run_stage1=config.in_sample_permutation.run_stage1,
-        run_stage2=config.in_sample_permutation.run_stage2,
-        run_stage3_walkforward=False,
+        nreps=config.permutation.nreps_stage2,
+        alpha=config.permutation.alpha,
+        metric_threshold=config.permutation.metric_threshold,
+        random_seed=config.permutation.random_seed,
+        permutation_mode_stage2=config.permutation.permutation_mode_stage2,
+        n_jobs_stage2_reps=config.permutation.n_jobs_stage2_reps,
+        run_stage1=config.permutation.run_stage1,
+        run_stage2=config.permutation.run_stage2,
         out_of_sample=OutOfSamplePermutationConfig(
-            objective_metric=config.in_sample_permutation.objective_metric,
+            objective_metric=config.permutation.objective_metric,
             run_oos_permutation=False,
         ),
     )
-    objective_func = resolve_objective_metric(config.in_sample_permutation.objective_metric)
-    fold_structure = _build_fold_structure(
-        config.start,
-        config.end,
-        config.in_sample_permutation.fold_years,
-    )
+    objective_func = resolve_objective_metric(config.permutation.objective_metric)
 
     if config.feature_type == FeatureType.CONTINUOUS:
+        from feature_research.in_sample.binning_analysis import binning_model_from_config
         bp = config.binning_params
 
         def binning_model_factory(params: dict[str, Any]) -> ContinuousBinningModel:
             bin_count = int(cast(int, params.get("bin_count", bp.bin_counts[0])))
-            return ContinuousBinningModel(
-                n_bins=bin_count,
-                bin_counts=[bin_count],
-                selection_metric=bp.selection_metric,
-                strategy=bp.strategy,
-                metric_threshold=bp.metric_threshold,
-                t_threshold=bp.t_threshold,
-                min_region_width=bp.min_region_width,
-                shrinkage_k=bp.shrinkage_k,
-                long_clip_min=bp.long_clip_min,
-                long_clip_max=bp.long_clip_max,
-                short_clip_min=bp.short_clip_min,
-                short_clip_max=bp.short_clip_max,
-                use_coverage_bonus=bp.use_coverage_bonus,
-                coverage_bonus_per_10pct=bp.coverage_bonus_per_10pct,
-                max_coverage_bonus=bp.max_coverage_bonus,
-                bin_index_min=bp.bin_index_min,
-                bin_index_max=bp.bin_index_max,
-            )
+            return binning_model_from_config(bp, bin_count)
     else:
         def binning_model_factory(_params: dict[str, Any]) -> None:
             return None
@@ -232,7 +188,6 @@ def run_permutation_pipeline(
         target=target,
         param_grid=param_grid,
         objective_func=objective_func,
-        fold_structure=fold_structure,
         config=permutation_config,
         extractor_func=extractor_func,
         binning_model_factory=binning_model_factory,

@@ -62,24 +62,24 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
         patch("sys.argv", ["run_oos_permutation.py", "--nreps", "3"]),
         patch("feature_research.oos.run_oos_permutation.load_config") as m_load,
         patch(
-            "feature_research.oos.run_oos_permutation._load_research_data",
+            "feature_research.validation.permutation_helpers.load_research_data",
             side_effect=fake_load_research_data,
         ),
         patch(
-            "feature_research.oos.run_oos_permutation.run_walkforward_research",
+            "utils.evaluation.walkforward.runner.run_walkforward_research",
             return_value=minimal_report,
         ),
         patch(
-            "feature_research.oos.run_oos_permutation.run_vector_shuffle_null",
+            "utils.evaluation.walkforward.permutation_core.run_vector_shuffle_null",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
     ):
         base_config = load_config()
-        config_with_oos = replace(base_config, oos_window=oos)
+        config_with_oos = replace(base_config, validation_window=None, oos_window=oos)
         m_load.return_value = config_with_oos
         # Force output to tmp_path
         with patch(
-            "feature_research.oos.run_oos_permutation.resolve_walkforward_output_dir",
+            "utils.evaluation.walkforward.io.resolve_walkforward_output_dir",
             return_value=tmp_path / "continuous" / "rsi" / "oos",
         ):
             exit_code = main()

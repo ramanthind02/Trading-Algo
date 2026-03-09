@@ -1,13 +1,19 @@
 from enum import Enum
 from dataclasses import dataclass, field
+from typing import TypeAlias
 
 
 class TimeFrame(Enum):
-    """Simplified TimeFrame enum for daily, weekly, and monthly data only."""
+    """Simplified multi-timeframe enum: H1, H4, D, W, M."""
+    H1 = 60 * 60
+    H4 = 60 * 60 * 4
     D = 60 * 60 * 24
     W = 60 * 60 * 24 * 7
     M = 60 * 60 * 24 * 30
 
+    @property
+    def bars_per_year(self) -> int:
+        return _BARS_PER_YEAR[self]
 
     def __lt__(self, other):
         return tuple(self.__class__).index(self) < tuple(self.__class__).index(other)
@@ -16,6 +22,15 @@ class TimeFrame(Enum):
     def higher_timeframes(cls, current_tf):
         current_index = list(cls).index(current_tf)
         return [tf for tf in cls if list(cls).index(tf) > current_index]
+
+
+_BARS_PER_YEAR: dict[TimeFrame, int] = {
+    TimeFrame.H1: 5200,
+    TimeFrame.H4: 1300,
+    TimeFrame.D: 252,
+    TimeFrame.W: 52,
+    TimeFrame.M: 12,
+}
 
 class Ticker(Enum):
     # Equity Indices
@@ -110,12 +125,12 @@ class Direction(Enum):
     @classmethod
     def from_string(cls, direction_str: str) -> 'Direction':
         """
-        Convert string to Direction enum (case-insensitive).
+        Convert canonical string to Direction enum (case-insensitive).
         
         Parameters
         ----------
         direction_str : str
-            Direction string ('long', 'short', or 'long_short' / 'both')
+            Direction string ('long', 'short', or 'long_short')
             
         Returns
         -------
@@ -128,12 +143,26 @@ class Direction(Enum):
             If direction string is invalid
         """
         direction_lower = direction_str.lower().strip()
-        if direction_lower in ('both', 'long_short'):
+        if direction_lower == cls.LONG_SHORT.value:
             return cls.LONG_SHORT
         for direction in cls:
             if direction.value == direction_lower:
                 return direction
         raise ValueError(
             f"Invalid direction: '{direction_str}'. "
-            f"Must be 'long', 'short', or 'long_short'/'both'"
+            f"Must be 'long', 'short', or 'long_short'"
         )
+
+
+DirectionInput: TypeAlias = Direction | str
+
+
+def coerce_direction(direction: DirectionInput, field_name: str = "direction") -> Direction:
+    """Coerce a direction input to Direction using canonical values only."""
+    if isinstance(direction, Direction):
+        return direction
+    if isinstance(direction, str):
+        return Direction.from_string(direction)
+    raise TypeError(
+        f"{field_name} must be a Direction or str, got {type(direction).__name__}"
+    )

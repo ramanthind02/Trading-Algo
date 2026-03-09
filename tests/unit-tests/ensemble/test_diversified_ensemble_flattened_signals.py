@@ -185,8 +185,8 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
         assert 'ewmac_slow::lower' in unique_ids
         assert 'ewmac_slow::upper' in unique_ids
 
-    def test_members_required_for_ensemble_to_work(self):
-        """Test that ensemble requires members array in control file."""
+    def test_members_optional_for_ensemble_control_file(self):
+        """Test that ensemble accepts control files without members."""
         control_file_legacy = {
             'metadata': {
                 'is_fit': False,
@@ -204,9 +204,7 @@ class TestDiversifiedEnsembleFlattenedMemberSignals:
             ]
         }
         
-        # Should raise because legacy schema doesn't have members
-        with pytest.raises(ValueError, match="members"):
-            validate_control_file(control_file_legacy)
+        validate_control_file(control_file_legacy)
 
     def test_member_signal_strength_annualizes_and_clips_daily_sharpe_outputs(self):
         """Continuous member outputs should map to clipped annualized strength."""

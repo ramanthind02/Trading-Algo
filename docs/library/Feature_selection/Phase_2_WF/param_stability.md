@@ -87,17 +87,15 @@ Quadrant 4 (Low raw, High ratio — reject):
 
 ---
 
-## Marginal Peak Selection (MPS)
+## Selection Workflow
 
-Parameter selection is done via **Marginal Peak Selection**: pairwise 2D marginal tables over the param grid, gap-based peak cell, then top `k_max` by raw objective within the peak cell. Best for 2D+ grids (e.g. 15–50 combos).
+Marginal Peak Selection (MPS) has been retired. Parameter selection now relies on manual review of the **top-k** combos by smoothed objective, ensuring stability and alignment with the three-period workflow:
 
-**Algorithm (see `feature_research/walkforward/marginal_peak_selection.py`):**
+1. **Training (2000–2017)** — full parameter sweeps and stability analysis produce the smoothed surface and candidate plateau.
+2. **Validation (2018–2022)** — fixed candidates from training are tested on unseen data; failing strategies are discarded.
+3. **Test (2023–2025)** — locked parameters are evaluated via forward simulation to ensure final robustness.
 
-1. **Pairwise marginal tables** — For each pair of dimensions, group param combos by `(param_A, param_B)`, compute cell mean of raw objective. Only cells with at least `min_cell_size` combos are kept.
-2. **Largest gap** — Find the marginal table whose best cell beats the second-best cell by the largest gap.
-3. **Peak cell** — If that gap ≥ `min_gap`, restrict to param combos in the peak cell; rank by raw objective and take top `k_max`. If gap < `min_gap` (no dominant regime), **fallback**: take top `fallback_k` by raw objective over the full grid.
-
-Neighbor smoothing is still used for plots and for other selection methods (e.g. TOP_K / enhanced in walkforward); MPS uses **raw** objective for ranking and gap computation.
+Neighbor smoothing continues to regularize the surface so that plateau regions dominate isolated spikes. Researchers hand-select a few parameter combinations from the smoothed ranking (TOP_K or ENHANCED in walkforward), rather than relying on any automated gap-based marginal analysis.
 
 ---
 
@@ -149,30 +147,11 @@ Top params jump across parameter space with no consistent pattern → feature is
 
 | Parameter              | Default    | Description                                          |
 |------------------------|------------|------------------------------------------------------|
-| `selection_method`     | `marginal_peak` | Walkforward: `top_k`, `enhanced`, or `marginal_peak`. |
+| `selection_method`     | `top_k` | Walkforward: `top_k` or `enhanced`. |
 | `smoothing_self_weight` | `2.0`–`3.0` | Center param weight vs. each neighbor in smoothing. **Must match EDA config so researcher and WF see the same landscape.** |
-| **MPS** (`MarginalPeakConfig`) | | |
-| `k_max`                | `5`        | Max params selected from the peak cell (or fallback). |
-| `min_gap`               | `0.10`     | Min gap (best − second) to declare a dominant regime; else fallback. |
-| `min_cell_size`        | `2`        | Min combos per cell in marginal tables.     |
-| `fallback_k`           | `5`        | When gap < min_gap, take top fallback_k by raw objective. |
-| `marginal_dim`         | `2`        | Dimensions per marginal table: 2 = C(D,2) pairwise (interpretable); 3 = C(D,3) 3D tables (better noise reduction for 5D+ grids). |
 | `trade_freq_min`       | feature-specific | Upstream walkforward prefilter — applied before selector input. |
 
 All parameters are pre-committed before any fold is evaluated — not tuned per feature.
-
----
-
-## Output: Per-Param Fields (MPS)
-
-| Field               | Description                                          |
-|---------------------|------------------------------------------------------|
-| `param_label`       | Canonical param combo label                          |
-| `raw_objective`     | Raw training metric value                            |
-| `cell_id`           | (dim_A, dim_B) or (dim_A, dim_B, dim_C) when marginal_dim=3 — selected marginal dimensions. |
-| `cell_mean`         | Mean raw objective in that cell                      |
-| `in_peak_cell`      | Whether param is in the gap-selected peak cell       |
-| `selected`          | Whether param was selected for the ensemble          |
 
 ---
 
@@ -180,7 +159,7 @@ All parameters are pre-committed before any fold is evaluated — not tuned per 
 
 1. **Stability ≠ significance.** Permutation tests filter noise. Parameter stability (e.g. MPS, smoothing) filters overfitting. Both required.
 2. **Smoothing is regularization.** Averaging over neighbors penalizes isolated peaks, rewards plateaus; used for plots and for TOP_K/enhanced selection.
-3. **MPS picks a dominant regime.** Marginal tables (2D or 3D per `marginal_dim`) and gap-based peak cell select a robust neighborhood; fallback avoids over-committing when no clear peak exists.
+3. **Top-K smoothed selection identifies the plateau.** The smoothed objective surface ranks stable neighborhoods; researchers hand-select from the top-k rather than relying on gap-based marginal tables.
 4. **Pre-committed config.** All selection parameters are fixed before any fold — no recalibration between walkforward and production.
 
 ---

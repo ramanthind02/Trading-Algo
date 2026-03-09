@@ -1,8 +1,6 @@
 from pathlib import Path
 
-from feature_research.in_sample.continuous_binning.binning_analysis import (
-    run_binning_analysis_pipeline,
-)
+from feature_research.in_sample.binning_analysis import run_binning_analysis_pipeline
 from feature_research.in_sample.config import load_config
 
 

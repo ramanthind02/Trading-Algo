@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Union
 
 import numpy as np
@@ -120,12 +121,15 @@ class Portfolio:
     def __init__(
         self,
         ensembles: Optional[List] = None,
+        ensemble_names: Optional[List[str]] = None,
+        vault_root: str = "vault",
         trading_timeframe: TimeFrame = TimeFrame.D,
         target_volatility: Optional[float] = None,
         max_position_pct: float = 2.0,
         weight_layer: Optional[BaseWeightLayer] = None,
         instrument_weights: Optional[Dict[str, float]] = None,
         idm_max: float = 2.5,
+        dm: Optional[float] = None,
         use_cache: bool = True,
         sector_allocation_config_path: Optional[str] = None
     ):
@@ -135,7 +139,13 @@ class Portfolio:
         Parameters
         ----------
         ensembles : List[DiversifiedEnsemble], optional
-            List of ensembles for this portfolio (new API)
+            List of ensembles for this portfolio. When None, ensembles are loaded
+            from vault via `_load_ensembles_from_vault`.
+        ensemble_names : List[str], optional
+            Optional filter on vault ensemble directory names (full names like
+            `mean-reversion_indices_long`). Used only when `ensembles is None`.
+        vault_root : str, default='vault'
+            Root vault directory used for auto-loading when `ensembles is None`.
         trading_timeframe : TimeFrame, default=TimeFrame.D
             The timeframe this portfolio trades on
         target_volatility : float, optional
@@ -152,9 +162,18 @@ class Portfolio:
             override instrument_weights.
         idm_max : float, default=2.5
             Maximum IDM value (Carver's recommendation)
+        dm : float, optional
+            Backward-compatible alias for `idm_max`.
         """
-        # New API: ensembles-based
-        self.ensembles = ensembles if ensembles is not None else []
+        legacy_dm = dm
+        if dm is not None:
+            idm_max = dm
+
+        # New API: explicit ensembles bypasses vault auto-load (including empty list).
+        if ensembles is None:
+            self.ensembles = self._load_ensembles_from_vault(vault_root, ensemble_names)
+        else:
+            self.ensembles = ensembles
         self.trading_timeframe = trading_timeframe
         self.target_volatility = target_volatility
         self.use_cache = use_cache
@@ -164,7 +183,7 @@ class Portfolio:
             # Create default inverse correlation WeightLayer
             self.weight_layer = WeightLayer(
                 weight_method='inverse_correlation',
-                fdm_max=2.0
+                fdm_max=legacy_dm if legacy_dm is not None else 2.0
             )
         else:
             self.weight_layer = weight_layer
@@ -189,6 +208,40 @@ class Portfolio:
         self.mean_return_correlation_: Optional[float] = None
         self.instruments_: Optional[List[str]] = None
         self.is_fitted_: bool = False
+
+    def _load_ensembles_from_vault(
+        self,
+        vault_root: str,
+        names: Optional[List[str]] = None,
+    ) -> List[Any]:
+        """Auto-load ensemble directories from vault/{D,W,M}."""
+        from ensemble.vault_manager import load_ensemble_from_vault
+
+        vault_path = Path(vault_root)
+        if not vault_path.exists():
+            logger.warning("Vault root not found for portfolio auto-load: %s", vault_root)
+            return []
+
+        name_filter = set(names or [])
+        loaded: List[Any] = []
+        for tf_name in ["D", "W", "M"]:
+            tf_dir = vault_path / tf_name
+            if not tf_dir.exists() or not tf_dir.is_dir():
+                continue
+            for ensemble_dir in sorted(tf_dir.iterdir()):
+                if not ensemble_dir.is_dir():
+                    continue
+                if name_filter and ensemble_dir.name not in name_filter:
+                    continue
+                try:
+                    loaded.append(load_ensemble_from_vault(str(ensemble_dir)))
+                except Exception as exc:
+                    logger.warning(
+                        "Skipping vault ensemble '%s' during auto-load: %s",
+                        ensemble_dir,
+                        exc,
+                    )
+        return loaded
 
     def _load_sector_allocation_config(self, config_path: str) -> Dict[str, Any]:
         """Load and validate a sector allocation configuration file."""
@@ -658,6 +711,14 @@ class Portfolio:
         
         # Fit IDM if we have return data
         if target_data is not None:
+            # #region agent log
+            _tickers = tf_candles["ticker"].unique().tolist()
+            try:
+                import json
+                _log = {"sessionId": "1a52b7", "hypothesisId": "H1", "location": "portfolio.py:fit_from_candles", "message": "before _calculate_returns_from_candles", "data": {"n_tickers": len(_tickers), "tickers": [str(t) for t in _tickers]}, "timestamp": int(__import__("time").time() * 1000)}
+                open("/home/raman/repos/Trading-Algo/.cursor/debug-1a52b7.log", "a").write(json.dumps(_log) + "\n")
+            except Exception: pass
+            # #endregion
             # Calculate returns from candles for IDM calculation
             returns_df = self._calculate_returns_from_candles(tf_candles)
             
@@ -799,9 +860,14 @@ class Portfolio:
                 return None, None
             
             try:
+                ensemble_volatility = (
+                    None
+                    if getattr(ensemble, "fitted_ticker_volatility_", None)
+                    else volatility
+                )
                 ensemble_result = ensemble.predict_from_candles(
                     tf_candles,
-                    volatility=volatility,
+                    volatility=ensemble_volatility,
                     return_base_model_predictions=True,
                     start_date=start_date,
                     end_date=end_date
@@ -1235,10 +1301,17 @@ class Portfolio:
                     f"columns={list(returns_df.columns)}"
                 )
         else:
-            # If we have fewer than 2 tickers, return empty
-            logger.warning(f"Only {len(returns_df.columns)} ticker(s) in returns DataFrame")
-            return pd.DataFrame()
-        
+            # Fewer than 2 tickers: return 1-column returns (non-empty); fit_from_candles
+            # will set IDM=1.0 and log the "Only N instrument(s)" warning.
+            # #region agent log
+            try:
+                import json
+                _log = {"sessionId": "1a52b7", "hypothesisId": "H1", "location": "portfolio.py:_calculate_returns_from_candles", "message": "returning 1-column returns (columns < 2)", "data": {"n_columns": len(returns_df.columns), "columns": list(returns_df.columns)}, "timestamp": int(__import__("time").time() * 1000)}
+                open("/home/raman/repos/Trading-Algo/.cursor/debug-1a52b7.log", "a").write(json.dumps(_log) + "\n")
+            except Exception: pass
+            # #endregion
+            return returns_df
+
         return returns_df
 
     @staticmethod

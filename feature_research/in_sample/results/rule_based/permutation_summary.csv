@@ -1,0 +1,2 @@
+param_combo,stage1_metric,stage1_pval,stage1_passed,stage1_alpha,stage2_metric,stage2_pval,stage2_passed,stage2_mode
+,1.43802888521624,0.3465346534653465,False,0.1,,,False,skipped

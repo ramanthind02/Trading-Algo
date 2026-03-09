@@ -79,7 +79,7 @@ def test_continuous_eda_pipeline_smoke(
                 "params": {"lookback": lookback},
             },
             target_col="log_return",
-            strategy="long-short",
+            strategy="long_short",
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
@@ -138,7 +138,7 @@ def test_continuous_eda_pipeline_multi_combo(
                 "params": {"lookback": lookbacks},
             },
             target_col="log_return",
-            strategy="long-short",
+            strategy="long_short",
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
@@ -174,11 +174,14 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
                 "params": {"lookback": lookbacks},
             },
             target_col="log_return",
-            strategy="long-short",
+            strategy="long_short",
             use_cache=True,
             populate_cache=True,
             reports_dir=Path(tmpdir),
-            in_sample_permutation=PermutationResearchConfig(enabled=True, nreps=10, top_k=2, min_folds_stable=1),
+            permutation=PermutationResearchConfig(
+                enabled=True,
+                nreps_stage1=10,
+            ),
         )
 
         try:
@@ -188,5 +191,6 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
             raise
 
         assert suite.feature_type == "continuous"
-        assert suite.funnel_stats.total_params == len(lookbacks)
-        assert len(suite.stage1_reports) == len(lookbacks)
+        # Param grid is (bin_count × lookback), so total_params can exceed len(lookbacks).
+        assert suite.funnel_stats.total_params == len(suite.stage1_reports)
+        assert len(suite.stage1_reports) >= len(lookbacks)

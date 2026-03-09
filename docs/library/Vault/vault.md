@@ -2,7 +2,7 @@
 
 > [!summary] What Is the Vault?
 > Centralized, validated storage for fitted [[base_model|base models]] and feature control files.
-> Organized by **timeframe → ensemble → feature**. Each feature has one JSON control file holding all model variants.
+> Organized by **timeframe → ensemble → feature**. Each feature has one canonical JSON control file holding all model variants.
 
 ---
 
@@ -13,8 +13,8 @@ vault/
 ├── D/                                   # TimeFrame.D
 │   ├── commodity_breakout_long/         # {strategy_name}_{direction}
 │   │   └── features/
-│   │       ├── rsi_signal_D_lookback_14.json
-│   │       └── momentum_signal_D_lookback_20.json
+│   │       ├── rsi_signal_D.json
+│   │       └── momentum_signal_D.json
 │   └── universal_momentum_short/
 │       └── features/
 └── W/
@@ -30,12 +30,12 @@ vault/
 
 ## Model ID Auto-Generation
 
-IDs are derived from binning type + hyperparameters — no manual naming needed.
+IDs are derived from binning type + hyperparameters + per-model bias params — no manual naming needed.
 
 | Binning model | Generated ID |
 |---|---|
-| `QuantileBinningModel(n_bins=3)` | `quantile_binning_3` |
-| `ContinuousBinningModel(n_bins=5)` | `continuous_binning_5` |
+| `rule_based + lookback=2` | `rule_based_lookback_2` |
+| `continuous_binning(n_bins=5) + lookback=14` | `continuous_binning_5_lookback_14` |
 
 Duplicate IDs (same hyperparams) raise `ValueError`.
 
@@ -113,29 +113,23 @@ remove_base_model_variant(
 ## Control File Schema (JSON)
 
 Each feature JSON contains:
-- `bias_node_spec` — everything needed to reconstruct bias nodes
-- `feature_column` — standardized column name
-- `base_models` — list of all model variants (fitted and unfitted)
+- `feature_name` — canonical feature key (for example `rsi_signal_D`)
+- `bias_node_spec` — top-level shared spec (`module_name`, `timeframes`) with no params
+- `tickers` — training ticker universe for the ensemble feature
+- `base_models` — list of model variants
 - `created_at`, `updated_at` — metadata timestamps
 
-### Multi-Member Schema (required as of v2.0.0)
+Each base model entry contains:
+- `model_id`, `model_name`
+- `bias_node_params` (params moved from top-level spec into per-model entries)
+- `binning_model_type`, `strategy`, `binning_model_params`
+- `requires_fit`, `is_fitted`, `fitted_params`
+- optional `members` list (may be empty or omitted)
 
-```python
-{
-    'name': 'my_feature_model',
-    'model_type': 'continuous_binning',
-    'feature_column': 'rsi_signal_D_lookback_14',
-    'strategy': 'long',
-    'constructor_params': {'n_bins': 3},
-    'members': [
-        {'member_id': 'member_1', 'bin_index': 0},
-        {'member_id': 'member_2', 'bin_index': 1},
-        {'member_id': 'member_3', 'bin_index': 2},
-    ]
-}
-```
-
-> [!warning] Legacy schemas without `members` are rejected.
+Each member entry contains:
+- `member_name`
+- `binning_model_type`, `binning_model_params`
+- `requires_fit`, `is_fitted`, `fitted_params`
 
 ### `is_fit` Flag + Selection Metadata
 
@@ -154,3 +148,17 @@ metadata = {
 
 - [[base_model]] — BaseModel composition and binning strategy
 - [[portfolio]] — how vault ensembles are loaded into Portfolio
+
+---
+
+## Portfolio Auto-Load
+
+`Portfolio` supports vault auto-load:
+
+```python
+Portfolio(ensembles=None, vault_root="vault", ensemble_names=None)
+```
+
+- `ensembles=None`: load all ensemble directories under `vault/{D,W,M}/*`
+- `ensemble_names=[...]`: filter by full directory names (for example `mean-reversion_indices_long`)
+- Explicit `ensembles=` (including `[]`) bypasses auto-load entirely

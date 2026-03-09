@@ -1,0 +1,10 @@
+{
+  "weight": 1.0,
+  "children": [
+    { "weight": 0.3, "tickers": ["NQ"] },
+    { "weight": 0.24, "tickers": ["ES"] },
+    { "weight": 0.06, "tickers": ["RTY"] },
+    { "weight": 0.2, "tickers": ["TLT"] },
+    { "weight": 0.2, "tickers": ["GC"] }
+  ]
+}
