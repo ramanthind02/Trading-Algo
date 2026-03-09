@@ -148,6 +148,7 @@ metadata = {
 
 - [[base_model]] — BaseModel composition and binning strategy
 - [[portfolio]] — how vault ensembles are loaded into Portfolio
+- [[monitoring]] — strategy decay monitoring store (signal/target vectors, CUSUM, rolling Sharpe)
 
 ---
 

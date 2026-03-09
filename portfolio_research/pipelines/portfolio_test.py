@@ -24,6 +24,7 @@ from ensemble.portfolio_tester import (
 from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from portfolio_research.weight_layer_report import export_weight_layer_report
 from utils.core.enums import TimeFrame
 from utils.evaluation.walkforward.runner import _sanitize_tearsheet_name
 
@@ -303,6 +304,11 @@ def _evaluate_phase(
         print(f"  Fitting {tf_label} portfolio...")
         tester = _build_tester_for_timeframe(timeframe, config, grouped_ensembles)
         tester.fit(tf_train_candles)
+        export_weight_layer_report(
+            tester.portfolio.weight_layer,
+            phase_name=output_dir_name,
+            output_dir=phase_out / tf_label / "weight_layer",
+        )
 
         print(f"  Predicting {tf_label} portfolio...")
         tester.predict(

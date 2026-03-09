@@ -915,6 +915,12 @@ def _compute_group_signals_and_returns(
     if ticker_returns is None:
         return group_signals_df, None
 
+    # Deduplicate indices so reindex does not raise (duplicate dates in signals or returns)
+    if group_signals_df.index.duplicated().any():
+        group_signals_df = group_signals_df.loc[~group_signals_df.index.duplicated(keep="first")]
+    if ticker_returns.index.duplicated().any():
+        ticker_returns = ticker_returns.loc[~ticker_returns.index.duplicated(keep="first")]
+
     aligned_returns = ticker_returns.reindex(group_signals_df.index)
     group_returns_df = group_signals_df.multiply(aligned_returns, axis=0)
     return group_signals_df, group_returns_df
@@ -962,7 +968,6 @@ def _hrp_weights_from_semi_cov(
     np.ndarray of length K, summing to 1.0
     """
     from scipy.cluster.hierarchy import linkage as _scipy_linkage, to_tree
-    from scipy.spatial.distance import squareform
 
     K = semi_cov.shape[0]
     if K == 1:
@@ -976,11 +981,16 @@ def _hrp_weights_from_semi_cov(
     np.fill_diagonal(corr, 1.0)
     corr = np.clip(corr, -1.0, 1.0)
 
-    # Distance
+    # Symmetrize corr before computing distance (guards against float-precision
+    # asymmetry from Ledoit-Wolf shrinkage which can cause squareform to reject)
+    corr = (corr + corr.T) / 2
+    np.fill_diagonal(corr, 1.0)
+
+    # Distance — extract condensed form directly to skip squareform symmetry check
     dist = np.sqrt(np.clip(0.5 * (1.0 - corr), 0.0, None))
     np.fill_diagonal(dist, 0.0)
-
-    condensed = squareform(dist)
+    n = dist.shape[0]
+    condensed = dist[np.triu_indices(n, k=1)]
     Z = _scipy_linkage(condensed, method=linkage_method)
 
     # Leaf order from dendrogram

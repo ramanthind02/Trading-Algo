@@ -204,8 +204,8 @@ def load_config() -> PortfolioResearchConfig:
     ensemble_dirs = _discover_ensemble_dirs()
 
     target_volatility = 0.15
-    weight_layer_method = "inverse_correlation"
-    weight_layer_kwargs = {"fdm_max": 2.5}
+    weight_layer_method = "downside_hrp_grouped"
+    weight_layer_kwargs = {"fdm_max": 2.0}
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"

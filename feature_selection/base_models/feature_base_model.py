@@ -1387,6 +1387,26 @@ class BaseModel:
             members=serialized_members,
         )
 
+        # Initialize decay monitoring if model is fitted
+        bm = self.binning_model
+        if (
+            bm.is_fitted_
+            and hasattr(bm, "_training_feature_data")
+            and hasattr(bm, "_training_target_data")
+        ):
+            try:
+                from ensemble.monitoring_store import initialize_monitoring
+                signal_vector = bm.get_fitted_vector(strategy=bm.strategy)
+                initialize_monitoring(
+                    ensemble_dir=ensemble_dir,
+                    feature_name=feature_name,
+                    model_id=model_id,
+                    signals=signal_vector,
+                    targets=bm._training_target_data,
+                )
+            except FileExistsError:
+                pass  # Already initialized — idempotent
+
         return model_id
     
     def update_fitted_params_in_vault(
