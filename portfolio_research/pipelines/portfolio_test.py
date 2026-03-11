@@ -137,7 +137,7 @@ def _enable_cache(ensemble: Any, use_cache: bool) -> Any:
 def _build_instrument_returns(daily_candles: pd.DataFrame) -> pd.DataFrame:
     """Build a (date × ticker) instrument-returns DataFrame from daily candles.
 
-    Used as input to ``GlobalPortfolio.fit`` for IDM and GlobalWeightLayer fitting.
+    Used as input to ``GlobalPortfolio.fit`` for IDM and WeightLayer fitting.
     """
     if daily_candles.empty:
         return pd.DataFrame()
@@ -158,16 +158,11 @@ def _build_tester_for_timeframe(
     grouped_ensembles: dict[TimeFrame, list[Any]],
 ) -> PortfolioTester:
     """Build PortfolioTester for a specific timeframe."""
-    weight_layer = WeightLayer(
-        weight_method=config.weight_layer_method,
-        **dict(config.weight_layer_kwargs),
-    )
     portfolio_kw: dict[str, Any] = {
         "ensembles": grouped_ensembles[timeframe],
         "trading_timeframe": timeframe,
         "target_volatility": config.target_volatility,
         "max_position_pct": config.max_position_pct,
-        "weight_layer": weight_layer,
         "use_cache": config.use_cache,
     }
     if config.sector_allocation_config_path is not None:
@@ -367,10 +362,14 @@ def _evaluate_phase(
 
     if has_multiple_timeframes:
         # Build GlobalPortfolio from the already-fitted TFPortfolios and combine
-        # forecast streams via GlobalWeightLayer (inverse-correlation cross-TF weights).
+        # forecast streams via WeightLayer (clustered cross-TF weights).
         tf_portfolios = [testers_by_timeframe[tf].portfolio for tf in unique_timeframes]
         global_portfolio = GlobalPortfolio(
             tf_portfolios=tf_portfolios,
+            weight_layer=WeightLayer(
+                weight_method=config.weight_layer_method,
+                **dict(config.weight_layer_kwargs),
+            ),
             max_position_pct=config.max_position_pct,
         )
         instrument_returns = _build_instrument_returns(daily_train_candles)

@@ -69,7 +69,7 @@ class PortfolioResearchConfig:
     target_volatility : float
         Target annual volatility for ensembles/portfolio.
     weight_layer_method : str
-        WeightLayer method (e.g. 'inverse_correlation').
+        WeightLayer method (``'cluster_equal'`` or ``'cluster_corr_ulcer'``).
     weight_layer_kwargs : Mapping[str, Any]
         Extra kwargs for WeightLayer (e.g. fdm_max).
     max_position_pct : float
@@ -97,7 +97,7 @@ class PortfolioResearchConfig:
     oos_window: OOSWindowConfig | None = None
     ensemble_dirs: Mapping[str, str] = field(default_factory=dict)
     target_volatility: float = 0.15
-    weight_layer_method: str = "inverse_correlation"
+    weight_layer_method: str = "cluster_equal"
     weight_layer_kwargs: Mapping[str, Any] = field(default_factory=dict)
     max_position_pct: float = 3.5
     baseline_mode: str = "equal_weight"
@@ -242,7 +242,7 @@ def load_config() -> PortfolioResearchConfig:
     ensemble_dirs = _discover_ensemble_dirs()
 
     target_volatility = 0.15
-    weight_layer_method = "inv_avg_pairwise_corr_grouped"
+    weight_layer_method = "cluster_equal"
     weight_layer_kwargs = {"fdm_max": 2.0}
     max_position_pct = 3.5
     baseline_mode = "equal_weight"

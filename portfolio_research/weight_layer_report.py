@@ -5,9 +5,9 @@ after each pipeline phase.
 
 Outputs (written to ``output_dir/``):
 - ``report.html``             self-contained visual report (charts + tables)
-- ``weights_by_group.csv``    per-(ticker × model) flat table with group weights
+- ``weights_by_cluster.csv``  per-(ticker × model) flat table with cluster weights
 - ``signal_cross_ticker.csv`` models that appear in multiple tickers
-- ``summary.csv``             per-ticker aggregate stats (FDM, n_models, n_groups)
+- ``summary.csv``             per-ticker aggregate stats (FDM, n_models, n_clusters)
 - ``diagnostics.json``        full raw diagnostics dict for programmatic use
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Colour palette (qualitative, up to 20 groups)
+# Colour palette (qualitative, up to 20 clusters)
 # ---------------------------------------------------------------------------
 _PALETTE = [
     "#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B3",
@@ -43,10 +43,10 @@ _PALETTE = [
 ]
 
 
-def _color_for(family: str, palette: dict[str, str]) -> str:
-    if family not in palette:
-        palette[family] = _PALETTE[len(palette) % len(_PALETTE)]
-    return palette[family]
+def _color_for(cluster_id: str, palette: dict[str, str]) -> str:
+    if cluster_id not in palette:
+        palette[cluster_id] = _PALETTE[len(palette) % len(_PALETTE)]
+    return palette[cluster_id]
 
 
 # ---------------------------------------------------------------------------
@@ -85,15 +85,9 @@ def _clean_ticker(s: str) -> str:
     return s.split(".")[-1] if "." in s else s
 
 
-def _abbrev_family(name: str, max_len: int = 12) -> str:
-    """Truncate long family names for chart legends."""
+def _abbrev_cluster(name: str, max_len: int = 12) -> str:
+    """Truncate long cluster names for chart legends."""
     return name if len(name) <= max_len else name[:max_len - 1] + "…"
-
-
-def _family_id(model_name: str) -> str:
-    """Extract feature-family group ID from a model name."""
-    left = model_name.split("::")[0].strip() if "::" in model_name else model_name
-    return left.split("_")[0] if "_" in left else left
 
 
 def _build_weights_by_group(diagnostics: dict, phase: str) -> pd.DataFrame:
@@ -101,25 +95,21 @@ def _build_weights_by_group(diagnostics: dict, phase: str) -> pd.DataFrame:
     for ticker, info in diagnostics.get("tickers", {}).items():
         weights: dict = info.get("weights") or {}
         fdm = info.get("fdm", 1.0)
-        mean_corr = info.get("mean_forecast_correlation", float("nan"))
-
-        family_of = {model: _family_id(model) for model in weights}
-        group_totals: dict[str, float] = {}
-        for model, w in weights.items():
-            grp = family_of[model]
-            group_totals[grp] = group_totals.get(grp, 0.0) + w
+        mean_corr = info.get("mean_cluster_correlation", float("nan"))
+        cluster_of: dict[str, str] = info.get("cluster_assignments") or {}
+        cluster_totals: dict[str, float] = info.get("cluster_weights") or {}
 
         for model, model_weight in sorted(weights.items()):
-            grp = family_of[model]
+            cluster_id = cluster_of.get(model, "cluster_1")
             rows.append({
                 "phase": phase,
                 "ticker": _clean_ticker(ticker),
-                "feature_family": grp,
+                "cluster_id": cluster_id,
                 "model_name": model,
                 "model_weight": round(model_weight, 6),
-                "group_weight": round(group_totals[grp], 6),
+                "cluster_weight": round(cluster_totals.get(cluster_id, 0.0), 6),
                 "fdm": round(fdm, 4),
-                "mean_forecast_correlation": round(mean_corr, 4),
+                "mean_cluster_correlation": round(mean_corr, 4),
             })
     return pd.DataFrame(rows)
 
@@ -130,12 +120,12 @@ def _build_cross_ticker(weights_df: pd.DataFrame) -> pd.DataFrame:
 
     all_tickers = sorted(weights_df["ticker"].unique())
     rows = []
-    for model_name, grp in weights_df[["model_name", "feature_family"]].drop_duplicates().values:
+    for model_name, cluster_id in weights_df[["model_name", "cluster_id"]].drop_duplicates().values:
         model_rows = weights_df[weights_df["model_name"] == model_name]
         present_tickers = sorted(str(t) for t in model_rows["ticker"].tolist())
         row: dict = {
             "model_name": model_name,
-            "feature_family": grp,
+            "cluster_id": cluster_id,
             "tickers_present": ",".join(present_tickers),
             "n_tickers": len(present_tickers),
         }
@@ -145,7 +135,7 @@ def _build_cross_ticker(weights_df: pd.DataFrame) -> pd.DataFrame:
         rows.append(row)
 
     df = pd.DataFrame(rows).sort_values(
-        ["n_tickers", "feature_family", "model_name"], ascending=[False, True, True]
+        ["n_tickers", "cluster_id", "model_name"], ascending=[False, True, True]
     )
     return df.reset_index(drop=True)
 
@@ -154,15 +144,15 @@ def _build_summary(diagnostics: dict, phase: str) -> pd.DataFrame:
     rows = []
     for ticker, info in diagnostics.get("tickers", {}).items():
         weights: dict = info.get("weights") or {}
-        families = {_family_id(m) for m in weights}
+        clusters = set((info.get("cluster_weights") or {}).keys())
         rows.append({
             "phase": phase,
             "ticker": _clean_ticker(ticker),
             "n_models": info.get("n_models", len(weights)),
-            "n_groups": len(families),
+            "n_clusters": len(clusters),
             "fdm": round(info.get("fdm", 1.0), 4),
-            "mean_forecast_correlation": round(
-                info.get("mean_forecast_correlation", float("nan")), 4
+            "mean_cluster_correlation": round(
+                info.get("mean_cluster_correlation", float("nan")), 4
             ),
         })
     return pd.DataFrame(rows).sort_values("ticker").reset_index(drop=True)
@@ -180,16 +170,16 @@ def _fig_to_b64(fig: plt.Figure) -> str:
 
 
 def _chart_group_weights(weights_df: pd.DataFrame) -> str:
-    """Stacked bar: weight allocated to each feature family, per ticker."""
+    """Stacked bar: weight allocated to each cluster, per ticker."""
     tickers = sorted(weights_df["ticker"].unique())
-    families = sorted(weights_df["feature_family"].unique())
+    cluster_ids = sorted(weights_df["cluster_id"].unique())
     palette: dict[str, str] = {}
-    for f in families:
-        _color_for(f, palette)
+    for cluster_id in cluster_ids:
+        _color_for(cluster_id, palette)
 
     # Group → total weight per ticker
     pivot = (
-        weights_df.groupby(["ticker", "feature_family"])["model_weight"]
+        weights_df.groupby(["ticker", "cluster_id"])["model_weight"]
         .sum()
         .unstack(fill_value=0.0)
         .reindex(tickers)
@@ -200,10 +190,10 @@ def _chart_group_weights(weights_df: pd.DataFrame) -> str:
     bottom = np.zeros(len(tickers))
     x = np.arange(len(tickers))
 
-    for fam in sorted(pivot.columns):
-        vals = pivot[fam].values
-        bars = ax.bar(x, vals, bottom=bottom, color=palette.get(fam, "#888"),
-                      label=_abbrev_family(fam), width=0.6, edgecolor="white", linewidth=0.5)
+    for cluster_id in sorted(pivot.columns):
+        vals = pivot[cluster_id].values
+        bars = ax.bar(x, vals, bottom=bottom, color=palette.get(cluster_id, "#888"),
+                      label=_abbrev_cluster(cluster_id), width=0.6, edgecolor="white", linewidth=0.5)
         # Label bars that are wide enough to read
         for bar, b, v in zip(bars, bottom, vals):
             if v > 0.04:
@@ -220,8 +210,8 @@ def _chart_group_weights(weights_df: pd.DataFrame) -> str:
     ax.set_ylim(0, 1.08)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f"{y:.0%}"))
     ax.set_ylabel("Allocated Weight", fontsize=10)
-    ax.set_title("Group Weight Allocation per Ticker", fontsize=12, fontweight="bold", pad=10)
-    ax.legend(loc="upper right", fontsize=8, framealpha=0.8, ncol=max(1, len(families) // 8))
+    ax.set_title("Cluster Weight Allocation per Ticker", fontsize=12, fontweight="bold", pad=10)
+    ax.legend(loc="upper right", fontsize=8, framealpha=0.8, ncol=max(1, len(cluster_ids) // 8))
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="y", alpha=0.3, linestyle="--")
     fig.tight_layout()
@@ -263,10 +253,10 @@ def _chart_model_weight_heatmap(weights_df: pd.DataFrame) -> str | None:
     pivot = weights_df.pivot_table(
         index="model_name", columns="ticker", values="model_weight", aggfunc="first"
     ).reindex(columns=tickers)
-    # Sort rows by feature family then model name
-    family_map = weights_df.set_index("model_name")["feature_family"].to_dict()
-    pivot["_fam"] = pivot.index.map(family_map)
-    pivot = pivot.sort_values(["_fam", pivot.index.name]).drop(columns=["_fam"])
+    # Sort rows by cluster then model name.
+    cluster_map = weights_df.set_index("model_name")["cluster_id"].to_dict()
+    pivot["_cluster"] = pivot.index.map(cluster_map)
+    pivot = pivot.sort_values(["_cluster", pivot.index.name]).drop(columns=["_cluster"])
 
     fig_h = max(4, len(pivot) * 0.28 + 1.5)
     fig, ax = plt.subplots(figsize=(max(5, len(tickers) * 1.2), fig_h), facecolor="#FAFAFA")
@@ -297,22 +287,22 @@ def _chart_model_weight_heatmap(weights_df: pd.DataFrame) -> str | None:
 
     ax.set_title("Model Weight per Ticker (Heatmap)", fontsize=12, fontweight="bold", pad=10)
     plt.colorbar(im, ax=ax, shrink=0.6, label="Model Weight")
-    # Draw family group separators
-    prev_fam = None
+    # Draw cluster separators.
+    prev_cluster = None
     for r, mname in enumerate(pivot.index):
-        fam = family_map.get(mname, "")
-        if fam != prev_fam and r > 0:
+        cluster_id = cluster_map.get(mname, "")
+        if cluster_id != prev_cluster and r > 0:
             ax.axhline(r - 0.5, color="#555", linewidth=0.8, linestyle="--")
-        prev_fam = fam
+        prev_cluster = cluster_id
 
     fig.tight_layout()
     return _fig_to_b64(fig)
 
 
 def _chart_group_pie(weights_df: pd.DataFrame, ticker: str, palette: dict[str, str]) -> str:
-    """Donut chart of group weights for a single ticker."""
+    """Donut chart of cluster weights for a single ticker."""
     t_df = weights_df[weights_df["ticker"] == ticker]
-    grp = t_df.groupby("feature_family")["model_weight"].sum().sort_values(ascending=False)
+    grp = t_df.groupby("cluster_id")["model_weight"].sum().sort_values(ascending=False)
 
     fig, ax = plt.subplots(figsize=(4, 4), facecolor="#FAFAFA")
     colors = [_color_for(f, palette) for f in grp.index]
@@ -331,7 +321,7 @@ def _chart_group_pie(weights_df: pd.DataFrame, ticker: str, palette: dict[str, s
         at.set_fontweight("bold")
     ax.set_title(ticker, fontsize=11, fontweight="bold")
     ax.legend(
-        wedges, [f"{_abbrev_family(f)} ({w:.1%})" for f, w in zip(grp.index, grp.values)],
+        wedges, [f"{_abbrev_cluster(f)} ({w:.1%})" for f, w in zip(grp.index, grp.values)],
         loc="lower center", bbox_to_anchor=(0.5, -0.18),
         fontsize=7.5, ncol=2, framealpha=0.8,
     )
@@ -381,13 +371,13 @@ def _html_table(df: pd.DataFrame, highlight_col: str | None = None, palette: dic
         cells = ""
         for col in df.columns:
             v = row[col]
-            if col == "feature_family" and pal:
+            if col == "cluster_id" and pal:
                 color = pal.get(str(v), "#888")
                 cells += f'<td><span class="tag" style="background:{color}">{v}</span></td>'
             elif isinstance(v, float):
-                if col.startswith("weight") or col == "model_weight" or col == "group_weight":
+                if col.startswith("weight") or col == "model_weight" or col == "cluster_weight":
                     cells += f"<td>{v:.4f}" + (f" <small style='color:#888'>({v:.1%})</small>" if v == v else "") + "</td>"
-                elif col in ("fdm", "mean_forecast_correlation"):
+                elif col in ("fdm", "mean_cluster_correlation"):
                     cells += f"<td>{v:.4f}</td>"
                 else:
                     cells += f"<td>{v}</td>"
@@ -410,9 +400,9 @@ def _build_html_report(
     from datetime import datetime, timezone
 
     palette: dict[str, str] = {}
-    all_families = sorted(weights_df["feature_family"].unique()) if not weights_df.empty else []
-    for f in all_families:
-        _color_for(f, palette)
+    all_clusters = sorted(weights_df["cluster_id"].unique()) if not weights_df.empty else []
+    for cluster_id in all_clusters:
+        _color_for(cluster_id, palette)
 
     summary = diagnostics.get("summary", {})
     weight_method = diagnostics.get("weight_method", "unknown")
@@ -420,7 +410,7 @@ def _build_html_report(
     n_tickers = int(summary.get("n_tickers", 0))
     mean_fdm = float(summary.get("mean_fdm", 1.0))
     total_models = int(summary.get("total_models", 0))
-    n_groups = len(all_families)
+    n_groups = len(all_clusters)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     # --- Charts ---
@@ -437,14 +427,14 @@ def _build_html_report(
     <div class="kpi-row">
       <div class="kpi"><div class="val">{n_tickers}</div><div class="lbl">Tickers</div></div>
       <div class="kpi"><div class="val">{total_models}</div><div class="lbl">Total Models</div></div>
-      <div class="kpi"><div class="val">{n_groups}</div><div class="lbl">Feature Families</div></div>
+      <div class="kpi"><div class="val">{n_groups}</div><div class="lbl">Clusters</div></div>
       <div class="kpi"><div class="val">{mean_fdm:.3f}</div><div class="lbl">Mean FDM</div></div>
       <div class="kpi"><div class="val">{fdm_max:.1f}</div><div class="lbl">FDM Cap</div></div>
     </div>"""
 
-    # --- Family legend ---
+    # --- Cluster legend ---
     legend_pills = "".join(
-        f'<span class="tag" style="background:{palette[f]}" title="{f}">{_abbrev_family(f)}</span>'
+        f'<span class="tag" style="background:{palette[f]}" title="{f}">{_abbrev_cluster(f)}</span>'
         for f in sorted(palette)
     )
     legend_html = f'<div class="pill-row">{legend_pills}</div>'
@@ -452,7 +442,7 @@ def _build_html_report(
     # --- Stacked + FDM charts ---
     charts_row_1 = ""
     if chart_stacked:
-        charts_row_1 += f'<div class="card"><h3>Group Weight Allocation</h3><img class="chart" src="data:image/png;base64,{chart_stacked}"></div>'
+        charts_row_1 += f'<div class="card"><h3>Cluster Weight Allocation</h3><img class="chart" src="data:image/png;base64,{chart_stacked}"></div>'
     if chart_fdm:
         charts_row_1 += f'<div class="card"><h3>Forecast Diversification Multiplier</h3><img class="chart" src="data:image/png;base64,{chart_fdm}"></div>'
     if charts_row_1:
@@ -464,7 +454,7 @@ def _build_html_report(
         for b64 in ticker_pies.values()
     )
     donut_section = f"""
-    <h2>Group Allocation per Ticker</h2>
+    <h2>Cluster Allocation per Ticker</h2>
     <div class="chart-row" style="flex-wrap:wrap">{donut_cards}</div>
     """ if donut_cards else ""
 
@@ -473,7 +463,7 @@ def _build_html_report(
     if chart_heatmap:
         heatmap_section = f"""
         <h2>Model Weight Heatmap (Cross-Ticker)</h2>
-        <p class="section-note">Rows = models (grouped by feature family, separated by dashed lines). Columns = tickers. Colour intensity = allocated weight. Grey = model not in that ticker.</p>
+        <p class="section-note">Rows = models (grouped by cluster, separated by dashed lines). Columns = tickers. Colour intensity = allocated weight. Grey = model not in that ticker.</p>
         <div class="card" style="text-align:center"><img class="chart" src="data:image/png;base64,{chart_heatmap}"></div>
         """
 
@@ -491,7 +481,7 @@ def _build_html_report(
         display_df = weights_df.drop(columns=["phase"], errors="ignore")
         detail_section = f"""
         <h2>Model Weights Detail</h2>
-        <p class="section-note">One row per (ticker × model). <em>group_weight</em> = sum of all model weights in that feature family for that ticker.</p>
+        <p class="section-note">One row per (ticker x model). <em>cluster_weight</em> = sum of all model weights in that cluster for that ticker.</p>
         <div class="card"><div class="tbl-wrap">{_html_table(display_df, palette=palette)}</div></div>
         """
 
@@ -518,7 +508,7 @@ def _build_html_report(
   <h1>Weight Layer Report</h1>
   <p class="subtitle">Phase: <strong>{phase_name}</strong> &nbsp;|&nbsp; Method: <strong>{weight_method}</strong> &nbsp;|&nbsp; Generated: {now}</p>
   {kpi_html}
-  <h2>Feature Families</h2>
+  <h2>Clusters</h2>
   <div class="card">{legend_html}</div>
   {charts_row_1}
   {donut_section}
@@ -573,8 +563,8 @@ def export_weight_layer_report(
     cross_df = _build_cross_ticker(weights_df) if not weights_df.empty else pd.DataFrame()
 
     if not weights_df.empty:
-        weights_df.to_csv(output_dir / "weights_by_group.csv", index=False)
-        logger.info("Weights by group written (%d rows)", len(weights_df))
+        weights_df.to_csv(output_dir / "weights_by_cluster.csv", index=False)
+        logger.info("Weights by cluster written (%d rows)", len(weights_df))
     if not cross_df.empty:
         cross_df.to_csv(output_dir / "signal_cross_ticker.csv", index=False)
         logger.info("Cross-ticker signal table written (%d rows)", len(cross_df))
@@ -590,7 +580,7 @@ def export_weight_layer_report(
 
 
 # ---------------------------------------------------------------------------
-# Cross-TF weight diagnostics (GlobalPortfolio / GlobalWeightLayer)
+# Cross-TF weight diagnostics (GlobalPortfolio)
 # ---------------------------------------------------------------------------
 
 def _build_global_html_report(diagnostics: dict, phase_name: str) -> str:

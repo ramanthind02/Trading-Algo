@@ -1,17 +1,16 @@
 """
 Portfolio Class for Position Sizing and Instrument Allocation
 
-This module provides a Portfolio class that applies instrument weighting,
-Instrument Diversification Multiplier (IDM), and optional position capping
-to combined forecasts from the WeightLayer.
+This module provides timeframe and global portfolio layers.
 
-The Portfolio is the final layer before Execution:
-    WeightLayer.combine() -> Portfolio.predict() -> PositionSizer.calculate_positions()
+- ``TFPortfolio`` fits ensembles and produces per-timeframe forecast streams.
+- ``GlobalPortfolio`` combines those streams with ``WeightLayer``, then applies
+  instrument weighting, IDM, and optional position capping.
 
 Key responsibilities:
-1. Apply instrument weights (equal weight or custom allocation)
-2. Calculate and apply IDM from instrument return correlations
-3. Apply optional position capping
+1. Build timeframe-level forecasts from ensembles
+2. Combine those forecasts globally
+3. Apply instrument weights, IDM, and optional position capping
 
 Reference: Robert Carver's "Systematic Trading" and "Leveraged Trading"
 """
@@ -69,11 +68,12 @@ def _parse_timeframe_from_global_model_name(model_name: str) -> str:
 
 class TFPortfolio:
     """
-    Portfolio class for applying instrument weighting and IDM to combined forecasts.
+    Timeframe portfolio for fitting ensembles and producing forecast streams.
 
-    The Portfolio uses WeightLayer to combine forecasts from all base models across all ensembles.
-    WeightLayer applies FDM (Forecast Diversification Multiplier) during combination.
-    Portfolio then applies:
+    ``TFPortfolio`` does not own the cross-timeframe ``WeightLayer``. That
+    combiner now sits one level up inside ``GlobalPortfolio``.
+
+    ``TFPortfolio`` applies:
     1. Instrument weights (default: equal weight per instrument)
     2. Instrument Diversification Multiplier (IDM)
     3. Optional position capping
@@ -125,7 +125,6 @@ class TFPortfolio:
 
     Examples
     --------
-    >>> # Using default WeightLayer
     >>> portfolio = TFPortfolio(
     ...     ensembles=[ensemble1, ensemble2],
     ...     trading_timeframe=TimeFrame.D,
@@ -937,8 +936,8 @@ class TFPortfolio:
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
             Should contain candles for the trading_timeframe of this portfolio
         target_data : pd.Series, optional
-            Optional return series passed to WeightLayer.fit(returns=...) for
-            downside-risk weighting methods. If None, ensembles must be pre-fitted.
+            Optional target/return series used while fitting the underlying ensembles.
+            If None, ensembles must already be fitted.
         start_date : datetime, optional
             Start date for cached data. If None, inferred from candles_df.
         end_date : datetime, optional
@@ -1927,7 +1926,7 @@ class GlobalPortfolio:
     tf_portfolios : list of TFPortfolio
         One per trading timeframe.
     weight_layer : BaseWeightLayer, optional
-        Cross-TF weight layer. Defaults to ``inv_avg_pairwise_corr_grouped``.
+        Cross-TF weight layer. Defaults to ``cluster_equal``.
     instrument_weights : dict mapping ticker → weight, optional
         Global instrument weights. If None, equal weight is applied.
     sector_allocation_config_path : str, optional
@@ -1960,7 +1959,7 @@ class GlobalPortfolio:
         self.weight_layer: BaseWeightLayer = (
             weight_layer
             if weight_layer is not None
-            else WeightLayer(weight_method="inv_avg_pairwise_corr_grouped", fdm_max=2.0)
+            else WeightLayer(weight_method="cluster_equal", fdm_max=2.0)
         )
         self.buy_hold_target_weight = float(np.clip(buy_hold_target_weight, 0.0, 1.0))
         self.idm_max = idm_max

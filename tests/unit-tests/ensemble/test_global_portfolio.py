@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 
 from utils.core.enums import TimeFrame
-from ensemble.global_weight_layer import GlobalWeightLayer, GlobalWeightLayerConfig
 from ensemble.portfolio import GlobalPortfolio, TFPortfolio
 
 
@@ -151,12 +150,8 @@ def _build_global_portfolio(
         for tf in timeframes
     ]
 
-    gwl_config = GlobalWeightLayerConfig(shrinkage="none", fdm_max=2.0)
-    gwl = GlobalWeightLayer(config=gwl_config)
-
     gp = GlobalPortfolio(
         tf_portfolios=tf_portfolios,
-        global_weight_layer=gwl,
         idm_max=idm_max,
         max_position_pct=max_position_pct,
     )
@@ -247,9 +242,8 @@ class TestFittedState:
         assert gp.is_fitted_ is True
 
     def test_not_fitted_raises(self):
-        gwl = GlobalWeightLayer()
         tf_p = _MockTFPortfolio(TimeFrame.D, ["ES"])
-        gp = GlobalPortfolio(tf_portfolios=[tf_p], global_weight_layer=gwl)
+        gp = GlobalPortfolio(tf_portfolios=[tf_p])
         candles_per_tf = {TimeFrame.D: _make_candles_stub(["ES"])}
         with pytest.raises(RuntimeError, match="fitted"):
             gp.predict(candles_per_tf)
@@ -314,7 +308,7 @@ class TestDiagnostics:
             "idm_max",
             "max_position_pct",
             "n_tf_portfolios",
-            "global_weight_layer",
+            "weight_layer",
         }
         assert expected_keys.issubset(set(diag.keys()))
 
@@ -333,10 +327,8 @@ class TestInstrumentWeights:
 
         timeframes = [TimeFrame.D]
         tf_portfolios = [_MockTFPortfolio(TimeFrame.D, tickers, score=0.5, n_dates=20)]
-        gwl = GlobalWeightLayer(config=GlobalWeightLayerConfig(shrinkage="none"))
         gp = GlobalPortfolio(
             tf_portfolios=tf_portfolios,
-            global_weight_layer=gwl,
             instrument_weights=custom_w,
         )
 

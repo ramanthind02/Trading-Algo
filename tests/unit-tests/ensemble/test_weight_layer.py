@@ -1,275 +1,200 @@
-"""
-Unit tests for WeightLayer and InverseCorrelationWeighter.
+"""Unit tests for the clustered WeightLayer."""
 
-Tests cover:
-- Inverse correlation weight calculation
-- FDM calculation from forecast correlations
-- Combining forecasts with weights and FDM
-- Edge cases (single model, empty data, etc.)
-"""
+from __future__ import annotations
 
-import unittest
-import pandas as pd
 import numpy as np
-
-from ensemble.weight_layer import WeightLayer, InverseCorrelationWeighter
-
-
-class TestInverseCorrelationWeighter(unittest.TestCase):
-    """Tests for InverseCorrelationWeighter class."""
-
-    def test_single_model_weight(self):
-        """Single model should have weight of 1.0."""
-        weighter = InverseCorrelationWeighter()
-        signals = pd.DataFrame({'model_a': [1, 0, 1, 0, 1]})
-
-        weighter.fit(signals)
-        weights = weighter.get_weights()
-
-        self.assertEqual(len(weights), 1)
-        self.assertAlmostEqual(weights['model_a'], 1.0)
-
-    def test_uncorrelated_models_equal_weights(self):
-        """Uncorrelated models should have approximately equal weights."""
-        weighter = InverseCorrelationWeighter()
-        np.random.seed(42)
-
-        # Create uncorrelated signals
-        signals = pd.DataFrame({
-            'model_a': np.random.randint(0, 2, 100),
-            'model_b': np.random.randint(0, 2, 100),
-            'model_c': np.random.randint(0, 2, 100)
-        })
-
-        weighter.fit(signals)
-        weights = weighter.get_weights()
-
-        # Weights should sum to 1.0
-        self.assertAlmostEqual(weights.sum(), 1.0, places=5)
-
-        # Each weight should be roughly 1/3 for uncorrelated models
-        for weight in weights.values:
-            self.assertTrue(0.2 <= weight <= 0.5)
-
-    def test_correlated_models_different_weights(self):
-        """Correlated models should get lower weights."""
-        weighter = InverseCorrelationWeighter()
-
-        # model_a and model_b are highly correlated
-        # model_c is uncorrelated
-        signals = pd.DataFrame({
-            'model_a': [1, 0, 1, 0, 1, 0, 1, 0] * 10,
-            'model_b': [1, 0, 1, 0, 1, 0, 1, 0] * 10,  # Same as model_a
-            'model_c': [0, 1, 0, 1, 1, 0, 0, 1] * 10   # Different pattern
-        })
-
-        weighter.fit(signals)
-        weights = weighter.get_weights()
-
-        # model_c should have higher weight (less correlated with others)
-        self.assertTrue(weights['model_c'] > weights['model_a'])
-        self.assertTrue(weights['model_c'] > weights['model_b'])
-
-    def test_fit_raises_on_empty_signals(self):
-        """Should raise ValueError on empty signals."""
-        weighter = InverseCorrelationWeighter()
-        signals = pd.DataFrame()
-
-        with self.assertRaises(ValueError):
-            weighter.fit(signals)
-
-    def test_fit_raises_on_single_sample(self):
-        """Should raise ValueError with insufficient data."""
-        weighter = InverseCorrelationWeighter()
-        signals = pd.DataFrame({'model_a': [1]})
-
-        with self.assertRaises(ValueError):
-            weighter.fit(signals)
-
-    def test_get_weights_before_fit_raises(self):
-        """Should raise ValueError if getting weights before fit."""
-        weighter = InverseCorrelationWeighter()
-
-        with self.assertRaises(ValueError):
-            weighter.get_weights()
-
-
-class TestWeightLayer(unittest.TestCase):
-    """Tests for WeightLayer class."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        # Create sample forecast vectors
-        self.forecast_vectors = [
-            pd.DataFrame({
-                'ticker': ['ES', 'ES', 'NQ', 'NQ'],
-                'model_name': ['model_a', 'model_b', 'model_a', 'model_b'],
-                'forecast': [1.0, 0.5, 0.8, 0.6],
-                'signal': [1, 1, 1, 1]
-            })
-        ]
-
-        # Create sample signals for weight calculation
-        self.signals = pd.DataFrame({
-            'model_a': [1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-            'model_b': [0, 1, 1, 0, 0, 1, 0, 1, 1, 0]
-        })
-
-    def test_fit_and_combine(self):
-        """Test basic fit and combine workflow."""
-        layer = WeightLayer(fdm_max=2.0)
-        layer.fit(self.forecast_vectors, self.signals)
-
-        result = layer.combine(self.forecast_vectors)
-
-        # Check output structure
-        self.assertIn('ticker', result.columns)
-        self.assertIn('forecast_score', result.columns)
-
-        # Should have one row per unique ticker
-        self.assertEqual(len(result), 2)  # ES and NQ
-
-    def test_fdm_calculation_single_model(self):
-        """Single model should have FDM of 1.0."""
-        layer = WeightLayer()
-
-        single_model_forecasts = [
-            pd.DataFrame({
-                'ticker': ['ES', 'NQ'],
-                'model_name': ['model_a', 'model_a'],
-                'forecast': [1.0, 0.8],
-                'signal': [1, 1]
-            })
-        ]
-
-        single_model_signals = pd.DataFrame({
-            'model_a': [1, 0, 1, 0, 1]
-        })
-
-        layer.fit(single_model_forecasts, single_model_signals)
-
-        self.assertEqual(set(layer.fdm_.keys()), {'ES', 'NQ'})
-        self.assertTrue(all(np.isclose(fdm, 1.0) for fdm in layer.fdm_.values()))
-
-    def test_fdm_capped_at_max(self):
-        """FDM should be capped at fdm_max."""
-        layer = WeightLayer(fdm_max=2.0)
-
-        # Create uncorrelated forecasts that would give high FDM
-        np.random.seed(42)
-        forecasts = [
-            pd.DataFrame({
-                'ticker': ['ES'] * 100,
-                'model_name': ['model_a'] * 50 + ['model_b'] * 50,
-                'forecast': list(np.random.randn(100)),
-                'signal': [1] * 100
-            })
-        ]
-
-        signals = pd.DataFrame({
-            'model_a': np.random.randint(0, 2, 50),
-            'model_b': np.random.randint(0, 2, 50)
-        })
-
-        layer.fit(forecasts, signals)
-
-        self.assertIn('ES', layer.fdm_)
-        self.assertLessEqual(layer.fdm_['ES'], 2.0)
-
-    def test_combine_applies_fdm(self):
-        """Combined forecast should include FDM scaling."""
-        layer = WeightLayer(fdm_max=2.0)
-        layer.fit(self.forecast_vectors, self.signals)
-
-        result = layer.combine(self.forecast_vectors)
-
-        # The forecast_score should be FDM-scaled
-        # Verify it's not zero and reasonable
-        self.assertTrue(all(result['forecast_score'] > 0))
-
-    def test_combine_before_fit_raises(self):
-        """Should raise error if combining before fit."""
-        layer = WeightLayer()
-
-        with self.assertRaises(ValueError):
-            layer.combine(self.forecast_vectors)
-
-    def test_diagnostics(self):
-        """Test get_diagnostics method."""
-        layer = WeightLayer(fdm_max=2.0)
-        layer.fit(self.forecast_vectors, self.signals)
-
-        diag = layer.get_diagnostics()
-
-        self.assertTrue(diag['is_fitted'])
-        self.assertIn('tickers', diag)
-        self.assertIn('summary', diag)
-        self.assertIn('ES', diag['tickers'])
-        self.assertIn('NQ', diag['tickers'])
-        self.assertEqual(diag['tickers']['ES']['n_models'], 2)
-
-    def test_invalid_weight_method(self):
-        """Should raise on invalid weight method."""
-        with self.assertRaises(ValueError):
-            WeightLayer(weight_method='invalid_method')
-
-    def test_sortino_weight_method_removed(self):
-        """Should reject sortino method and only allow inverse correlation."""
-        with self.assertRaises(ValueError):
-            WeightLayer(weight_method='sortino_optimized')
-
-    def test_empty_forecast_vectors(self):
-        """Should handle empty forecast vectors."""
-        layer = WeightLayer()
-
-        with self.assertRaises(ValueError):
-            layer.fit([], self.signals)
-
-    def test_combine_with_empty_input(self):
-        """Combining empty forecast should return empty DataFrame."""
-        layer = WeightLayer()
-        layer.fit(self.forecast_vectors, self.signals)
-
-        result = layer.combine([])
-
-        self.assertEqual(len(result), 0)
-        self.assertIn('ticker', result.columns)
-        self.assertIn('forecast_score', result.columns)
-
-
-class TestWeightLayerIntegration(unittest.TestCase):
-    """Integration tests for WeightLayer with realistic data."""
-
-    def test_multi_ticker_multi_model(self):
-        """Test with multiple tickers and models."""
-        layer = WeightLayer(fdm_max=2.0)
-
-        # Create realistic forecast data
-        forecasts = [
-            pd.DataFrame({
-                'ticker': ['ES', 'ES', 'ES', 'NQ', 'NQ', 'NQ', 'GC', 'GC', 'GC'],
-                'model_name': ['ewmac_8', 'ewmac_16', 'rsi_14'] * 3,
-                'forecast': [1.0, 0.5, 0.8, 1.2, 0.6, 0.9, 0.7, 0.4, 0.5],
-                'signal': [1, 1, 1, 1, 1, 0, 1, 0, 1]
-            })
-        ]
-
-        signals = pd.DataFrame({
-            'ewmac_8': [1, 0, 1, 0, 1, 0, 1, 0, 1, 0],
-            'ewmac_16': [1, 1, 0, 0, 1, 1, 0, 0, 1, 1],
-            'rsi_14': [0, 1, 1, 0, 0, 1, 1, 0, 0, 1]
-        })
-
-        layer.fit(forecasts, signals)
-        result = layer.combine(forecasts)
-
-        # Should have one row per ticker
-        self.assertEqual(len(result), 3)
-        self.assertEqual(set(result['ticker']), {'ES', 'NQ', 'GC'})
-
-        # All forecast scores should be non-negative
-        self.assertTrue(all(result['forecast_score'] >= 0))
-
-
-if __name__ == '__main__':
-    unittest.main()
+import pandas as pd
+import pytest
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from ensemble.weight_layer import WeightLayer, WeightLayerConfig
+
+
+def _make_forecasts(
+    columns: dict[str, list[float]],
+    *,
+    ticker: str = "ES",
+) -> list[pd.DataFrame]:
+    index = pd.date_range("2020-01-01", periods=len(next(iter(columns.values()))), freq="D")
+    vectors: list[pd.DataFrame] = []
+    for model_name, values in columns.items():
+        vectors.append(
+            pd.DataFrame(
+                {
+                    "ticker": [ticker] * len(values),
+                    "datetime": index,
+                    "model_name": [model_name] * len(values),
+                    "forecast": values,
+                    "signal": [int(v != 0.0) for v in values],
+                }
+            )
+        )
+    return vectors
+
+
+def _make_returns(values: list[float]) -> pd.Series:
+    return pd.Series(values, index=pd.date_range("2020-01-01", periods=len(values), freq="D"))
+
+
+def test_weight_layer_config_accepts_only_two_modes() -> None:
+    assert WeightLayerConfig(weighting_method="cluster_equal").weighting_method == "cluster_equal"
+    assert (
+        WeightLayerConfig(weighting_method="cluster_corr_ulcer").weighting_method
+        == "cluster_corr_ulcer"
+    )
+
+    with pytest.raises(ValueError, match="weighting_method must be one of"):
+        WeightLayerConfig(weighting_method="inverse_correlation")
+
+
+def test_cluster_equal_clusters_highly_correlated_members_together() -> None:
+    layer = WeightLayer(rho_cut=0.7)
+    forecasts = _make_forecasts(
+        {
+            "model_a": [1.0, 0.5, 1.0, 0.5, 1.0, 0.5],
+            "model_b": [1.0, 0.5, 1.0, 0.5, 1.0, 0.5],
+            "model_c": [0.2, 0.4, 0.2, 0.4, 0.2, 0.4],
+        }
+    )
+
+    layer.fit(forecasts, signals=pd.DataFrame())
+    diag = layer.get_diagnostics()
+    assignments = diag["tickers"]["ES"]["cluster_assignments"]
+
+    assert assignments["model_a"] == assignments["model_b"]
+    assert assignments["model_a"] != assignments["model_c"]
+
+
+def test_cluster_equal_splits_weight_equally_across_clusters_and_members() -> None:
+    layer = WeightLayer(rho_cut=0.7)
+    forecasts = _make_forecasts(
+        {
+            "fast_1": [1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            "fast_2": [1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            "slow_1": [0.1, 0.3, 0.1, 0.3, 0.1, 0.3],
+        }
+    )
+
+    layer.fit(forecasts, signals=pd.DataFrame())
+    weights = layer.weights_["ES"]
+    diag = layer.get_diagnostics()["tickers"]["ES"]
+
+    assert pytest.approx(0.25, rel=1e-6) == weights["fast_1"]
+    assert pytest.approx(0.25, rel=1e-6) == weights["fast_2"]
+    assert pytest.approx(0.50, rel=1e-6) == weights["slow_1"]
+    assert sorted(diag["cluster_weights"].values()) == pytest.approx([0.5, 0.5])
+
+
+def test_cluster_corr_ulcer_requires_returns() -> None:
+    layer = WeightLayer(weight_method="cluster_corr_ulcer")
+    forecasts = _make_forecasts(
+        {
+            "model_a": [1.0, 0.5, 1.0, 0.5],
+            "model_b": [0.4, 0.1, 0.4, 0.1],
+        }
+    )
+
+    with pytest.raises(ValueError, match="requires returns"):
+        layer.fit(forecasts, signals=pd.DataFrame(), returns=None)
+
+
+def test_cluster_corr_ulcer_downweights_worse_ulcer_cluster() -> None:
+    layer = WeightLayer(weight_method="cluster_corr_ulcer", rho_cut=0.7, risk_tilt_alpha=1.0)
+    forecasts = _make_forecasts(
+        {
+            "stable_a": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
+            "stable_b": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
+            "choppy": [0.80, 0.10, 0.80, 0.10, 0.80, 0.10],
+        }
+    )
+    returns = _make_returns([0.01, 0.01, 0.01, -0.30, 0.01, -0.30])
+
+    layer.fit(forecasts, signals=pd.DataFrame(), returns=returns)
+    weights = layer.weights_["ES"]
+
+    assert weights["choppy"] < weights["stable_a"] + weights["stable_b"]
+    metrics = layer.get_diagnostics()["tickers"]["ES"]["cluster_metrics"]
+    ulcer_values = {cluster: info["ulcer_index"] for cluster, info in metrics.items()}
+    assert max(v for v in ulcer_values.values() if v is not None) > min(
+        v for v in ulcer_values.values() if v is not None
+    )
+
+
+def test_risk_tilt_alpha_zero_removes_ulcer_penalty() -> None:
+    forecasts = _make_forecasts(
+        {
+            "stable_a": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
+            "stable_b": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
+            "volatile_a": [0.80, 0.10, 0.80, 0.10, 0.80, 0.10],
+            "volatile_b": [0.80, 0.10, 0.80, 0.10, 0.80, 0.10],
+        }
+    )
+    returns = _make_returns([0.01, -0.30, 0.01, -0.30, 0.01, -0.30])
+
+    alpha_zero = WeightLayer(weight_method="cluster_corr_ulcer", risk_tilt_alpha=0.0, rho_cut=0.7)
+    alpha_one = WeightLayer(weight_method="cluster_corr_ulcer", risk_tilt_alpha=1.0, rho_cut=0.7)
+
+    alpha_zero.fit(forecasts, signals=pd.DataFrame(), returns=returns)
+    alpha_one.fit(forecasts, signals=pd.DataFrame(), returns=returns)
+
+    zero_diag = alpha_zero.get_diagnostics()["tickers"]["ES"]
+    one_diag = alpha_one.get_diagnostics()["tickers"]["ES"]
+
+    zero_cluster_weights = zero_diag["cluster_weights"]
+    one_cluster_weights = one_diag["cluster_weights"]
+
+    assert sorted(zero_cluster_weights.values()) == pytest.approx([0.5, 0.5], rel=1e-6)
+    assert sorted(one_cluster_weights.values()) != pytest.approx([0.5, 0.5], rel=1e-3)
+
+
+def test_insufficient_forecast_history_falls_back_to_one_cluster() -> None:
+    layer = WeightLayer()
+    forecasts = [
+        pd.DataFrame(
+            {
+                "ticker": ["ES", "ES"],
+                "datetime": pd.to_datetime(["2020-01-01", "2020-01-01"]),
+                "model_name": ["model_a", "model_b"],
+                "forecast": [0.2, 0.3],
+                "signal": [1, 1],
+            }
+        )
+    ]
+
+    layer.fit(forecasts, signals=pd.DataFrame())
+    diag = layer.get_diagnostics()["tickers"]["ES"]
+
+    assert diag["cluster_weights"] == {"cluster_1": 1.0}
+    assert diag["fdm"] == 1.0
+
+
+def test_fdm_uses_cluster_correlations_and_respects_cap() -> None:
+    rng = np.random.default_rng(42)
+    model_a = rng.normal(size=80)
+    model_b = rng.normal(size=80)
+    layer = WeightLayer(fdm_max=1.3)
+    forecasts = _make_forecasts({"model_a": model_a.tolist(), "model_b": model_b.tolist()})
+
+    layer.fit(forecasts, signals=pd.DataFrame())
+
+    assert layer.fdm_["ES"] <= 1.3
+    assert layer.get_diagnostics()["tickers"]["ES"]["mean_cluster_correlation"] < 1.0
+
+
+def test_combine_returns_datetime_level_forecasts() -> None:
+    layer = WeightLayer()
+    forecasts = _make_forecasts(
+        {
+            "model_a": [0.2, 0.4, 0.6],
+            "model_b": [0.2, 0.4, 0.6],
+        }
+    )
+
+    layer.fit(forecasts, signals=pd.DataFrame())
+    combined = layer.combine(forecasts)
+
+    assert list(combined.columns) == ["ticker", "datetime", "forecast_score"]
+    assert len(combined) == 3

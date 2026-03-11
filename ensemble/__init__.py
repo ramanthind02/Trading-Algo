@@ -14,8 +14,7 @@ from .portfolio import GlobalPortfolio, Portfolio, TFPortfolio
 from .portfolio_manager import PortfolioManager
 from .weight_layer import (
     BaseWeightLayer,
-    InverseCorrelationWeighter,
-    InverseCorrelationWeightLayer,
+    ClusteredWeightLayer,
     WeightLayer,
 )
 
@@ -27,6 +26,5 @@ __all__ = [
     'PortfolioManager',
     'WeightLayer',
     'BaseWeightLayer',
-    'InverseCorrelationWeightLayer',
-    'InverseCorrelationWeighter',
+    'ClusteredWeightLayer',
 ]

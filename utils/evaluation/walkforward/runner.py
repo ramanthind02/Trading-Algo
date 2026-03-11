@@ -129,14 +129,10 @@ def _resolve_weight_layer_config(wf_cfg: object | None) -> WeightLayerConfig | N
 
     return WeightLayerConfig(
         weighting_method=algorithm_name,
-        group_method=configured.group_method,
         rho_cut=configured.rho_cut,
-        within_group_weights=configured.within_group_weights,
-        linkage=configured.linkage,
-        shrinkage=configured.shrinkage,
         fdm_max=configured.fdm_max,
-        fdm_correlation_source=configured.fdm_correlation_source,
-        weight_stability_threshold=configured.weight_stability_threshold,
+        group_weight_cap=configured.group_weight_cap,
+        risk_tilt_alpha=configured.risk_tilt_alpha,
     )
 
 

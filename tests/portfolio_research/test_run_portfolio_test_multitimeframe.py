@@ -22,21 +22,8 @@ from utils.core.enums import Ticker, TimeFrame
 
 
 # ---------------------------------------------------------------------------
-# Shared GlobalPortfolio / GlobalWeightLayer mocks
+# Shared GlobalPortfolio mock
 # ---------------------------------------------------------------------------
-
-class _DummyGlobalWeightLayer:
-    """Minimal GlobalWeightLayer stub for pipeline tests."""
-
-    def __init__(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        pass
-
-    def fit(self, tf_forecast_streams, instrument_returns):  # noqa: ANN001
-        return self
-
-    def combine(self, tf_forecast_streams):  # noqa: ANN001
-        return pd.DataFrame()
-
 
 class _DummyGlobalPortfolio:
     """Minimal GlobalPortfolio stub that returns capped synthetic positions."""
@@ -46,12 +33,10 @@ class _DummyGlobalPortfolio:
     def __init__(
         self,
         tf_portfolios,
-        global_weight_layer,
         max_position_pct: float = 2.0,
         **kwargs,  # noqa: ANN003
     ):
         self.tf_portfolios = tf_portfolios
-        self.global_weight_layer = global_weight_layer
         self.max_position_pct = max_position_pct
         _DummyGlobalPortfolio.created.append(self)
 
@@ -147,14 +132,13 @@ class _DummyPortfolio:
         trading_timeframe,
         target_volatility,
         max_position_pct,
-        weight_layer,
         use_cache,
+        **kwargs,
     ):
         self.ensembles = ensembles
         self.trading_timeframe = trading_timeframe
         self.target_volatility = target_volatility
         self.max_position_pct = max_position_pct
-        self.weight_layer = weight_layer
         self.use_cache = use_cache
         _DummyPortfolio.created_timeframes.append(trading_timeframe)
 
@@ -257,7 +241,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
             "weekly": "vault/W/weekly_strategy",
         },
         target_volatility=0.15,
-        weight_layer_method="inverse_correlation",
+        weight_layer_method="cluster_equal",
         weight_layer_kwargs={"fdm_max": 2.5},
         max_position_pct=3.5,
         baseline_mode="equal_weight",
@@ -322,7 +306,6 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
     monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
     monkeypatch.setattr(pipeline, "GlobalPortfolio", _DummyGlobalPortfolio)
-    monkeypatch.setattr(pipeline, "GlobalWeightLayer", _DummyGlobalWeightLayer)
     monkeypatch.setattr(pipeline, "PortfolioTester", _DummyTester)
     monkeypatch.setattr(pipeline, "calculate_strategy_returns_from_positions", _mock_calculate_strategy_returns_from_positions)
     monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
@@ -369,65 +352,3 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
         for frame in capped_combined_frames
     )
 
-
-# ---------------------------------------------------------------------------
-# T009: GlobalWeightLayer produces non-equal TF weights for different profiles
-# ---------------------------------------------------------------------------
-
-def test_global_weight_layer_non_equal_weights_different_tf_profiles() -> None:
-    """GlobalWeightLayer assigns non-equal weights when TF return streams differ.
-
-    Uses synthetic daily and weekly forecast streams where the daily stream has
-    high return-aligned forecasts and the weekly stream has near-zero forecasts,
-    so that semi-covariances differ and HRP assigns unequal weights.
-    """
-    from ensemble.global_weight_layer import GlobalWeightLayer
-
-    rng = pd.date_range("2020-01-02", periods=250, freq="B")
-    ticker = "ES"
-
-    # Daily: strong positive forecasts (large semi-variance)
-    daily_scores = pd.Series(1.0, index=rng, name="forecast_score")
-    # Weekly: flat near-zero forecasts (tiny semi-variance)
-    weekly_scores = pd.Series(0.01, index=rng, name="forecast_score")
-
-    def _stream(scores: pd.Series) -> pd.DataFrame:
-        return pd.DataFrame(
-            {
-                "ticker": ticker,
-                "datetime": scores.index,
-                "forecast_score": scores.values,
-            }
-        )
-
-    tf_streams = {
-        TimeFrame.D: _stream(daily_scores),
-        TimeFrame.W: _stream(weekly_scores),
-    }
-
-    # Instrument returns: simple random walk aligned to the same grid.
-    import numpy as np
-
-    np.random.seed(42)
-    raw_ret = np.random.normal(0.001, 0.01, len(rng))
-    instrument_returns = pd.DataFrame({"ES": raw_ret}, index=rng)
-
-    gwl = GlobalWeightLayer()
-    gwl.fit(tf_streams, instrument_returns)
-
-    assert gwl.is_fitted_, "GlobalWeightLayer should be marked fitted after fit()"
-    assert set(gwl.tf_weights_.keys()) == {TimeFrame.D, TimeFrame.W}, (
-        "Expected weights for both timeframes"
-    )
-
-    w_d = gwl.tf_weights_[TimeFrame.D]
-    w_w = gwl.tf_weights_[TimeFrame.W]
-
-    # Weights must sum to 1.0 (within floating-point tolerance).
-    assert abs(w_d + w_w - 1.0) < 1e-6, f"TF weights must sum to 1.0, got {w_d + w_w}"
-
-    # The TF weights should not both be exactly 0.5 when return profiles differ.
-    # With very different semi-variances, HRP assigns more weight to the lower-risk TF.
-    assert w_d != w_w, (
-        f"Expected non-equal TF weights for different forecast profiles, got D={w_d}, W={w_w}"
-    )

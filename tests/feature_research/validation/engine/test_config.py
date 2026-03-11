@@ -109,10 +109,10 @@ def test_selection_method_accepts_enum_or_enum_coercible_string(
     ("weight_layer_algorithm", "expected"),
     [
         (
-            WeightLayerAlgorithm.DOWNSIDE_HRP_GROUPED,
-            WeightLayerAlgorithm.DOWNSIDE_HRP_GROUPED,
+            WeightLayerAlgorithm.CLUSTER_CORR_ULCER,
+            WeightLayerAlgorithm.CLUSTER_CORR_ULCER,
         ),
-        ("equal_grouped", WeightLayerAlgorithm.EQUAL_GROUPED),
+        ("cluster_equal", WeightLayerAlgorithm.CLUSTER_EQUAL),
     ],
 )
 def test_weight_layer_algorithm_accepts_enum_or_enum_coercible_string(
