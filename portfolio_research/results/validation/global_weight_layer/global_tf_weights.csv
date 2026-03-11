@@ -1,0 +1,5 @@
+phase,timeframe,weight,fdm,mean_cross_tf_correlation
+validation,buy_hold_signal_M,0.666445,1.6,
+validation,seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7,0.1,1.6,
+validation,seasonalindiceseof_signal_D_smaPeriod_200,0.06711,1.6,
+validation,turnaroundtuesday_signal_D_mode_tue_wed,0.166445,1.6,

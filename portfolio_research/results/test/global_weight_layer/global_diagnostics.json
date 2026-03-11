@@ -1,0 +1,192 @@
+{
+  "is_fitted": true,
+  "tf_weights": {
+    "buy_hold_signal_M": 0.6664853240573422,
+    "turnaroundtuesday_signal_D_mode_tue_wed": 0.1664853240573422,
+    "seasonalindiceseof_signal_D_smaPeriod_200": 0.0670293518853156,
+    "seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7": 0.1
+  },
+  "fdm": 1.6,
+  "daily_grid_len": 5,
+  "diagnostics": {
+    "is_fitted": true,
+    "tickers": {
+      "Ticker.ES": {
+        "fdm": 2.0,
+        "weights": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.33242662028671105,
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.33242662028671105,
+          "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_0": 0.335146759426578
+        },
+        "models": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_0",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1"
+        ],
+        "n_models": 3,
+        "cluster_assignments": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_1",
+          "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_0": "cluster_3",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": "cluster_2"
+        },
+        "cluster_weights": {
+          "cluster_1": 0.33242662028671105,
+          "cluster_2": 0.33242662028671105,
+          "cluster_3": 0.335146759426578
+        },
+        "cluster_metrics": {
+          "cluster_1": {
+            "avg_positive_corr": 0.008182675435321267,
+            "ulcer_index": null,
+            "score": 0.9918837373080348,
+            "member_count": 1
+          },
+          "cluster_2": {
+            "avg_positive_corr": 0.008182675435321267,
+            "ulcer_index": null,
+            "score": 0.9918837373080348,
+            "member_count": 1
+          },
+          "cluster_3": {
+            "avg_positive_corr": 0.0,
+            "ulcer_index": null,
+            "score": 1.0,
+            "member_count": 1
+          }
+        },
+        "mean_cluster_correlation": 0.005455116956880845
+      },
+      "Ticker.GC": {
+        "fdm": 1.0,
+        "weights": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": 1.0
+        },
+        "models": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+        ],
+        "n_models": 1,
+        "cluster_assignments": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_1"
+        },
+        "cluster_weights": {
+          "cluster_1": 1.0
+        },
+        "cluster_metrics": {
+          "cluster_1": {
+            "avg_positive_corr": 0.0,
+            "ulcer_index": null,
+            "score": 1.0,
+            "member_count": 1
+          }
+        },
+        "mean_cluster_correlation": 1.0
+      },
+      "Ticker.NQ": {
+        "fdm": 2.0,
+        "weights": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.5,
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.5
+        },
+        "models": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1"
+        ],
+        "n_models": 2,
+        "cluster_assignments": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_1",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": "cluster_2"
+        },
+        "cluster_weights": {
+          "cluster_1": 0.5,
+          "cluster_2": 0.5
+        },
+        "cluster_metrics": {
+          "cluster_1": {
+            "avg_positive_corr": 0.0,
+            "ulcer_index": null,
+            "score": 1.0,
+            "member_count": 1
+          },
+          "cluster_2": {
+            "avg_positive_corr": 0.0,
+            "ulcer_index": null,
+            "score": 1.0,
+            "member_count": 1
+          }
+        },
+        "mean_cluster_correlation": 0.0
+      },
+      "Ticker.RTY": {
+        "fdm": 1.0,
+        "weights": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": 1.0
+        },
+        "models": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+        ],
+        "n_models": 1,
+        "cluster_assignments": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_1"
+        },
+        "cluster_weights": {
+          "cluster_1": 1.0
+        },
+        "cluster_metrics": {
+          "cluster_1": {
+            "avg_positive_corr": 0.0,
+            "ulcer_index": null,
+            "score": 1.0,
+            "member_count": 1
+          }
+        },
+        "mean_cluster_correlation": 1.0
+      },
+      "Ticker.TLT": {
+        "fdm": 2.0,
+        "weights": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.5,
+          "seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_2": 0.5
+        },
+        "models": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_2"
+        ],
+        "n_models": 2,
+        "cluster_assignments": {
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_1",
+          "seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_2": "cluster_2"
+        },
+        "cluster_weights": {
+          "cluster_1": 0.5,
+          "cluster_2": 0.5
+        },
+        "cluster_metrics": {
+          "cluster_1": {
+            "avg_positive_corr": 0.0,
+            "ulcer_index": null,
+            "score": 1.0,
+            "member_count": 1
+          },
+          "cluster_2": {
+            "avg_positive_corr": 0.0,
+            "ulcer_index": null,
+            "score": 1.0,
+            "member_count": 1
+          }
+        },
+        "mean_cluster_correlation": 0.0
+      }
+    },
+    "summary": {
+      "n_tickers": 5,
+      "mean_fdm": 1.6,
+      "min_fdm": 1.0,
+      "max_fdm": 2.0,
+      "mean_models_per_ticker": 1.8,
+      "mean_clusters_per_ticker": 1.8,
+      "total_models": 9
+    },
+    "weight_method": "cluster_corr_ulcer",
+    "fdm_max": 2.0
+  }
+}

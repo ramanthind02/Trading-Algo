@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from feature_research.config import OOSWindowConfig
 from utils.core.enums import Ticker, TimeFrame
@@ -71,7 +71,7 @@ class PortfolioResearchConfig:
     weight_layer_method : str
         WeightLayer method (``'cluster_equal'`` or ``'cluster_corr_ulcer'``).
     weight_layer_kwargs : Mapping[str, Any]
-        Extra kwargs for WeightLayer (e.g. fdm_max).
+        Extra kwargs for WeightLayer (e.g. fdm_max, group_weight_cap).
     max_position_pct : float
         Max position as fraction of capital (e.g. 3.5).
     baseline_mode : str
@@ -125,58 +125,42 @@ class PortfolioResearchConfig:
             )
 
 
-def _discover_ensemble_dirs() -> Mapping[str, str]:
-    """Discover all ensemble directories under vault/ for use as defaults.
+def _discover_ensemble_dirs(
+    allowed_timeframes: Iterable[TimeFrame] | None = None,
+) -> Mapping[str, str]:
+    """Discover ensemble directories under vault/ for use as defaults.
 
     An ensemble folder is any directory under vault/<TF>/ whose leaf directory
     contains a 'features' subdirectory with at least one *.json file. The name
     is the leaf directory name; the path is repository-relative.
 
-    Buy-and-hold ensembles are excluded from auto-discovery by default to avoid
-    overwhelming strategy-driven portfolios in multi-timeframe blends. They can
-    still be included explicitly by setting ``ensemble_dirs`` in ``load_config``.
+    When ``allowed_timeframes`` is provided, only those vault timeframe folders
+    are considered.
     """
     vault_root = _PORTFOLIO_RESEARCH_DIR.parent / "vault"
     if not vault_root.exists():
         return {}
+
+    allowed_tf_names = (
+        {timeframe.name for timeframe in allowed_timeframes}
+        if allowed_timeframes is not None
+        else None
+    )
 
     def _has_feature_json(features_dir: Path) -> bool:
         return features_dir.is_dir() and any(
             child.suffix == ".json" for child in features_dir.iterdir()
         )
 
-    def _is_buy_hold_ensemble(ensemble_dir: Path) -> bool:
-        if ensemble_dir.name.startswith("buy_hold"):
-            return True
-
-        features_dir = ensemble_dir / "features"
-        feature_files = sorted(features_dir.glob("*.json"))
-        if not feature_files:
-            return False
-
-        # Treat ensemble as buy-hold only if every readable feature config is buy_hold.
-        has_readable_feature = False
-        for feature_file in feature_files:
-            try:
-                with feature_file.open("r", encoding="utf-8") as handle:
-                    payload = json.load(handle)
-            except (OSError, json.JSONDecodeError):
-                return False
-
-            has_readable_feature = True
-            module_name = (
-                payload.get("bias_node_spec", {}).get("module_name")
-                if isinstance(payload, dict)
-                else None
-            )
-            if module_name != "buy_hold":
-                return False
-
-        return has_readable_feature
-
     timeframe_dirs = [
         d for d in vault_root.iterdir() if d.is_dir()
     ]
+    if allowed_tf_names is not None:
+        timeframe_dirs = [
+            timeframe_dir
+            for timeframe_dir in timeframe_dirs
+            if timeframe_dir.name in allowed_tf_names
+        ]
 
     ensembles = {
         ensemble_dir.name: str(
@@ -187,7 +171,6 @@ def _discover_ensemble_dirs() -> Mapping[str, str]:
         if (
             ensemble_dir.is_dir()
             and _has_feature_json(ensemble_dir / "features")
-            and not _is_buy_hold_ensemble(ensemble_dir)
         )
     }
 
@@ -237,13 +220,17 @@ def load_config() -> PortfolioResearchConfig:
         test_end=datetime(2025, 12, 31),
     )
 
-    # By default, use all ensembles discoverable in the vault. Researchers can
-    # override this by assigning a custom mapping here.
-    ensemble_dirs = _discover_ensemble_dirs()
+    # By default, use daily + monthly ensembles.
+    ensemble_dirs = _discover_ensemble_dirs(
+        allowed_timeframes=(TimeFrame.D, TimeFrame.M),
+    )
 
     target_volatility = 0.15
-    weight_layer_method = "cluster_equal"
-    weight_layer_kwargs = {"fdm_max": 2.0}
+    weight_layer_method = "cluster_corr_ulcer"
+    weight_layer_kwargs = {
+        "fdm_max": 2.0,
+        "group_weight_cap": 1.0,
+    }
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"

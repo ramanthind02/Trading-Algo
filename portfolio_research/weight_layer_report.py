@@ -13,6 +13,7 @@ Outputs (written to ``output_dir/``):
 from __future__ import annotations
 
 import base64
+import html
 import io
 import json
 import logging
@@ -90,6 +91,15 @@ def _abbrev_cluster(name: str, max_len: int = 12) -> str:
     return name if len(name) <= max_len else name[:max_len - 1] + "…"
 
 
+def _parse_global_timeframe(model_name: str) -> str:
+    """Extract timeframe tag from global model names."""
+    left = str(model_name).split("::", 1)[0]
+    if "__" in left:
+        _, tf = left.rsplit("__", 1)
+        return tf
+    return left
+
+
 def _build_weights_by_group(diagnostics: dict, phase: str) -> pd.DataFrame:
     rows = []
     for ticker, info in diagnostics.get("tickers", {}).items():
@@ -156,6 +166,136 @@ def _build_summary(diagnostics: dict, phase: str) -> pd.DataFrame:
             ),
         })
     return pd.DataFrame(rows).sort_values("ticker").reset_index(drop=True)
+
+
+def _build_global_strategy_tables(
+    strategy_diag: dict,
+    phase_name: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    """Build per-ticker summary/detail tables for the global report."""
+    tickers = strategy_diag.get("tickers", {}) if isinstance(strategy_diag, dict) else {}
+
+    summary_rows: list[dict[str, Any]] = []
+    detail_rows: list[dict[str, Any]] = []
+    per_ticker_model_tables: dict[str, pd.DataFrame] = {}
+    per_ticker_cluster_tables: dict[str, pd.DataFrame] = {}
+
+    for raw_ticker, info in sorted(tickers.items(), key=lambda item: _clean_ticker(str(item[0]))):
+        ticker = _clean_ticker(str(raw_ticker))
+        weights = info.get("weights") or {}
+        cluster_assignments = info.get("cluster_assignments") or {}
+        cluster_weights = info.get("cluster_weights") or {}
+        cluster_metrics = info.get("cluster_metrics") or {}
+        ticker_fdm = float(info.get("fdm", 1.0))
+        mean_corr = float(info.get("mean_cluster_correlation", float("nan")))
+
+        sorted_weights = sorted(weights.items(), key=lambda item: item[1], reverse=True)
+        top_model, top_weight = sorted_weights[0] if sorted_weights else ("", float("nan"))
+
+        cluster_rows = [
+            {
+                "cluster_id": cluster_id,
+                "cluster_weight": float(cluster_weights.get(cluster_id, 0.0)),
+                "member_count": int((cluster_metrics.get(cluster_id) or {}).get("member_count", 0)),
+                "avg_positive_corr": (cluster_metrics.get(cluster_id) or {}).get("avg_positive_corr"),
+                "ulcer_index": (cluster_metrics.get(cluster_id) or {}).get("ulcer_index"),
+                "score": (cluster_metrics.get(cluster_id) or {}).get("score"),
+            }
+            for cluster_id in sorted(cluster_weights)
+        ]
+
+        model_rows = [
+            {
+                "ticker": ticker,
+                "cluster_id": cluster_assignments.get(model_name, "cluster_1"),
+                "timeframe": _parse_global_timeframe(model_name),
+                "model_name": str(model_name),
+                "model_weight": float(weight),
+                "cluster_weight": float(
+                    cluster_weights.get(cluster_assignments.get(model_name, "cluster_1"), 0.0)
+                ),
+                "avg_positive_corr": (
+                    cluster_metrics.get(cluster_assignments.get(model_name, "cluster_1"), {})
+                    or {}
+                ).get("avg_positive_corr"),
+                "ulcer_index": (
+                    cluster_metrics.get(cluster_assignments.get(model_name, "cluster_1"), {})
+                    or {}
+                ).get("ulcer_index"),
+                "score": (
+                    cluster_metrics.get(cluster_assignments.get(model_name, "cluster_1"), {})
+                    or {}
+                ).get("score"),
+            }
+            for model_name, weight in sorted_weights
+        ]
+
+        cluster_df = (
+            pd.DataFrame(cluster_rows)
+            .sort_values(["cluster_weight", "cluster_id"], ascending=[False, True])
+            .reset_index(drop=True)
+            if cluster_rows
+            else pd.DataFrame(
+                columns=[
+                    "cluster_id",
+                    "cluster_weight",
+                    "member_count",
+                    "avg_positive_corr",
+                    "ulcer_index",
+                    "score",
+                ]
+            )
+        )
+        model_df = (
+            pd.DataFrame(model_rows)
+            .sort_values(["model_weight", "model_name"], ascending=[False, True])
+            .reset_index(drop=True)
+            if model_rows
+            else pd.DataFrame(
+                columns=[
+                    "ticker",
+                    "cluster_id",
+                    "timeframe",
+                    "model_name",
+                    "model_weight",
+                    "cluster_weight",
+                    "avg_positive_corr",
+                    "ulcer_index",
+                    "score",
+                ]
+            )
+        )
+
+        per_ticker_cluster_tables[ticker] = cluster_df
+        per_ticker_model_tables[ticker] = model_df
+
+        summary_rows.append(
+            {
+                "phase": phase_name,
+                "ticker": ticker,
+                "n_models": int(info.get("n_models", len(weights))),
+                "n_clusters": len(cluster_weights),
+                "fdm": round(ticker_fdm, 4),
+                "mean_cluster_correlation": round(mean_corr, 4),
+                "top_model": str(top_model),
+                "top_model_weight": round(float(top_weight), 6) if sorted_weights else None,
+            }
+        )
+        detail_rows.extend([{**row, "phase": phase_name} for row in model_rows])
+
+    summary_df = (
+        pd.DataFrame(summary_rows).sort_values("ticker").reset_index(drop=True)
+        if summary_rows
+        else pd.DataFrame()
+    )
+    detail_df = (
+        pd.DataFrame(detail_rows)
+        .sort_values(["ticker", "model_weight", "model_name"], ascending=[True, False, True])
+        .reset_index(drop=True)
+        if detail_rows
+        else pd.DataFrame()
+    )
+    return summary_df, detail_df, per_ticker_model_tables, per_ticker_cluster_tables
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +481,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 h1 { font-size: 1.6rem; font-weight: 700; margin-bottom: 4px; }
 h2 { font-size: 1.15rem; font-weight: 600; color: #333; margin: 28px 0 12px; border-left: 4px solid #4C72B0; padding-left: 10px; }
 h3 { font-size: 1rem; font-weight: 600; color: #444; margin-bottom: 8px; }
+h4 { font-size: 0.9rem; font-weight: 600; color: #555; margin-bottom: 8px; }
 .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 24px; }
 .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.08); padding: 20px; margin-bottom: 20px; }
 .kpi-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
@@ -360,7 +501,24 @@ td { padding: 6px 10px; border-bottom: 1px solid #EEE; }
        font-weight: 600; color: #fff; }
 .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .tbl-wrap { max-height: 480px; overflow-y: auto; border-radius: 6px; border: 1px solid #E5E7EB; }
+.tbl-wrap-wide { overflow-x: auto; }
 .section-note { font-size: 0.8rem; color: #888; margin-bottom: 10px; }
+.mono { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 0.78rem; word-break: break-word; }
+.ticker-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.ticker-link { background: #E8EEF9; color: #274C77; text-decoration: none; padding: 6px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+.ticker-link:hover { background: #D8E2F3; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.summary-card { background: #F8FAFD; border: 1px solid #E4EAF3; border-radius: 10px; padding: 14px; }
+.summary-card .summary-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: .06em; color: #6B7280; margin-bottom: 6px; }
+.summary-card .summary-value { font-size: 1.2rem; font-weight: 700; color: #1F3B62; }
+.summary-card .summary-subtext { font-size: 0.8rem; color: #6B7280; margin-top: 4px; }
+.ticker-section { margin-top: 24px; }
+.ticker-header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 12px; }
+.ticker-title { font-size: 1.1rem; font-weight: 700; color: #1F3B62; }
+.ticker-subtitle { font-size: 0.85rem; color: #6B7280; }
+.ticker-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr); gap: 16px; }
+.table-title { font-size: 0.82rem; color: #6B7280; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .05em; }
+@media (max-width: 980px) { .ticker-grid { grid-template-columns: 1fr; } }
 """
 
 
@@ -371,22 +529,30 @@ def _html_table(df: pd.DataFrame, highlight_col: str | None = None, palette: dic
         cells = ""
         for col in df.columns:
             v = row[col]
-            if col == "cluster_id" and pal:
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                cells += '<td style="color:#CCC">—</td>'
+            elif col == "cluster_id" and pal:
                 color = pal.get(str(v), "#888")
-                cells += f'<td><span class="tag" style="background:{color}">{v}</span></td>'
+                cells += (
+                    f'<td><span class="tag" style="background:{color}">'
+                    f"{html.escape(str(v))}</span></td>"
+                )
             elif isinstance(v, float):
                 if col.startswith("weight") or col == "model_weight" or col == "cluster_weight":
-                    cells += f"<td>{v:.4f}" + (f" <small style='color:#888'>({v:.1%})</small>" if v == v else "") + "</td>"
-                elif col in ("fdm", "mean_cluster_correlation"):
+                    cells += (
+                        f"<td>{v:.4f}"
+                        f" <small style='color:#888'>({v:.1%})</small></td>"
+                    )
+                elif col in ("fdm", "mean_cluster_correlation", "avg_positive_corr", "ulcer_index", "score"):
                     cells += f"<td>{v:.4f}</td>"
                 else:
                     cells += f"<td>{v}</td>"
-            elif v is None or (isinstance(v, float) and np.isnan(v)):
-                cells += '<td style="color:#CCC">—</td>'
+            elif col == "model_name":
+                cells += f'<td class="mono">{html.escape(str(v))}</td>'
             else:
-                cells += f"<td>{v}</td>"
+                cells += f"<td>{html.escape(str(v))}</td>"
         rows_html += f"<tr>{cells}</tr>"
-    headers = "".join(f"<th>{c}</th>" for c in df.columns)
+    headers = "".join(f"<th>{html.escape(str(c))}</th>" for c in df.columns)
     return f"<table><thead><tr>{headers}</tr></thead><tbody>{rows_html}</tbody></table>"
 
 
@@ -590,26 +756,32 @@ def _build_global_html_report(diagnostics: dict, phase_name: str) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     tf_weights: dict = diagnostics.get("tf_weights", {})
     strategy_diag: dict = diagnostics.get("diagnostics", {}) or {}
+    strategy_weight_method = str(strategy_diag.get("weight_method", "unknown"))
     fdm = float(diagnostics.get("fdm", 1.0))
     mean_corr = diagnostics.get("mean_cross_tf_correlation", float("nan"))
     mean_corr_str = f"{float(mean_corr):.4f}" if mean_corr == mean_corr else "N/A"  # NaN check
     n_tfs = int(diagnostics.get("daily_grid_len", 0))
+    ticker_summary_df, strategy_detail_df, per_ticker_model_tables, per_ticker_cluster_tables = (
+        _build_global_strategy_tables(strategy_diag, phase_name)
+    )
 
     # --- Bar chart of TF weights ---
     chart_b64 = ""
     if tf_weights:
-        fig, ax = plt.subplots(figsize=(max(4, len(tf_weights) * 1.2), 3))
+        fig, ax = plt.subplots(figsize=(max(4.5, len(tf_weights) * 1.4), 3.6), facecolor="#FAFAFA")
+        ax.set_facecolor("#FAFAFA")
         tfs = sorted(tf_weights.keys())
         vals = [tf_weights[t] for t in tfs]
         colors = [_PALETTE[i % len(_PALETTE)] for i in range(len(tfs))]
         bars = ax.bar(tfs, vals, color=colors, edgecolor="white", linewidth=0.8)
-        ax.set_ylim(0, max(vals) * 1.25)
+        ax.set_ylim(0, max(1.0, max(vals) * 1.25))
         ax.set_ylabel("Weight")
-        ax.set_title("Cross-TF HRP Weights")
+        ax.set_title("Global Timeframe Weights", fontsize=12, fontweight="bold")
         for bar, v in zip(bars, vals):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
                     f"{v:.3f}", ha="center", va="bottom", fontsize=9)
         ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(axis="y", alpha=0.25, linestyle="--")
         fig.tight_layout()
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
@@ -622,43 +794,103 @@ def _build_global_html_report(diagnostics: dict, phase_name: str) -> str:
         if chart_b64 else ""
     )
 
-    # --- Weights table ---
-    rows_html = "".join(
-        f"<tr><td>{tf}</td><td>{w:.6f}</td></tr>"
-        for tf, w in sorted(tf_weights.items())
+    tf_df = (
+        pd.DataFrame(
+            [
+                {"timeframe": str(tf), "weight": float(weight)}
+                for tf, weight in sorted(tf_weights.items())
+            ]
+        )
+        if tf_weights
+        else pd.DataFrame()
     )
-    table_html = (
-        f'<table><thead><tr><th>Timeframe</th><th>HRP Weight</th></tr></thead>'
-        f'<tbody>{rows_html}</tbody></table>'
-    )
+    tf_table_html = _html_table(tf_df) if not tf_df.empty else ""
 
-    strategy_section = ""
-    strategy_tickers: dict = strategy_diag.get("tickers", {}) if isinstance(strategy_diag, dict) else {}
-    if strategy_tickers:
-        rows = []
-        for ticker, info in strategy_tickers.items():
-            weights = info.get("weights") or {}
-            for model_name, weight in sorted(weights.items(), key=lambda kv: kv[1], reverse=True):
-                rows.append(
-                    {
-                        "ticker": _clean_ticker(str(ticker)),
-                        "model_name": str(model_name),
-                        "weight": float(weight),
-                        "timeframe": str(model_name).split("::", 1)[0],
-                    }
-                )
-        strategy_df = pd.DataFrame(rows)
-        if not strategy_df.empty:
-            top_df = (
-                strategy_df.groupby(["timeframe", "model_name"], as_index=False)["weight"]
-                .mean()
-                .sort_values("weight", ascending=False)
-                .head(30)
-            )
-            strategy_section = f"""
-  <h2>Global Strategy Weights</h2>
-  <p class="section-note">Flattened base-model signals across all timeframes. Values are mean per-model weights across tickers.</p>
-  <div class="card"><div class="tbl-wrap">{_html_table(top_df)}</div></div>
+    ticker_nav = ""
+    if per_ticker_model_tables:
+        links = "".join(
+            f'<a class="ticker-link" href="#ticker-{html.escape(ticker)}">{html.escape(ticker)}</a>'
+            for ticker in per_ticker_model_tables
+        )
+        ticker_nav = f'<div class="ticker-nav">{links}</div>'
+
+    strategy_summary_section = ""
+    if not ticker_summary_df.empty:
+        display_summary_df = ticker_summary_df.drop(columns=["phase"], errors="ignore")
+        strategy_summary_section = f"""
+  <h2>Ticker Summary</h2>
+  <p class="section-note">Each ticker has its own fitted weight layer. This table shows how many clustered models it kept, how diversified it ended up, and which model had the largest final weight.</p>
+  <div class="card"><div class="tbl-wrap tbl-wrap-wide">{_html_table(display_summary_df)}</div></div>
+"""
+
+    per_ticker_sections = ""
+    palette: dict[str, str] = {}
+    all_cluster_ids = sorted(
+        {
+            str(cluster_id)
+            for cluster_df in per_ticker_cluster_tables.values()
+            for cluster_id in cluster_df.get("cluster_id", pd.Series(dtype=str)).tolist()
+        }
+    )
+    for cluster_id in all_cluster_ids:
+        _color_for(cluster_id, palette)
+
+    for ticker in per_ticker_model_tables:
+        cluster_df = per_ticker_cluster_tables.get(ticker, pd.DataFrame())
+        model_df = per_ticker_model_tables.get(ticker, pd.DataFrame())
+        summary_row = ticker_summary_df[ticker_summary_df["ticker"] == ticker]
+        n_models = int(summary_row["n_models"].iloc[0]) if not summary_row.empty else 0
+        n_clusters = int(summary_row["n_clusters"].iloc[0]) if not summary_row.empty else 0
+        ticker_fdm = float(summary_row["fdm"].iloc[0]) if not summary_row.empty else 1.0
+        ticker_corr = summary_row["mean_cluster_correlation"].iloc[0] if not summary_row.empty else float("nan")
+        ticker_corr_str = f"{float(ticker_corr):.4f}" if pd.notna(ticker_corr) else "N/A"
+        top_model = str(summary_row["top_model"].iloc[0]) if not summary_row.empty else ""
+        top_weight = summary_row["top_model_weight"].iloc[0] if not summary_row.empty else float("nan")
+
+        top_model_html = (
+            f'<div class="summary-subtext"><span class="mono">{html.escape(top_model)}</span>'
+            f" at {float(top_weight):.1%}</div>"
+            if isinstance(top_weight, (int, float)) and top_weight == top_weight and top_model
+            else ""
+        )
+        per_ticker_sections += f"""
+  <div class="ticker-section" id="ticker-{html.escape(ticker)}">
+    <div class="ticker-header">
+      <div>
+        <div class="ticker-title">{html.escape(ticker)}</div>
+        <div class="ticker-subtitle">Strategy weight layer: {html.escape(strategy_weight_method)}</div>
+      </div>
+    </div>
+    <div class="summary-grid card">
+      <div class="summary-card">
+        <div class="summary-label">Models</div>
+        <div class="summary-value">{n_models}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Clusters</div>
+        <div class="summary-value">{n_clusters}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Ticker FDM</div>
+        <div class="summary-value">{ticker_fdm:.3f}</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-label">Mean Cluster Corr</div>
+        <div class="summary-value">{ticker_corr_str}</div>
+        {top_model_html}
+      </div>
+    </div>
+    <div class="ticker-grid">
+      <div class="card">
+        <div class="table-title">Cluster Allocation</div>
+        <div class="tbl-wrap tbl-wrap-wide">{_html_table(cluster_df, palette=palette)}</div>
+      </div>
+      <div class="card">
+        <div class="table-title">Model Weights</div>
+        <div class="tbl-wrap tbl-wrap-wide">{_html_table(model_df.drop(columns=["ticker"], errors="ignore"), palette=palette)}</div>
+      </div>
+    </div>
+  </div>
 """
 
     return f"""<!DOCTYPE html>
@@ -672,17 +904,22 @@ def _build_global_html_report(diagnostics: dict, phase_name: str) -> str:
 <body>
 <div class="page">
   <h1>Global Weight Layer Report</h1>
-  <p class="subtitle">Phase: <strong>{phase_name}</strong> &nbsp;|&nbsp; Generated: {now}</p>
+  <p class="subtitle">Phase: <strong>{phase_name}</strong> &nbsp;|&nbsp; Global combiner FDM: <strong>{fdm:.3f}</strong> &nbsp;|&nbsp; Generated: {now}</p>
   <div class="kpi-row">
     <div class="kpi"><div class="val">{len(tf_weights)}</div><div class="lbl">Timeframes</div></div>
     <div class="kpi"><div class="val">{fdm:.3f}</div><div class="lbl">Cross-TF FDM</div></div>
-    <div class="kpi"><div class="val">{mean_corr_str}</div><div class="lbl">Mean Downside Corr</div></div>
+    <div class="kpi"><div class="val">{mean_corr_str}</div><div class="lbl">Mean Cross-TF Corr</div></div>
     <div class="kpi"><div class="val">{n_tfs}</div><div class="lbl">Training Days</div></div>
   </div>
-  <h2>Timeframe Weights</h2>
+  <h2>Global Timeframe Weights</h2>
+  <p class="section-note">These are the weights applied by the global portfolio across timeframe portfolios before each ticker's internal strategy weight layer is used.</p>
   {chart_html}
-  <div class="card"><div class="tbl-wrap">{table_html}</div></div>
-  {strategy_section}
+  <div class="card"><div class="tbl-wrap tbl-wrap-wide">{tf_table_html}</div></div>
+  {strategy_summary_section}
+  <h2>Per-Ticker Weight Layers</h2>
+  <p class="section-note">Every ticker gets its own clustered strategy weight layer. The sections below show cluster allocation and final model weights ticker by ticker.</p>
+  {ticker_nav}
+  {per_ticker_sections}
 </div>
 </body>
 </html>"""
@@ -751,24 +988,8 @@ def export_global_weight_layer_report(
             json.dump(_to_json_serializable(strategy_diag), f, indent=2)
         logger.info("Global strategy diagnostics written to %s", strategy_diag_path)
 
-        rows = []
-        tickers = strategy_diag.get("tickers", {})
-        for ticker, info in (tickers.items() if isinstance(tickers, dict) else []):
-            weights = info.get("weights") or {}
-            for model_name, weight in weights.items():
-                rows.append(
-                    {
-                        "phase": phase_name,
-                        "ticker": _clean_ticker(str(ticker)),
-                        "model_name": str(model_name),
-                        "timeframe": str(model_name).split("::", 1)[0],
-                        "weight": float(weight),
-                    }
-                )
-        if rows:
-            strategy_df = pd.DataFrame(rows).sort_values(
-                ["ticker", "weight"], ascending=[True, False]
-            )
+        _, strategy_df, _, _ = _build_global_strategy_tables(strategy_diag, phase_name)
+        if not strategy_df.empty:
             strategy_csv = output_dir / "global_strategy_weights.csv"
             strategy_df.to_csv(strategy_csv, index=False)
             logger.info("Global strategy weights written to %s", strategy_csv)

@@ -50,6 +50,11 @@ def test_weight_layer_config_accepts_only_two_modes() -> None:
         WeightLayerConfig(weighting_method="inverse_correlation")
 
 
+def test_weight_layer_rejects_removed_risk_tilt_alpha_kwarg() -> None:
+    with pytest.raises(ValueError, match="risk_tilt_alpha is no longer supported"):
+        WeightLayer(weight_method="cluster_corr_ulcer", risk_tilt_alpha=0.5)
+
+
 def test_cluster_equal_clusters_highly_correlated_members_together() -> None:
     layer = WeightLayer(rho_cut=0.7)
     forecasts = _make_forecasts(
@@ -88,7 +93,7 @@ def test_cluster_equal_splits_weight_equally_across_clusters_and_members() -> No
     assert sorted(diag["cluster_weights"].values()) == pytest.approx([0.5, 0.5])
 
 
-def test_cluster_corr_ulcer_requires_returns() -> None:
+def test_cluster_corr_ulcer_does_not_require_returns() -> None:
     layer = WeightLayer(weight_method="cluster_corr_ulcer")
     forecasts = _make_forecasts(
         {
@@ -97,57 +102,73 @@ def test_cluster_corr_ulcer_requires_returns() -> None:
         }
     )
 
-    with pytest.raises(ValueError, match="requires returns"):
-        layer.fit(forecasts, signals=pd.DataFrame(), returns=None)
+    layer.fit(forecasts, signals=pd.DataFrame(), returns=None)
+
+    assert layer.is_fitted_ is True
 
 
-def test_cluster_corr_ulcer_downweights_worse_ulcer_cluster() -> None:
-    layer = WeightLayer(weight_method="cluster_corr_ulcer", rho_cut=0.7, risk_tilt_alpha=1.0)
+def test_cluster_corr_ulcer_downweights_more_correlated_cluster() -> None:
+    layer = WeightLayer(
+        weight_method="cluster_corr_ulcer",
+        rho_cut=0.7,
+        group_weight_cap=1.0,
+    )
+    rng = np.random.default_rng(123)
+    shared = rng.normal(size=300)
+    model_a = shared + rng.normal(scale=1.0, size=300)
+    model_b = shared + rng.normal(scale=1.0, size=300)
+    model_c = rng.normal(size=300)
     forecasts = _make_forecasts(
         {
-            "stable_a": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
-            "stable_b": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
-            "choppy": [0.80, 0.10, 0.80, 0.10, 0.80, 0.10],
+            "model_a": model_a.tolist(),
+            "model_b": model_b.tolist(),
+            "model_c": model_c.tolist(),
         }
     )
-    returns = _make_returns([0.01, 0.01, 0.01, -0.30, 0.01, -0.30])
 
-    layer.fit(forecasts, signals=pd.DataFrame(), returns=returns)
+    layer.fit(forecasts, signals=pd.DataFrame())
+    diag = layer.get_diagnostics()["tickers"]["ES"]
     weights = layer.weights_["ES"]
+    assignments = diag["cluster_assignments"]
+    cluster_weights = diag["cluster_weights"]
 
-    assert weights["choppy"] < weights["stable_a"] + weights["stable_b"]
+    corr_only_cluster = assignments["model_c"]
+    corr_heavy_cluster_a = assignments["model_a"]
+    corr_heavy_cluster_b = assignments["model_b"]
+
+    assert corr_heavy_cluster_a != corr_heavy_cluster_b
+    assert cluster_weights[corr_only_cluster] > cluster_weights[corr_heavy_cluster_a]
+    assert cluster_weights[corr_only_cluster] > cluster_weights[corr_heavy_cluster_b]
+    assert weights["model_c"] > weights["model_a"]
+    assert weights["model_c"] > weights["model_b"]
     metrics = layer.get_diagnostics()["tickers"]["ES"]["cluster_metrics"]
-    ulcer_values = {cluster: info["ulcer_index"] for cluster, info in metrics.items()}
-    assert max(v for v in ulcer_values.values() if v is not None) > min(
-        v for v in ulcer_values.values() if v is not None
-    )
+    assert all(info["ulcer_index"] is None for info in metrics.values())
 
 
-def test_risk_tilt_alpha_zero_removes_ulcer_penalty() -> None:
+def test_cluster_corr_ulcer_ignores_returns_input() -> None:
     forecasts = _make_forecasts(
         {
-            "stable_a": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
-            "stable_b": [0.10, 0.10, 0.20, 0.20, 0.10, 0.10],
-            "volatile_a": [0.80, 0.10, 0.80, 0.10, 0.80, 0.10],
-            "volatile_b": [0.80, 0.10, 0.80, 0.10, 0.80, 0.10],
+            "model_a": [1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            "model_b": [0.1, 0.3, 0.1, 0.3, 0.1, 0.3],
+            "model_c": [0.2, 0.1, 0.2, 0.1, 0.2, 0.1],
         }
     )
-    returns = _make_returns([0.01, -0.30, 0.01, -0.30, 0.01, -0.30])
+    series_returns = _make_returns([0.01, -0.30, 0.01, -0.30, 0.01, -0.30])
+    frame_returns = pd.DataFrame(
+        {"ES": series_returns, "NQ": series_returns * 0.5},
+        index=series_returns.index,
+    )
 
-    alpha_zero = WeightLayer(weight_method="cluster_corr_ulcer", risk_tilt_alpha=0.0, rho_cut=0.7)
-    alpha_one = WeightLayer(weight_method="cluster_corr_ulcer", risk_tilt_alpha=1.0, rho_cut=0.7)
+    no_returns = WeightLayer(weight_method="cluster_corr_ulcer", rho_cut=0.7, group_weight_cap=1.0)
+    series_layer = WeightLayer(weight_method="cluster_corr_ulcer", rho_cut=0.7, group_weight_cap=1.0)
+    frame_layer = WeightLayer(weight_method="cluster_corr_ulcer", rho_cut=0.7, group_weight_cap=1.0)
 
-    alpha_zero.fit(forecasts, signals=pd.DataFrame(), returns=returns)
-    alpha_one.fit(forecasts, signals=pd.DataFrame(), returns=returns)
+    no_returns.fit(forecasts, signals=pd.DataFrame(), returns=None)
+    series_layer.fit(forecasts, signals=pd.DataFrame(), returns=series_returns)
+    frame_layer.fit(forecasts, signals=pd.DataFrame(), returns=frame_returns)
 
-    zero_diag = alpha_zero.get_diagnostics()["tickers"]["ES"]
-    one_diag = alpha_one.get_diagnostics()["tickers"]["ES"]
-
-    zero_cluster_weights = zero_diag["cluster_weights"]
-    one_cluster_weights = one_diag["cluster_weights"]
-
-    assert sorted(zero_cluster_weights.values()) == pytest.approx([0.5, 0.5], rel=1e-6)
-    assert sorted(one_cluster_weights.values()) != pytest.approx([0.5, 0.5], rel=1e-3)
+    pd.testing.assert_series_equal(no_returns.weights_["ES"], series_layer.weights_["ES"])
+    pd.testing.assert_series_equal(no_returns.weights_["ES"], frame_layer.weights_["ES"])
 
 
 def test_insufficient_forecast_history_falls_back_to_one_cluster() -> None:

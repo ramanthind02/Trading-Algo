@@ -3,8 +3,9 @@
 This module combines model forecasts using one of two clustered allocation modes:
 
 - ``cluster_equal``: cluster first, then equal weight across clusters.
-- ``cluster_corr_ulcer``: cluster first, then tilt cluster weights by
-  average positive correlation and ulcer index on forecast-weighted returns.
+- ``cluster_corr_ulcer``: cluster first, then weight clusters by inverse
+  average positive correlation only. The legacy name is retained for
+  compatibility, but ulcer-risk tilt has been removed.
 """
 
 from __future__ import annotations
@@ -19,8 +20,6 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-_EPSILON = 1e-8
-
 
 @_dataclass(frozen=True)
 class WeightLayerConfig:
@@ -30,7 +29,6 @@ class WeightLayerConfig:
     rho_cut: float = 0.70
     fdm_max: float = 2.0
     group_weight_cap: float = 0.25
-    risk_tilt_alpha: float = 0.5
 
     def __post_init__(self) -> None:
         valid_methods = {"cluster_equal", "cluster_corr_ulcer"}
@@ -46,10 +44,6 @@ class WeightLayerConfig:
         if not (0.0 < self.group_weight_cap <= 1.0):
             raise ValueError(
                 f"group_weight_cap must be in (0, 1], got {self.group_weight_cap}"
-            )
-        if self.risk_tilt_alpha < 0.0:
-            raise ValueError(
-                f"risk_tilt_alpha must be >= 0, got {self.risk_tilt_alpha}"
             )
 
 
@@ -77,7 +71,7 @@ class BaseWeightLayer(ABC):
         self,
         forecast_vectors: List[pd.DataFrame],
         signals: pd.DataFrame,
-        returns: Optional[pd.Series] = None,
+        returns: Optional[pd.Series | pd.DataFrame] = None,
     ) -> "BaseWeightLayer":
         """Fit ticker-level weights from training data."""
 
@@ -367,17 +361,6 @@ def _apply_group_weight_cap(weights: np.ndarray, cap: float) -> np.ndarray:
     return clipped / total if total > 0.0 else np.ones(n_weights) / n_weights
 
 
-def _compute_ulcer_index(series: pd.Series) -> float:
-    """Ulcer index on a return proxy series."""
-    clean = series.fillna(0.0).astype(float)
-    if clean.empty:
-        return 0.0
-    cumulative = clean.cumsum()
-    running_peak = cumulative.cummax()
-    drawdown = cumulative - running_peak
-    return float(np.sqrt(np.mean(np.square(drawdown.to_numpy()))))
-
-
 def _distribute_cluster_weights_to_models(
     model_names: List[str],
     cluster_assignments: Dict[str, str],
@@ -413,30 +396,19 @@ class ClusteredWeightLayer(BaseWeightLayer):
         self,
         forecast_vectors: List[pd.DataFrame],
         signals: pd.DataFrame,
-        returns: Optional[pd.Series] = None,
+        returns: Optional[pd.Series | pd.DataFrame] = None,
     ) -> "ClusteredWeightLayer":
         del signals
+        del returns
 
         if not forecast_vectors:
             raise ValueError("forecast_vectors cannot be empty")
-        if self.weight_method == "cluster_corr_ulcer" and returns is None:
-            raise ValueError(
-                "cluster_corr_ulcer requires returns so ulcer index can be computed "
-                "from forecast-weighted returns"
-            )
 
         all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
         if all_forecasts.empty:
             raise ValueError("forecast_vectors contain no data")
         if "ticker" not in all_forecasts.columns:
             raise ValueError("forecast_vectors must contain 'ticker' column")
-
-        normalized_returns: Optional[pd.Series] = None
-        if returns is not None and not returns.empty:
-            normalized_returns = returns.astype(float).copy()
-            normalized_returns.index = pd.to_datetime(normalized_returns.index).normalize()
-            if normalized_returns.index.duplicated().any():
-                normalized_returns = normalized_returns.groupby(level=0).mean()
 
         self.fdm_.clear()
         self.weights_.clear()
@@ -524,22 +496,15 @@ class ClusteredWeightLayer(BaseWeightLayer):
                     for cluster in cluster_names
                 }
             else:
-                assert normalized_returns is not None
-                aligned_returns = normalized_returns.reindex(cluster_forecasts.index).fillna(0.0)
-                cluster_return_proxy = cluster_forecasts.multiply(aligned_returns, axis=0)
                 raw_scores = []
                 metrics = {}
                 for cluster in cluster_names:
                     avg_positive_corr = float(corr_matrix.loc[cluster].drop(cluster).mean())
-                    ulcer_index = _compute_ulcer_index(cluster_return_proxy[cluster])
-                    score = 1.0 / (
-                        (max(ulcer_index, _EPSILON) ** self._wl_config.risk_tilt_alpha)
-                        * (1.0 + avg_positive_corr)
-                    )
+                    score = 1.0 / (1.0 + avg_positive_corr)
                     raw_scores.append(score)
                     metrics[cluster] = {
                         "avg_positive_corr": avg_positive_corr,
-                        "ulcer_index": ulcer_index,
+                        "ulcer_index": None,
                         "score": float(score),
                         "member_count": int(
                             sum(
@@ -598,7 +563,7 @@ class ClusteredWeightLayer(BaseWeightLayer):
         self.cluster_metrics_[ticker] = {
             "cluster_1": {
                 "avg_positive_corr": 0.0,
-                "ulcer_index": None if self.weight_method == "cluster_equal" else 0.0,
+                "ulcer_index": None,
                 "score": None if self.weight_method == "cluster_equal" else 1.0,
                 "member_count": len(model_names),
             }
@@ -624,12 +589,13 @@ def WeightLayer(
 ) -> BaseWeightLayer:
     """Factory for the clustered weight layer."""
     if config is None:
+        if "risk_tilt_alpha" in kwargs:
+            raise ValueError("risk_tilt_alpha is no longer supported by WeightLayer")
         config = WeightLayerConfig(
             weighting_method=weight_method,
             fdm_max=float(kwargs.pop("fdm_max", fdm_max)),
             rho_cut=float(kwargs.pop("rho_cut", 0.70)),
             group_weight_cap=float(kwargs.pop("group_weight_cap", 0.25)),
-            risk_tilt_alpha=float(kwargs.pop("risk_tilt_alpha", 0.5)),
         )
     elif kwargs:
         raise ValueError("Pass either config or keyword overrides, not both")

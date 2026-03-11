@@ -5,9 +5,14 @@ TFPortfolio instances are lightweight mocks to isolate GlobalPortfolio orchestra
 """
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 import numpy as np
 import pandas as pd
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from utils.core.enums import TimeFrame
 from ensemble.portfolio import GlobalPortfolio, TFPortfolio

@@ -311,7 +311,6 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
     monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", _mock_aggregate_intraday_returns_to_daily)
     monkeypatch.setattr(pipeline, "generate_tearsheet", _mock_generate_tearsheet)
-    monkeypatch.setattr(pipeline, "export_weight_layer_report", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "export_global_weight_layer_report", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
 
@@ -352,3 +351,79 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
         for frame in capped_combined_frames
     )
 
+
+def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _DummyPortfolio.created_timeframes = []
+    _DummyGlobalPortfolio.created = []
+
+    config = _DummyConfig(
+        tickers=[Ticker.ES],
+        timeframe=TimeFrame.D,
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 1, 5),
+        use_cache=True,
+        ensemble_dirs={"daily": "vault/D/daily_strategy"},
+        target_volatility=0.15,
+        weight_layer_method="cluster_equal",
+        weight_layer_kwargs={"fdm_max": 2.5},
+        max_position_pct=3.5,
+        baseline_mode="equal_weight",
+        output_root=tmp_path / "results",
+    )
+
+    daily_candles = _make_candles(
+        TimeFrame.D,
+        ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"],
+    )
+
+    def _mock_load_candles(_config, timeframe, start=None, end=None):  # noqa: ANN001
+        if timeframe == TimeFrame.D:
+            return daily_candles.copy()
+        raise AssertionError(f"Unexpected timeframe: {timeframe}")
+
+    def _mock_load_ensemble_from_vault(path: str, refit: bool, target_volatility: float):
+        return _DummyEnsemble(TimeFrame.D)
+
+    def _mock_calculate_strategy_returns_from_positions(
+        positions_df: pd.DataFrame,
+        candles_df: pd.DataFrame,
+        strategy: str = "long",
+    ) -> pd.Series:
+        idx = pd.to_datetime(candles_df["datetime"]).sort_values().drop_duplicates()
+        return pd.Series(0.001, index=idx, name="strategy_return")
+
+    def _mock_calculate_baseline_returns(
+        candles_df: pd.DataFrame,
+        equal_weight: bool = True,
+    ) -> pd.Series:
+        idx = pd.to_datetime(candles_df["datetime"]).sort_values().drop_duplicates()
+        return pd.Series(0.0005, index=idx, name="baseline_return")
+
+    export_calls: list[tuple[str, Path]] = []
+
+    def _mock_export_global_weight_layer_report(
+        portfolio, phase_name: str, output_dir: Path  # noqa: ANN001
+    ) -> None:
+        export_calls.append((phase_name, output_dir))
+
+    monkeypatch.setattr(pipeline, "_load_candles", _mock_load_candles)
+    monkeypatch.setattr(pipeline, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
+    monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
+    monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
+    monkeypatch.setattr(pipeline, "GlobalPortfolio", _DummyGlobalPortfolio)
+    monkeypatch.setattr(pipeline, "PortfolioTester", _DummyTester)
+    monkeypatch.setattr(pipeline, "calculate_strategy_returns_from_positions", _mock_calculate_strategy_returns_from_positions)
+    monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
+    monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", lambda returns: returns)
+    monkeypatch.setattr(pipeline, "generate_tearsheet", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "export_global_weight_layer_report", _mock_export_global_weight_layer_report)
+    monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
+
+    rpt.run_portfolio_test(config)
+
+    assert len(_DummyGlobalPortfolio.created) == 3
+    assert [phase for phase, _ in export_calls] == ["train", "validation", "test"]
+    assert all(output_dir.name == "global_weight_layer" for _, output_dir in export_calls)

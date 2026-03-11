@@ -28,6 +28,16 @@ def _resample_to_daily_if_needed(returns: pd.Series, tf: TimeFrame) -> pd.Series
     return returns
 
 
+def _normalize_returns_series(returns: pd.Series, timeframe: TimeFrame) -> pd.Series:
+    """Normalize a returns series for QuantStats consumption."""
+    normalized = returns.copy()
+    if hasattr(normalized.index, "tz") and normalized.index.tz is not None:
+        normalized.index = normalized.index.tz_localize(None)
+    normalized = _resample_to_daily_if_needed(normalized, timeframe)
+    normalized = normalized.dropna().sort_index()
+    return normalized
+
+
 def generate_tearsheet(
     strategy_returns: pd.Series,
     baseline_returns: Optional[pd.Series] = None,
@@ -97,12 +107,13 @@ def generate_tearsheet(
     if not isinstance(strategy_returns.index, pd.DatetimeIndex):
         raise TypeError("strategy_returns must have a DatetimeIndex")
     
-    # Remove timezone info to avoid QuantStats comparison errors
-    if hasattr(strategy_returns.index, 'tz') and strategy_returns.index.tz is not None:
-        strategy_returns = strategy_returns.copy()
-        strategy_returns.index = strategy_returns.index.tz_localize(None)
-    strategy_returns = _resample_to_daily_if_needed(strategy_returns, timeframe)
-    
+    strategy_returns = _normalize_returns_series(strategy_returns, timeframe)
+    if strategy_returns.empty:
+        warnings.warn(
+            f"Skipping tearsheet for '{feature_name}' because strategy_returns is empty."
+        )
+        return
+
     strategy_returns.name = feature_name
     
     # Process baseline if provided
@@ -111,14 +122,10 @@ def generate_tearsheet(
         if not isinstance(baseline_returns, pd.Series):
             raise TypeError("baseline_returns must be a pandas Series of daily returns")
         
-        # Remove timezone info
-        if hasattr(baseline_returns.index, 'tz') and baseline_returns.index.tz is not None:
-            baseline_returns = baseline_returns.copy()
-            baseline_returns.index = baseline_returns.index.tz_localize(None)
-        baseline_returns = _resample_to_daily_if_needed(baseline_returns, timeframe)
-        
-        baseline_returns.name = "Baseline (Always-In)"
-        benchmark = baseline_returns
+        baseline_returns = _normalize_returns_series(baseline_returns, timeframe)
+        if not baseline_returns.empty:
+            baseline_returns.name = "Baseline (Always-In)"
+            benchmark = baseline_returns
     
     # #region agent log
     try:

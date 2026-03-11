@@ -25,10 +25,7 @@ from ensemble.portfolio_tester import (
 from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
-from portfolio_research.weight_layer_report import (
-    export_global_weight_layer_report,
-    export_weight_layer_report,
-)
+from portfolio_research.weight_layer_report import export_global_weight_layer_report
 from utils.core.enums import TimeFrame
 from utils.evaluation.walkforward.runner import _sanitize_tearsheet_name
 
@@ -311,12 +308,9 @@ def _evaluate_phase(
     print(f"{phase_title} daily test : {len(daily_test_candles)} candles")
 
     daily_dates_per_ticker = _build_daily_dates_per_ticker(daily_test_candles)
-    daily_positions_by_timeframe: list[pd.DataFrame] = []
     testers_by_timeframe: dict[TimeFrame, PortfolioTester] = {}
     per_tf_strategy_returns: dict[TimeFrame, pd.Series] = {}
     per_tf_baseline_returns: dict[TimeFrame, pd.Series] = {}
-
-    has_multiple_timeframes = len(unique_timeframes) >= 2
 
     for timeframe in unique_timeframes:
         tf_train_candles = train_candles_by_timeframe[timeframe]
@@ -348,8 +342,6 @@ def _evaluate_phase(
                 native_positions,
                 daily_dates_per_ticker,
             )
-
-        daily_positions_by_timeframe.append(daily_positions)
         testers_by_timeframe[timeframe] = tester
 
         strategy_returns = tester.calculate_strategy_returns(
@@ -360,44 +352,34 @@ def _evaluate_phase(
         per_tf_strategy_returns[timeframe] = aggregate_intraday_returns_to_daily(strategy_returns)
         per_tf_baseline_returns[timeframe] = aggregate_intraday_returns_to_daily(baseline_returns)
 
-    if has_multiple_timeframes:
-        # Build GlobalPortfolio from the already-fitted TFPortfolios and combine
-        # forecast streams via WeightLayer (clustered cross-TF weights).
-        tf_portfolios = [testers_by_timeframe[tf].portfolio for tf in unique_timeframes]
-        global_portfolio = GlobalPortfolio(
-            tf_portfolios=tf_portfolios,
-            weight_layer=WeightLayer(
-                weight_method=config.weight_layer_method,
-                **dict(config.weight_layer_kwargs),
-            ),
-            max_position_pct=config.max_position_pct,
-        )
-        instrument_returns = _build_instrument_returns(daily_train_candles)
-        global_portfolio.fit(train_candles_by_timeframe, instrument_returns)
-        export_global_weight_layer_report(
-            global_portfolio,
-            phase_name=output_dir_name,
-            output_dir=phase_out / "global_weight_layer",
-        )
-        global_positions_raw = global_portfolio.predict(test_candles_by_timeframe)
-        global_positions_raw["datetime"] = pd.to_datetime(
-            global_positions_raw["datetime"]
-        ).dt.floor("s")
-        combined_positions = global_positions_raw[
-            ["ticker", "datetime", "position_fraction"]
-        ].copy()
-        combined_positions["position_fraction"] = combined_positions[
-            "position_fraction"
-        ].clip(-config.max_position_pct, config.max_position_pct)
-    else:
-        combined_positions = (
-            pd.concat(daily_positions_by_timeframe, ignore_index=True)
-            .groupby(["ticker", "datetime"], as_index=False)["position_fraction"]
-            .sum()
-        )
-        combined_positions["position_fraction"] = combined_positions[
-            "position_fraction"
-        ].clip(-config.max_position_pct, config.max_position_pct)
+    # Always build GlobalPortfolio so the global WeightLayer is fitted and reported
+    # even for a single-timeframe run.
+    tf_portfolios = [testers_by_timeframe[tf].portfolio for tf in unique_timeframes]
+    global_portfolio = GlobalPortfolio(
+        tf_portfolios=tf_portfolios,
+        weight_layer=WeightLayer(
+            weight_method=config.weight_layer_method,
+            **dict(config.weight_layer_kwargs),
+        ),
+        max_position_pct=config.max_position_pct,
+    )
+    instrument_returns = _build_instrument_returns(daily_train_candles)
+    global_portfolio.fit(train_candles_by_timeframe, instrument_returns)
+    export_global_weight_layer_report(
+        global_portfolio,
+        phase_name=output_dir_name,
+        output_dir=phase_out / "global_weight_layer",
+    )
+    global_positions_raw = global_portfolio.predict(test_candles_by_timeframe)
+    global_positions_raw["datetime"] = pd.to_datetime(
+        global_positions_raw["datetime"]
+    ).dt.floor("s")
+    combined_positions = global_positions_raw[
+        ["ticker", "datetime", "position_fraction"]
+    ].copy()
+    combined_positions["position_fraction"] = combined_positions[
+        "position_fraction"
+    ].clip(-config.max_position_pct, config.max_position_pct)
 
     combined_strategy_returns = calculate_strategy_returns_from_positions(
         combined_positions,
@@ -419,7 +401,7 @@ def _evaluate_phase(
         mode="html",
     )
 
-    if has_multiple_timeframes:
+    if len(unique_timeframes) >= 2:
         for timeframe in unique_timeframes:
             tf_label = _timeframe_label(timeframe)
             tf_output_file = portfolio_dir / f"{tf_label}_Portfolio_{phase_title}_window_tearsheet.html"

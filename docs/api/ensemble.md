@@ -188,7 +188,7 @@ Forecast vector contract:
 - `datetime` is required for clustering; if present, combination is per `(ticker, datetime)`.
 
 Raises:
-- `ValueError` for empty fit inputs, unfitted `combine`, unknown `weight_method`, or missing `returns` in `cluster_corr_ulcer`.
+- `ValueError` for empty fit inputs, unfitted `combine`, or unknown `weight_method`.
 
 Logging:
 - `logger.info` for per-ticker fit progress.

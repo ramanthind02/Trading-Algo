@@ -1949,7 +1949,6 @@ class GlobalPortfolio:
         self,
         tf_portfolios: List["TFPortfolio"],
         weight_layer: Optional[BaseWeightLayer] = None,
-        buy_hold_target_weight: float = 0.20,
         instrument_weights: Optional[Dict[str, float]] = None,
         sector_allocation_config_path: Optional[str] = None,
         idm_max: float = 2.5,
@@ -1961,7 +1960,6 @@ class GlobalPortfolio:
             if weight_layer is not None
             else WeightLayer(weight_method="cluster_equal", fdm_max=2.0)
         )
-        self.buy_hold_target_weight = float(np.clip(buy_hold_target_weight, 0.0, 1.0))
         self.idm_max = idm_max
         self.max_position_pct = max_position_pct
 
@@ -1987,55 +1985,6 @@ class GlobalPortfolio:
         self.global_eligible_models_by_ticker_: Dict[str, Set[str]] = {}
         self.global_eligibility_diagnostics_: Dict[str, Any] = {}
         self.is_fitted_: bool = False
-
-    def _enforce_buy_hold_target_weight(self) -> None:
-        """Force a configured buy/hold share per ticker on fitted strategy weights."""
-        weights_map = getattr(self.weight_layer, "weights_", None)
-        if not isinstance(weights_map, dict):
-            return
-
-        target = self.buy_hold_target_weight
-        for ticker, ticker_weights in list(weights_map.items()):
-            if not isinstance(ticker_weights, pd.Series) or ticker_weights.empty:
-                continue
-
-            names = [str(n) for n in ticker_weights.index]
-            buy_hold_mask = np.array(["buy_hold" in n.lower() for n in names], dtype=bool)
-            if not bool(np.any(buy_hold_mask)):
-                continue
-
-            bh_names = [names[i] for i, is_bh in enumerate(buy_hold_mask) if is_bh]
-            other_names = [names[i] for i, is_bh in enumerate(buy_hold_mask) if not is_bh]
-            current = ticker_weights.astype(float).copy()
-
-            if not other_names:
-                out = pd.Series({k: 0.0 for k in names}, dtype=float)
-                out.loc[bh_names] = 1.0 / len(bh_names)
-                weights_map[ticker] = out
-                continue
-
-            bh_sum = float(current.loc[bh_names].sum())
-            other_sum = float(current.loc[other_names].sum())
-
-            if bh_sum > 0:
-                bh_scaled = current.loc[bh_names] / bh_sum * target
-            else:
-                bh_scaled = pd.Series(1.0 / len(bh_names), index=bh_names, dtype=float) * target
-
-            residual = 1.0 - target
-            if other_sum > 0:
-                other_scaled = current.loc[other_names] / other_sum * residual
-            else:
-                other_scaled = (
-                    pd.Series(1.0 / len(other_names), index=other_names, dtype=float)
-                    * residual
-                )
-
-            out = pd.concat([bh_scaled, other_scaled]).reindex(names).fillna(0.0)
-            total = float(out.sum())
-            if total > 0:
-                out = out / total
-            weights_map[ticker] = out
 
     @staticmethod
     def _build_global_signals_df(
@@ -2552,7 +2501,8 @@ class GlobalPortfolio:
         if not forecast_vectors:
             raise ValueError("No forecast vectors available for global strategy weighting")
 
-        # Use aggregate daily return proxy for downside-risk grouped global weighting.
+        # Use aggregate daily return proxy for eligibility diagnostics and
+        # downside-vol normalization.
         global_returns: Optional[pd.Series] = None
         if isinstance(instrument_returns, pd.DataFrame) and not instrument_returns.empty:
             global_returns = instrument_returns.mean(axis=1).astype(float)
@@ -2588,9 +2538,7 @@ class GlobalPortfolio:
         self.weight_layer.fit(
             forecast_vectors=normalized_vectors,
             signals=signals_df,
-            returns=global_returns,
         )
-        self._enforce_buy_hold_target_weight()
         self.weight_layer_diagnostics_ = self.weight_layer.get_diagnostics()
         self.global_tf_weights_compat_ = self._derive_tf_weights_from_strategy_diagnostics(
             self.weight_layer_diagnostics_

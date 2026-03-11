@@ -15,7 +15,7 @@ The layer only has two modes:
 | Mode | Behavior |
 |---|---|
 | `cluster_equal` | Cluster model forecast streams, equal weight across clusters, equal weight within each cluster |
-| `cluster_corr_ulcer` | Cluster first, then tilt cluster weights by inverse average positive correlation and ulcer index on forecast-weighted returns |
+| `cluster_corr_ulcer` | Legacy mode name retained for compatibility; cluster first, then weight clusters by inverse average positive correlation only |
 
 There are no manual group definitions, no feature-family grouping, and no HRP path.
 
@@ -47,14 +47,12 @@ model_weight_i = cluster_weight_k / n_members(cluster_k)
 For each cluster `c`:
 
 ```text
-score_c = 1 / ((max(ulcer_index_c, eps) ** alpha) * (1 + avg_positive_corr_c))
+score_c = 1 / (1 + avg_positive_corr_c)
 ```
 
 Where:
 
 - `avg_positive_corr_c` is the mean positive correlation of cluster `c` versus the other clusters
-- `ulcer_index_c` is computed on `cluster_forecast_c * instrument_return`
-- `alpha` controls tilt strength
 
 Scores are normalized, capped by `group_weight_cap`, then distributed equally within each cluster.
 
@@ -79,7 +77,6 @@ Single-model and single-cluster cases use `FDM = 1.0`.
 | `rho_cut` | `0.70` | Correlation cutoff for automatic clustering |
 | `fdm_max` | `2.0` | FDM cap |
 | `group_weight_cap` | `0.25` | Hard cap per cluster |
-| `risk_tilt_alpha` | `0.5` | Ulcer tilt strength for `cluster_corr_ulcer` |
 
 ## Diagnostics
 
@@ -92,4 +89,5 @@ Per ticker, the layer reports:
 - `fdm`
 - `mean_cluster_correlation`
 
-`cluster_metrics` contains per-cluster `avg_positive_corr`, `ulcer_index`, `score`, and `member_count`.
+`cluster_metrics` contains per-cluster `avg_positive_corr`, `score`, and `member_count`.
+`ulcer_index` is retained in diagnostics for compatibility and is always `null`.
