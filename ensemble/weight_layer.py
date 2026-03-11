@@ -42,11 +42,11 @@ class WeightLayerConfig:
     ----------
     weighting_method : str
         One of: ``"equal_flat"``, ``"equal_grouped"``,
-        ``"inv_downside_vol_grouped"``, ``"downside_hrp_grouped"``,
+        ``"inv_avg_pairwise_corr_grouped"``, ``"downside_hrp_grouped"``,
         ``"downside_hrp_flat"``, ``"inverse_correlation"`` (backward-compat).
     group_method : str
-        ``"feature_family"`` (extract module prefix from model name) or
-        ``"correlation_clustering"`` (hierarchical clustering with rho_cut).
+        ``"correlation_clustering"`` (hierarchical clustering with rho_cut, default) or
+        ``"feature_family"`` (extract module prefix from model name).
     rho_cut : float
         Correlation cutoff for ``correlation_clustering`` (default 0.70).
     within_group_weights : str
@@ -62,9 +62,13 @@ class WeightLayerConfig:
         ``"full_period"`` — use full-period correlation (for equal-weight methods).
     weight_stability_threshold : float
         Diagnostic: warn if any group weight shifts more than this across folds.
+    group_weight_cap : float
+        Hard cap on any single group's weight (default 0.25). Applied after
+        computing across-group weights in all grouped methods. Surplus is
+        redistributed proportionally to uncapped groups.
     """
-    weighting_method: str = "inverse_correlation"
-    group_method: str = "feature_family"
+    weighting_method: str = "inv_avg_pairwise_corr_grouped"
+    group_method: str = "correlation_clustering"
     rho_cut: float = 0.70
     within_group_weights: str = "equal"
     linkage: str = "ward"
@@ -72,10 +76,11 @@ class WeightLayerConfig:
     fdm_max: float = 2.0
     fdm_correlation_source: str = "downside"
     weight_stability_threshold: float = 0.20
+    group_weight_cap: float = 0.25
 
     def __post_init__(self) -> None:
         valid_methods = {
-            "equal_flat", "equal_grouped", "inv_downside_vol_grouped",
+            "equal_flat", "equal_grouped", "inv_avg_pairwise_corr_grouped",
             "downside_hrp_grouped", "downside_hrp_flat", "inverse_correlation",
         }
         if self.weighting_method not in valid_methods:
@@ -1057,6 +1062,49 @@ def _compute_fdm_from_corr_matrix(
     return min(fdm, fdm_max)
 
 
+def _apply_group_weight_cap(weights: np.ndarray, cap: float) -> np.ndarray:
+    """Iteratively cap group weights and redistribute surplus to uncapped groups.
+
+    Groups that have been capped in a previous iteration are excluded from
+    receiving redistribution in subsequent iterations.
+
+    Parameters
+    ----------
+    weights : np.ndarray
+        Raw group weight vector, must sum to 1.0 and be non-negative.
+    cap : float
+        Maximum allowed weight for any single group (e.g. 0.25).
+
+    Returns
+    -------
+    np.ndarray
+        Capped and renormalized weight vector summing to 1.0.
+    """
+    K = len(weights)
+    if cap >= 1.0 or K <= 1:
+        return weights
+    # Infeasible: K groups cannot each be ≤ cap and sum to 1. Fall back to equal.
+    if K * cap < 1.0 - 1e-9:
+        return np.ones(K) / K
+    w = weights.copy()
+    permanently_capped = np.zeros(K, dtype=bool)
+    for _ in range(K):
+        newly_over = (~permanently_capped) & (w > cap)
+        if not newly_over.any():
+            break
+        surplus = (w[newly_over] - cap).sum()
+        w[newly_over] = cap
+        permanently_capped |= newly_over
+        free = ~permanently_capped
+        free_sum = w[free].sum()
+        if free_sum > 0:
+            w[free] += surplus * (w[free] / free_sum)
+        else:
+            break
+    total = w.sum()
+    return w / total if total > 0 else w
+
+
 # ---------------------------------------------------------------------------
 # Concrete Strategy: Inverse Correlation
 # ---------------------------------------------------------------------------
@@ -1154,11 +1202,12 @@ class EqualGroupedWeightLayer(BaseWeightLayer):
         )
         groups = sorted(set(group_map.values()))
         K = len(groups)
-        group_weight = 1.0 / K if K > 0 else 1.0
+        raw_group_weights = np.ones(K) / K
+        group_weights_arr = _apply_group_weight_cap(raw_group_weights, self._wl_config.group_weight_cap)
         weights: Dict[str, float] = {}
-        for grp in groups:
+        for i, grp in enumerate(groups):
             members = [m for m in model_names if group_map[m] == grp]
-            per_model = group_weight / len(members) if members else 0.0
+            per_model = group_weights_arr[i] / len(members) if members else 0.0
             for m in members:
                 weights[m] = per_model
         total = sum(weights.values())
@@ -1168,14 +1217,25 @@ class EqualGroupedWeightLayer(BaseWeightLayer):
 
 
 # ---------------------------------------------------------------------------
-# Concrete Strategy: Inverse Downside Vol, Grouped (Level 2)
+# Concrete Strategy: Inverse Avg Pairwise Correlation, Grouped (Level 2)
 # ---------------------------------------------------------------------------
 
-class InvDownsideVolGroupedWeightLayer(BaseWeightLayer):
-    """Level 2 — Equal within group, inverse downside vol across groups.
+class InvAvgPairwiseCorrelationGroupedWeightLayer(BaseWeightLayer):
+    """Level 2 — Equal within group, inverse average pairwise correlation across groups.
 
-    Group weights ∝ 1/σ^down_k. No correlation matrix — targets drawdown
-    without matrix estimation risk.
+    Since forecasts are already vol-targeted, the only remaining diversification
+    criterion is correlation. Groups that are highly correlated with other groups
+    (e.g. buy/hold correlating with trend signals) receive lower weight.
+
+    Algorithm
+    ---------
+    1. Extract groups via correlation clustering.
+    2. Build group signal streams (mean of member signals per group).
+    3. Compute (K×K) full-period correlation matrix of group signal streams.
+    4. Score each group: ``score_c = 1 / (1 + avg_corr_c_with_others)``.
+    5. Normalize scores → group weights.
+    6. Apply hard cap via ``_apply_group_weight_cap``.
+    7. Distribute each group's weight equally among its members.
     """
 
     def __init__(self, config: Optional['WeightLayerConfig'] = None) -> None:
@@ -1185,7 +1245,7 @@ class InvDownsideVolGroupedWeightLayer(BaseWeightLayer):
 
     @property
     def weight_method(self) -> str:
-        return 'inv_downside_vol_grouped'
+        return 'inv_avg_pairwise_corr_grouped'
 
     def _fit_ticker_weights(
         self,
@@ -1201,35 +1261,31 @@ class InvDownsideVolGroupedWeightLayer(BaseWeightLayer):
         groups = sorted(set(group_map.values()))
         K = len(groups)
 
-        if ticker_returns is None or K == 1:
-            # Fallback: equal across groups
-            group_weight = 1.0 / K if K > 0 else 1.0
-            weights: Dict[str, float] = {}
-            for grp in groups:
-                members = [m for m in model_names if group_map[m] == grp]
-                per_model = group_weight / len(members) if members else 0.0
-                for m in members:
-                    weights[m] = per_model
-            total = sum(weights.values())
-            return pd.Series({k: v / total for k, v in weights.items()})
+        # Build group signal streams: mean of member signals per group
+        group_signals: Dict[str, pd.Series] = {
+            grp: ticker_signals[
+                [m for m in model_names if group_map[m] == grp and m in ticker_signals.columns]
+            ].mean(axis=1)
+            for grp in groups
+        }
+        group_signals_df = pd.DataFrame(group_signals)
 
-        _, group_returns_df = _compute_group_signals_and_returns(
-            ticker_signals, ticker_returns, group_map
-        )
-        if group_returns_df is None or group_returns_df.empty:
-            equal_w = 1.0 / len(model_names)
-            return pd.Series({m: equal_w for m in model_names})
+        # Compute group-level pairwise correlation and score each group
+        if K >= 2 and len(group_signals_df) >= 2:
+            corr = group_signals_df.corr().clip(lower=0.0).fillna(0.0)
+            scores = np.array([
+                1.0 / (1.0 + corr[grp].drop(grp).mean())
+                for grp in groups
+            ])
+        else:
+            scores = np.ones(K)
 
-        # Downside vol per group
-        semi = np.minimum(group_returns_df.values, 0.0)
-        downside_std = semi.std(axis=0, ddof=0)
-        downside_std = np.where(downside_std == 0, 1e-8, downside_std)
-        inv_vol = 1.0 / downside_std
-        group_weights_arr = inv_vol / inv_vol.sum()
-        group_cols = list(group_returns_df.columns)
+        scores_sum = scores.sum()
+        group_weights_arr = scores / scores_sum if scores_sum > 0 else np.ones(K) / K
+        group_weights_arr = _apply_group_weight_cap(group_weights_arr, self._wl_config.group_weight_cap)
 
         weights_out: Dict[str, float] = {}
-        for i, grp in enumerate(group_cols):
+        for i, grp in enumerate(groups):
             members = [m for m in model_names if group_map.get(m) == grp]
             per_model = group_weights_arr[i] / len(members) if members else 0.0
             for m in members:
@@ -1306,9 +1362,10 @@ class DownsideHRPGroupedWeightLayer(BaseWeightLayer):
         semi_cov = _compute_downside_semi_covariance(
             group_returns_df, shrinkage=self._wl_config.shrinkage
         )
-        group_weights_arr = _hrp_weights_from_semi_cov(
+        raw_weights = _hrp_weights_from_semi_cov(
             semi_cov, linkage_method=self._wl_config.linkage
         )
+        group_weights_arr = _apply_group_weight_cap(raw_weights, self._wl_config.group_weight_cap)
         group_cols = list(group_returns_df.columns)
 
         weights_out: Dict[str, float] = {}
@@ -1409,7 +1466,7 @@ class DownsideHRPFlatWeightLayer(BaseWeightLayer):
 # ---------------------------------------------------------------------------
 
 def WeightLayer(
-    weight_method: str = 'inverse_correlation',
+    weight_method: str = 'inv_avg_pairwise_corr_grouped',
     fdm_max: float = 2.0,
     config: Optional['WeightLayerConfig'] = None,
     **kwargs,
@@ -1436,7 +1493,7 @@ def WeightLayer(
 
     Examples
     --------
-    >>> layer = WeightLayer()                                     # inverse correlation (default)
+    >>> layer = WeightLayer()                                     # inv_avg_pairwise_corr_grouped (default)
     >>> layer = WeightLayer(config=WeightLayerConfig(weighting_method='downside_hrp_grouped'))
     """
     if config is not None:
@@ -1448,7 +1505,7 @@ def WeightLayer(
         'inverse_correlation': InverseCorrelationWeightLayer,
         'equal_flat': EqualFlatWeightLayer,
         'equal_grouped': EqualGroupedWeightLayer,
-        'inv_downside_vol_grouped': InvDownsideVolGroupedWeightLayer,
+        'inv_avg_pairwise_corr_grouped': InvAvgPairwiseCorrelationGroupedWeightLayer,
         'downside_hrp_grouped': DownsideHRPGroupedWeightLayer,
         'downside_hrp_flat': DownsideHRPFlatWeightLayer,
     }
@@ -1475,7 +1532,7 @@ __all__ = [
     'InverseCorrelationWeightLayer',
     'EqualFlatWeightLayer',
     'EqualGroupedWeightLayer',
-    'InvDownsideVolGroupedWeightLayer',
+    'InvAvgPairwiseCorrelationGroupedWeightLayer',
     'DownsideHRPGroupedWeightLayer',
     'DownsideHRPFlatWeightLayer',
     'InverseCorrelationWeighter',

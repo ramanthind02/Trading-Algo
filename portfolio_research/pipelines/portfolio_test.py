@@ -14,7 +14,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from ensemble.global_weight_layer import GlobalWeightLayer
 from ensemble.portfolio import GlobalPortfolio, Portfolio, TFPortfolio
 from ensemble.portfolio_tester import (
     PortfolioTester,
@@ -332,12 +331,6 @@ def _evaluate_phase(
         print(f"  Fitting {tf_label} portfolio...")
         tester = _build_tester_for_timeframe(timeframe, config, grouped_ensembles)
         tester.fit(tf_train_candles)
-        if not has_multiple_timeframes:
-            export_weight_layer_report(
-                tester.portfolio.weight_layer,
-                phase_name=output_dir_name,
-                output_dir=phase_out / tf_label / "weight_layer",
-            )
 
         print(f"  Predicting {tf_label} portfolio...")
         tester.predict(
@@ -378,13 +371,12 @@ def _evaluate_phase(
         tf_portfolios = [testers_by_timeframe[tf].portfolio for tf in unique_timeframes]
         global_portfolio = GlobalPortfolio(
             tf_portfolios=tf_portfolios,
-            global_weight_layer=GlobalWeightLayer(),
             max_position_pct=config.max_position_pct,
         )
         instrument_returns = _build_instrument_returns(daily_train_candles)
         global_portfolio.fit(train_candles_by_timeframe, instrument_returns)
         export_global_weight_layer_report(
-            global_portfolio.global_weight_layer,
+            global_portfolio,
             phase_name=output_dir_name,
             output_dir=phase_out / "global_weight_layer",
         )

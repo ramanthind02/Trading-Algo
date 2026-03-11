@@ -38,6 +38,35 @@ def _normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame
     return normalize_candles_datetime_column(candles_df)
 
 
+def _forecast_to_activity_signal(forecast: pd.Series) -> pd.Series:
+    """Convert signed forecast magnitudes to binary activity flags.
+
+    Any non-zero forecast means the model is active (long or short).
+    """
+    return forecast.ne(0.0).astype(int)
+
+
+def _build_global_model_name(
+    timeframe: TimeFrame,
+    ensemble_idx: int,
+    model_name: str,
+) -> str:
+    """Stable global model namespace with explicit strategy + timeframe tags.
+
+    Format: ``{model_name}__{TF}::ensemble_{idx}``.
+    """
+    return f"{model_name}__{timeframe.name}::ensemble_{ensemble_idx}"
+
+
+def _parse_timeframe_from_global_model_name(model_name: str) -> str:
+    """Extract timeframe tag from global names produced by _build_global_model_name."""
+    left = str(model_name).split("::", 1)[0]
+    if "__" in left:
+        _, tf = left.rsplit("__", 1)
+        return tf
+    return left
+
+
 class TFPortfolio:
     """
     Portfolio class for applying instrument weighting and IDM to combined forecasts.
@@ -59,8 +88,6 @@ class TFPortfolio:
         Target volatility for position sizing (new API)
     max_position_pct : float, default=2.0
         Maximum position size per instrument (e.g., 2.0 = 200%)
-    weight_layer : WeightLayer, optional
-        Weight layer for combining forecasts. If None, creates default inverse correlation WeightLayer.
     instrument_weights : Dict[str, float], optional
         Custom weights per instrument. Ignored when sector_allocation_config_path
         is provided.
@@ -75,8 +102,6 @@ class TFPortfolio:
     ----------
     ensembles : List[DiversifiedEnsemble]
         List of ensembles for this portfolio
-    weight_layer : WeightLayer
-        The WeightLayer for forecast combination (required, created if not provided)
     trading_timeframe : TimeFrame
         The trading timeframe
     max_position_pct : float or None
@@ -109,13 +134,6 @@ class TFPortfolio:
     >>> portfolio.fit_from_candles(candles_df, target_data)
     >>> positions = portfolio.predict_from_candles(test_candles)
     >>>
-    >>> # Using custom WeightLayer
-    >>> custom_weight_layer = WeightLayer(weight_method='inverse_correlation', fdm_max=2.0)
-    >>> portfolio = TFPortfolio(
-    ...     ensembles=[ensemble1, ensemble2],
-    ...     weight_layer=custom_weight_layer,
-    ...     trading_timeframe=TimeFrame.D
-    ... )
     """
     
     def __init__(
@@ -126,7 +144,6 @@ class TFPortfolio:
         trading_timeframe: TimeFrame = TimeFrame.D,
         target_volatility: Optional[float] = None,
         max_position_pct: float = 2.0,
-        weight_layer: Optional[BaseWeightLayer] = None,
         instrument_weights: Optional[Dict[str, float]] = None,
         idm_max: float = 2.5,
         dm: Optional[float] = None,
@@ -152,8 +169,6 @@ class TFPortfolio:
             Target volatility for position sizing (new API)
         max_position_pct : float, default=2.0
             Maximum position size per instrument (e.g., 2.0 = 200%)
-        weight_layer : WeightLayer, optional
-            Weight layer for combining forecasts. If None, creates default inverse correlation WeightLayer.
         instrument_weights : Dict[str, float], optional
             Custom weights per instrument. If None, equal weight.
             Ignored when sector_allocation_config_path is provided.
@@ -177,16 +192,6 @@ class TFPortfolio:
         self.trading_timeframe = trading_timeframe
         self.target_volatility = target_volatility
         self.use_cache = use_cache
-        
-        # WeightLayer is required - create default if not provided
-        if weight_layer is None:
-            # Create default inverse correlation WeightLayer
-            self.weight_layer = WeightLayer(
-                weight_method='inverse_correlation',
-                fdm_max=legacy_dm if legacy_dm is not None else 2.0
-            )
-        else:
-            self.weight_layer = weight_layer
         
         # Common attributes
         self.max_position_pct = max_position_pct
@@ -729,6 +734,112 @@ class TFPortfolio:
 
         return raw_df
 
+    def predict_base_model_vectors_from_candles(
+        self,
+        candles_df: pd.DataFrame,
+        start_date=None,
+        end_date=None,
+    ) -> pd.DataFrame:
+        """Emit raw base-model forecast vectors for global strategy-level weighting.
+
+        Returns a DataFrame with columns:
+        ``['ticker', 'datetime', 'model_name', 'forecast', 'signal', 'timeframe']``.
+        ``signal`` is the signed, volatility-scaled forecast stream. This allows
+        global weighting methods that use ``signal * returns`` to operate on
+        scaled signals rather than binary activity flags.
+        """
+        if not self.ensembles:
+            raise ValueError("No ensembles provided. Cannot predict without ensembles.")
+
+        tf_candles = candles_df[candles_df["timeframe"] == self.trading_timeframe].copy()
+        if tf_candles.empty:
+            return pd.DataFrame(
+                columns=[
+                    "ticker",
+                    "datetime",
+                    "model_name",
+                    "forecast",
+                    "signal",
+                    "timeframe",
+                ]
+            )
+
+        volatility = self._calculate_volatility_from_candles(tf_candles)
+        forecast_vectors: List[pd.DataFrame] = []
+
+        for ensemble_idx, ensemble in enumerate(self.ensembles):
+            if not hasattr(ensemble, "predict_from_candles"):
+                continue
+
+            try:
+                ensemble_volatility = (
+                    None
+                    if getattr(ensemble, "fitted_ticker_volatility_", None)
+                    else volatility
+                )
+                ensemble_result = ensemble.predict_from_candles(
+                    tf_candles,
+                    volatility=ensemble_volatility,
+                    return_base_model_predictions=True,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Skipping ensemble %s during global vector extraction: %s",
+                    ensemble_idx,
+                    exc,
+                )
+                continue
+
+            if not isinstance(ensemble_result, dict):
+                continue
+
+            base_models = ensemble_result.get("base_models", {})
+            for model_name, model_pred in base_models.items():
+                if (
+                    not isinstance(model_pred, pd.DataFrame)
+                    or "forecast_score" not in model_pred.columns
+                ):
+                    continue
+
+                model_df = model_pred.copy()
+                model_df["datetime"] = pd.to_datetime(model_df["datetime"]).dt.floor("s")
+                model_df["forecast"] = model_df["forecast_score"].astype(float)
+                model_df["signal"] = model_df["forecast"].astype(float)
+                model_df["model_name"] = _build_global_model_name(
+                    timeframe=self.trading_timeframe,
+                    ensemble_idx=ensemble_idx,
+                    model_name=model_name,
+                )
+                model_df["timeframe"] = self.trading_timeframe.name
+                forecast_vectors.append(
+                    model_df[
+                        [
+                            "ticker",
+                            "datetime",
+                            "model_name",
+                            "forecast",
+                            "signal",
+                            "timeframe",
+                        ]
+                    ]
+                )
+
+        if not forecast_vectors:
+            return pd.DataFrame(
+                columns=[
+                    "ticker",
+                    "datetime",
+                    "model_name",
+                    "forecast",
+                    "signal",
+                    "timeframe",
+                ]
+            )
+
+        return pd.concat(forecast_vectors, ignore_index=True)
+
     def _apply_instrument_weights(
         self,
         combined_forecasts: pd.DataFrame
@@ -850,15 +961,25 @@ class TFPortfolio:
                 f"Available timeframes: {candles_df['timeframe'].unique()}"
             )
         
-        # Fit all ensembles sequentially (Cython-friendly, no GIL contention)
-        if target_data is not None:
-            logger.debug(f"Fitting {len(self.ensembles)} ensemble(s) sequentially")
-            for idx, ensemble in enumerate(self.ensembles):
-                try:
-                    logger.debug(f"Fitting ensemble {idx}...")
-                    ensemble.fit_from_candles(tf_candles, target_data, start_date, end_date)
-                except Exception as e:
-                    logger.error(f"Error fitting ensemble {idx}: {e}", exc_info=True)
+        # Fit all ensembles sequentially (Cython-friendly, no GIL contention).
+        # DiversifiedEnsemble.fit_from_candles currently ignores target_data and
+        # computes aligned returns from candles, but it still requires the arg.
+        fit_target = target_data if target_data is not None else pd.Series(dtype=float)
+        fitted_ensembles = 0
+        logger.debug(f"Fitting {len(self.ensembles)} ensemble(s) sequentially")
+        for idx, ensemble in enumerate(self.ensembles):
+            try:
+                logger.debug(f"Fitting ensemble {idx}...")
+                ensemble.fit_from_candles(tf_candles, fit_target, start_date, end_date)
+                fitted_ensembles += 1
+            except Exception as e:
+                logger.error(f"Error fitting ensemble {idx}: {e}", exc_info=True)
+
+        if fitted_ensembles == 0:
+            raise RuntimeError(
+                "TFPortfolio fitting failed: all ensemble fits failed. "
+                "Check per-ensemble logs above."
+            )
 
         
         # Fit IDM if we have return data
@@ -925,13 +1046,8 @@ class TFPortfolio:
                 if self.instruments_ is None:
                     self.instruments_ = sorted(tf_candles['ticker'].unique().tolist())
             
-            # Fit WeightLayer (calculates weights and FDM from forecast correlations)
-            self._fit_weight_layer(
-                tf_candles,
-                target_data=target_data,
-                start_date=start_date,
-                end_date=end_date,
-            )
+            # Hard cutover: TF-level weight layer is no longer part of the
+            # execution path; global strategy-level weighting owns combination.
         
         self.is_fitted_ = True
         
@@ -1056,8 +1172,10 @@ class TFPortfolio:
                         forecast_df = model_pred.copy()
                         forecast_df['model_name'] = model_name
                         forecast_df['forecast'] = forecast_df['forecast_score']
-                        # Extract signal from forecast (1 if forecast > 0, else 0)
-                        forecast_df['signal'] = (forecast_df['forecast'] > 0).astype(int)
+                        # Binary activity flag: any non-zero forecast is active.
+                        forecast_df['signal'] = _forecast_to_activity_signal(
+                            forecast_df['forecast']
+                        )
                         # Keep only required columns
                         forecast_df = forecast_df[['ticker', 'datetime', 'model_name', 'forecast', 'signal']]
                         ensemble_forecast_vector.append(forecast_df)
@@ -1108,16 +1226,8 @@ class TFPortfolio:
                 return result
             return empty_df
         
-        # Use WeightLayer to combine forecasts from all base models across all ensembles
-        if self.weight_layer.is_fitted_:# WeightLayer is fitted - use it to combine forecasts
-            combined_forecasts = self.weight_layer.combine(forecast_vectors)# Convert to format expected by _apply_risk_management (needs datetime column)
-            # WeightLayer returns ['ticker', 'forecast_score'], but we need datetime
-            # We'll merge with candles to get datetime alignment
-            forecast_scores_df = self._align_forecasts_with_candles(combined_forecasts, tf_candles)
-        else:
-            # WeightLayer not fitted - fallback to simple averaging
-            # This should not happen if fit_from_candles was called, but handle gracefully
-            forecast_scores_df = self._aggregate_ensembles_fallback(forecast_vectors, tf_candles)
+        # Hard cutover: bypass TF-level WeightLayer and use unweighted model aggregation.
+        forecast_scores_df = self._aggregate_ensembles_fallback(forecast_vectors, tf_candles)
         
         # Apply risk management for portfolio-level
         positions_df = self._apply_risk_management(
@@ -1471,275 +1581,6 @@ class TFPortfolio:
         """Normalize ticker to string key; delegate to shared helper."""
         return normalize_ticker_key(ticker)
     
-    def _fit_weight_layer(
-        self,
-        candles_df: pd.DataFrame,
-        target_data: Optional[pd.Series] = None,
-        start_date=None,
-        end_date=None
-    ) -> None:
-        """
-        Fit WeightLayer from forecast vectors and signals.
-        
-        Collects forecast vectors from all ensembles, extracts binary signals,
-        and fits the WeightLayer (which calculates weights and FDM).
-        
-        Parameters
-        ----------
-        candles_df : pd.DataFrame
-            Candles DataFrame for generating forecasts
-        target_data : pd.Series, optional
-            Return series passed to WeightLayer.fit(returns=...) for methods
-            that use returns (e.g., downside-risk weighting).
-        """
-        logger.info("=" * 60)
-        logger.info("Fitting WeightLayer...")
-        logger.info("=" * 60)
-        
-        if not self.ensembles:
-            logger.warning("No ensembles available for WeightLayer fitting")
-            return
-        
-        logger.info(f"Processing {len(self.ensembles)} ensemble(s)")
-        
-        # Calculate volatility for forecast generation
-        logger.info("Calculating volatility from candles...")
-        volatility = self._calculate_volatility_from_candles(candles_df)
-        logger.info(f"Volatility calculated for {len(volatility)} ticker(s)")
-        
-        # Collect forecast vectors and signals from all ensembles
-        forecast_vectors = []
-        all_signals_dict = {}  # model_name -> list of (datetime, signal) tuples
-        
-        for ensemble_idx, ensemble in enumerate(self.ensembles):
-            logger.info(f"\nProcessing Ensemble {ensemble_idx + 1}/{len(self.ensembles)}...")
-            
-            if not hasattr(ensemble, 'predict_from_candles'):
-                logger.warning(f"Ensemble {ensemble_idx} does not have predict_from_candles method")
-                continue
-            
-            try:
-                # Get ensemble predictions with base model granularity
-                logger.info(f"  Getting predictions from ensemble {ensemble_idx}...")
-                ensemble_result = ensemble.predict_from_candles(
-                    candles_df,
-                    volatility=volatility,
-                    return_base_model_predictions=True,
-                    start_date=start_date,
-                    end_date=end_date
-                )
-                
-                if isinstance(ensemble_result, dict):
-                    base_models = ensemble_result.get('base_models', {})
-                    logger.info(f"  Found {len(base_models)} base model(s) in ensemble {ensemble_idx}")
-                    ensemble_forecast_vector = []
-                    
-                    for model_name, model_pred in base_models.items():
-                        if isinstance(model_pred, pd.DataFrame) and 'forecast_score' in model_pred.columns:
-                            logger.info(f"    Processing model: {model_name} ({len(model_pred)} rows)")
-                            
-                            # Convert to WeightLayer format: ['ticker', 'model_name', 'forecast', 'signal']
-                            forecast_df = model_pred.copy()
-                            forecast_df['model_name'] = model_name
-                            forecast_df['forecast'] = forecast_df['forecast_score']
-                            # Extract signal from forecast (1 if forecast > 0, else 0)
-                            forecast_df['signal'] = (forecast_df['forecast'] > 0).astype(int)
-                            # Keep only required columns
-                            forecast_df = forecast_df[['ticker', 'datetime', 'model_name', 'forecast', 'signal']]
-                            ensemble_forecast_vector.append(forecast_df)
-                            
-                            # Aggregate signals across tickers by datetime (take max)
-                            # For signals, we want to know if ANY ticker has a signal at a given datetime
-                            forecast_df['datetime'] = pd.to_datetime(forecast_df['datetime'])
-                            signal_by_datetime = forecast_df.groupby('datetime')['signal'].max()
-                            
-                            # Log signal statistics
-                            signal_sum = signal_by_datetime.sum()
-                            signal_pct = 100.0 * signal_sum / len(signal_by_datetime) if len(signal_by_datetime) > 0 else 0
-                            logger.info(
-                                f"      Signals: {signal_sum}/{len(signal_by_datetime)} ({signal_pct:.1f}%) active, "
-                                f"date range: {signal_by_datetime.index.min()} to {signal_by_datetime.index.max()}"
-                            )
-                            
-                            # Store signals for this model
-                            if model_name not in all_signals_dict:
-                                all_signals_dict[model_name] = []
-                            all_signals_dict[model_name].append(signal_by_datetime)
-                        else:
-                            logger.warning(f"    Model {model_name}: Invalid format (not DataFrame or missing 'forecast_score')")
-                    
-                    if ensemble_forecast_vector:
-                        # Combine all base models from this ensemble into one forecast vector
-                        ensemble_vector_df = pd.concat(ensemble_forecast_vector, ignore_index=True)
-                        forecast_vectors.append(ensemble_vector_df)
-                        logger.info(f"  Ensemble {ensemble_idx}: Added forecast vector with {len(ensemble_vector_df)} rows")
-                    else:
-                        logger.warning(f"  Ensemble {ensemble_idx}: No valid forecast vectors collected")
-                else:
-                    logger.warning(f"  Ensemble {ensemble_idx}: Result is not a dict: {type(ensemble_result)}")
-            except Exception as e:
-                logger.error(
-                    f"Error getting predictions from ensemble {ensemble_idx} for WeightLayer fitting: {e}",
-                    exc_info=True
-                )
-                continue
-        
-        logger.info(f"\nCollected {len(forecast_vectors)} forecast vector(s)")
-        logger.info(f"Collected signals for {len(all_signals_dict)} model(s)")
-        
-        # Debug: Show forecast vector details
-        for idx, fv in enumerate(forecast_vectors):
-            if isinstance(fv, pd.DataFrame):
-                logger.info(
-                    f"  Forecast vector {idx}: {len(fv)} rows, "
-                    f"columns: {list(fv.columns)}, "
-                    f"date range: {fv['datetime'].min()} to {fv['datetime'].max() if 'datetime' in fv.columns else 'N/A'}"
-                )
-        
-        if len(forecast_vectors) == 0:
-            logger.error("No forecast vectors collected. Cannot fit WeightLayer.")
-            return
-        
-        # Build signals DataFrame for weight calculation
-        # Aggregate signals per model across all tickers and ensembles
-        if all_signals_dict:
-            logger.info("\nAggregating signals across tickers...")
-            # For each model, combine all signal series (from different tickers/ensembles)
-            # Take max across all series for each datetime (1 if any ticker has signal)
-            combined_signals_dict = {}
-            for model_name, signal_series_list in all_signals_dict.items():
-                if not signal_series_list:
-                    logger.warning(f"  Model {model_name}: Empty signal series list")
-                    continue
-                
-                logger.info(f"  Model {model_name}: Combining {len(signal_series_list)} signal series...")
-                
-                # Combine all series for this model
-                combined_df = pd.DataFrame({i: series for i, series in enumerate(signal_series_list)})
-                # Take max across columns (1 if any ticker has signal at this datetime)
-                combined_signal = combined_df.max(axis=1)
-                combined_signals_dict[model_name] = combined_signal
-                
-                signal_sum = combined_signal.sum()
-                signal_pct = 100.0 * signal_sum / len(combined_signal) if len(combined_signal) > 0 else 0
-                logger.info(
-                    f"    Combined: {signal_sum}/{len(combined_signal)} ({signal_pct:.1f}%) active, "
-                    f"date range: {combined_signal.index.min()} to {combined_signal.index.max()}"
-                )
-            
-            if not combined_signals_dict:
-                logger.error("No signals collected after aggregation. Cannot fit WeightLayer.")
-                return
-            
-            logger.info(f"\nFinding common datetime index across {len(combined_signals_dict)} model(s)...")
-            
-            # Instead of using intersection (which can be empty), use the union of all datetimes
-            # from the candles DataFrame as the common index
-            # This ensures we have a complete datetime range to work with
-            candles_datetimes = pd.to_datetime(candles_df['datetime']).unique()
-            candles_datetimes = pd.DatetimeIndex(sorted(candles_datetimes))
-            
-            logger.info(f"  Using candles datetime index: {len(candles_datetimes)} unique datetimes")
-            logger.info(f"  Date range: {candles_datetimes.min()} to {candles_datetimes.max()}")
-            
-            # Also log what each model has
-            for model_name, signal_series in combined_signals_dict.items():
-                logger.info(
-                    f"  Model {model_name}: {len(signal_series)} datetimes, "
-                    f"range: {signal_series.index.min()} to {signal_series.index.max()}"
-                )
-            
-            # Use candles datetime index as common index
-            common_index = candles_datetimes
-            
-            if len(common_index) < 2:
-                logger.error(
-                    "Insufficient datetime index for WeightLayer fitting. "
-                    "Common index length: %s (need at least 2)",
-                    len(common_index),
-                )
-                return
-            
-            logger.info(f"Using common datetime index: {len(common_index)} datetimes")
-            logger.info(f"  Date range: {common_index.min()} to {common_index.max()}")
-            
-            # Build signals DataFrame
-            logger.debug("\nBuilding signals DataFrame...")
-            signals_df = pd.DataFrame(index=common_index)
-            for model_name, signal_series in combined_signals_dict.items():
-                # Reindex to common index, filling missing values with 0
-                # This handles cases where a model doesn't have signals for all datetimes
-                aligned_signal = signal_series.reindex(common_index, fill_value=0)
-                signals_df[model_name] = aligned_signal
-                signal_sum = aligned_signal.sum()
-                original_sum = signal_series.sum()
-                msg = (
-                    f"  {model_name}: {signal_sum}/{len(aligned_signal)} ({100.0*signal_sum/len(aligned_signal):.1f}%) active "
-                    f"(original: {original_sum}/{len(signal_series)})"
-                )
-                logger.debug(msg)
-            
-            # Drop rows with any NaN (shouldn't happen after fill_value=0, but just in case)
-            before_drop = len(signals_df)
-            signals_df = signals_df.dropna()
-            after_drop = len(signals_df)
-            if before_drop != after_drop:
-                warn_msg = f"Dropped {before_drop - after_drop} rows with NaN"
-                logger.warning(warn_msg)
-            
-            logger.debug(f"\nSignals DataFrame: {len(signals_df)} rows, {len(signals_df.columns)} columns")
-            logger.debug(f"  Columns: {list(signals_df.columns)}")
-            
-            if len(signals_df) >= 2 and len(signals_df.columns) >= 1:
-                # Fit WeightLayer
-                try:
-                    logger.info(f"\nFitting WeightLayer...")
-                    logger.info(f"  Forecast vectors: {len(forecast_vectors)}")
-                    logger.info(f"  Signals DataFrame: {len(signals_df)} samples, {len(signals_df.columns)} models")
-                    self.weight_layer.fit(forecast_vectors, signals_df, returns=target_data)
-
-                    # Get diagnostics for success message
-                    diag = self.weight_layer.get_diagnostics()
-                    summary = diag.get('summary', {})
-                    
-                    success_msg = (
-                        f"\n✓ WeightLayer fitted successfully!"
-                        f"\n  Tickers: {summary.get('n_tickers', 0)}"
-                        f"\n  Mean FDM: {summary.get('mean_fdm', 1.0):.4f} "
-                        f"(range: {summary.get('min_fdm', 1.0):.4f} - {summary.get('max_fdm', 1.0):.4f})"
-                        f"\n  Mean models per ticker: {summary.get('mean_models_per_ticker', 0):.1f}"
-                    )
-                    
-                    # Show per-ticker FDM and per-model weights
-                    tickers_info = diag.get('tickers', {})
-                    if tickers_info:
-                        success_msg += f"\n  Per-ticker FDM and weights:"
-                        for ticker, ticker_info in sorted(tickers_info.items()):
-                            fdm_val = ticker_info.get('fdm', 1.0)
-                            n_models = ticker_info.get('n_models', 0)
-                            success_msg += f"\n    {ticker}: FDM={fdm_val:.4f} ({n_models} model(s))"
-                            weights = ticker_info.get('weights')
-                            if weights and isinstance(weights, dict):
-                                valid = {k: v for k, v in weights.items() if v is not None and not pd.isna(v)}
-                                if valid:
-                                    for model_name, w in sorted(valid.items(), key=lambda x: (-x[1], x[0])):
-                                        success_msg += f"\n      {model_name}: {float(w):.4f}"
-                    
-                    logger.info(success_msg)
-                except Exception as e:
-                    logger.error("Error fitting WeightLayer: %s", e, exc_info=True)
-                    # WeightLayer will remain unfitted
-            else:
-                logger.error(
-                    "Insufficient data for WeightLayer fitting: %s samples (need >= 2), %s models (need >= 1)",
-                    len(signals_df),
-                    len(signals_df.columns),
-                )
-        else:
-            logger.error("No signals collected. Cannot fit WeightLayer.")
-        
-        logger.info("=" * 60)
-    
     def _align_forecasts_with_candles(
         self,
         combined_forecasts: pd.DataFrame,
@@ -1908,48 +1749,17 @@ class TFPortfolio:
         return self._apply_risk_management_to_forecasts(forecast_scores_df, volatility, candles_df)
 
     def get_diagnostics(self) -> Dict:
-        """
-        Get diagnostic information about the fitted Portfolio.
-
-        Returns
-        -------
-        dict
-            Dictionary containing:
-            - is_fitted: Whether Portfolio has been fitted
-            - idm: Instrument Diversification Multiplier
-            - mean_return_correlation: Mean correlation between instrument returns
-            - fdm: Forecast Diversification Multiplier (from WeightLayer)
-            - mean_forecast_correlation: Mean correlation between forecast values (from WeightLayer)
-            - n_instruments: Number of instruments
-            - instruments: List of instrument tickers
-            - idm_max: Maximum allowed IDM
-            - fdm_max: Maximum allowed FDM (from WeightLayer)
-            - max_position_pct: Position cap (if any)
-            - weight_layer: Full WeightLayer diagnostics dict
-        """
-        weight_layer_diag = self.weight_layer.get_diagnostics() if self.weight_layer else {}
-        
-        # Extract summary FDM from weight layer diagnostics (new per-ticker structure)
-        summary = weight_layer_diag.get('summary', {}) if isinstance(weight_layer_diag, dict) else {}
-        mean_fdm = summary.get('mean_fdm') if summary else (weight_layer_diag.get('fdm') if isinstance(weight_layer_diag, dict) else None)
-        
-        # Flatten weight layer diagnostics for easier access
-        diagnostics = {
+        """Return a snapshot of fitted state for inspection."""
+        return {
             'is_fitted': self.is_fitted_,
             'idm': self.idm_,
             'mean_return_correlation': self.mean_return_correlation_,
-            'fdm': mean_fdm,  # Use mean FDM across tickers
-            'mean_forecast_correlation': summary.get('mean_forecast_correlation') if summary else (weight_layer_diag.get('mean_forecast_correlation') if isinstance(weight_layer_diag, dict) else None),
             'n_instruments': len(self.instruments_) if self.instruments_ else 0,
             'instruments': self.instruments_,
             'idm_max': self.idm_max,
-            'fdm_max': weight_layer_diag.get('fdm_max') if isinstance(weight_layer_diag, dict) else None,
             'max_position_pct': self.max_position_pct,
             'trading_timeframe': self.trading_timeframe.name if self.trading_timeframe else None,
-            'weight_layer': weight_layer_diag  # Full weight layer diagnostics (includes per-ticker info)
         }
-        
-        return diagnostics
     
     def print_diagnostics(self) -> None:
         """
@@ -1972,68 +1782,6 @@ class TFPortfolio:
         print(f"  IDM: {self.idm_ if self.idm_ is not None else 'Not calculated'}")
         print(f"  IDM Max: {self.idm_max}")
         print(f"  Mean Return Correlation: {self.mean_return_correlation_ if self.mean_return_correlation_ is not None else 'N/A'}")
-        
-        if self.weight_layer:
-            weight_layer_diag = self.weight_layer.get_diagnostics()
-            summary = weight_layer_diag.get('summary', {})
-            tickers_info = weight_layer_diag.get('tickers', {})
-            
-            print(f"\n🔮 Forecast Diversification Multiplier (FDM):")
-            if summary:
-                print(f"  Mean FDM: {summary.get('mean_fdm', 'N/A')}")
-                print(f"  FDM Range: {summary.get('min_fdm', 'N/A')} - {summary.get('max_fdm', 'N/A')}")
-                print(f"  FDM Max: {weight_layer_diag.get('fdm_max', 'N/A')}")
-                print(f"  Number of Tickers: {summary.get('n_tickers', 0)}")
-                print(f"  Mean Models per Ticker: {summary.get('mean_models_per_ticker', 'N/A'):.1f}")
-            else:
-                # Fallback for old format (shouldn't happen with new implementation)
-                print(f"  FDM: {weight_layer_diag.get('fdm', 'Not calculated')}")
-                print(f"  FDM Max: {weight_layer_diag.get('fdm_max', 'N/A')}")
-                print(f"  Mean Forecast Correlation: {weight_layer_diag.get('mean_forecast_correlation', 'N/A')}")
-            
-            print(f"\n⚖️  Weight Layer:")
-            print(f"  Fitted: {weight_layer_diag.get('is_fitted', False)}")
-            print(f"  Weight Method: {weight_layer_diag.get('weight_method', 'N/A')}")
-            
-            # Show per-ticker FDM and model availability
-            if tickers_info:
-                print(f"\n  Per-Ticker FDM and Models:")
-                for ticker in sorted(tickers_info.keys()):
-                    ticker_info = tickers_info[ticker]
-                    fdm_val = ticker_info.get('fdm', 1.0)
-                    n_models = ticker_info.get('n_models', 0)
-                    models = ticker_info.get('models', [])
-                    mean_corr = ticker_info.get('mean_forecast_correlation', 'N/A')
-                    print(f"    {ticker}:")
-                    print(f"      FDM: {fdm_val:.4f}")
-                    print(f"      Models: {n_models} ({', '.join(models[:3])}{'...' if len(models) > 3 else ''})")
-                    if isinstance(mean_corr, (int, float)):
-                        print(f"      Mean Forecast Correlation: {mean_corr:.4f}")
-                    
-                    # Show full list of weights for this ticker (sorted by weight descending)
-                    weights = ticker_info.get('weights')
-                    if weights and isinstance(weights, dict):
-                        valid_weights = {k: v for k, v in weights.items() if not pd.isna(v)}
-                        if valid_weights:
-                            sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)
-                            print(f"      Weights:")
-                            for model_name, weight in sorted_weights:
-                                print(f"        {model_name}: {weight:.4f}")
-            else:
-                # Fallback: show global weights if available (old format)
-                weights = weight_layer_diag.get('weights')
-                if weights and isinstance(weights, dict):
-                    print(f"  Model Weights (top 5):")
-                    valid_weights = {k: v for k, v in weights.items() if not pd.isna(v)}
-                    if valid_weights:
-                        sorted_weights = sorted(valid_weights.items(), key=lambda x: x[1], reverse=True)[:5]
-                        for model_name, weight in sorted_weights:
-                            print(f"    {model_name}: {weight:.4f}")
-                    else:
-                        print(f"    (All weights are NaN - check signal correlations)")
-        else:
-            print(f"\n🔮 Forecast Diversification Multiplier (FDM):")
-            print(f"  WeightLayer: Not initialized")
         
         print(f"\n📏 Position Sizing:")
         print(f"  Max Position %: {self.max_position_pct}")
@@ -2162,15 +1910,15 @@ class TFPortfolio:
 
 
 class GlobalPortfolio:
-    """Global multi-timeframe portfolio combining TFPortfolio streams via GlobalWeightLayer.
+    """Global multi-timeframe portfolio combining TFPortfolio streams via WeightLayer.
 
     This is the top-level portfolio object in the multi-TF pipeline:
 
-        TFPortfolio (per-TF) → GlobalWeightLayer → GlobalPortfolio → PositionSizer
+        TFPortfolio (per-TF) → WeightLayer → GlobalPortfolio → PositionSizer
 
     It:
     1. Fits and runs each TFPortfolio to obtain per-TF forecast streams.
-    2. Fits / calls GlobalWeightLayer to combine them into a single daily forecast.
+    2. Fits / calls WeightLayer to combine them into a single daily forecast.
     3. Applies global instrument weights and a global IDM.
     4. Clips to ``[-max_position_pct, +max_position_pct]``.
 
@@ -2178,8 +1926,8 @@ class GlobalPortfolio:
     ----------
     tf_portfolios : list of TFPortfolio
         One per trading timeframe.
-    global_weight_layer : GlobalWeightLayer
-        Fitted (or to-be-fitted) cross-TF weight layer.
+    weight_layer : BaseWeightLayer, optional
+        Cross-TF weight layer. Defaults to ``inv_avg_pairwise_corr_grouped``.
     instrument_weights : dict mapping ticker → weight, optional
         Global instrument weights. If None, equal weight is applied.
     sector_allocation_config_path : str, optional
@@ -2201,14 +1949,20 @@ class GlobalPortfolio:
     def __init__(
         self,
         tf_portfolios: List["TFPortfolio"],
-        global_weight_layer: "GlobalWeightLayer",
+        weight_layer: Optional[BaseWeightLayer] = None,
+        buy_hold_target_weight: float = 0.20,
         instrument_weights: Optional[Dict[str, float]] = None,
         sector_allocation_config_path: Optional[str] = None,
         idm_max: float = 2.5,
         max_position_pct: float = 2.0,
     ) -> None:
         self.tf_portfolios = tf_portfolios
-        self.global_weight_layer = global_weight_layer
+        self.weight_layer: BaseWeightLayer = (
+            weight_layer
+            if weight_layer is not None
+            else WeightLayer(weight_method="inv_avg_pairwise_corr_grouped", fdm_max=2.0)
+        )
+        self.buy_hold_target_weight = float(np.clip(buy_hold_target_weight, 0.0, 1.0))
         self.idm_max = idm_max
         self.max_position_pct = max_position_pct
 
@@ -2229,7 +1983,330 @@ class GlobalPortfolio:
         self.global_idm_: Optional[float] = None
         self.mean_instrument_return_correlation_: Optional[float] = None
         self.instruments_: Optional[List[str]] = None
+        self.global_tf_weights_compat_: Dict[str, float] = {}
+        self.weight_layer_diagnostics_: Dict[str, Any] = {}
+        self.global_eligible_models_by_ticker_: Dict[str, Set[str]] = {}
+        self.global_eligibility_diagnostics_: Dict[str, Any] = {}
         self.is_fitted_: bool = False
+
+    def _enforce_buy_hold_target_weight(self) -> None:
+        """Force a configured buy/hold share per ticker on fitted strategy weights."""
+        weights_map = getattr(self.weight_layer, "weights_", None)
+        if not isinstance(weights_map, dict):
+            return
+
+        target = self.buy_hold_target_weight
+        for ticker, ticker_weights in list(weights_map.items()):
+            if not isinstance(ticker_weights, pd.Series) or ticker_weights.empty:
+                continue
+
+            names = [str(n) for n in ticker_weights.index]
+            buy_hold_mask = np.array(["buy_hold" in n.lower() for n in names], dtype=bool)
+            if not bool(np.any(buy_hold_mask)):
+                continue
+
+            bh_names = [names[i] for i, is_bh in enumerate(buy_hold_mask) if is_bh]
+            other_names = [names[i] for i, is_bh in enumerate(buy_hold_mask) if not is_bh]
+            current = ticker_weights.astype(float).copy()
+
+            if not other_names:
+                out = pd.Series({k: 0.0 for k in names}, dtype=float)
+                out.loc[bh_names] = 1.0 / len(bh_names)
+                weights_map[ticker] = out
+                continue
+
+            bh_sum = float(current.loc[bh_names].sum())
+            other_sum = float(current.loc[other_names].sum())
+
+            if bh_sum > 0:
+                bh_scaled = current.loc[bh_names] / bh_sum * target
+            else:
+                bh_scaled = pd.Series(1.0 / len(bh_names), index=bh_names, dtype=float) * target
+
+            residual = 1.0 - target
+            if other_sum > 0:
+                other_scaled = current.loc[other_names] / other_sum * residual
+            else:
+                other_scaled = (
+                    pd.Series(1.0 / len(other_names), index=other_names, dtype=float)
+                    * residual
+                )
+
+            out = pd.concat([bh_scaled, other_scaled]).reindex(names).fillna(0.0)
+            total = float(out.sum())
+            if total > 0:
+                out = out / total
+            weights_map[ticker] = out
+
+    @staticmethod
+    def _build_global_signals_df(
+        forecast_vectors: List[pd.DataFrame],
+    ) -> pd.DataFrame:
+        """Build global (date × model) scaled-signal matrix for strategy-level weighting."""
+        if not forecast_vectors:
+            return pd.DataFrame()
+
+        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        if all_forecasts.empty:
+            return pd.DataFrame()
+
+        if "datetime" not in all_forecasts.columns or "signal" not in all_forecasts.columns:
+            return pd.DataFrame()
+
+        df = all_forecasts.copy()
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        df["date"] = df["datetime"].dt.normalize()
+        return (
+            df.pivot_table(
+                index="date",
+                columns="model_name",
+                values="signal",
+                aggfunc="mean",
+            )
+            .fillna(0.0)
+            .sort_index()
+        )
+
+    @staticmethod
+    def _build_daily_grid(
+        forecast_vectors: List[pd.DataFrame],
+        reference_index: Optional[pd.Index] = None,
+    ) -> pd.DatetimeIndex:
+        """Build a daily date grid used to align all strategy streams."""
+        if reference_index is not None and len(reference_index) > 0:
+            idx = pd.to_datetime(reference_index)
+            if isinstance(idx, pd.Series):
+                idx = idx.dt.normalize()
+            else:
+                idx = pd.DatetimeIndex(idx).normalize()
+            idx = idx[~idx.isna()]
+            if len(idx) > 0:
+                return pd.DatetimeIndex(sorted(set(idx)))
+
+        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
+        if all_forecasts.empty or "datetime" not in all_forecasts.columns:
+            return pd.DatetimeIndex([])
+
+        dates = pd.to_datetime(all_forecasts["datetime"]).dt.normalize().dropna()
+        if dates.empty:
+            return pd.DatetimeIndex([])
+        return pd.date_range(dates.min(), dates.max(), freq="D")
+
+    @staticmethod
+    def _align_forecast_vectors_to_daily_grid(
+        forecast_vectors: List[pd.DataFrame],
+        daily_grid: pd.DatetimeIndex,
+    ) -> List[pd.DataFrame]:
+        """Resample each ticker/model stream to a common daily grid via forward-fill."""
+        if not forecast_vectors or len(daily_grid) == 0:
+            return forecast_vectors
+
+        combined = pd.concat(forecast_vectors, ignore_index=True)
+        if combined.empty:
+            return forecast_vectors
+
+        required_cols = {"ticker", "datetime", "model_name", "forecast", "signal", "timeframe"}
+        if not required_cols.issubset(set(combined.columns)):
+            return forecast_vectors
+
+        aligned_parts: List[pd.DataFrame] = []
+        for (ticker, model_name, timeframe), grp in combined.groupby(
+            ["ticker", "model_name", "timeframe"], sort=False
+        ):
+            base = grp.copy()
+            base["datetime"] = pd.to_datetime(base["datetime"]).dt.normalize()
+            base = (
+                base.sort_values("datetime")
+                .drop_duplicates(subset=["datetime"], keep="last")
+                .set_index("datetime")
+            )
+            stream = base[["forecast", "signal"]].astype(float)
+            aligned = stream.reindex(daily_grid).ffill().fillna(0.0).reset_index()
+            aligned = aligned.rename(columns={"index": "datetime"})
+            aligned["ticker"] = ticker
+            aligned["model_name"] = model_name
+            aligned["timeframe"] = timeframe
+            aligned_parts.append(
+                aligned[
+                    [
+                        "ticker",
+                        "datetime",
+                        "model_name",
+                        "forecast",
+                        "signal",
+                        "timeframe",
+                    ]
+                ]
+            )
+
+        if not aligned_parts:
+            return forecast_vectors
+
+        return [pd.concat(aligned_parts, ignore_index=True)]
+
+    @staticmethod
+    def _derive_tf_weights_from_strategy_diagnostics(
+        diagnostics: Dict[str, Any],
+    ) -> Dict[str, float]:
+        """Derive compatibility TF-level weights from strategy-level weights."""
+        tickers = diagnostics.get("tickers", {}) if isinstance(diagnostics, dict) else {}
+        tf_sums: Dict[str, float] = {}
+        n_tickers = 0
+
+        for ticker_info in tickers.values():
+            weights = ticker_info.get("weights") or {}
+            if not isinstance(weights, dict) or not weights:
+                continue
+            n_tickers += 1
+            per_ticker_tf: Dict[str, float] = {}
+            for model_name, weight in weights.items():
+                tf_name = _parse_timeframe_from_global_model_name(str(model_name))
+                per_ticker_tf[tf_name] = per_ticker_tf.get(tf_name, 0.0) + float(weight)
+            for tf_name, tf_weight in per_ticker_tf.items():
+                tf_sums[tf_name] = tf_sums.get(tf_name, 0.0) + tf_weight
+
+        if n_tickers == 0 or not tf_sums:
+            return {}
+
+        averaged = {tf: w / n_tickers for tf, w in tf_sums.items()}
+        total = sum(averaged.values())
+        if total <= 0:
+            return {}
+        return {tf: w / total for tf, w in averaged.items()}
+
+    @staticmethod
+    def _count_sign_changes(signal: pd.Series, eps: float = 1e-12) -> int:
+        """Count sign flips across non-zero points in a signal stream."""
+        signs = np.sign(signal.to_numpy(dtype=float))
+        non_zero = signs[np.abs(signs) > eps]
+        if len(non_zero) < 2:
+            return 0
+        return int(np.sum(non_zero[1:] != non_zero[:-1]))
+
+    def _collect_global_strategy_health_diagnostics(
+        self,
+        forecast_vectors: List[pd.DataFrame],
+        global_returns: Optional[pd.Series],
+    ) -> tuple[List[pd.DataFrame], Dict[str, Any]]:
+        """Collect low-information diagnostics without dropping any strategy.
+
+        Rules are diagnostic-only:
+        - min observations
+        - min non-zero activity ratio
+        - min effective observations where signal*return is non-zero
+        """
+        min_obs = 252
+        min_activity_ratio = 0.02
+        min_effective_obs = 21
+        returns_norm: Optional[pd.Series] = None
+        if global_returns is not None and not global_returns.empty:
+            returns_norm = global_returns.astype(float).copy()
+            returns_norm.index = pd.to_datetime(returns_norm.index).normalize()
+
+        combined = pd.concat(forecast_vectors, ignore_index=True)
+        if combined.empty:
+            return forecast_vectors, {
+                "min_obs": min_obs,
+                "min_activity_ratio": min_activity_ratio,
+                "min_effective_obs": min_effective_obs,
+                "tickers": {},
+            }
+
+        tickers_diag: Dict[str, Any] = {}
+        eligible_by_ticker: Dict[str, Set[str]] = {}
+
+        for ticker, ticker_df in combined.groupby("ticker", sort=False):
+            ticker_key = str(ticker)
+            model_stats = []
+            for model_name, model_df in ticker_df.groupby("model_name", sort=False):
+                signal = model_df["signal"].astype(float)
+                obs = int(len(signal))
+                activity_ratio = float((signal.abs() > 1e-12).mean()) if obs else 0.0
+                effective_obs = 0
+                if returns_norm is not None:
+                    model_dates = pd.to_datetime(model_df["datetime"]).dt.normalize()
+                    model_rets = returns_norm.reindex(model_dates).fillna(0.0).to_numpy(dtype=float)
+                    effective_obs = int(np.sum(np.abs(signal.to_numpy(dtype=float) * model_rets) > 1e-12))
+                else:
+                    effective_obs = int(np.sum(np.abs(signal.to_numpy(dtype=float)) > 1e-12))
+                is_eligible = (
+                    obs >= min_obs
+                    and activity_ratio >= min_activity_ratio
+                    and effective_obs >= min_effective_obs
+                )
+                model_stats.append(
+                    {
+                        "model_name": str(model_name),
+                        "obs": obs,
+                        "activity_ratio": activity_ratio,
+                        "effective_obs": effective_obs,
+                        "eligible": is_eligible,
+                    }
+                )
+
+            eligible_models = {str(s["model_name"]) for s in model_stats}
+
+            eligible_by_ticker[ticker_key] = eligible_models
+            tickers_diag[ticker_key] = {
+                "eligible_models": sorted(eligible_models),
+                "n_models_before": len(model_stats),
+                "n_models_after": len(eligible_models),
+                "model_stats": model_stats,
+            }
+
+        self.global_eligible_models_by_ticker_ = eligible_by_ticker
+        diag = {
+            "min_obs": min_obs,
+            "min_activity_ratio": min_activity_ratio,
+            "min_effective_obs": min_effective_obs,
+            "mode": "diagnostics_only_no_filtering",
+            "tickers": tickers_diag,
+        }
+        self.global_eligibility_diagnostics_ = diag
+        return forecast_vectors, diag
+
+    @staticmethod
+    def _normalize_global_signals_by_downside_vol(
+        forecast_vectors: List[pd.DataFrame],
+        global_returns: Optional[pd.Series],
+    ) -> List[pd.DataFrame]:
+        """Normalize per-(ticker, model) signal streams by downside vol of signal*returns."""
+        if global_returns is None or global_returns.empty:
+            return forecast_vectors
+
+        clean_returns = global_returns.astype(float).copy()
+        clean_returns.index = pd.to_datetime(clean_returns.index).normalize()
+
+        combined = pd.concat(forecast_vectors, ignore_index=True).copy()
+        combined["date"] = pd.to_datetime(combined["datetime"]).dt.normalize()
+
+        scales: Dict[tuple[str, str], float] = {}
+        for (ticker, model_name), grp in combined.groupby(["ticker", "model_name"], sort=False):
+            merged = (
+                grp[["date", "signal"]]
+                .merge(
+                    clean_returns.rename("ret").to_frame(),
+                    left_on="date",
+                    right_index=True,
+                    how="left",
+                )
+                .fillna({"ret": 0.0})
+            )
+            signal_ret = merged["signal"].astype(float) * merged["ret"].astype(float)
+            downside = np.minimum(signal_ret.to_numpy(dtype=float), 0.0)
+            downside_vol = float(np.sqrt(np.mean(np.square(downside)))) if len(downside) else 0.0
+            scales[(str(ticker), str(model_name))] = max(downside_vol, 1e-8)
+
+        normalized: List[pd.DataFrame] = []
+        for vec in forecast_vectors:
+            out = vec.copy()
+            out["signal"] = out.apply(
+                lambda r: float(r["signal"])
+                / scales.get((str(r["ticker"]), str(r["model_name"])), 1.0),
+                axis=1,
+            )
+            normalized.append(out)
+        return normalized
 
     # ------------------------------------------------------------------
     # Sector allocation helpers (delegated from TFPortfolio logic)
@@ -2440,7 +2517,7 @@ class GlobalPortfolio:
         candles_per_tf: Dict[TimeFrame, pd.DataFrame],
         instrument_returns: pd.DataFrame,
     ) -> "GlobalPortfolio":
-        """Fit all TFPortfolios, GlobalWeightLayer, and global IDM.
+        """Fit all TFPortfolios, WeightLayer, and global IDM.
 
         Parameters
         ----------
@@ -2467,22 +2544,63 @@ class GlobalPortfolio:
         tf_forecast_streams: Dict[TimeFrame, pd.DataFrame] = {}
         for tf_p in self.tf_portfolios:
             tf_candles = candles_per_tf[tf_p.trading_timeframe]
-            raw = tf_p.predict_from_candles_raw(tf_candles)
-            # raw has columns ['ticker', 'datetime', 'forecast_score', 'position_weighted']
-            # GlobalWeightLayer.fit() expects ['ticker', 'datetime', 'forecast_score']
-            if isinstance(raw, dict):
-                stream_df = raw['portfolio'][['ticker', 'datetime', 'forecast_score']]
-            else:
-                stream_df = raw[['ticker', 'datetime', 'forecast_score']]
-            tf_forecast_streams[tf_p.trading_timeframe] = stream_df
+            vectors = tf_p.predict_base_model_vectors_from_candles(tf_candles)
+            if vectors.empty:
+                continue
+            tf_forecast_streams[tf_p.trading_timeframe] = vectors
 
-        # Step 3 — fit GlobalWeightLayer
-        self.global_weight_layer.fit(tf_forecast_streams, instrument_returns)
+        forecast_vectors = list(tf_forecast_streams.values())
+        if not forecast_vectors:
+            raise ValueError("No forecast vectors available for global strategy weighting")
 
-        # Step 4 — compute global IDM
+        # Use aggregate daily return proxy for downside-risk grouped global weighting.
+        global_returns: Optional[pd.Series] = None
+        if isinstance(instrument_returns, pd.DataFrame) and not instrument_returns.empty:
+            global_returns = instrument_returns.mean(axis=1).astype(float)
+        elif isinstance(instrument_returns, pd.Series) and not instrument_returns.empty:
+            global_returns = instrument_returns.astype(float)
+        if global_returns is not None:
+            global_returns.index = pd.to_datetime(global_returns.index).normalize()
+
+        # Align all strategy streams to a shared daily grid first.
+        daily_grid = self._build_daily_grid(
+            forecast_vectors=forecast_vectors,
+            reference_index=global_returns.index if global_returns is not None else None,
+        )
+        forecast_vectors = self._align_forecast_vectors_to_daily_grid(
+            forecast_vectors=forecast_vectors,
+            daily_grid=daily_grid,
+        )
+
+        # Step 3 — diagnostics + downside-vol normalization (fit inputs only)
+        eligible_vectors, _elig_diag = self._collect_global_strategy_health_diagnostics(
+            forecast_vectors=forecast_vectors,
+            global_returns=global_returns,
+        )
+        normalized_vectors = self._normalize_global_signals_by_downside_vol(
+            forecast_vectors=eligible_vectors,
+            global_returns=global_returns,
+        )
+        signals_df = self._build_global_signals_df(normalized_vectors)
+        if signals_df.empty:
+            raise ValueError("Global strategy signals are empty after normalization")
+
+        # Step 4 — fit WeightLayer
+        self.weight_layer.fit(
+            forecast_vectors=normalized_vectors,
+            signals=signals_df,
+            returns=global_returns,
+        )
+        self._enforce_buy_hold_target_weight()
+        self.weight_layer_diagnostics_ = self.weight_layer.get_diagnostics()
+        self.global_tf_weights_compat_ = self._derive_tf_weights_from_strategy_diagnostics(
+            self.weight_layer_diagnostics_
+        )
+
+        # Step 5 — compute global IDM
         self._calculate_global_idm(instrument_returns)
 
-        # Step 5 — mark fitted
+        # Step 6 — mark fitted
         self.is_fitted_ = True
         return self
 
@@ -2520,15 +2638,32 @@ class GlobalPortfolio:
                 raise ValueError(
                     f"No candles provided for timeframe {tf_p.trading_timeframe.name}"
                 )
-            raw = tf_p.predict_from_candles_raw(tf_candles)
-            if isinstance(raw, dict):
-                stream_df = raw['portfolio'][['ticker', 'datetime', 'forecast_score']]
-            else:
-                stream_df = raw[['ticker', 'datetime', 'forecast_score']]
-            tf_forecast_streams[tf_p.trading_timeframe] = stream_df
+            vectors = tf_p.predict_base_model_vectors_from_candles(tf_candles)
+            if vectors.empty:
+                continue
+            tf_forecast_streams[tf_p.trading_timeframe] = vectors
 
-        # Step 2 — combine via GlobalWeightLayer → ['ticker', 'datetime', 'forecast_score']
-        combined = self.global_weight_layer.combine(tf_forecast_streams)
+        forecast_vectors = list(tf_forecast_streams.values())
+        if not forecast_vectors:
+            return pd.DataFrame(
+                columns=['ticker', 'datetime', 'forecast_score', 'position_fraction']
+            )
+
+        reference_grid: Optional[pd.Index] = None
+        daily_candles = candles_per_tf.get(TimeFrame.D)
+        if isinstance(daily_candles, pd.DataFrame) and "datetime" in daily_candles.columns:
+            reference_grid = pd.to_datetime(daily_candles["datetime"]).dt.normalize().dropna()
+        daily_grid = self._build_daily_grid(
+            forecast_vectors=forecast_vectors,
+            reference_index=reference_grid,
+        )
+        forecast_vectors = self._align_forecast_vectors_to_daily_grid(
+            forecast_vectors=forecast_vectors,
+            daily_grid=daily_grid,
+        )
+
+        # Step 2 — combine via WeightLayer
+        combined = self.weight_layer.combine(forecast_vectors)
 
         if combined.empty:
             return pd.DataFrame(
@@ -2564,13 +2699,30 @@ class GlobalPortfolio:
         """Return a snapshot of fitted state for inspection / logging."""
         return {
             "is_fitted": self.is_fitted_,
+            "global_signal_eligibility": self.global_eligibility_diagnostics_,
             "global_idm": self.global_idm_,
             "mean_instrument_return_correlation": self.mean_instrument_return_correlation_,
             "instruments": self.instruments_,
             "idm_max": self.idm_max,
             "max_position_pct": self.max_position_pct,
             "n_tf_portfolios": len(self.tf_portfolios),
-            "global_weight_layer": self.global_weight_layer.get_diagnostics(),
+            "weight_layer": {
+                "is_fitted": bool(
+                    self.weight_layer_diagnostics_.get("is_fitted", False)
+                ),
+                "tf_weights": self.global_tf_weights_compat_,
+                "fdm": float(
+                    self.weight_layer_diagnostics_
+                    .get("summary", {})
+                    .get("mean_fdm", 1.0)
+                ),
+                "daily_grid_len": int(
+                    self.weight_layer_diagnostics_
+                    .get("summary", {})
+                    .get("n_tickers", 0)
+                ),
+                "diagnostics": self.weight_layer_diagnostics_,
+            },
         }
 
     def __repr__(self) -> str:

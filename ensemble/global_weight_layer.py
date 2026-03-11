@@ -58,12 +58,17 @@ class GlobalWeightLayerConfig:
     resample_method : str
         Strategy used to project each TF stream onto the daily grid.
         Only ``"forward_fill"`` is supported.
+    risk_normalization : str
+        Optional pre-HRP normalization on TF proxy-return streams.
+        ``"unit_downside_vol"`` scales each TF stream to unit downside volatility,
+        ``"none"`` keeps raw proxy-return scales.
     """
 
     shrinkage: str = "ledoit_wolf"
     linkage: str = "ward"
     fdm_max: float = 2.0
     resample_method: str = "forward_fill"
+    risk_normalization: str = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +128,14 @@ def _resample_stream_to_grid(
     return long
 
 
+def _downside_volatility(series: pd.Series) -> float:
+    """Root-mean-square downside volatility for a return stream."""
+    downside = pd.Series(series, copy=False).clip(upper=0.0)
+    if downside.empty:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(downside.to_numpy(dtype=float)))))
+
+
 # ---------------------------------------------------------------------------
 # GlobalWeightLayer
 # ---------------------------------------------------------------------------
@@ -148,6 +161,7 @@ class GlobalWeightLayer:
         self.tf_weights_: Dict[TimeFrame, float] = {}
         self.fdm_: float = 1.0
         self.mean_cross_tf_correlation_: float = float("nan")
+        self.tf_downside_volatility_: Dict[TimeFrame, float] = {}
         self._daily_grid: pd.DatetimeIndex = pd.DatetimeIndex([])
         self.is_fitted_: bool = False
 
@@ -245,6 +259,26 @@ class GlobalWeightLayer:
             {tf: tf_return_streams[tf] for tf in tfs_sorted},
             index=daily_grid,
         ).fillna(0.0)
+
+        # Keep diagnostics on raw per-TF downside volatility.
+        self.tf_downside_volatility_ = {
+            tf: _downside_volatility(return_matrix[tf]) for tf in tfs_sorted
+        }
+
+        if self.config.risk_normalization == "unit_downside_vol":
+            scales = {
+                tf: max(self.tf_downside_volatility_.get(tf, 0.0), 1e-8)
+                for tf in tfs_sorted
+            }
+            return_matrix = pd.DataFrame(
+                {tf: return_matrix[tf] / scales[tf] for tf in tfs_sorted},
+                index=daily_grid,
+            )
+        elif self.config.risk_normalization != "none":
+            raise ValueError(
+                "GlobalWeightLayerConfig.risk_normalization must be "
+                "'none' or 'unit_downside_vol'"
+            )
 
         # ----------------------------------------------------------------
         # Step 6 — downside semi-covariance
@@ -410,5 +444,9 @@ class GlobalWeightLayer:
             "tf_weights": {tf.name: w for tf, w in self.tf_weights_.items()},
             "fdm": self.fdm_,
             "mean_cross_tf_correlation": self.mean_cross_tf_correlation_,
+            "risk_normalization": self.config.risk_normalization,
+            "tf_downside_volatility": {
+                tf.name: v for tf, v in self.tf_downside_volatility_.items()
+            },
             "daily_grid_len": len(self._daily_grid),
         }

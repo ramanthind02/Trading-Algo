@@ -27,8 +27,8 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
+    from ensemble.portfolio import GlobalPortfolio as _GlobalPortfolio
     from ensemble.weight_layer import BaseWeightLayer
-    from ensemble.global_weight_layer import GlobalWeightLayer as _GlobalWeightLayer
 
 logger = logging.getLogger(__name__)
 
@@ -594,11 +594,12 @@ def export_weight_layer_report(
 # ---------------------------------------------------------------------------
 
 def _build_global_html_report(diagnostics: dict, phase_name: str) -> str:
-    """Build a self-contained HTML report for a fitted GlobalWeightLayer."""
+    """Build a self-contained HTML report for a fitted GlobalPortfolio weight layer."""
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     tf_weights: dict = diagnostics.get("tf_weights", {})
+    strategy_diag: dict = diagnostics.get("diagnostics", {}) or {}
     fdm = float(diagnostics.get("fdm", 1.0))
     mean_corr = diagnostics.get("mean_cross_tf_correlation", float("nan"))
     mean_corr_str = f"{float(mean_corr):.4f}" if mean_corr == mean_corr else "N/A"  # NaN check
@@ -641,6 +642,35 @@ def _build_global_html_report(diagnostics: dict, phase_name: str) -> str:
         f'<tbody>{rows_html}</tbody></table>'
     )
 
+    strategy_section = ""
+    strategy_tickers: dict = strategy_diag.get("tickers", {}) if isinstance(strategy_diag, dict) else {}
+    if strategy_tickers:
+        rows = []
+        for ticker, info in strategy_tickers.items():
+            weights = info.get("weights") or {}
+            for model_name, weight in sorted(weights.items(), key=lambda kv: kv[1], reverse=True):
+                rows.append(
+                    {
+                        "ticker": _clean_ticker(str(ticker)),
+                        "model_name": str(model_name),
+                        "weight": float(weight),
+                        "timeframe": str(model_name).split("::", 1)[0],
+                    }
+                )
+        strategy_df = pd.DataFrame(rows)
+        if not strategy_df.empty:
+            top_df = (
+                strategy_df.groupby(["timeframe", "model_name"], as_index=False)["weight"]
+                .mean()
+                .sort_values("weight", ascending=False)
+                .head(30)
+            )
+            strategy_section = f"""
+  <h2>Global Strategy Weights</h2>
+  <p class="section-note">Flattened base-model signals across all timeframes. Values are mean per-model weights across tickers.</p>
+  <div class="card"><div class="tbl-wrap">{_html_table(top_df)}</div></div>
+"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -662,34 +692,40 @@ def _build_global_html_report(diagnostics: dict, phase_name: str) -> str:
   <h2>Timeframe Weights</h2>
   {chart_html}
   <div class="card"><div class="tbl-wrap">{table_html}</div></div>
+  {strategy_section}
 </div>
 </body>
 </html>"""
 
 
 def export_global_weight_layer_report(
-    global_weight_layer: "_GlobalWeightLayer",
+    portfolio: "_GlobalPortfolio",
     phase_name: str,
     output_dir: Path,
 ) -> None:
-    """Export cross-TF weight diagnostics from a fitted ``GlobalWeightLayer``.
+    """Export cross-TF weight diagnostics from a fitted ``GlobalPortfolio``.
 
     Writes to ``output_dir``:
     - ``report.html``             — visual HTML report (bar chart + table)
     - ``global_tf_weights.csv``   — per-timeframe weights + FDM summary
     - ``global_diagnostics.json`` — full raw diagnostics dict
     """
-    if not getattr(global_weight_layer, "is_fitted_", False):
-        logger.warning(
-            "GlobalWeightLayer is not fitted — skipping cross-TF report for phase '%s'",
-            phase_name,
-        )
+    diagnostics: dict
+    if hasattr(portfolio, "get_diagnostics"):
+        root_diag = portfolio.get_diagnostics()
+        if isinstance(root_diag, dict) and "weight_layer" in root_diag:
+            diagnostics = root_diag.get("weight_layer", {})
+        else:
+            diagnostics = root_diag if isinstance(root_diag, dict) else {}
+    else:
+        diagnostics = {}
+
+    if not diagnostics.get("is_fitted", False):
+        logger.warning("Global layer diagnostics unavailable — skipping report for phase '%s'", phase_name)
         return
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    diagnostics = global_weight_layer.get_diagnostics()
 
     # --- global_diagnostics.json ---
     diag_path = output_dir / "global_diagnostics.json"
@@ -716,6 +752,36 @@ def export_global_weight_layer_report(
         csv_path = output_dir / "global_tf_weights.csv"
         tf_df.to_csv(csv_path, index=False)
         logger.info("Global TF weights written to %s", csv_path)
+
+    # --- global_strategy_diagnostics.json / global_strategy_weights.csv ---
+    strategy_diag: dict = diagnostics.get("diagnostics", {}) or {}
+    if strategy_diag:
+        strategy_diag_path = output_dir / "global_strategy_diagnostics.json"
+        with strategy_diag_path.open("w") as f:
+            json.dump(_to_json_serializable(strategy_diag), f, indent=2)
+        logger.info("Global strategy diagnostics written to %s", strategy_diag_path)
+
+        rows = []
+        tickers = strategy_diag.get("tickers", {})
+        for ticker, info in (tickers.items() if isinstance(tickers, dict) else []):
+            weights = info.get("weights") or {}
+            for model_name, weight in weights.items():
+                rows.append(
+                    {
+                        "phase": phase_name,
+                        "ticker": _clean_ticker(str(ticker)),
+                        "model_name": str(model_name),
+                        "timeframe": str(model_name).split("::", 1)[0],
+                        "weight": float(weight),
+                    }
+                )
+        if rows:
+            strategy_df = pd.DataFrame(rows).sort_values(
+                ["ticker", "weight"], ascending=[True, False]
+            )
+            strategy_csv = output_dir / "global_strategy_weights.csv"
+            strategy_df.to_csv(strategy_csv, index=False)
+            logger.info("Global strategy weights written to %s", strategy_csv)
 
     # --- report.html ---
     html = _build_global_html_report(diagnostics, phase_name)

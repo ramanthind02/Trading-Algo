@@ -95,6 +95,23 @@ class _MockTFPortfolio:
         ]
         return pd.DataFrame(rows)
 
+    def predict_base_model_vectors_from_candles(
+        self, candles_df: pd.DataFrame, *args, **kwargs
+    ) -> pd.DataFrame:
+        rows = [
+            {
+                "ticker": t,
+                "datetime": d,
+                "model_name": f"{self.trading_timeframe.name}::ensemble_0::model_a",
+                "forecast": self._score,
+                "signal": self._score,
+                "timeframe": self.trading_timeframe.name,
+            }
+            for d in self._dates
+            for t in self._tickers
+        ]
+        return pd.DataFrame(rows)
+
 
 def _make_candles_stub(tickers: list[str], n_dates: int = 20) -> pd.DataFrame:
     """Return a minimal stub candles DataFrame (not used by the mock, just satisfies type)."""

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -130,6 +131,10 @@ def _discover_ensemble_dirs() -> Mapping[str, str]:
     An ensemble folder is any directory under vault/<TF>/ whose leaf directory
     contains a 'features' subdirectory with at least one *.json file. The name
     is the leaf directory name; the path is repository-relative.
+
+    Buy-and-hold ensembles are excluded from auto-discovery by default to avoid
+    overwhelming strategy-driven portfolios in multi-timeframe blends. They can
+    still be included explicitly by setting ``ensemble_dirs`` in ``load_config``.
     """
     vault_root = _PORTFOLIO_RESEARCH_DIR.parent / "vault"
     if not vault_root.exists():
@@ -139,6 +144,35 @@ def _discover_ensemble_dirs() -> Mapping[str, str]:
         return features_dir.is_dir() and any(
             child.suffix == ".json" for child in features_dir.iterdir()
         )
+
+    def _is_buy_hold_ensemble(ensemble_dir: Path) -> bool:
+        if ensemble_dir.name.startswith("buy_hold"):
+            return True
+
+        features_dir = ensemble_dir / "features"
+        feature_files = sorted(features_dir.glob("*.json"))
+        if not feature_files:
+            return False
+
+        # Treat ensemble as buy-hold only if every readable feature config is buy_hold.
+        has_readable_feature = False
+        for feature_file in feature_files:
+            try:
+                with feature_file.open("r", encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            except (OSError, json.JSONDecodeError):
+                return False
+
+            has_readable_feature = True
+            module_name = (
+                payload.get("bias_node_spec", {}).get("module_name")
+                if isinstance(payload, dict)
+                else None
+            )
+            if module_name != "buy_hold":
+                return False
+
+        return has_readable_feature
 
     timeframe_dirs = [
         d for d in vault_root.iterdir() if d.is_dir()
@@ -150,7 +184,11 @@ def _discover_ensemble_dirs() -> Mapping[str, str]:
         )
         for tf_dir in timeframe_dirs
         for ensemble_dir in tf_dir.iterdir()
-        if ensemble_dir.is_dir() and _has_feature_json(ensemble_dir / "features")
+        if (
+            ensemble_dir.is_dir()
+            and _has_feature_json(ensemble_dir / "features")
+            and not _is_buy_hold_ensemble(ensemble_dir)
+        )
     }
 
     return ensembles
@@ -204,7 +242,7 @@ def load_config() -> PortfolioResearchConfig:
     ensemble_dirs = _discover_ensemble_dirs()
 
     target_volatility = 0.15
-    weight_layer_method = "downside_hrp_grouped"
+    weight_layer_method = "inv_avg_pairwise_corr_grouped"
     weight_layer_kwargs = {"fdm_max": 2.0}
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
