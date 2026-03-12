@@ -1,0 +1,320 @@
+{
+  "BP": {
+    "return_correlation": 0.99868,
+    "mean_return_diff": 0.000137,
+    "max_return_diff": 0.007764,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "C": {
+    "return_correlation": 0.897323,
+    "mean_return_diff": 0.003974,
+    "max_return_diff": 0.136464,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 21,
+    "divergent_dates": [
+      "2005-04-19",
+      "2005-08-17",
+      "2005-11-17",
+      "2006-02-17",
+      "2006-08-17",
+      "2007-08-17",
+      "2012-06-19",
+      "2013-06-19",
+      "2020-04-21",
+      "2020-04-27",
+      "2020-06-29",
+      "2020-06-30",
+      "2020-08-04",
+      "2020-08-13",
+      "2020-09-30",
+      "2021-06-21",
+      "2022-06-21",
+      "2023-04-19",
+      "2023-06-21",
+      "2024-08-21"
+    ]
+  },
+  "CD": {
+    "return_correlation": 0.998966,
+    "mean_return_diff": 0.000111,
+    "max_return_diff": 0.004494,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "CL": {
+    "return_correlation": 0.249882,
+    "mean_return_diff": 0.011749,
+    "max_return_diff": 2.244882,
+    "n_overlapping_days": 5212,
+    "n_divergent_dates": 134,
+    "divergent_dates": [
+      "2008-10-10",
+      "2008-11-04",
+      "2008-11-20",
+      "2008-11-24",
+      "2008-12-01",
+      "2008-12-11",
+      "2008-12-24",
+      "2008-12-31",
+      "2009-01-07",
+      "2009-01-12",
+      "2009-01-16",
+      "2009-01-27",
+      "2009-02-13",
+      "2009-02-18",
+      "2009-03-02",
+      "2009-03-04",
+      "2009-03-12",
+      "2009-04-02",
+      "2015-03-18",
+      "2015-08-27"
+    ]
+  },
+  "ES": {
+    "return_correlation": 0.992216,
+    "mean_return_diff": 0.001777,
+    "max_return_diff": 0.046868,
+    "n_overlapping_days": 5217,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "EU": {
+    "return_correlation": 0.994993,
+    "mean_return_diff": 0.000543,
+    "max_return_diff": 0.007797,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "FV": {
+    "return_correlation": 0.955587,
+    "mean_return_diff": 0.000243,
+    "max_return_diff": 0.023925,
+    "n_overlapping_days": 5213,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "GC": {
+    "return_correlation": 0.968584,
+    "mean_return_diff": 0.002833,
+    "max_return_diff": 0.044131,
+    "n_overlapping_days": 5212,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "GF": {
+    "return_correlation": 0.845989,
+    "mean_return_diff": 0.004037,
+    "max_return_diff": 0.077404,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 7,
+    "divergent_dates": [
+      "2013-04-17",
+      "2019-04-16",
+      "2020-04-17",
+      "2020-10-19",
+      "2021-04-19",
+      "2022-04-18",
+      "2023-04-17"
+    ]
+  },
+  "HG": {
+    "return_correlation": 0.98479,
+    "mean_return_diff": 0.003195,
+    "max_return_diff": 0.059741,
+    "n_overlapping_days": 5212,
+    "n_divergent_dates": 2,
+    "divergent_dates": [
+      "2005-11-29",
+      "2008-10-29"
+    ]
+  },
+  "HO": {
+    "return_correlation": -0.031094,
+    "mean_return_diff": 0.060168,
+    "max_return_diff": 24.223754,
+    "n_overlapping_days": 5213,
+    "n_divergent_dates": 1323,
+    "divergent_dates": [
+      "2005-01-04",
+      "2005-01-06",
+      "2005-01-13",
+      "2005-01-21",
+      "2005-01-28",
+      "2005-02-01",
+      "2005-02-07",
+      "2005-02-10",
+      "2005-02-16",
+      "2005-02-18",
+      "2005-02-22",
+      "2005-02-23",
+      "2005-02-24",
+      "2005-03-02",
+      "2005-03-08",
+      "2005-03-11",
+      "2005-03-16",
+      "2005-03-30",
+      "2005-03-31",
+      "2005-04-01"
+    ]
+  },
+  "JY": {
+    "return_correlation": 0.983045,
+    "mean_return_diff": 0.000865,
+    "max_return_diff": 0.016328,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "NQ": {
+    "return_correlation": 0.934811,
+    "mean_return_diff": 0.003778,
+    "max_return_diff": 0.094758,
+    "n_overlapping_days": 5217,
+    "n_divergent_dates": 6,
+    "divergent_dates": [
+      "2008-09-29",
+      "2008-10-13",
+      "2008-10-15",
+      "2008-10-16",
+      "2008-10-28",
+      "2008-12-01"
+    ]
+  },
+  "PL": {
+    "return_correlation": 0.994839,
+    "mean_return_diff": 0.002411,
+    "max_return_diff": 0.03126,
+    "n_overlapping_days": 5212,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "RTY": {
+    "return_correlation": 0.99408,
+    "mean_return_diff": 0.001254,
+    "max_return_diff": 0.056978,
+    "n_overlapping_days": 2088,
+    "n_divergent_dates": 1,
+    "divergent_dates": [
+      "2017-06-05"
+    ]
+  },
+  "S": {
+    "return_correlation": NaN,
+    "mean_return_diff": Infinity,
+    "max_return_diff": Infinity,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 771,
+    "divergent_dates": [
+      "2005-01-14",
+      "2005-02-17",
+      "2005-02-22",
+      "2005-02-25",
+      "2005-02-28",
+      "2005-03-02",
+      "2005-03-07",
+      "2005-03-11",
+      "2005-03-15",
+      "2005-03-18",
+      "2005-03-21",
+      "2005-03-30",
+      "2005-03-31",
+      "2005-04-01",
+      "2005-04-19",
+      "2005-05-18",
+      "2005-05-25",
+      "2005-05-31",
+      "2005-06-02",
+      "2005-06-13"
+    ]
+  },
+  "SF": {
+    "return_correlation": 0.989249,
+    "mean_return_diff": 0.001025,
+    "max_return_diff": 0.041887,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "SI": {
+    "return_correlation": 0.982055,
+    "mean_return_diff": 0.004308,
+    "max_return_diff": 0.066049,
+    "n_overlapping_days": 5212,
+    "n_divergent_dates": 6,
+    "divergent_dates": [
+      "2006-04-20",
+      "2006-06-13",
+      "2008-09-17",
+      "2008-10-02",
+      "2008-10-29",
+      "2009-03-19"
+    ]
+  },
+  "TU": {
+    "return_correlation": 0.935334,
+    "mean_return_diff": 6.4e-05,
+    "max_return_diff": 0.007141,
+    "n_overlapping_days": 5213,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "TY": {
+    "return_correlation": 0.960929,
+    "mean_return_diff": 0.000532,
+    "max_return_diff": 0.020291,
+    "n_overlapping_days": 5214,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  },
+  "US": {
+    "return_correlation": 0.952515,
+    "mean_return_diff": 0.001254,
+    "max_return_diff": 0.102856,
+    "n_overlapping_days": 5213,
+    "n_divergent_dates": 1,
+    "divergent_dates": [
+      "2015-02-27"
+    ]
+  },
+  "W": {
+    "return_correlation": 0.919114,
+    "mean_return_diff": 0.008021,
+    "max_return_diff": 0.068519,
+    "n_overlapping_days": 5215,
+    "n_divergent_dates": 20,
+    "divergent_dates": [
+      "2005-05-23",
+      "2005-08-17",
+      "2006-02-17",
+      "2006-11-17",
+      "2007-04-19",
+      "2008-10-29",
+      "2008-11-24",
+      "2009-01-12",
+      "2009-06-17",
+      "2009-08-19",
+      "2010-04-20",
+      "2010-08-18",
+      "2010-10-08",
+      "2010-11-17",
+      "2011-04-19",
+      "2011-06-17",
+      "2011-06-30",
+      "2016-11-18",
+      "2017-08-22",
+      "2023-11-21"
+    ]
+  },
+  "YM": {
+    "return_correlation": 0.997409,
+    "mean_return_diff": 0.000982,
+    "max_return_diff": 0.019858,
+    "n_overlapping_days": 5217,
+    "n_divergent_dates": 0,
+    "divergent_dates": []
+  }
+}
