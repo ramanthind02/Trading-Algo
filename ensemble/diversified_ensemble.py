@@ -90,15 +90,11 @@ class DiversifiedEnsemble:
         required_columns: Optional[List[str]] = None,
         base_tf: Optional[TimeFrame] = None,
         use_cache: bool = True,
-        member_forecast_scaling_mode: str = "sharpe_weighted",
     ):
         self.target_volatility = target_volatility
         self.instrument_weights = instrument_weights
         self.save_path = save_path
         self.use_cache = use_cache
-        self.member_forecast_scaling_mode = self._normalize_member_forecast_scaling_mode(
-            member_forecast_scaling_mode
-        )
         
         # Base model ownership
         self.base_models: Dict[str, Any] = {}  # Dict[str, BaseModel]
@@ -106,8 +102,6 @@ class DiversifiedEnsemble:
         self.required_columns: List[str] = []
         self.control_file_data: Optional[Dict[str, Any]] = None
         self.base_tf: Optional[TimeFrame] = None  # Will be set from file or parameter
-        # Optional: for base models with members, feature data keyed by model_name (datetime index, member columns)
-        self._member_feature_data: Optional[Dict[str, pd.DataFrame]] = None
 
         # Fitted parameters (set during fit() or load_config())
         self.weights_ = None
@@ -135,13 +129,12 @@ class DiversifiedEnsemble:
             self.base_models = base_models
             self.required_columns = list(required_columns)
             for model_name, bm in self.base_models.items():
-                get_cols = getattr(bm, "get_member_feature_columns", None)
-                cols = list(get_cols()) if get_cols else []
-                if not cols and getattr(bm, "feature_column", None):
-                    cols = [bm.feature_column]
-                for col in cols:
-                    if col:
-                        self.column_to_model[col] = model_name
+                feature_column = getattr(bm, "feature_column", None)
+                if not feature_column:
+                    raise ValueError(
+                        f"Base model '{model_name}' missing feature_column in single-feature mode."
+                    )
+                self.column_to_model[feature_column] = model_name
             if base_tf is None:
                 raise ValueError("base_tf is required when not using control_file_path.")
             self.base_tf = base_tf
@@ -150,51 +143,6 @@ class DiversifiedEnsemble:
         if config_path is not None:
             self.load_config(config_path)
 
-    def _bars_per_year_for_base_timeframe(self) -> float:
-        """Return the annualization factor (bars/year) for the ensemble base timeframe."""
-        tf = self.base_tf
-        if tf == TimeFrame.W:
-            return 52.0
-        if tf == TimeFrame.M:
-            return 12.0
-        # Default to daily if unset/unknown (current walkforward path is daily).
-        return 252.0
-
-    def _normalize_member_forecast_scaling_mode(self, mode: object) -> str:
-        valid_modes = {"binary", "sharpe_weighted"}
-        if not isinstance(mode, str):
-            raise ValueError(
-                "member_forecast_scaling_mode must be one of "
-                f"{sorted(valid_modes)}, got {type(mode)}"
-            )
-        normalized = mode.strip().lower()
-        if normalized not in valid_modes:
-            raise ValueError(
-                "member_forecast_scaling_mode must be one of "
-                f"{sorted(valid_modes)}, got '{mode}'"
-            )
-        return normalized
-
-    def _annualized_member_signal_strength(self, member_signal: pd.Series) -> np.ndarray:
-        """Map per-bar Sharpe-like member outputs to clipped annualized forecast strength."""
-        values = pd.Series(member_signal, copy=False).astype(float)
-        values = values.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        annualized = values.to_numpy() * np.sqrt(self._bars_per_year_for_base_timeframe())
-        return np.clip(annualized, -2.0, 2.0)
-
-    def _member_signal_strength(self, member_signal: pd.Series) -> np.ndarray:
-        """Convert member outputs to forecast strength according to configured mode."""
-        values = pd.Series(member_signal, copy=False).astype(float)
-        values = values.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-        if self.member_forecast_scaling_mode == "binary":
-            return np.sign(values.to_numpy())
-        if self.member_forecast_scaling_mode == "sharpe_weighted":
-            return self._annualized_member_signal_strength(values)
-        raise ValueError(
-            "Unsupported member_forecast_scaling_mode "
-            f"'{self.member_forecast_scaling_mode}'"
-        )
-    
     def _validate_input_data(
         self,
         X: Union[pd.DataFrame, np.ndarray],
@@ -1009,30 +957,6 @@ class DiversifiedEnsemble:
                 if is_buy_hold:
                     # Buy_hold is always in market: h_i = 1.0
                     self.model_exposure_fractions_[model_name] = 1.0
-                elif base_model.members:
-                    model_tickers = set(getattr(base_model, 'tickers', []))
-                    model_ticker_names = {_normalize_ticker_name(t) for t in model_tickers}
-                    model_candles = filtered_candles[
-                        filtered_candles['ticker'].apply(_normalize_ticker_name).isin(model_ticker_names)
-                    ].copy()
-                    try:
-                        member_signals_df = base_model.predict_members_from_candles(
-                            model_candles,
-                            strategy=base_model.strategy,
-                        )
-                        for member_name in member_signals_df.columns:
-                            full_name = f"{model_name}::{member_name}"
-                            ser = member_signals_df[member_name]
-                            # Exposure fraction is time-in-market; do not shrink it by signal magnitude.
-                            self.model_exposure_fractions_[full_name] = (ser != 0).astype(float).mean()
-                    except Exception as e:
-                        logger.warning(
-                            f"Error computing exposure for model '{model_name}' members: {e}. "
-                            "Using fallback 1/n_bins per member."
-                        )
-                        n_bins = getattr(base_model, "n_bins", 10)
-                        for mname, _ in base_model.members:
-                            self.model_exposure_fractions_[f"{model_name}::{mname}"] = 1.0 / n_bins
                 else:
                     # Generate binary signals for this model across supported tickers only
                     model_signals = []
@@ -1347,53 +1271,6 @@ class DiversifiedEnsemble:
                         isinstance(bias_node_spec, dict)
                         and bias_node_spec.get("module_name") == "buy_hold"
                     )
-
-                    if (not is_buy_hold_model) and base_model.members:
-                        try:
-                            member_signals_df = base_model.predict_members_from_candles(
-                                ticker_candles,
-                                strategy=base_model.strategy,
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Error emitting member signals for model '{model_name}' ticker '{ticker_name}': {e}",
-                                exc_info=True,
-                            )
-                            continue
-                        for member_name in member_signals_df.columns:
-                            pred_ser = member_signals_df[member_name]
-                            full_name = f"{model_name}::{member_name}"
-                            # Member outputs from continuous binning are per-bar Sharpe-like
-                            # magnitudes. Convert to clipped annualized strength for position
-                            # scaling so stronger members get proportionally larger forecasts.
-                            strength = self._member_signal_strength(pred_ser)
-                            h_i = self.model_exposure_fractions_.get(full_name, 0.1)
-                            sqrt_h_i = np.sqrt(max(h_i, 1e-8))
-                            forecast_if_active = self.target_volatility_ / (ticker_vol * sqrt_h_i)
-                            forecast_if_active = min(forecast_if_active, 2.0)
-                            volatility_adjusted_forecast = np.clip(
-                                forecast_if_active * strength,
-                                -2.0,
-                                2.0,
-                            )
-                            pred_df = pd.DataFrame({
-                                "ticker": ticker_name,
-                                "datetime": pred_ser.index,
-                                "model_name": full_name,
-                                "forecast": volatility_adjusted_forecast,
-                            })
-                            ticker_predictions.append(pred_df)
-                            if return_base_model_predictions:
-                                if full_name not in base_model_predictions_dict:
-                                    base_model_predictions_dict[full_name] = []
-                                base_model_predictions_dict[full_name].append(
-                                    pd.DataFrame({
-                                        "ticker": ticker_name,
-                                        "datetime": pred_ser.index,
-                                        "forecast_score": volatility_adjusted_forecast,
-                                    })
-                                )
-                        continue
 
                     # BaseModel.predict() returns a Series indexed by datetime with binary signals
                     # BaseModel.predict() handles feature caching internally (if use_cache=True)

@@ -497,25 +497,8 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
     if not isinstance(config['constructor_params'], dict):
         raise ValueError(f"{prefix}constructor_params must be a dictionary")
     
-    # Validate members when present (optional/empty allowed)
-    members = config.get('members')
-    if members is None:
-        return
-    if not isinstance(members, list):
-        raise ValueError(f"{prefix}'members' must be a list when provided")
-    for j, member in enumerate(members):
-        if not isinstance(member, dict):
-            raise ValueError(f"{prefix}Member at index {j} must be a dictionary")
-        member_name = member.get('member_name') or member.get('member_id') or member.get('name')
-        if not member_name:
-            raise ValueError(f"{prefix}Member at index {j} is missing member name")
-        has_new_params = 'binning_model_params' in member
-        has_legacy_params = 'params' in member
-        has_legacy_bin_index = 'bin_index' in member
-        if not has_new_params and not has_legacy_params and not has_legacy_bin_index:
-            raise ValueError(
-                f"{prefix}Member at index {j} must include 'binning_model_params' or legacy 'params'"
-            )
+    if "members" in config:
+        raise ValueError(f"{prefix}'members' is not supported in single-feature mode")
 
 
 def create_base_model_from_config(
@@ -684,38 +667,8 @@ def create_base_model_from_config(
         bool(config.get("requires_fit", model_type != "rule_based")),
     )
 
-    # Optional member models attached to this base model
-    member_configs = config.get('members') or []
-    for member in member_configs:
-        member_name = (
-            member.get('member_name')
-            or member.get('member_id')
-            or member.get('name')
-        )
-        if not member_name:
-            continue
-        member_model_type = _normalize_model_type(
-            member.get('binning_model_type') or member.get('model_type', 'continuous_binning')
-        )
-        member_params = (
-            member.get('binning_model_params')
-            or member.get('params')
-            or {}
-        ).copy()
-        member_strategy = member.get('strategy', strategy)
-        member_params['strategy'] = member_strategy
-        member_model = _create_binning_model_instance(member_model_type, member_params)
-        member_fitted = member.get('fitted_params')
-        requires_fit = bool(member.get('requires_fit', member_model_type != 'rule_based'))
-        setattr(member_model, "requires_fit", requires_fit)
-        if member_fitted and member_fitted.get('model_version') == 'binning_v2':
-            _restore_fitted_state(member_model, member_fitted)
-        member_feature_column = member.get('feature_column')
-        base_model.add_member(
-            str(member_name),
-            member_model,
-            feature_column=member_feature_column,
-        )
+    if "members" in config:
+        raise ValueError("members are not supported in single-feature mode")
     
     return base_model
 

@@ -75,7 +75,7 @@ Input(s):
   - `volatility`: per-sample series/array or `dict[ticker, float]`
 - Control file shape (`ensemble_utils.parse_control_file`):
   - Required top-level keys: `metadata`, `base_models`
-  - `members` in each base model is optional (if present, supports legacy and new member schemas)
+  - Each base model is single-stream; `members` payloads are unsupported
   - `metadata.is_fit: bool`
   - When `is_fit=True`, required keys: `fitted_base_models`, `fitted_ensemble`
 

@@ -82,9 +82,6 @@ class TestDiversifiedEnsemble(unittest.TestCase):
                     'n_bins': 3,
                     'selection_metric': 'sortino'
                 },
-                'members': [
-                    {'member_name': 'default', 'params': {'n_bins': 3, 'selection_metric': 'sortino'}}
-                ],
             })
         
         control_file = {

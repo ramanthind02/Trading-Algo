@@ -21,18 +21,8 @@ from utils.core.enums import Direction, DirectionInput, Ticker, TimeFrame
 from utils.core.models import Candle
 from utils.core import helpers
 from feature_selection.base_models.base_model import BinningModelBase
-from feature_selection.base_models.utils import build_member_model_name
 
 logger = logging.getLogger(__name__)
-
-
-def _member_requires_fit(member_bm: BinningModelBase) -> bool:
-    """Continuous-style members are refit-capable; rule-based members are static."""
-    model_type = getattr(member_bm, "model_type", "")
-    explicit = getattr(member_bm, "requires_fit", None)
-    if explicit is not None:
-        return bool(explicit)
-    return model_type != "rule_based"
 
 
 def _align_feature_and_target(
@@ -246,8 +236,7 @@ class BaseModel:
         # Key: (ticker, timeframe) tuple
         self.bias_nodes: dict[tuple[Ticker, TimeFrame], object] = {}
         
-        # Extract single values from lists in params (BaseModel doesn't do grid expansion)
-        # If params contain lists, extract first value (for compatibility with extract_features_for_bias_node)
+        # BaseModel must represent exactly one param combo.
         cleaned_params = {}
         for key, value in bias_node_spec['params'].items():
             if isinstance(value, list):
@@ -256,10 +245,8 @@ class BaseModel:
                 elif len(value) > 1:
                     raise ValueError(
                         f"Parameter '{key}' has multiple values {value}. "
-                        f"BaseModel creates one feature per parameter combination. "
-                        f"For multiple combinations, create separate BaseModel instances or use extract_features_for_bias_node()."
+                        "BaseModel requires a single param combo."
                     )
-                # Extract single value from list
                 cleaned_params[key] = value[0]
             else:
                 cleaned_params[key] = value
@@ -282,52 +269,6 @@ class BaseModel:
         self._feature_values: dict[datetime, float] = {}
         self._feature_datetimes: list[datetime] = []
         
-        # Multi-member container: list of (member_name, binning_model) tuples
-        # Each member is an independent binning model that can be fitted on the same features
-        self.members: list[tuple[str, BinningModelBase]] = []
-        # Optional: member_name -> feature_column for per-member feature columns (DataFrame input)
-        self._member_feature_columns: dict[str, str] = {}
-
-    def add_member(
-        self,
-        name: str,
-        binning_model: BinningModelBase,
-        feature_column: Optional[str] = None,
-    ) -> None:
-        """
-        Add a member model to this base model.
-
-        Parameters
-        ----------
-        name : str
-            Unique identifier for this member
-        binning_model : BinningModelBase
-            The binning model instance to add as a member
-        feature_column : str, optional
-            Feature column name for this member. When provided, emit_member_signals(feature_data=pd.DataFrame)
-            will use feature_data[feature_column] for this member. If None, the member uses the primary
-            feature (single Series or first column) when feature_data is provided.
-        """
-        self.members.append((name, binning_model))
-        if feature_column is not None:
-            self._member_feature_columns[name] = feature_column
-
-    def get_member_feature_columns(self) -> List[str]:
-        """
-        Return the list of feature column names used by members (for ensemble required_columns).
-
-        Returns the primary feature_column if set, plus each member's feature_column when
-        provided via add_member(..., feature_column=...). Deduplicated and order-preserving.
-        """
-        columns: List[str] = []
-        if self.feature_column:
-            columns.append(self.feature_column)
-        for _name, _bm in self.members:
-            col = self._member_feature_columns.get(_name)
-            if col and col not in columns:
-                columns.append(col)
-        return columns
-
     def __getattr__(self, name: str) -> object:
         """
         Delegate attribute access to binning_model for compatibility.
@@ -491,30 +432,6 @@ class BaseModel:
             return self.vectorized_fit(candles_df, target_data, start_date, end_date)
         return self.stream_fit(candles_df, target_data)
 
-    def _fit_members_from_aligned_data(
-        self,
-        feature_data: pd.Series,
-        aligned_target: pd.Series,
-    ) -> None:
-        """Fit member models on the same aligned feature/target used for primary fit."""
-        if not self.members:
-            return
-        for member_name, member_bm in self.members:
-            if member_bm is None:
-                continue
-            requires_fit = _member_requires_fit(member_bm)
-            if member_bm.is_fitted_ and not requires_fit:
-                logger.debug(
-                    "Skipping pre-fitted static member '%s' for feature '%s'",
-                    member_name,
-                    self.feature_column,
-                )
-                continue
-            member_feature = feature_data.copy()
-            if member_feature.name is None:
-                member_feature.name = self.feature_column or "feature"
-            member_bm.fit(member_feature, aligned_target)
-
     def stream_fit(
         self,
         candles_df: pd.DataFrame,
@@ -641,7 +558,6 @@ class BaseModel:
             feature_data, target_data, rule_based=is_rule_based
         )
         self.binning_model.fit(feature_data, aligned_target)
-        self._fit_members_from_aligned_data(feature_data, aligned_target)
         return self
 
     def vectorized_fit(
@@ -774,7 +690,6 @@ class BaseModel:
         if feature_data.name is None:
             feature_data.name = column_name
         self.binning_model.fit(feature_data, aligned_target)
-        self._fit_members_from_aligned_data(feature_data, aligned_target)
         return self
 
     def predict(
@@ -1056,237 +971,6 @@ class BaseModel:
 
         return predictions
 
-    def emit_member_signals(
-        self,
-        feature_data: Optional[Union[pd.Series, pd.DataFrame]] = None,
-        strategy: DirectionInput = Direction.LONG,
-    ) -> pd.DataFrame:
-        """
-        Emit flattened member-level signal outputs.
-
-        For each member in self.members, generates predictions and combines them
-        into a DataFrame with member names as columns.
-
-        When feature_data is a DataFrame, each member uses its own feature column
-        when set via add_member(..., feature_column=...); otherwise the first
-        column or primary feature_column is used. When feature_data is a Series,
-        it is used for all members (or for the primary model when no members).
-
-        Parameters
-        ----------
-        feature_data : pd.Series or pd.DataFrame, optional
-            Feature data for prediction. If DataFrame, columns should match
-            member feature columns (or primary). If not provided, uses the
-            training feature data from the primary binning model (backward compat).
-        strategy : DirectionInput, default=Direction.LONG
-            Strategy to use.
-
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame with member names as columns and predictions as values,
-            indexed by datetime.
-        """
-        if not self.members:
-            if feature_data is None:
-                raise ValueError(
-                    "No members defined and no feature_data provided. "
-                    "Either add members or provide feature_data."
-                )
-            series = (
-                feature_data.iloc[:, 0]
-                if isinstance(feature_data, pd.DataFrame) and not feature_data.empty
-                else feature_data
-            )
-            if not isinstance(series, pd.Series):
-                series = pd.Series(feature_data) if hasattr(feature_data, "__len__") else feature_data
-            predictions_df = pd.DataFrame(
-                {
-                    self.feature_column or "default": self.binning_model.predict(
-                        series, strategy=strategy
-                    )
-                }
-            )
-            return predictions_df
-
-        member_signals: Dict[str, pd.Series] = {}
-
-        for member_name, binning_model in self.members:
-            if not binning_model.is_fitted_:
-                logger.warning(f"Member {member_name} is not fitted, skipping")
-                continue
-
-            if feature_data is not None:
-                if isinstance(feature_data, pd.DataFrame):
-                    col = self._member_feature_columns.get(
-                        member_name, self.feature_column
-                    )
-                    if col is not None and col in feature_data.columns:
-                        series = feature_data[col]
-                    elif len(feature_data.columns) > 0:
-                        series = feature_data.iloc[:, 0]
-                    else:
-                        logger.warning(
-                            f"Member {member_name}: no feature column in DataFrame, skipping"
-                        )
-                        continue
-                else:
-                    series = feature_data
-                signal = binning_model.predict(series, strategy=strategy)
-            elif hasattr(binning_model, "_training_feature_data"):
-                signal = binning_model.get_fitted_vector(strategy=strategy)
-            else:
-                logger.warning(
-                    f"Member {member_name} has no training data, skipping"
-                )
-                continue
-
-            member_signals[member_name] = signal
-
-        if not member_signals:
-            raise ValueError(
-                "No valid member signals to emit. Ensure members are fitted."
-            )
-
-        return pd.DataFrame(member_signals)
-
-    def _extract_feature_data_from_candles(
-        self,
-        candles_df: pd.DataFrame,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-    ) -> pd.Series:
-        """Extract feature series from candles using the configured cached/stream path."""
-        if self.use_cache:
-            from utils.cache.bias_node_cache import CacheMissError
-
-            if start_date is None:
-                start_date = pd.to_datetime(candles_df['datetime']).min()
-            if end_date is None:
-                end_date = pd.to_datetime(candles_df['datetime']).max()
-            if isinstance(start_date, str):
-                start_date = pd.to_datetime(start_date)
-            if isinstance(end_date, str):
-                end_date = pd.to_datetime(end_date)
-
-            if 'ticker' in candles_df.columns:
-                candles_tickers = candles_df['ticker'].unique()
-                candles_ticker_set = set(candles_tickers)
-                tickers_to_predict = [
-                    t for t in self.tickers
-                    if (
-                        t in candles_ticker_set
-                        or (hasattr(t, 'value') and t.value in candles_ticker_set)
-                        or str(t) in [str(ct) for ct in candles_tickers]
-                    )
-                ]
-            else:
-                tickers_to_predict = self.tickers
-
-            all_features: List[pd.Series] = []
-            for ticker in tickers_to_predict:
-                for tf in self.bias_node_spec['timeframes']:
-                    bias_node = self.bias_nodes[(ticker, tf)]
-                    try:
-                        cached_values = bias_node.get_cached_values(
-                            start=start_date,
-                            end=end_date,
-                            require_cache=True,
-                        )
-                        if cached_values is not None and len(cached_values) > 0:
-                            all_features.append(cached_values)
-                    except CacheMissError as exc:
-                        logger.error(
-                            "Cache miss for %s (%s, %s) while extracting member features.",
-                            bias_node.module_name,
-                            ticker,
-                            tf,
-                            exc_info=True,
-                        )
-                        raise exc
-
-            if not all_features:
-                raise ValueError(
-                    "No cached features available for member prediction extraction. "
-                    "Run cache population first or set use_cache=False."
-                )
-            feature_data = (
-                all_features[0]
-                if len(all_features) == 1
-                else pd.concat(all_features).groupby(level=0).mean()
-            )
-        else:
-            unique_tickers = candles_df['ticker'].unique()
-            normalized_tickers = []
-            for ticker in unique_tickers:
-                if isinstance(ticker, str):
-                    try:
-                        normalized_tickers.append(Ticker[ticker])
-                    except (KeyError, AttributeError):
-                        normalized_tickers.append(ticker)
-                else:
-                    normalized_tickers.append(ticker)
-            for ticker in normalized_tickers:
-                if ticker not in self.tickers:
-                    raise ValueError(
-                        f"Ticker {ticker} in candles_df is not in model tickers {self.tickers}"
-                    )
-
-            input_datetimes = pd.to_datetime(candles_df['datetime']).tolist()
-            for ticker in normalized_tickers:
-                ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
-                ticker_candles = candles_df[
-                    (candles_df['ticker'] == ticker) | (candles_df['ticker'] == ticker_str)
-                ].copy()
-                if 'datetime' in ticker_candles.columns:
-                    ticker_candles = ticker_candles.sort_values('datetime')
-                for row in ticker_candles.itertuples(index=False):
-                    candle = Candle.from_row_fast(row)
-                    self.add_candle(candle, candle.tf, ticker=ticker)
-
-            extracted = self.get_feature()
-            values: List[float] = []
-            out_idx: List[datetime] = []
-            for dt in input_datetimes:
-                if dt in extracted.index:
-                    values.append(float(extracted.loc[dt]))
-                elif dt in self._feature_values:
-                    values.append(float(self._feature_values[dt]))
-                else:
-                    values.append(np.nan)
-                out_idx.append(dt)
-            feature_data = pd.Series(values, index=pd.DatetimeIndex(out_idx))
-
-        is_rule_based = getattr(self.binning_model, "model_type", None) == "rule_based"
-        if feature_data.isna().any():
-            if is_rule_based:
-                feature_data = feature_data.dropna()
-            else:
-                feature_data = feature_data.fillna(0.0)
-        return feature_data
-
-    def predict_members_from_candles(
-        self,
-        candles_df: pd.DataFrame,
-        strategy: DirectionInput = Direction.LONG,
-    ) -> pd.DataFrame:
-        """Predict member-level signals directly from candles."""
-        if not self.members:
-            return pd.DataFrame(index=pd.DatetimeIndex([]))
-        feature_data = self._extract_feature_data_from_candles(candles_df)
-        return self.emit_member_signals(feature_data=feature_data, strategy=strategy)
-
-    def get_fitted_params_for_members(self) -> Dict[str, Dict[str, Any]]:
-        """Return binning_v2 fitted payload for all fitted members."""
-        fitted: Dict[str, Dict[str, Any]] = {}
-        for member_name, member_bm in self.members:
-            if not member_bm.is_fitted_:
-                continue
-            payload = member_bm.get_fitted_params()
-            if payload.get("model_version") == "binning_v2":
-                fitted[member_name] = payload
-        return fitted
-
     def save_to_vault(
         self,
         ensemble_dir: Optional[str] = None,
@@ -1352,31 +1036,6 @@ class BaseModel:
             'module_name': self.bias_node_spec['module_name'],
             'timeframes': self.bias_node_spec['timeframes'],
         }
-        serialized_members: List[Dict[str, Any]] = []
-        for member_name, member_bm in self.members:
-            member_type = getattr(member_bm, "model_type", member_bm.__class__.__name__)
-            member_params = dict(member_bm.get_params())
-            member_params.pop("strategy", None)
-            requires_fit = _member_requires_fit(member_bm)
-            is_fitted = bool(member_bm.is_fitted_)
-            fitted_payload = None
-            if is_fitted:
-                payload = member_bm.get_fitted_params()
-                if payload.get("model_version") == "binning_v2":
-                    fitted_payload = payload
-                else:
-                    is_fitted = False
-            serialized_members.append(
-                {
-                    "member_name": member_name,
-                    "binning_model_type": member_type,
-                    "binning_model_params": member_params,
-                    "requires_fit": requires_fit,
-                    "is_fitted": is_fitted,
-                    "fitted_params": fitted_payload,
-                }
-            )
-
         model_id = add_feature_to_ensemble(
             feature_name=feature_name,
             bias_node_spec=bias_node_spec,
@@ -1384,7 +1043,6 @@ class BaseModel:
             base_model=self,
             ensemble_dir=ensemble_dir,
             tickers=tickers,
-            members=serialized_members,
         )
 
         # Initialize decay monitoring if model is fitted
@@ -1434,10 +1092,7 @@ class BaseModel:
         train_end : str
             Training end date (YYYY-MM-DD)
         """
-        from ensemble.vault_manager import (
-            save_member_fitted_params,
-            update_base_model_fitted_params,
-        )
+        from ensemble.vault_manager import update_base_model_fitted_params
 
         if not self.binning_model.is_fitted_:
             raise ValueError("Binning model must be fitted before updating vault")
@@ -1469,15 +1124,3 @@ class BaseModel:
             train_start=train_start,
             train_end=train_end
         )
-
-        member_fitted = self.get_fitted_params_for_members()
-        for member_name, member_payload in member_fitted.items():
-            save_member_fitted_params(
-                ensemble_dir=ensemble_dir,
-                feature_name=feature_name,
-                model_id=model_id,
-                member_name=member_name,
-                fitted_params=member_payload,
-                train_start=train_start,
-                train_end=train_end,
-            )

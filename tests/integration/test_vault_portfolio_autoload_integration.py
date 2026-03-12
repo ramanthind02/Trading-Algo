@@ -114,23 +114,6 @@ def test_vault_portfolio_autoload_integration(tmp_path) -> None:
         base_model=base_model,
         ensemble_dir=ensemble_a,
         tickers=tickers,
-        members=[
-            {
-                "member_name": "cb10",
-                "binning_model_type": "continuous_binning",
-                "binning_model_params": {
-                    "n_bins": 10,
-                    "bin_counts": [10, 8, 5, 3],
-                    "bin_index_min": 0,
-                    "bin_index_max": None,
-                    "selection_metric": "t_stat",
-                    "normalize_by": "ewsd",
-                },
-                "requires_fit": True,
-                "is_fitted": False,
-                "fitted_params": None,
-            }
-        ],
     )
     # Second ensemble for portfolio auto-load coverage.
     add_feature_to_ensemble(
@@ -147,9 +130,6 @@ def test_vault_portfolio_autoload_integration(tmp_path) -> None:
         ensemble_dir=ensemble_a,
     )
     assert loaded_models
-    first_model = next(iter(loaded_models.values()))
-    assert first_model.members
-    assert first_model.members[0][1].is_fitted_ is False
 
     legacy_ensemble = create_ensemble_directory(
         timeframe=TimeFrame.D,
@@ -168,6 +148,11 @@ def test_vault_portfolio_autoload_integration(tmp_path) -> None:
     with open(canonical_path, "r") as handle:
         merged = json.load(handle)
     assert len(merged["base_models"]) == 2
+    with pytest.raises(ValueError, match="exactly one base model"):
+        load_feature_base_models(
+            feature_name="rsi_signal_D",
+            ensemble_dir=legacy_ensemble,
+        )
 
     portfolio_all = Portfolio(ensembles=None, vault_root=str(vault_root))
     assert len(portfolio_all.ensembles) >= 2
