@@ -51,6 +51,7 @@ from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
 from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.portfolio import Portfolio
 from deployment.telegram_notifier import TelegramNotifier
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 from utils.core.enums import TimeFrame
 
 
@@ -604,7 +605,14 @@ def main():
 
         # Generate forecasts
         print("\n4. Generating forecasts...")
-        positions_df = portfolio.predict_from_candles(candles_df)
+        daily_candles = candles_df[candles_df["timeframe"] == TimeFrame.D]
+        if daily_candles.empty:
+            raise ValueError("Daily candles are required to compute EWSD volatility for predictions.")
+        daily_volatility_df = compute_daily_ewsd_volatility(daily_candles)
+        positions_df = portfolio.predict_from_candles(
+            candles_df,
+            daily_volatility_df=daily_volatility_df,
+        )
 
         if positions_df.empty:
             print("ERROR: No forecasts generated.")

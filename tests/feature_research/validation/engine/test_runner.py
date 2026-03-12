@@ -1680,7 +1680,12 @@ def test_evaluate_fold_portfolio_returns_per_ticker_oos_returns_shape(
         def fit_from_candles(self, _candles: pd.DataFrame, target_data: pd.Series | None = None) -> None:
             _ = target_data
 
-        def predict_from_candles(self, _candles: pd.DataFrame) -> dict[str, pd.DataFrame]:
+        def predict_from_candles(
+            self,
+            _candles: pd.DataFrame,
+            daily_volatility_df: pd.DataFrame | None = None,
+        ) -> dict[str, pd.DataFrame]:
+            _ = daily_volatility_df
             return {"portfolio": positions_df}
 
     def _fake_build_research_portfolio(**_kwargs: object) -> _FakePortfolio:

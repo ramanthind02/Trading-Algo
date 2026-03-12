@@ -389,6 +389,7 @@ class PortfolioTester:
     def predict(
         self,
         candles_df: pd.DataFrame,
+        daily_volatility_df: pd.DataFrame,
         return_ensemble_predictions: bool = False,
         return_base_model_predictions: bool = False
     ) -> Union[pd.DataFrame, Dict[str, Any]]:
@@ -399,6 +400,9 @@ class PortfolioTester:
         ----------
         candles_df : pd.DataFrame
             Candles DataFrame for prediction
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility DataFrame with columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
         return_ensemble_predictions : bool, default=False
             If True, return ensemble-level predictions
         return_base_model_predictions : bool, default=False
@@ -413,6 +417,7 @@ class PortfolioTester:
         # Call portfolio predict with granularity flags
         result = self.portfolio.predict_from_candles(
             candles_df,
+            daily_volatility_df=daily_volatility_df,
             return_ensemble_predictions=return_ensemble_predictions,
             return_base_model_predictions=return_base_model_predictions
         )

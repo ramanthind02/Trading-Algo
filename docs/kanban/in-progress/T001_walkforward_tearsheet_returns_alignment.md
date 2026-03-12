@@ -11,7 +11,7 @@ Fix walkforward stage-2 OOS/tearsheet return generation so strategy returns are 
 
 ## Observed behavior
 - Walkforward tearsheet strategy volatility is ~`1.03%` annualized while benchmark is ~`19.72%` in sample results.
-- Stage-2 OOS returns are currently built via datetime-only aggregation (`groupby("datetime").mean()`) and multiplied by the research `target` series (`log_return_atr` in the sample), which is normalized and not comparable to buy-and-hold candle returns.
+- Stage-2 OOS returns are currently built via datetime-only aggregation (`groupby("datetime").mean()`) and multiplied by the research `target` series (`log_return_ewsd` in the sample), which is normalized and not comparable to buy-and-hold candle returns.
 
 ## Expected behavior
 - OOS portfolio and per-signal returns use ticker-level `position_fraction` outputs and candle-derived instrument returns (same return basis as baseline / portfolio tester).

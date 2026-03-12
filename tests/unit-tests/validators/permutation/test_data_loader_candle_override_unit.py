@@ -83,8 +83,6 @@ def test_extract_features_with_forward_returns_uses_override_instead_of_loading(
 
     def _fake_extract_features(**kwargs: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
         module_name = kwargs["module_name"]
-        if module_name == "atr":
-            return pd.DataFrame({"atr_252": [0.2, 0.2, 0.2], "ticker": ["ES", "ES", "ES"]}, index=idx), pd.DataFrame()
         if module_name == "ewsd":
             return pd.DataFrame({"ewsd_63": [1.0, 1.0, 1.0], "ticker": ["ES", "ES", "ES"]}, index=idx), pd.DataFrame()
         return pd.DataFrame({"feat": [1.0, 2.0, 3.0], "ticker": ["ES", "ES", "ES"]}, index=idx), pd.DataFrame()
@@ -100,7 +98,6 @@ def test_extract_features_with_forward_returns_uses_override_instead_of_loading(
             {
                 "raw_return": [0.01, 0.01, 0.01],
                 "log_return": [0.01, 0.01, 0.01],
-                "log_return_atr": [0.05, 0.05, 0.05],
                 "log_return_ewsd": [1.0, 1.0, 1.0],
                 "ticker": ["ES", "ES", "ES"],
             },
@@ -131,8 +128,6 @@ def test_extract_features_with_forward_returns_normalizes_override_datetimes_to_
 
     def _fake_extract_features(**kwargs: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
         module_name = kwargs["module_name"]
-        if module_name == "atr":
-            return pd.DataFrame({"atr_252": [0.2, 0.2, 0.2], "ticker": ["ES", "ES", "ES"]}, index=idx), pd.DataFrame()
         if module_name == "ewsd":
             return pd.DataFrame({"ewsd_63": [1.0, 1.0, 1.0], "ticker": ["ES", "ES", "ES"]}, index=idx), pd.DataFrame()
         return pd.DataFrame({"feat": [1.0, 2.0, 3.0], "ticker": ["ES", "ES", "ES"]}, index=idx), pd.DataFrame()
@@ -148,7 +143,6 @@ def test_extract_features_with_forward_returns_normalizes_override_datetimes_to_
             {
                 "raw_return": [0.01, 0.01, 0.01],
                 "log_return": [0.01, 0.01, 0.01],
-                "log_return_atr": [0.05, 0.05, 0.05],
                 "log_return_ewsd": [1.0, 1.0, 1.0],
                 "ticker": ["ES", "ES", "ES"],
             },
@@ -185,11 +179,6 @@ def test_extract_features_with_forward_returns_multi_ticker_aligns_on_datetime_t
 
     def _fake_extract_features(**kwargs: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
         module_name = kwargs["module_name"]
-        if module_name == "atr":
-            return pd.DataFrame(
-                {"atr_252": [0.2] * 6, "ticker": ["ES", "ES", "ES", "NQ", "NQ", "NQ"]},
-                index=bar_dts,
-            ), pd.DataFrame()
         if module_name == "ewsd":
             return pd.DataFrame(
                 {"ewsd_63": [1.0] * 6, "ticker": ["ES", "ES", "ES", "NQ", "NQ", "NQ"]},
@@ -212,7 +201,6 @@ def test_extract_features_with_forward_returns_multi_ticker_aligns_on_datetime_t
             {
                 "raw_return": [0.01] * 6,
                 "log_return": [0.01] * 6,
-                "log_return_atr": [0.05] * 6,
                 "log_return_ewsd": [1.0] * 6,
                 "ticker": ["ES", "ES", "ES", "NQ", "NQ", "NQ"],
             },
@@ -278,11 +266,6 @@ def test_extract_features_with_forward_returns_errors_when_ticker_is_dropped_aft
 
     def _fake_extract_features(**kwargs: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
         module_name = kwargs["module_name"]
-        if module_name == "atr":
-            return pd.DataFrame(
-                {"atr_252": [0.2] * 4, "ticker": ["ES", "ES", "NQ", "NQ"]},
-                index=idx,
-            ), pd.DataFrame()
         if module_name == "ewsd":
             return pd.DataFrame(
                 {"ewsd_63": [1.0] * 4, "ticker": ["ES", "ES", "NQ", "NQ"]},
@@ -301,7 +284,6 @@ def test_extract_features_with_forward_returns_errors_when_ticker_is_dropped_aft
             {
                 "raw_return": [0.01, 0.01],
                 "log_return": [0.01, 0.01],
-                "log_return_atr": [0.05, 0.05],
                 "log_return_ewsd": [1.0, 1.0],
                 "ticker": ["ES", "ES"],
             },

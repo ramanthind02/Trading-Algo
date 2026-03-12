@@ -53,7 +53,7 @@ results_df, step_info, _ = selector.walkforward_test(
 ## Data contracts
 Input(s):
 - `features_df`: `pd.DataFrame` with feature columns and optional `ticker`; must share index with targets.
-- `targets_df`/`target`: return-like series/columns (commonly `raw_return`, `log_return`, `log_return_atr`, `log_return_ewsd`).
+- `targets_df`/`target`: return-like series/columns (commonly `raw_return`, `log_return`, `log_return_ewsd`).
 - All walk-forward utilities require `pd.DatetimeIndex`.
 - Portfolio validator paths additionally require `candles_df` with a `datetime` column.
 

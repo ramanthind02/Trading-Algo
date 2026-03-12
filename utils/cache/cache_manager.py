@@ -41,13 +41,13 @@ from utils.core.models import Candle
 
 logger = logging.getLogger(__name__)
 
-# Required for volatility-scaled targets (log_return_atr, log_return_ewsd).
-# extract_features_with_forward_returns always requests these when building targets.
+# Required for volatility-scaled targets (log_return_ewsd).
+# Volatility normalization is EWSD-only and always uses daily settings.
 def get_auxiliary_specs_for_timeframe(tf: TimeFrame) -> list[dict]:
-    """Return ATR + EWSD auxiliary specs for volatility-scaled targets."""
+    """Return EWSD auxiliary specs for volatility-scaled targets."""
+    _ = tf
     return [
-        {"module_name": "atr", "params": {"period": tf.bars_per_year}},
-        {"module_name": "ewsd", "params": {"long_run_window": 10 * tf.bars_per_year}},
+        {"module_name": "ewsd", "params": {"long_run_window": 2520}},
     ]
 
 
@@ -566,7 +566,7 @@ class CacheManager:
         show_progress : bool
             Whether to print progress
         timeframe : TimeFrame
-            Active research timeframe used to scale required ATR/EWSD auxiliary specs.
+            Active research timeframe (auxiliary EWSD cache remains daily).
 
         Returns
         -------
@@ -584,7 +584,7 @@ class CacheManager:
         if not all_timeframes:
             all_timeframes = [TimeFrame.D]
 
-        # Ensure required auxiliary bias nodes (atr, ewsd) are included for volatility-scaled targets
+        # Ensure required auxiliary bias nodes (EWSD-only) are included.
         specs_to_use = list(bias_node_specs)
         for aux in get_auxiliary_specs_for_timeframe(timeframe):
             if not any(
@@ -594,10 +594,10 @@ class CacheManager:
                 specs_to_use.append({
                     "module_name": aux["module_name"],
                     "params": aux["params"],
-                    "timeframes": all_timeframes,
+                    "timeframes": [TimeFrame.D],
                 })
                 if show_progress:
-                    print(f"  Adding required auxiliary: {aux['module_name']} (for log_return_atr/log_return_ewsd)")
+                    print(f"  Adding required auxiliary: {aux['module_name']} (for log_return_ewsd)")
 
         # Build list of (module, params, ticker, tf) combinations
         tasks = []
@@ -620,7 +620,7 @@ class CacheManager:
 
         if show_progress:
             print(f"Populating cache for {len(tasks)} combinations...")
-            print(f"  Bias node specs: {len(specs_to_use)} (including required atr/ewsd if needed)")
+            print(f"  Bias node specs: {len(specs_to_use)} (including required ewsd if needed)")
             print(f"  Tickers: {len(tickers)}")
             print(f"  Date range: {start_date} to {end_date}")
             print(f"  Max workers: {max_workers}")

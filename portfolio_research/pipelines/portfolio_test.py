@@ -26,6 +26,7 @@ from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
 from portfolio_research.weight_layer_report import export_global_weight_layer_report
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 from utils.core.enums import TimeFrame
 from utils.evaluation.walkforward.runner import _sanitize_tearsheet_name
 
@@ -305,6 +306,9 @@ def _evaluate_phase(
     print(f"{phase_title} daily train: {len(daily_train_candles)} candles")
     print(f"{phase_title} daily test : {len(daily_test_candles)} candles")
 
+    # Daily EWSD volatility is computed once and aligned downstream to each TF.
+    daily_volatility_all = compute_daily_ewsd_volatility(candles_by_timeframe[TimeFrame.D])
+
     daily_dates_per_ticker = _build_daily_dates_per_ticker(daily_test_candles)
     testers_by_timeframe: dict[TimeFrame, PortfolioTester] = {}
     per_tf_strategy_returns: dict[TimeFrame, pd.Series] = {}
@@ -322,6 +326,7 @@ def _evaluate_phase(
         print(f"  Predicting {tf_label} portfolio...")
         tester.predict(
             tf_test_candles,
+            daily_volatility_df=daily_volatility_all,
             return_ensemble_predictions=True,
             return_base_model_predictions=True,
         )
@@ -362,13 +367,20 @@ def _evaluate_phase(
         max_position_pct=config.max_position_pct,
     )
     instrument_returns = _build_instrument_returns(daily_train_candles)
-    global_portfolio.fit(train_candles_by_timeframe, instrument_returns)
+    global_portfolio.fit(
+        train_candles_by_timeframe,
+        instrument_returns,
+        daily_volatility_df=daily_volatility_all,
+    )
     export_global_weight_layer_report(
         global_portfolio,
         phase_name=output_dir_name,
         output_dir=phase_out / "global_weight_layer",
     )
-    global_positions_raw = global_portfolio.predict(test_candles_by_timeframe)
+    global_positions_raw = global_portfolio.predict(
+        test_candles_by_timeframe,
+        daily_volatility_df=daily_volatility_all,
+    )
     global_positions_raw["datetime"] = pd.to_datetime(
         global_positions_raw["datetime"]
     ).dt.floor("s")

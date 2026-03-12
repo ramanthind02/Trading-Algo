@@ -191,7 +191,7 @@ def _default_continuous_in_sample_defaults(
                 "rsi_period": [2]
             },
         },
-        target_col="log_return_atr",
+        target_col="log_return_ewsd",
         strategy=Direction.LONG,
         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
         binning_params_overrides={"bin_counts": [10]},
@@ -208,7 +208,7 @@ def _default_rule_based_in_sample_defaults(
             "timeframes": [DEFAULT_TIMEFRAME],
             "params": {},
         },
-        target_col="log_return_atr",
+        target_col="log_return_ewsd",
         strategy=Direction.LONG,
         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "rule_based",
     )
@@ -383,7 +383,7 @@ def load_config() -> ResearchConfig:
     #             "timeframes": [timeframe],
     #             "params": {"short_period": [4], "long_period": [120], "rsi_period": [2]},
     #         },
-    #         target_col="log_return_atr",
+    #         target_col="log_return_ewsd",
     #         strategy="long",
     #         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
     #     ),

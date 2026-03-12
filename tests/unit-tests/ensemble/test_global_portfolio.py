@@ -137,6 +137,16 @@ def _make_candles_stub(tickers: list[str], n_dates: int = 20) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _make_daily_volatility_stub(tickers: list[str], n_dates: int = 20, annual_vol: float = 0.2) -> pd.DataFrame:
+    dates = _make_dates(n_dates)
+    rows = [
+        {"datetime": d, "ticker": t, "ewsd_annual_vol": annual_vol}
+        for d in dates
+        for t in tickers
+    ]
+    return pd.DataFrame(rows)
+
+
 def _build_global_portfolio(
     tickers: list[str] = None,
     n_tfs: int = 1,
@@ -165,8 +175,9 @@ def _build_global_portfolio(
     instrument_returns = _make_instrument_returns(tickers, dates)
     candles_per_tf = {tf: _make_candles_stub(tickers, n_dates) for tf in timeframes}
 
-    gp.fit(candles_per_tf, instrument_returns)
-    return gp, candles_per_tf
+    daily_volatility_df = _make_daily_volatility_stub(tickers, n_dates)
+    gp.fit(candles_per_tf, instrument_returns, daily_volatility_df=daily_volatility_df)
+    return gp, candles_per_tf, daily_volatility_df
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +189,8 @@ class TestOutputSchemaMatchesLegacy:
     """Output must have exactly ['ticker', 'datetime', 'forecast_score', 'position_fraction']."""
 
     def test_output_columns(self):
-        gp, candles_per_tf = _build_global_portfolio(tickers=["ES", "NQ"])
-        result = gp.predict(candles_per_tf)
+        gp, candles_per_tf, daily_volatility_df = _build_global_portfolio(tickers=["ES", "NQ"])
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
         assert isinstance(result, pd.DataFrame)
         expected_cols = {"ticker", "datetime", "forecast_score", "position_fraction"}
         assert expected_cols == set(result.columns), (
@@ -187,15 +198,15 @@ class TestOutputSchemaMatchesLegacy:
         )
 
     def test_no_nan_in_position_fraction(self):
-        gp, candles_per_tf = _build_global_portfolio(tickers=["ES", "NQ"])
-        result = gp.predict(candles_per_tf)
+        gp, candles_per_tf, daily_volatility_df = _build_global_portfolio(tickers=["ES", "NQ"])
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
         assert not result["position_fraction"].isna().any(), (
             "position_fraction contains NaN values"
         )
 
     def test_no_nan_in_forecast_score(self):
-        gp, candles_per_tf = _build_global_portfolio(tickers=["ES", "NQ"])
-        result = gp.predict(candles_per_tf)
+        gp, candles_per_tf, daily_volatility_df = _build_global_portfolio(tickers=["ES", "NQ"])
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
         assert not result["forecast_score"].isna().any()
 
 
@@ -203,22 +214,22 @@ class TestTwoTFOutputSchema:
     """Two-TF GlobalPortfolio must produce correct schema with no NaN."""
 
     def test_two_tf_columns(self):
-        gp, candles_per_tf = _build_global_portfolio(tickers=["ES", "NQ", "CL"], n_tfs=2)
-        result = gp.predict(candles_per_tf)
+        gp, candles_per_tf, daily_volatility_df = _build_global_portfolio(tickers=["ES", "NQ", "CL"], n_tfs=2)
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
         assert set(result.columns) == {"ticker", "datetime", "forecast_score", "position_fraction"}
 
     def test_two_tf_no_nan(self):
-        gp, candles_per_tf = _build_global_portfolio(tickers=["ES", "NQ", "CL"], n_tfs=2)
-        result = gp.predict(candles_per_tf)
+        gp, candles_per_tf, daily_volatility_df = _build_global_portfolio(tickers=["ES", "NQ", "CL"], n_tfs=2)
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
         assert not result["position_fraction"].isna().any()
         assert not result["forecast_score"].isna().any()
 
     def test_two_tf_position_fraction_bounded(self):
         max_pos = 2.0
-        gp, candles_per_tf = _build_global_portfolio(
+        gp, candles_per_tf, daily_volatility_df = _build_global_portfolio(
             tickers=["ES", "NQ"], n_tfs=2, max_position_pct=max_pos
         )
-        result = gp.predict(candles_per_tf)
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
         assert (result["position_fraction"].abs() <= max_pos + 1e-9).all(), (
             "position_fraction exceeds max_position_pct"
         )
@@ -229,13 +240,13 @@ class TestPositionFractionBounds:
 
     @pytest.mark.parametrize("max_pos", [0.5, 1.0, 2.0, 5.0])
     def test_position_clipped(self, max_pos: float):
-        gp, candles_per_tf = _build_global_portfolio(
+        gp, candles_per_tf, daily_volatility_df = _build_global_portfolio(
             tickers=["ES", "NQ", "GC"],
             n_tfs=1,
             score=10.0,  # large score to stress the clip
             max_position_pct=max_pos,
         )
-        result = gp.predict(candles_per_tf)
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
         assert (result["position_fraction"].abs() <= max_pos + 1e-9).all()
 
 
@@ -243,23 +254,24 @@ class TestFittedState:
     """is_fitted_ must be True after fit() and False before."""
 
     def test_is_fitted_after_fit(self):
-        gp, _ = _build_global_portfolio()
+        gp, _, _ = _build_global_portfolio()
         assert gp.is_fitted_ is True
 
     def test_not_fitted_raises(self):
         tf_p = _MockTFPortfolio(TimeFrame.D, ["ES"])
         gp = GlobalPortfolio(tf_portfolios=[tf_p])
         candles_per_tf = {TimeFrame.D: _make_candles_stub(["ES"])}
+        daily_volatility_df = _make_daily_volatility_stub(["ES"])
         with pytest.raises(RuntimeError, match="fitted"):
-            gp.predict(candles_per_tf)
+            gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
 
     def test_global_idm_set_after_fit(self):
-        gp, _ = _build_global_portfolio(tickers=["ES", "NQ"])
+        gp, _, _ = _build_global_portfolio(tickers=["ES", "NQ"])
         assert gp.global_idm_ is not None
         assert gp.global_idm_ > 0
 
     def test_instruments_set_after_fit(self):
-        gp, _ = _build_global_portfolio(tickers=["ES", "NQ", "GC"])
+        gp, _, _ = _build_global_portfolio(tickers=["ES", "NQ", "GC"])
         assert gp.instruments_ is not None
         assert set(gp.instruments_) == {"ES", "NQ", "GC"}
 
@@ -269,11 +281,11 @@ class TestIDMCap:
 
     def test_idm_capped(self):
         idm_max = 1.2
-        gp, _ = _build_global_portfolio(tickers=["ES", "NQ"], idm_max=idm_max)
+        gp, _, _ = _build_global_portfolio(tickers=["ES", "NQ"], idm_max=idm_max)
         assert gp.global_idm_ <= idm_max + 1e-9
 
     def test_idm_at_least_one_for_single_instrument(self):
-        gp, _ = _build_global_portfolio(tickers=["ES"])
+        gp, _, _ = _build_global_portfolio(tickers=["ES"])
         # Single instrument → IDM = 1.0 (no diversification)
         assert gp.global_idm_ == pytest.approx(1.0)
 
@@ -303,7 +315,7 @@ class TestDiagnostics:
     """get_diagnostics() must return expected keys."""
 
     def test_diagnostics_keys(self):
-        gp, _ = _build_global_portfolio()
+        gp, _, _ = _build_global_portfolio()
         diag = gp.get_diagnostics()
         expected_keys = {
             "is_fitted",
@@ -318,7 +330,7 @@ class TestDiagnostics:
         assert expected_keys.issubset(set(diag.keys()))
 
     def test_diagnostics_fitted_flag(self):
-        gp, _ = _build_global_portfolio()
+        gp, _, _ = _build_global_portfolio()
         assert gp.get_diagnostics()["is_fitted"] is True
 
 
@@ -340,8 +352,9 @@ class TestInstrumentWeights:
         dates = _make_dates(20)
         instrument_returns = _make_instrument_returns(tickers, dates)
         candles_per_tf = {TimeFrame.D: _make_candles_stub(tickers, 20)}
-        gp.fit(candles_per_tf, instrument_returns)
-        result = gp.predict(candles_per_tf)
+        daily_volatility_df = _make_daily_volatility_stub(tickers, 20)
+        gp.fit(candles_per_tf, instrument_returns, daily_volatility_df=daily_volatility_df)
+        result = gp.predict(candles_per_tf, daily_volatility_df=daily_volatility_df)
 
         assert not result.empty
         assert not result["position_fraction"].isna().any()

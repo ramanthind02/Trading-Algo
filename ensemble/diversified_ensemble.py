@@ -16,6 +16,9 @@ import numpy as np
 import pandas as pd
 
 import utils.core.helpers as helpers
+from utils.compute.daily_ewsd_volatility import (
+    align_daily_ewsd_volatility_to_candles,
+)
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.models import Candle
 from .ensemble_utils import (
@@ -113,7 +116,6 @@ class DiversifiedEnsemble:
         self.instrument_weights_ = None
         self.n_tickers_ = None
         self.is_fitted_ = False
-        self.fitted_ticker_volatility_: Optional[Dict[str, float]] = None
         
         # Initialize from control file or programmatically from base_models + required_columns
         if control_file_path is not None:
@@ -560,7 +562,7 @@ class DiversifiedEnsemble:
         instrument_weights : dict, optional
             Custom instrument weights mapping ticker -> weight
         normalization_data : pd.DataFrame, optional
-            Normalization data (EWSD/ATR) for each feature column.
+            Normalization data (EWSD) for each feature column.
             Columns should match feature columns in X.
             
         Returns
@@ -1005,7 +1007,6 @@ class DiversifiedEnsemble:
         # Set target volatility if not already set
         if self.target_volatility_ is None:
             self.target_volatility_ = self.target_volatility
-        self.fitted_ticker_volatility_ = self._calculate_volatility_from_candles(filtered_candles)
 
         # Only mark fitted when at least one model is viable (already ensured by at_least_one_fit_viable above)
         self.is_fitted_ = True
@@ -1101,71 +1102,10 @@ class DiversifiedEnsemble:
         
         return aggregated_returns
     
-    def _calculate_volatility_from_candles(
-        self,
-        candles_df: pd.DataFrame
-    ) -> Dict[str, float]:
-        """
-        Calculate blended volatility from close prices using a fast, array-based EWSD approximation.
-
-        Matches Portfolio's vectorized approach: group by ticker, compute EWSD from closes,
-        with fallback to simple annualized std on failure.
-        
-        Parameters
-        ----------
-        candles_df : pd.DataFrame
-            Candles DataFrame with columns: datetime, ticker, close
-            
-        Returns
-        -------
-        Dict[str, float]
-            Mapping from ticker to annualized blended volatility (as decimal, not percentage)
-        """
-        from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
-
-        volatility_dict: Dict[str, float] = {}
-        if candles_df.empty or 'ticker' not in candles_df.columns or 'close' not in candles_df.columns:
-            return volatility_dict
-
-        df = _normalize_candles_datetime_column(candles_df)
-        df['datetime'] = pd.to_datetime(df['datetime'])
-
-        for ticker_name, ticker_candles in df.groupby('ticker'):
-            ticker_candles = ticker_candles.sort_values('datetime')
-            closes = ticker_candles['close'].to_numpy(dtype=np.float64)
-            if closes.size < 2:
-                volatility_dict[ticker_name] = 0.20
-                continue
-            try:
-                # Use simple annualized std as primary estimator for consistency
-                # with synthetic/unit-test data generation assumptions.
-                returns = np.diff(np.log(closes))
-                vol = float(np.std(returns, ddof=1) * np.sqrt(252.0)) if returns.size > 1 else np.nan
-            except Exception as exc:
-                vol = np.nan
-            if not np.isfinite(vol) or vol <= 0.0:
-                try:
-                    vol = compute_ewsd_annualized_from_closes(closes)
-                except Exception:
-                    vol = np.nan
-                if not np.isfinite(vol) or vol <= 0.0:
-                    ticker_candles = ticker_candles.copy()
-                    ticker_candles['returns'] = ticker_candles['close'].pct_change()
-                    daily_vol = float(ticker_candles['returns'].std())
-                    annual_vol = daily_vol * np.sqrt(252.0)
-                    vol = annual_vol if np.isfinite(annual_vol) and annual_vol > 0.0 else 0.20
-                    logger.warning(
-                        "Volatility estimation failed for ticker '%s'. Using simple fallback.",
-                        ticker_name,
-                    )
-            volatility_dict[ticker_name] = float(vol)
-
-        return volatility_dict
-    
     def predict_from_candles(
         self,
         candles_df: pd.DataFrame,
-        volatility: Optional[Dict[str, float]] = None,
+        daily_volatility_df: pd.DataFrame,
         return_base_model_predictions: bool = False,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None
@@ -1186,8 +1126,9 @@ class DiversifiedEnsemble:
         ----------
         candles_df : pd.DataFrame
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
-        volatility : Dict[str, float], optional
-            Volatility per ticker (annualized). If None, calculated from candles.
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility with required columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
         return_base_model_predictions : bool, default=False
             If True, return base model-level predictions in result dict
         start_date : datetime, optional
@@ -1210,22 +1151,27 @@ class DiversifiedEnsemble:
                 "Ensemble must be fitted before calling predict_from_candles(). "
                 "Call fit_from_candles() or fit() first."
             )
+
+        if daily_volatility_df is None:
+            raise ValueError(
+                "daily_volatility_df is required for predict_from_candles(). "
+                "Expected columns: ['datetime', 'ticker', 'ewsd_annual_vol']."
+            )
         
         # Ensure 'datetime' is only a column (not also an index level) so merge/groupby are unambiguous
         candles_df = _normalize_candles_datetime_column(candles_df)
-        
-        # Calculate or use provided volatility
-        if volatility is None:
-            volatility = dict(self.fitted_ticker_volatility_ or {})
-            missing_tickers = [
-                t for t in candles_df['ticker'].unique()
-                if t not in volatility
-            ]
-            if missing_tickers:
-                estimated = self._calculate_volatility_from_candles(candles_df)
-                for ticker_name in missing_tickers:
-                    if ticker_name in estimated:
-                        volatility[ticker_name] = estimated[ticker_name]
+
+        aligned_volatility = align_daily_ewsd_volatility_to_candles(
+            daily_volatility_df=daily_volatility_df,
+            candles_df=candles_df,
+        )
+        aligned_volatility["datetime"] = pd.to_datetime(aligned_volatility["datetime"]).dt.floor("s")
+        aligned_volatility["ticker"] = aligned_volatility["ticker"].map(_normalize_ticker_name)
+        vol_lookup = (
+            aligned_volatility
+            .drop_duplicates(subset=["ticker", "datetime"], keep="last")
+            .set_index(["ticker", "datetime"])["ewsd_annual_vol"]
+        )
         
         all_predictions = []
         base_model_predictions_dict = {}
@@ -1240,9 +1186,6 @@ class DiversifiedEnsemble:
             except (KeyError, AttributeError):
                 logger.warning(f"Unknown ticker '{ticker_name}', skipping")
                 continue
-            
-            # Get volatility for this ticker
-            ticker_vol = volatility.get(ticker_name, 0.20)
             
             # Get predictions from each base model (BaseModel.predict() handles caching internally)
             ticker_predictions = []
@@ -1312,6 +1255,23 @@ class DiversifiedEnsemble:
                         )
                         continue
                     
+                    pred_datetimes = pd.to_datetime(pred.index).floor("s")
+                    vol_keys = pd.MultiIndex.from_arrays(
+                        [
+                            np.repeat(_normalize_ticker_name(ticker_name), len(pred_datetimes)),
+                            pred_datetimes,
+                        ]
+                    )
+                    aligned_pred_vol = vol_lookup.reindex(vol_keys)
+                    if aligned_pred_vol.isna().any():
+                        missing_dt = pred_datetimes[int(np.where(aligned_pred_vol.isna().to_numpy())[0][0])]
+                        raise ValueError(
+                            "Missing aligned daily EWSD volatility for "
+                            f"ticker '{ticker_name}' at datetime {missing_dt}."
+                        )
+
+                    vol_arr = np.maximum(aligned_pred_vol.to_numpy(dtype=float), 1e-8)
+
                     # Apply volatility scaling per base model
                     # Formula: F_i = (tau / (sigma * sqrt(h_i))) * X_i
                     # Note: Instrument weights are applied at Portfolio layer, not here
@@ -1321,17 +1281,17 @@ class DiversifiedEnsemble:
                     
                     # Calculate volatility-adjusted forecast
                     # X_i is the binary signal (pred.values)
-                    forecast_if_active = self.target_volatility_ / (ticker_vol * sqrt_h_i)
+                    forecast_if_active = self.target_volatility_ / (vol_arr * sqrt_h_i)
                     if is_buy_hold_model:
                         if self.unique_tickers_ is not None and len(self.unique_tickers_) > 1:
                             forecast_if_active = 1.0
-                        elif abs(forecast_if_active - 1.0) < 0.25:
+                        elif np.all(np.abs(forecast_if_active - 1.0) < 0.25):
                             # Stabilize around the analytical buy-hold case where tau ~= sigma.
                             forecast_if_active = 1.0
                     
                     
                     # Cap forecast at 2.0 (per spec: max position is 2.0)
-                    forecast_if_active = min(forecast_if_active, 2.0)
+                    forecast_if_active = np.minimum(forecast_if_active, 2.0)
                     
                     # Apply signal: forecast_if_active if signal=1, else 0
                     volatility_adjusted_forecast = forecast_if_active * pred.values
@@ -1510,7 +1470,7 @@ class DiversifiedEnsemble:
             - np.ndarray: Volatility for each sample
             - Dict[str, float]: Mapping from ticker -> volatility
         normalization_data : pd.DataFrame, optional
-            Normalization data (EWSD/ATR) for each feature column.
+            Normalization data (EWSD) for each feature column.
             Columns should match feature columns in X.
             
         Returns

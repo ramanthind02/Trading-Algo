@@ -13,6 +13,7 @@ from ensemble.portfolio import Portfolio
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from feature_research.config import FeatureType
 from feature_research.core_helpers import combo_key
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.base_models.feature_base_model import BaseModel
@@ -291,12 +292,13 @@ def build_research_portfolio(
     finally:
         control_file.unlink(missing_ok=True)
 
-    weight_layer = WeightLayer(config=weight_layer_config) if weight_layer_config is not None else None
+    if weight_layer_config is not None:
+        # Validate user-provided config even though TFPortfolio no longer owns weighting.
+        WeightLayer(config=weight_layer_config)
     return Portfolio(
         ensembles=[ensemble],
         trading_timeframe=timeframe,
         target_volatility=target_volatility,
-        weight_layer=weight_layer,
     )
 
 
@@ -477,6 +479,9 @@ def evaluate_fold_portfolio(
     test_ready = ensure_portfolio_candle_columns(test_candles, timeframe)
     if train_ready.empty or test_ready.empty:
         raise ValueError("train_candles and test_candles must contain rows")
+    daily_volatility_df = compute_daily_ewsd_volatility(
+        pd.concat([train_ready, test_ready], ignore_index=True)
+    )
 
     train_dt = pd.to_datetime(train_ready["datetime"], utc=False)
     test_dt = pd.to_datetime(test_ready["datetime"], utc=False)
@@ -529,7 +534,9 @@ def evaluate_fold_portfolio(
         portfolio.fit_from_candles(train_ready, target_data=train_target)
         ensemble._member_feature_data = {model_name: test_features_df}
         predictions = portfolio.predict_from_candles(
-            test_ready, return_base_model_predictions=True
+            test_ready,
+            daily_volatility_df=daily_volatility_df,
+            return_base_model_predictions=True,
         )
         portfolio_predictions = (
             predictions["portfolio"] if isinstance(predictions, dict) else predictions
@@ -586,7 +593,10 @@ def evaluate_fold_portfolio(
         feature_type=feature_type,
     )
     portfolio.fit_from_candles(train_ready, target_data=train_target)
-    predictions = portfolio.predict_from_candles(test_ready)
+    predictions = portfolio.predict_from_candles(
+        test_ready,
+        daily_volatility_df=daily_volatility_df,
+    )
     portfolio_predictions = (
         predictions["portfolio"] if isinstance(predictions, dict) else predictions
     )

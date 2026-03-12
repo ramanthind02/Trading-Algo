@@ -395,7 +395,7 @@ def load_features_for_combo(
                 raise ValueError(
                     f"load_features_for_combo received target_col='{target_col_name}' with "
                     f"{unique_tickers} tickers. Raw return targets must not be mixed "
-                    "across tickers. Use 'log_return_ewsd' or 'log_return_atr'."
+                    "across tickers. Use 'log_return_ewsd'."
                 )
 
     feature_series = aligned["feature"].copy()

@@ -13,6 +13,9 @@ import numpy as np
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from pathlib import Path
+
+import pandas as pd
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,6 +28,7 @@ from deployment.mt5_data_connector import ForecastMT5DataConnector
 from deployment.telegram_notifier import TelegramNotifier
 from ensemble.portfolio import Portfolio
 from feature_extraction.ml_manager import MLManager
+from utils.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
 
 logger = get_logger(__name__)
 NY_TZ = ZoneInfo("America/New_York")
@@ -75,6 +79,9 @@ class ForecastServer:
         # Configuration
         self.tickers = [Ticker.EU, Ticker.BP, Ticker.ES, Ticker.NQ]
         self.timeframes = [TimeFrame.D, TimeFrame.W]  # Daily and Weekly
+        self.volatility_service = DailyEWSDVolatilityService(
+            store_dir=str(Path(__file__).resolve().parent / "state" / "ewsd_volatility")
+        )
         
         # Initialize portfolios and MLManagers
         self._setup_ensembles()
@@ -217,6 +224,9 @@ class ForecastServer:
         # Get latest candles and update MLManagers
         for ticker in self.tickers:
             try:
+                if timeframe != TimeFrame.D:
+                    self._refresh_daily_volatility(ticker)
+
                 ml_manager_key = (ticker, timeframe)
                 
                 if ml_manager_key not in self.ml_managers:
@@ -291,6 +301,43 @@ class ForecastServer:
             ml_manager.add_candle(candle, timeframe)
             
             logger.debug(f"Added candle to {ticker.name} {timeframe.name}: {candle.datetime}")
+
+        if timeframe == TimeFrame.D:
+            try:
+                self.volatility_service.update_incremental(
+                    pd.DataFrame(
+                        [
+                            {
+                                "datetime": candle.datetime,
+                                "ticker": ticker.name,
+                                "close": candle.close,
+                            }
+                        ]
+                    )
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed updating daily EWSD volatility for %s: %s",
+                    ticker.name,
+                    exc,
+                )
+
+    def _refresh_daily_volatility(self, ticker: Ticker) -> None:
+        """Refresh incremental daily EWSD state for a ticker using latest daily candle."""
+        daily_candle = self.mt5_connector.get_latest_candle(ticker.value, TimeFrame.D)
+        if daily_candle is None:
+            return
+        self.volatility_service.update_incremental(
+            pd.DataFrame(
+                [
+                    {
+                        "datetime": daily_candle.datetime,
+                        "ticker": ticker.name,
+                        "close": daily_candle.close,
+                    }
+                ]
+            )
+        )
     
     def _generate_portfolio_forecasts(self, timeframe: TimeFrame) -> Dict[str, float]:
         """
@@ -398,7 +445,6 @@ class ForecastServer:
             (ticker_series, volatility_series)
         """
         import pandas as pd
-        import numpy as np
         
         # Create ticker series - use ticker value
         ticker_value = ticker.value
@@ -410,18 +456,15 @@ class ForecastServer:
         logger.info(f"   n_samples = {n_samples}")
         logger.info(f"   ticker_series = {ticker_series.tolist()}")
         
-        # Calculate volatility from recent candles
-        candles = self.candle_buffers.get(ml_manager_key, [])
-        
-        if len(candles) >= 20:
-            returns = []
-            for i in range(1, min(21, len(candles))):
-                ret = np.log(candles[-i].close / candles[-i-1].close)
-                returns.append(ret)
-            
-            volatility = np.std(returns) * np.sqrt(252)  # Annualized
-        else:
-            volatility = 0.15  # Default to 15%
+        _ = ml_manager_key
+        latest_map = self.volatility_service.latest_volatility_map()
+        ticker_key = ticker.name
+        if ticker_key not in latest_map:
+            raise ValueError(
+                f"Missing daily EWSD volatility for ticker {ticker_key}. "
+                "Daily volatility must be available before forecasting."
+            )
+        volatility = float(latest_map[ticker_key])
         
         volatility_series = pd.Series([volatility] * n_samples)
         

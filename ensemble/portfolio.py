@@ -25,7 +25,6 @@ import numpy as np
 import pandas as pd
 
 from utils.core.enums import TimeFrame
-from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 from .ensemble_utils import normalize_candles_datetime_column, normalize_ticker_key
 from .weight_layer import BaseWeightLayer, WeightLayer
 
@@ -156,7 +155,10 @@ class TFPortfolio:
     ...     max_position_pct=2.0
     ... )
     >>> portfolio.fit_from_candles(candles_df, target_data)
-    >>> positions = portfolio.predict_from_candles(test_candles)
+    >>> positions = portfolio.predict_from_candles(
+    ...     test_candles,
+    ...     daily_volatility_df=daily_volatility_df,
+    ... )
     >>>
     """
     
@@ -664,6 +666,7 @@ class TFPortfolio:
     def predict_from_candles_raw(
         self,
         candles_df: pd.DataFrame,
+        daily_volatility_df: pd.DataFrame,
         return_ensemble_predictions: bool = False,
         return_base_model_predictions: bool = False,
         start_date=None,
@@ -681,6 +684,9 @@ class TFPortfolio:
         candles_df : pd.DataFrame
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
             Should contain candles for the trading_timeframe of this portfolio
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility DataFrame with columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
         return_ensemble_predictions : bool, default=False
             If True, return ensemble-level predictions in result dict
         return_base_model_predictions : bool, default=False
@@ -724,6 +730,7 @@ class TFPortfolio:
         # Delegate to predict_from_candles to collect the intra-TF pipeline result
         full_result = self.predict_from_candles(
             candles_df,
+            daily_volatility_df=daily_volatility_df,
             return_ensemble_predictions=True,
             return_base_model_predictions=return_base_model_predictions,
             start_date=start_date,
@@ -761,6 +768,7 @@ class TFPortfolio:
     def predict_base_model_vectors_from_candles(
         self,
         candles_df: pd.DataFrame,
+        daily_volatility_df: pd.DataFrame,
         start_date=None,
         end_date=None,
     ) -> pd.DataFrame:
@@ -774,6 +782,11 @@ class TFPortfolio:
         """
         if not self.ensembles:
             raise ValueError("No ensembles provided. Cannot predict without ensembles.")
+        if daily_volatility_df is None:
+            raise ValueError(
+                "daily_volatility_df is required for predict_base_model_vectors_from_candles(). "
+                "Expected columns: ['datetime', 'ticker', 'ewsd_annual_vol']."
+            )
 
         tf_candles = candles_df[candles_df["timeframe"] == self.trading_timeframe].copy()
         if tf_candles.empty:
@@ -788,7 +801,6 @@ class TFPortfolio:
                 ]
             )
 
-        volatility = self._calculate_volatility_from_candles(tf_candles)
         forecast_vectors: List[pd.DataFrame] = []
 
         for ensemble_idx, ensemble in enumerate(self.ensembles):
@@ -796,14 +808,9 @@ class TFPortfolio:
                 continue
 
             try:
-                ensemble_volatility = (
-                    None
-                    if getattr(ensemble, "fitted_ticker_volatility_", None)
-                    else volatility
-                )
                 ensemble_result = ensemble.predict_from_candles(
                     tf_candles,
-                    volatility=ensemble_volatility,
+                    daily_volatility_df=daily_volatility_df,
                     return_base_model_predictions=True,
                     start_date=start_date,
                     end_date=end_date,
@@ -1080,6 +1087,7 @@ class TFPortfolio:
     def predict_from_candles(
         self,
         candles_df: pd.DataFrame,
+        daily_volatility_df: pd.DataFrame,
         return_ensemble_predictions: bool = False,
         return_base_model_predictions: bool = False,
         start_date=None,
@@ -1100,6 +1108,9 @@ class TFPortfolio:
         candles_df : pd.DataFrame
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
             Should contain candles for the trading_timeframe of this portfolio
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility DataFrame with columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
         return_ensemble_predictions : bool, default=False
             If True, return ensemble-level predictions in result dict
         return_base_model_predictions : bool, default=False
@@ -1122,6 +1133,12 @@ class TFPortfolio:
         """
         if not self.ensembles:
             raise ValueError("No ensembles provided. Cannot predict without ensembles.")
+
+        if daily_volatility_df is None:
+            raise ValueError(
+                "daily_volatility_df is required for predict_from_candles(). "
+                "Expected columns: ['datetime', 'ticker', 'ewsd_annual_vol']."
+            )
         
         # Filter candles for this portfolio's trading timeframe
         tf_candles = candles_df[candles_df['timeframe'] == self.trading_timeframe].copy()
@@ -1137,9 +1154,6 @@ class TFPortfolio:
                 return result
             return empty_df
         
-        # Calculate volatility (from candles) - needed for all predictions
-        volatility = self._calculate_volatility_from_candles(tf_candles)
-        
         # Storage for all predictions (always compute everything for caching)
         forecast_vectors = []  # For WeightLayer.combine()
         ensemble_predictions_dict = {}
@@ -1152,14 +1166,9 @@ class TFPortfolio:
                 return None, None
             
             try:
-                ensemble_volatility = (
-                    None
-                    if getattr(ensemble, "fitted_ticker_volatility_", None)
-                    else volatility
-                )
                 ensemble_result = ensemble.predict_from_candles(
                     tf_candles,
-                    volatility=ensemble_volatility,
+                    daily_volatility_df=daily_volatility_df,
                     return_base_model_predictions=True,
                     start_date=start_date,
                     end_date=end_date
@@ -1215,7 +1224,7 @@ class TFPortfolio:
                     full_model_name = f"{ensemble_name}::{model_name}"
                     # Convert to position fractions (vectorized - O(n+m) complexity)
                     base_model_positions = self._apply_risk_management_to_forecasts(
-                        model_pred, volatility, tf_candles
+                        model_pred, tf_candles
                     )
                     base_model_predictions_dict[full_model_name] = base_model_positions
                 
@@ -1225,7 +1234,7 @@ class TFPortfolio:
                     
                     # Convert to position fractions (vectorized - O(n+m) complexity)
                     ensemble_positions = self._apply_risk_management_to_forecasts(
-                        ensemble_pred, volatility, tf_candles
+                        ensemble_pred, tf_candles
                     )
                     
                     ensemble_predictions_dict[ensemble_name] = ensemble_positions
@@ -1235,7 +1244,7 @@ class TFPortfolio:
                 if ensemble_pred is not None:
                     ensemble_name = f"ensemble_{ensemble_idx}"
                     ensemble_positions = self._apply_risk_management_to_forecasts(
-                        ensemble_pred, volatility, tf_candles
+                        ensemble_pred, tf_candles
                     )
                     ensemble_predictions_dict[ensemble_name] = ensemble_positions
         
@@ -1255,7 +1264,7 @@ class TFPortfolio:
         
         # Apply risk management for portfolio-level
         positions_df = self._apply_risk_management(
-            forecast_scores_df, volatility, tf_candles
+            forecast_scores_df, tf_candles
         )
         
         full_result = {
@@ -1393,74 +1402,6 @@ class TFPortfolio:
         # This method is only used as fallback when WeightLayer is not fitted
         
         return aggregated
-    
-    def _calculate_volatility_from_candles(
-        self,
-        candles_df: pd.DataFrame
-    ) -> Dict[str, float]:
-        """
-        Calculate blended volatility from close prices using a fast, array-based EWSD approximation.
-
-        This replaces the earlier per-candle EWSDNode loop with a vectorized
-        implementation that operates directly on NumPy arrays. Conceptually it
-        matches Carver's approach:
-
-        - 70% short-run EWMA-32 of squared returns
-        - 30% long-run historical standard deviation (10-year window)
-        - Annualized by multiplying daily sigma by 16
-
-        Parameters
-        ----------
-        candles_df : pd.DataFrame
-            Candles DataFrame with columns: datetime, ticker, close
-
-        Returns
-        -------
-        Dict[str, float]
-            Mapping from ticker to annualized blended volatility (as decimal, not percentage)
-        """
-        volatility_dict: Dict[str, float] = {}
-
-        if candles_df.empty or 'ticker' not in candles_df.columns or 'close' not in candles_df.columns:
-            return volatility_dict
-
-        df = _normalize_candles_datetime_column(candles_df)
-        df['datetime'] = pd.to_datetime(df['datetime'])
-
-        for ticker_name, ticker_candles in df.groupby('ticker'):
-            ticker_candles = ticker_candles.sort_values('datetime')
-
-            closes = ticker_candles['close'].to_numpy(dtype=np.float64)
-            if closes.size < 2:
-                volatility_dict[ticker_name] = 0.20
-                continue
-
-            try:
-                vol = compute_ewsd_annualized_from_closes(closes)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning(
-                    "Error computing EWSD volatility for ticker '%s': %s. "
-                    "Falling back to simple annualized std.",
-                    ticker_name,
-                    exc,
-                )
-                vol = np.nan
-
-            if not np.isfinite(vol) or vol <= 0.0:
-                ticker_candles = ticker_candles.copy()
-                ticker_candles['returns'] = ticker_candles['close'].pct_change()
-                daily_vol = float(ticker_candles['returns'].std())
-                annual_vol = daily_vol * np.sqrt(252.0)
-                vol = annual_vol if np.isfinite(annual_vol) and annual_vol > 0.0 else 0.20
-                logger.warning(
-                    "EWSD calculation produced invalid value for ticker '%s'. "
-                    "Using simple volatility calculation as fallback.",
-                    ticker_name,
-                )
-
-            volatility_dict[ticker_name] = float(vol)
-
-        return volatility_dict
     
     def _calculate_returns_from_candles(
         self,
@@ -1685,7 +1626,6 @@ class TFPortfolio:
     def _apply_risk_management_to_forecasts(
         self,
         forecasts_df: pd.DataFrame,
-        volatility: Dict[str, float],
         candles_df: pd.DataFrame
     ) -> pd.DataFrame:
         """
@@ -1699,8 +1639,6 @@ class TFPortfolio:
         forecasts_df : pd.DataFrame
             Forecast scores with columns: ticker, datetime, forecast_score
             (already volatility-adjusted from Ensemble)
-        volatility : Dict[str, float]
-            Volatility per ticker (used for alignment, not scaling)
         candles_df : pd.DataFrame
             Candles DataFrame for alignment
             
@@ -1745,7 +1683,6 @@ class TFPortfolio:
     def _apply_risk_management(
         self,
         forecast_scores_df: pd.DataFrame,
-        volatility: Dict[str, float],
         candles_df: pd.DataFrame
     ) -> pd.DataFrame:
         """
@@ -1759,8 +1696,6 @@ class TFPortfolio:
         forecast_scores_df : pd.DataFrame
             Forecast scores with columns: ticker, datetime, forecast_score
             (already volatility-adjusted from Ensemble)
-        volatility : Dict[str, float]
-            Volatility per ticker (used for alignment, not scaling)
         candles_df : pd.DataFrame
             Candles DataFrame for alignment
             
@@ -1770,7 +1705,7 @@ class TFPortfolio:
             Position fractions with columns: ticker, datetime, forecast_score, position_fraction
         """
         # Delegate to vectorized implementation (same logic)
-        return self._apply_risk_management_to_forecasts(forecast_scores_df, volatility, candles_df)
+        return self._apply_risk_management_to_forecasts(forecast_scores_df, candles_df)
 
     def get_diagnostics(self) -> Dict:
         """Return a snapshot of fitted state for inspection."""
@@ -2487,6 +2422,7 @@ class GlobalPortfolio:
         self,
         candles_per_tf: Dict[TimeFrame, pd.DataFrame],
         instrument_returns: pd.DataFrame,
+        daily_volatility_df: pd.DataFrame,
     ) -> "GlobalPortfolio":
         """Fit all TFPortfolios, WeightLayer, and global IDM.
 
@@ -2497,11 +2433,20 @@ class GlobalPortfolio:
             least the columns expected by ``TFPortfolio.fit_from_candles``.
         instrument_returns : pd.DataFrame
             Daily instrument returns; ``columns`` = tickers.
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility DataFrame with columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
 
         Returns
         -------
         self
         """
+        if daily_volatility_df is None:
+            raise ValueError(
+                "daily_volatility_df is required for GlobalPortfolio.fit(). "
+                "Expected columns: ['datetime', 'ticker', 'ewsd_annual_vol']."
+            )
+
         # Step 1 — fit each TFPortfolio
         for tf_p in self.tf_portfolios:
             tf_candles = candles_per_tf.get(tf_p.trading_timeframe)
@@ -2515,7 +2460,10 @@ class GlobalPortfolio:
         tf_forecast_streams: Dict[TimeFrame, pd.DataFrame] = {}
         for tf_p in self.tf_portfolios:
             tf_candles = candles_per_tf[tf_p.trading_timeframe]
-            vectors = tf_p.predict_base_model_vectors_from_candles(tf_candles)
+            vectors = tf_p.predict_base_model_vectors_from_candles(
+                tf_candles,
+                daily_volatility_df=daily_volatility_df,
+            )
             if vectors.empty:
                 continue
             tf_forecast_streams[tf_p.trading_timeframe] = vectors
@@ -2587,6 +2535,7 @@ class GlobalPortfolio:
     def predict(
         self,
         candles_per_tf: Dict[TimeFrame, pd.DataFrame],
+        daily_volatility_df: pd.DataFrame,
     ) -> pd.DataFrame:
         """Generate global position fractions for all instruments.
 
@@ -2594,6 +2543,9 @@ class GlobalPortfolio:
         ----------
         candles_per_tf : dict mapping TimeFrame → DataFrame
             Current candles for each TF.
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility DataFrame with columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
 
         Returns
         -------
@@ -2605,6 +2557,11 @@ class GlobalPortfolio:
                 "GlobalPortfolio must be fitted before calling predict(). "
                 "Call fit() first."
             )
+        if daily_volatility_df is None:
+            raise ValueError(
+                "daily_volatility_df is required for GlobalPortfolio.predict(). "
+                "Expected columns: ['datetime', 'ticker', 'ewsd_annual_vol']."
+            )
 
         # Step 1 — collect per-TF forecast streams (pre-IDM, instrument-weighted)
         tf_forecast_streams: Dict[TimeFrame, pd.DataFrame] = {}
@@ -2614,7 +2571,10 @@ class GlobalPortfolio:
                 raise ValueError(
                     f"No candles provided for timeframe {tf_p.trading_timeframe.name}"
                 )
-            vectors = tf_p.predict_base_model_vectors_from_candles(tf_candles)
+            vectors = tf_p.predict_base_model_vectors_from_candles(
+                tf_candles,
+                daily_volatility_df=daily_volatility_df,
+            )
             if vectors.empty:
                 continue
             tf_forecast_streams[tf_p.trading_timeframe] = vectors

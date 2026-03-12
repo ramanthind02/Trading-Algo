@@ -74,7 +74,7 @@ class FeatureExplorer:
         Columns: feature columns + optional 'ticker' column
     targets_df : pd.DataFrame
         Targets dataframe from FeatureExtractor
-        Columns: raw_return, log_return, log_return_atr, log_return_ewsd, optional 'ticker'
+        Columns: raw_return, log_return, log_return_ewsd, optional 'ticker'
     metadata : Optional[Dict[str, Any]], default=None
         Optional metadata about the features
         

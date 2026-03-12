@@ -103,7 +103,7 @@ def test_extract_features_single_ticker_uses_requested_timeframe_for_loading_and
     assert not targets_df.empty
 
 
-def test_extract_features_with_forward_returns_uses_timeframe_scaled_aux_params(
+def test_extract_features_with_forward_returns_uses_timeframe_scaled_ewsd_aux_params(
     monkeypatch: Any,
 ) -> None:
     captured_calls: list[tuple[str, dict[str, Any]]] = []
@@ -114,14 +114,6 @@ def test_extract_features_with_forward_returns_uses_timeframe_scaled_aux_params(
         params = kwargs["params"]
         captured_calls.append((module_name, params))
 
-        if module_name == "atr":
-            return (
-                pd.DataFrame(
-                    {"atr_signal_W_period_52": [0.2, 0.2, 0.2, 0.2], "ticker": ["ES"] * 4},
-                    index=idx,
-                ),
-                pd.DataFrame(),
-            )
         if module_name == "ewsd":
             return (
                 pd.DataFrame(
@@ -148,7 +140,6 @@ def test_extract_features_with_forward_returns_uses_timeframe_scaled_aux_params(
             {
                 "raw_return": [0.01, 0.01, 0.01, 0.01],
                 "log_return": [0.01, 0.01, 0.01, 0.01],
-                "log_return_atr": [0.05, 0.05, 0.05, 0.05],
                 "log_return_ewsd": [1.0, 1.0, 1.0, 1.0],
                 "ticker": ["ES"] * 4,
             },
@@ -167,11 +158,10 @@ def test_extract_features_with_forward_returns_uses_timeframe_scaled_aux_params(
     )
 
     call_map = {module_name: params for module_name, params in captured_calls}
-    assert call_map["atr"] == {"period": 52}
     assert call_map["ewsd"] == {"long_run_window": 520}
 
 
-def test_compute_forward_returns_accepts_non_252_atr_column() -> None:
+def test_compute_forward_returns_accepts_non_252_ewsd_column() -> None:
     idx = pd.date_range("2024-01-01", periods=4, freq="D", tz="UTC")
     candles_df = pd.DataFrame(
         {
@@ -185,7 +175,6 @@ def test_compute_forward_returns_accepts_non_252_atr_column() -> None:
     )
     features_df = pd.DataFrame(
         {
-            "atr_signal_W_period_52": [0.2, 0.2, 0.2, 0.2],
             "ewsd_signal_W_long_run_window_520": [1.0, 1.0, 1.0, 1.0],
             "ticker": ["ES"] * 4,
         },
@@ -194,6 +183,5 @@ def test_compute_forward_returns_accepts_non_252_atr_column() -> None:
 
     targets_df = feature_extractor.compute_forward_returns(candles_df, features_df=features_df)
 
-    assert "log_return_atr" in targets_df.columns
     assert "log_return_ewsd" in targets_df.columns
     assert not targets_df.empty

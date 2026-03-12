@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence, cast
 import pandas as pd
 
 from ensemble.weight_layer import WeightLayerConfig
-from feature_research.config import FeatureType
+from feature_research.config import BinningAnalysisConfig, FeatureType
 from feature_research.core_helpers import normalize_timeframe_from_bias_spec
 from utils.evaluation.walkforward.config import WalkforwardResearchConfig
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
@@ -221,14 +221,23 @@ def run_portfolio_simulation(
     single_fold = n_folds == 1
 
     # Use phase default strategy so portfolio build matches research_context (e.g. long_short for rule-based).
+    raw_binning_config = getattr(
+        typed_research_config,
+        "binning_params",
+        BinningAnalysisConfig(),
+    )
+    strategy_override = getattr(
+        typed_research_config,
+        "strategy",
+        getattr(raw_binning_config, "strategy", None),
+    )
     try:
-        binning_config = replace(
-            typed_research_config.binning_params,
-            strategy=typed_research_config.strategy,
-        )
+        if strategy_override is None:
+            raise TypeError("No strategy override available")
+        binning_config = replace(raw_binning_config, strategy=strategy_override)
     except (TypeError, AttributeError):
-        # Fallback when binning_params is not a dataclass (e.g. test mocks).
-        binning_config = typed_research_config.binning_params
+        # Fallback when binning config is not a dataclass (e.g. lightweight test mocks).
+        binning_config = raw_binning_config
 
     for fold_row in fold_rows:
         fold_id = int(cast(int, fold_row["fold_id"]))

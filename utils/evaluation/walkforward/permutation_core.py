@@ -13,6 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from feature_research.config import FeatureType
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 from utils.evaluation.walkforward.permutation_helpers import (
     _joblib_tqdm,
     aggregate_oos_metric_from_report,
@@ -407,6 +408,9 @@ def _compute_rule_based_oos_signal_by_fold(
 
         train_candles = candles_for_fitting.loc[(idx >= train_start) & (idx <= train_end)]
         test_candles = candles_for_fitting.loc[(idx >= test_start) & (idx <= test_end)]
+        daily_volatility_df = compute_daily_ewsd_volatility(
+            pd.concat([train_candles, test_candles], ignore_index=True)
+        )
 
         train_end_ts = pd.Timestamp(fold_row["train_end"])
         train_target = target_unique.loc[:train_end_ts].dropna()
@@ -421,7 +425,10 @@ def _compute_rule_based_oos_signal_by_fold(
                 feature_type=FeatureType.RULE_BASED,
             )
             portfolio.fit_from_candles(train_candles, target_data=train_target)
-            predictions = portfolio.predict_from_candles(test_candles)
+            predictions = portfolio.predict_from_candles(
+                test_candles,
+                daily_volatility_df=daily_volatility_df,
+            )
             portfolio_preds = predictions["portfolio"] if isinstance(predictions, dict) else predictions
             if "position_fraction" not in portfolio_preds.columns:
                 continue

@@ -98,8 +98,7 @@ class ContinuousBinningModel(BinningModelBase):
         target_data : pd.Series
             Prediction target aligned to ``feature_data``. When fitting on
             concatenated data from multiple tickers, this target must be
-            volatility-normalized (for example ``log_return_ewsd`` or
-            ``log_return_atr``). Raw return targets across tickers with
+            volatility-normalized (for example ``log_return_ewsd``). Raw return targets across tickers with
             different volatility will bias quantile bin selection.
         normalization_data : pd.Series | None
             Optional normalization series consumed by shared base behaviors.

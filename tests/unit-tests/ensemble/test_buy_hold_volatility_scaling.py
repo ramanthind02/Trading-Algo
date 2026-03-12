@@ -190,6 +190,20 @@ def create_test_candles(
     return pd.DataFrame(candles)
 
 
+def create_daily_volatility_df(
+    candles_df: pd.DataFrame,
+    annual_vol_by_ticker: Dict[str, float] | None = None,
+    default_annual_vol: float = 0.20,
+) -> pd.DataFrame:
+    """Build required daily EWSD volatility payload for prediction APIs."""
+    annual_vol_by_ticker = annual_vol_by_ticker or {}
+    out = candles_df[["datetime", "ticker"]].copy()
+    out["datetime"] = pd.to_datetime(out["datetime"]).dt.normalize()
+    out = out.drop_duplicates(subset=["ticker", "datetime"], keep="last")
+    out["ewsd_annual_vol"] = out["ticker"].map(annual_vol_by_ticker).fillna(default_annual_vol)
+    return out.sort_values(["ticker", "datetime"]).reset_index(drop=True)
+
+
 class TestBuyHoldVolatilityScaling:
     """Test buy/hold volatility scaling scenarios."""
     
@@ -241,7 +255,13 @@ class TestBuyHoldVolatilityScaling:
         
         # Generate predictions
         test_candles = create_test_candles(Ticker.ES, datetime(2020, 2, 1), 10, volatility=0.20)
-        predictions = ensemble.predict_from_candles(test_candles)
+        daily_volatility_df = create_daily_volatility_df(
+            test_candles, annual_vol_by_ticker={Ticker.ES.name: 0.20}
+        )
+        predictions = ensemble.predict_from_candles(
+            test_candles,
+            daily_volatility_df=daily_volatility_df,
+        )
         
         # Check forecast scores
         # For buy_hold: F_i = 0.20 / (0.20 * sqrt(1.0)) = 1.0
@@ -295,8 +315,12 @@ class TestBuyHoldVolatilityScaling:
             test_candles = create_test_candles(ticker, datetime(2020, 2, 1), 10, volatility=0.20)
             test_candles_list.append(test_candles)
         test_candles_df = pd.concat(test_candles_list, ignore_index=True)
-        
-        positions = portfolio.predict_from_candles(test_candles_df)
+        daily_volatility_df = create_daily_volatility_df(test_candles_df, default_annual_vol=0.20)
+
+        positions = portfolio.predict_from_candles(
+            test_candles_df,
+            daily_volatility_df=daily_volatility_df,
+        )
         
         # Check forecast scores (should be ≈ 1.0)
         forecast_scores = positions['forecast_score']
@@ -332,7 +356,13 @@ class TestBuyHoldVolatilityScaling:
         
         # Generate predictions
         test_candles = create_test_candles(Ticker.ES, datetime(2020, 2, 1), 10, volatility=0.40)
-        predictions = ensemble.predict_from_candles(test_candles)
+        daily_volatility_df = create_daily_volatility_df(
+            test_candles, annual_vol_by_ticker={Ticker.ES.name: 0.40}
+        )
+        predictions = ensemble.predict_from_candles(
+            test_candles,
+            daily_volatility_df=daily_volatility_df,
+        )
         
         # Check forecast scores
         # For buy_hold: F_i = 0.20 / (0.40 * sqrt(1.0)) = 0.5
@@ -374,7 +404,13 @@ class TestBuyHoldVolatilityScaling:
         
         # Generate predictions
         test_candles = create_test_candles(Ticker.ES, datetime(2020, 2, 1), 10, volatility=0.05)
-        positions = portfolio.predict_from_candles(test_candles)
+        daily_volatility_df = create_daily_volatility_df(
+            test_candles, annual_vol_by_ticker={Ticker.ES.name: 0.05}
+        )
+        positions = portfolio.predict_from_candles(
+            test_candles,
+            daily_volatility_df=daily_volatility_df,
+        )
         
         # Check forecast scores (should be capped at 2.0)
         # Uncapped: F_i = 0.20 / (0.05 * sqrt(1.0)) = 4.0
@@ -424,7 +460,8 @@ class TestBuyHoldVolatilityScaling:
         tester.fit(candles_df)
         
         # Generate predictions
-        positions = tester.predict(candles_df)
+        daily_volatility_df = create_daily_volatility_df(candles_df, default_annual_vol=0.20)
+        positions = tester.predict(candles_df, daily_volatility_df=daily_volatility_df)
         
         # Calculate returns
         strategy_returns = tester.calculate_strategy_returns(candles_df)
@@ -454,7 +491,13 @@ class TestBuyHoldVolatilityScaling:
         
         # Generate predictions
         test_candles = create_test_candles(Ticker.ES, datetime(2020, 2, 1), 10, volatility=0.05)
-        predictions = ensemble.predict_from_candles(test_candles)
+        daily_volatility_df = create_daily_volatility_df(
+            test_candles, annual_vol_by_ticker={Ticker.ES.name: 0.05}
+        )
+        predictions = ensemble.predict_from_candles(
+            test_candles,
+            daily_volatility_df=daily_volatility_df,
+        )
         
         # Check that forecast scores are capped at 2.0
         forecast_scores = predictions['forecast_score']
