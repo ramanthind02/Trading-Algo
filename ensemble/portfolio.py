@@ -2725,7 +2725,7 @@ class GlobalPortfolio:
 
 
 # ``Portfolio`` remains a backward-compatible alias for TFPortfolio so that
-# existing call sites (sector allocation tests, vault auto-load, etc.) continue
-# to work without changes.  GlobalPortfolio is the new top-level multi-TF class
-# and is exported separately from ensemble/__init__.py.
+# existing single-timeframe call sites continue to work without changes.
+# GlobalPortfolio is the top-level multi-TF class and is exported separately
+# from ensemble/__init__.py.
 Portfolio = TFPortfolio
