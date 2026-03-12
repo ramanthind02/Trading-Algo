@@ -162,8 +162,6 @@ def _build_tester_for_timeframe(
         "max_position_pct": config.max_position_pct,
         "use_cache": config.use_cache,
     }
-    if config.sector_allocation_config_path is not None:
-        portfolio_kw["sector_allocation_config_path"] = config.sector_allocation_config_path
     portfolio = Portfolio(**portfolio_kw)
     return PortfolioTester(portfolio, baseline_mode=config.baseline_mode)
 

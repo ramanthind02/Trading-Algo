@@ -45,7 +45,7 @@ portfolio.fit_from_candles(candles_df, target_data=returns_series)
 # 3) Attach WeightLayer at the global portfolio level
 global_portfolio = GlobalPortfolio(
     tf_portfolios=[portfolio],
-    weight_layer=WeightLayer(weight_method="cluster_equal", fdm_max=2.0),
+    weight_layer=WeightLayer(weight_method="equal_signal", fdm_max=2.0),
 )
 global_portfolio.fit({TimeFrame.D: candles_df}, instrument_returns=returns_df)
 
@@ -160,7 +160,7 @@ Type: factory + classes
 
 Factory signature:
 ```python
-def WeightLayer(weight_method: str = "cluster_equal", fdm_max: float = 2.0, **kwargs) -> BaseWeightLayer
+def WeightLayer(weight_method: str = "equal_signal", fdm_max: float = 2.0, **kwargs) -> BaseWeightLayer
 ```
 
 Key class methods:
@@ -178,14 +178,14 @@ class BaseWeightLayer(ABC):
 
 Behavior:
 - Used by `GlobalPortfolio`, not by `TFPortfolio`.
-- Always clusters model forecast streams first using hierarchical correlation clustering.
-- Supports exactly two modes: `cluster_equal` and `cluster_corr_ulcer`.
-- Computes per-ticker FDM from cluster-level forecast correlations and applies it during `combine`.
-- For sparse/insufficient forecast history, falls back to one-cluster equal weights and `FDM=1.0`.
+- Supports four modes: `equal_signal`, `inverse_avg_pairwise_corr`, `hrp_cluster_equal`, and `hrp_classic`.
+- Uses full-sample in-sample signal standardization, Ledoit-Wolf covariance, derived correlation, and Ward linkage for the HRP modes.
+- Computes per-ticker FDM from raw signal-level positive-clipped correlations and applies it during `combine`.
+- For sparse/insufficient forecast history or invalid covariance inputs, falls back to equal weights and `FDM=1.0`.
 
 Forecast vector contract:
 - Each DataFrame in `forecast_vectors` must contain `ticker, model_name, forecast, signal`.
-- `datetime` is required for clustering; if present, combination is per `(ticker, datetime)`.
+- `datetime` is required for fitting; if present, combination is per `(ticker, datetime)`.
 
 Raises:
 - `ValueError` for empty fit inputs, unfitted `combine`, or unknown `weight_method`.
@@ -231,7 +231,7 @@ Behavior:
 - Auto-loads ensembles from `vault/{D,W,M}/*` when `ensembles=None`; pass
   `ensemble_names=[...]` to filter by full directory names.
 - Applies instrument weights, IDM, and optional cap to produce `position_fraction`.
-- Supports hierarchical sector allocation configs that resolve to ticker-level instrument weights. See [Sector allocation (methodology)](../methodology/sector_allocation.md) for JSON schema, validation rules, and examples.
+- Active global/research sizing flows no longer consume sector-allocation JSON inputs.
 
 Risk stack order:
 1. Forecast combination (already volatility-adjusted upstream)
@@ -240,7 +240,7 @@ Risk stack order:
 4. Position cap (`max_position_pct`)
 
 Raises:
-- `ValueError` for empty/missing required columns, insufficient data for IDM fit, invalid sector config schema, or unfitted predict access.
+- `ValueError` for empty/missing required columns, insufficient data for IDM fit, or unfitted predict access.
 
 Logging:
 - Extensive `logger.debug/info/warning/error` around returns overlap, IDM/FDM fitting paths, and fallback behavior.

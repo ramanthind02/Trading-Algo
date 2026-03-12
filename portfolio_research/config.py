@@ -69,7 +69,7 @@ class PortfolioResearchConfig:
     target_volatility : float
         Target annual volatility for ensembles/portfolio.
     weight_layer_method : str
-        WeightLayer method (``'cluster_equal'`` or ``'cluster_corr_ulcer'``).
+        WeightLayer method (for example ``'equal_signal'`` or ``'hrp_classic'``).
     weight_layer_kwargs : Mapping[str, Any]
         Extra kwargs for WeightLayer (e.g. fdm_max, group_weight_cap).
     max_position_pct : float
@@ -78,8 +78,6 @@ class PortfolioResearchConfig:
         'equal_weight' or 'buy_hold' for PortfolioTester.
     output_root : Path
         Root directory for tearsheets and artifacts.
-    sector_allocation_config_path : str | None
-        Optional path to sector allocation JSON; when set, passed to Portfolio.
     """
 
     tickers: list[Ticker]
@@ -97,12 +95,11 @@ class PortfolioResearchConfig:
     oos_window: OOSWindowConfig | None = None
     ensemble_dirs: Mapping[str, str] = field(default_factory=dict)
     target_volatility: float = 0.15
-    weight_layer_method: str = "cluster_equal"
+    weight_layer_method: str = "equal_signal"
     weight_layer_kwargs: Mapping[str, Any] = field(default_factory=dict)
     max_position_pct: float = 3.5
     baseline_mode: str = "equal_weight"
     output_root: Path = field(default_factory=lambda: _PORTFOLIO_RESEARCH_DIR / "results")
-    sector_allocation_config_path: str | None = None
 
     def __post_init__(self) -> None:
         if self.baseline_mode not in ("equal_weight", "buy_hold"):
@@ -226,7 +223,7 @@ def load_config() -> PortfolioResearchConfig:
     )
 
     target_volatility = 0.15
-    weight_layer_method = "cluster_corr_ulcer"
+    weight_layer_method = "equal_signal"
     weight_layer_kwargs = {
         "fdm_max": 2.0,
         "group_weight_cap": 1.0,
@@ -234,9 +231,6 @@ def load_config() -> PortfolioResearchConfig:
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"
-    sector_allocation_config_path = str(
-        _PORTFOLIO_RESEARCH_DIR.parent / "feature_research" / "config" / "sector_buy_hold_60_20_20.json"
-    )
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -262,5 +256,4 @@ def load_config() -> PortfolioResearchConfig:
         max_position_pct=max_position_pct,
         baseline_mode=baseline_mode,
         output_root=output_root,
-        sector_allocation_config_path=sector_allocation_config_path,
     )

@@ -126,8 +126,6 @@ def _build_portfolio_and_tester(config, ensembles: list) -> tuple:
         "weight_layer": weight_layer,
         "use_cache": config.use_cache,
     }
-    if getattr(config, "sector_allocation_config_path", None) is not None:
-        portfolio_kw["sector_allocation_config_path"] = config.sector_allocation_config_path
     portfolio = Portfolio(**portfolio_kw)
     tester = PortfolioTester(portfolio=portfolio, baseline_mode=config.baseline_mode)
     return portfolio, tester

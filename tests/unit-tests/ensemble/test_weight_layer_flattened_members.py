@@ -37,12 +37,12 @@ def _member_forecasts() -> list[pd.DataFrame]:
 
 
 def test_weight_layer_config_supports_flattened_model_names() -> None:
-    config = WeightLayerConfig(weighting_method="cluster_equal")
-    assert config.weighting_method == "cluster_equal"
+    config = WeightLayerConfig(weighting_method="hrp_cluster_equal")
+    assert config.weighting_method == "hrp_cluster_equal"
 
 
 def test_weight_layer_clusters_flattened_member_names() -> None:
-    weight_layer = WeightLayer(weight_method="cluster_equal", fdm_max=2.0, rho_cut=0.7)
+    weight_layer = WeightLayer(weight_method="hrp_cluster_equal", fdm_max=2.0, rho_cut=0.7)
     forecasts = _member_forecasts()
 
     weight_layer.fit(forecasts, signals=pd.DataFrame())
@@ -53,7 +53,7 @@ def test_weight_layer_clusters_flattened_member_names() -> None:
 
 
 def test_weight_layer_weights_preserve_member_identifiers() -> None:
-    weight_layer = WeightLayer(weight_method="cluster_equal")
+    weight_layer = WeightLayer(weight_method="equal_signal")
     forecasts = _member_forecasts()
 
     weight_layer.fit(forecasts, signals=pd.DataFrame())

@@ -345,3 +345,100 @@ class TestInstrumentWeights:
 
         assert not result.empty
         assert not result["position_fraction"].isna().any()
+
+
+class TestGlobalAdapter:
+    def test_global_stream_encoding_is_unique_and_decodable(self):
+        data = pd.DataFrame(
+            {
+                "ticker": ["ES", "ES", "NQ", "NQ"],
+                "datetime": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-02"]
+                ),
+                "model_name": ["alpha", "alpha", "alpha", "beta"],
+                "forecast": [0.2, 0.1, 0.4, 0.5],
+                "signal": [1.0, 1.0, 1.0, 1.0],
+                "timeframe": ["D", "D", "W", "W"],
+            }
+        )
+        encoded_vectors, decode_map = GlobalPortfolio._encode_forecast_vectors_for_global_weight_layer(
+            [data]
+        )
+
+        assert len(encoded_vectors) == 1
+        encoded = encoded_vectors[0]
+        assert set(encoded["ticker"]) == {"__GLOBAL__"}
+        assert len(decode_map) == 3
+        assert decode_map["ES::D::alpha"] == {
+            "ticker": "ES",
+            "timeframe": "D",
+            "original_model_name": "alpha",
+        }
+        assert decode_map["NQ::W::alpha"] == {
+            "ticker": "NQ",
+            "timeframe": "W",
+            "original_model_name": "alpha",
+        }
+        assert decode_map["NQ::W::beta"] == {
+            "ticker": "NQ",
+            "timeframe": "W",
+            "original_model_name": "beta",
+        }
+
+    def test_decode_aggregates_streams_back_to_tickers(self):
+        gp = GlobalPortfolio(tf_portfolios=[])
+        gp.weight_layer.weights_ = {
+            "__GLOBAL__": pd.Series(
+                {
+                    "ES::D::m1": 0.60,
+                    "NQ::W::m2": 0.40,
+                }
+            )
+        }
+        gp.weight_layer.fdm_ = {"__GLOBAL__": 1.0}
+
+        encoded = pd.DataFrame(
+            {
+                "ticker": ["__GLOBAL__", "__GLOBAL__", "__GLOBAL__", "__GLOBAL__"],
+                "datetime": pd.to_datetime(
+                    ["2024-01-01", "2024-01-01", "2024-01-02", "2024-01-02"]
+                ),
+                "model_name": ["ES::D::m1", "NQ::W::m2", "ES::D::m1", "NQ::W::m2"],
+                "forecast": [1.0, 0.5, 1.0, -0.5],
+                "signal": [1.0, 1.0, 1.0, 1.0],
+            }
+        )
+        decode_map = {
+            "ES::D::m1": {
+                "ticker": "ES",
+                "timeframe": "D",
+                "original_model_name": "m1",
+            },
+            "NQ::W::m2": {
+                "ticker": "NQ",
+                "timeframe": "W",
+                "original_model_name": "m2",
+            },
+        }
+
+        decoded = gp._decode_global_weight_layer_output([encoded], decode_map)
+        expected = pd.DataFrame(
+            {
+                "ticker": ["ES", "ES", "NQ", "NQ"],
+                "datetime": pd.to_datetime(
+                    ["2024-01-01", "2024-01-02", "2024-01-01", "2024-01-02"]
+                ),
+                "forecast_score": [0.6, 0.6, 0.2, -0.2],
+            }
+        )
+        pd.testing.assert_frame_equal(
+            decoded.sort_values(["ticker", "datetime"]).reset_index(drop=True),
+            expected.sort_values(["ticker", "datetime"]).reset_index(drop=True),
+        )
+
+    def test_removed_sector_constructor_surface_rejected(self):
+        with pytest.raises(TypeError):
+            GlobalPortfolio(
+                tf_portfolios=[],
+                sector_allocation_config_path="config.json",  # type: ignore[arg-type]
+            )

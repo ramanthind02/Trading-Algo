@@ -81,7 +81,6 @@ class _DummyConfig:
     baseline_mode: str
     output_root: Path
     oos_window: None = None
-    sector_allocation_config_path: str | None = None
     train_window: ResearchWindow = field(
         default_factory=lambda: ResearchWindow(
             start=datetime(2024, 1, 1),
@@ -241,7 +240,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
             "weekly": "vault/W/weekly_strategy",
         },
         target_volatility=0.15,
-        weight_layer_method="cluster_equal",
+        weight_layer_method="equal_signal",
         weight_layer_kwargs={"fdm_max": 2.5},
         max_position_pct=3.5,
         baseline_mode="equal_weight",
@@ -367,7 +366,7 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
         use_cache=True,
         ensemble_dirs={"daily": "vault/D/daily_strategy"},
         target_volatility=0.15,
-        weight_layer_method="cluster_equal",
+        weight_layer_method="equal_signal",
         weight_layer_kwargs={"fdm_max": 2.5},
         max_position_pct=3.5,
         baseline_mode="equal_weight",

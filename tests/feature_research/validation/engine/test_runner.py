@@ -994,7 +994,7 @@ def test_run_portfolio_simulation_builds_weight_layer_config_from_algorithm(
                 (),
                 {
                     "objective_metric_name": "sharpe",
-                    "weight_layer_algorithm": WeightLayerAlgorithm.CLUSTER_EQUAL,
+                    "weight_layer_algorithm": WeightLayerAlgorithm.EQUAL_SIGNAL,
                     "weight_layer_config": None,
                 },
             )(),
@@ -1012,7 +1012,7 @@ def test_run_portfolio_simulation_builds_weight_layer_config_from_algorithm(
 
     forwarded = captured.get("weight_layer_config")
     assert isinstance(forwarded, WeightLayerConfig)
-    assert forwarded.weighting_method == WeightLayerAlgorithm.CLUSTER_EQUAL.value
+    assert forwarded.weighting_method == WeightLayerAlgorithm.EQUAL_SIGNAL.value
 
 
 def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_config(
@@ -1050,9 +1050,8 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
         ]
     )
     existing = WeightLayerConfig(
-        weighting_method=WeightLayerAlgorithm.CLUSTER_EQUAL.value,
+        weighting_method=WeightLayerAlgorithm.EQUAL_SIGNAL.value,
         rho_cut=0.65,
-        risk_tilt_alpha=0.75,
     )
 
     captured: dict[str, object] = {}
@@ -1081,7 +1080,7 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
                 (),
                 {
                     "objective_metric_name": "sharpe",
-                    "weight_layer_algorithm": WeightLayerAlgorithm.CLUSTER_CORR_ULCER,
+                    "weight_layer_algorithm": WeightLayerAlgorithm.HRP_CLASSIC,
                     "weight_layer_config": existing,
                 },
             )(),
@@ -1099,9 +1098,8 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
 
     forwarded = captured.get("weight_layer_config")
     assert isinstance(forwarded, WeightLayerConfig)
-    assert forwarded.weighting_method == WeightLayerAlgorithm.CLUSTER_CORR_ULCER.value
+    assert forwarded.weighting_method == WeightLayerAlgorithm.HRP_CLASSIC.value
     assert forwarded.rho_cut == pytest.approx(0.65)
-    assert forwarded.risk_tilt_alpha == pytest.approx(0.75)
 
 
 def test_run_portfolio_simulation_handles_invalid_top_k_features_json() -> None:

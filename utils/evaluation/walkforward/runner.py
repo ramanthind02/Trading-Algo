@@ -132,7 +132,6 @@ def _resolve_weight_layer_config(wf_cfg: object | None) -> WeightLayerConfig | N
         rho_cut=configured.rho_cut,
         fdm_max=configured.fdm_max,
         group_weight_cap=configured.group_weight_cap,
-        risk_tilt_alpha=configured.risk_tilt_alpha,
     )
 
 

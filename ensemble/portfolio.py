@@ -66,6 +66,31 @@ def _parse_timeframe_from_global_model_name(model_name: str) -> str:
     return left
 
 
+_GLOBAL_WEIGHT_LAYER_TICKER = "__GLOBAL__"
+
+
+def _build_global_stream_id(ticker: str, timeframe: str, model_name: str) -> str:
+    """Build a stable global stream id for adapter-encoded WeightLayer inputs."""
+    return f"{ticker}::{timeframe}::{model_name}"
+
+
+def _decode_global_stream_id(stream_id: str) -> Dict[str, str]:
+    """Decode stream id created by ``_build_global_stream_id``."""
+    parts = str(stream_id).split("::", 2)
+    if len(parts) != 3:
+        raise ValueError(
+            "Invalid global stream_id; expected format "
+            "'{ticker}::{timeframe}::{model_name}', got "
+            f"'{stream_id}'"
+        )
+    ticker, timeframe, model_name = parts
+    return {
+        "ticker": ticker,
+        "timeframe": timeframe,
+        "original_model_name": model_name,
+    }
+
+
 class TFPortfolio:
     """
     Timeframe portfolio for fitting ensembles and producing forecast streams.
@@ -1926,12 +1951,9 @@ class GlobalPortfolio:
     tf_portfolios : list of TFPortfolio
         One per trading timeframe.
     weight_layer : BaseWeightLayer, optional
-        Cross-TF weight layer. Defaults to ``cluster_equal``.
+        Cross-TF weight layer. Defaults to ``equal_signal``.
     instrument_weights : dict mapping ticker → weight, optional
         Global instrument weights. If None, equal weight is applied.
-    sector_allocation_config_path : str, optional
-        Path to a JSON sector allocation tree. When provided, the resolved
-        ticker-level weights supersede ``instrument_weights``.
     idm_max : float, default 2.5
         Maximum global IDM (Carver's cap).
     max_position_pct : float, default 2.0
@@ -1950,7 +1972,6 @@ class GlobalPortfolio:
         tf_portfolios: List["TFPortfolio"],
         weight_layer: Optional[BaseWeightLayer] = None,
         instrument_weights: Optional[Dict[str, float]] = None,
-        sector_allocation_config_path: Optional[str] = None,
         idm_max: float = 2.5,
         max_position_pct: float = 2.0,
     ) -> None:
@@ -1958,23 +1979,11 @@ class GlobalPortfolio:
         self.weight_layer: BaseWeightLayer = (
             weight_layer
             if weight_layer is not None
-            else WeightLayer(weight_method="cluster_equal", fdm_max=2.0)
+            else WeightLayer(weight_method="equal_signal", fdm_max=2.0)
         )
         self.idm_max = idm_max
         self.max_position_pct = max_position_pct
-
-        # Sector-allocation config resolution (same pattern as TFPortfolio)
-        self.sector_allocation_config_path = sector_allocation_config_path
-        self.sector_allocation_config_: Optional[Dict[str, Any]] = None
-        if sector_allocation_config_path is not None:
-            self.sector_allocation_config_ = self._load_sector_allocation_config(
-                sector_allocation_config_path
-            )
-            self.instrument_weights: Optional[Dict[str, float]] = (
-                self._resolve_sector_allocation(self.sector_allocation_config_)
-            )
-        else:
-            self.instrument_weights = instrument_weights
+        self.instrument_weights = instrument_weights
 
         # Fitted attributes
         self.global_idm_: Optional[float] = None
@@ -1982,6 +1991,7 @@ class GlobalPortfolio:
         self.instruments_: Optional[List[str]] = None
         self.global_tf_weights_compat_: Dict[str, float] = {}
         self.weight_layer_diagnostics_: Dict[str, Any] = {}
+        self.global_adapter_diagnostics_: Dict[str, Any] = {}
         self.global_eligible_models_by_ticker_: Dict[str, Set[str]] = {}
         self.global_eligibility_diagnostics_: Dict[str, Any] = {}
         self.is_fitted_: bool = False
@@ -2257,144 +2267,157 @@ class GlobalPortfolio:
         return normalized
 
     # ------------------------------------------------------------------
-    # Sector allocation helpers (delegated from TFPortfolio logic)
+    # Global WeightLayer adapter helpers
     # ------------------------------------------------------------------
 
-    def _load_sector_allocation_config(self, config_path: str) -> Dict[str, Any]:
-        """Load a sector allocation JSON config (identical logic to TFPortfolio)."""
-        try:
-            with open(config_path, "r", encoding="utf-8") as handle:
-                config = json.load(handle)
-        except FileNotFoundError:
-            raise FileNotFoundError(
-                f"Sector allocation configuration file not found: {config_path}"
+    @staticmethod
+    def _encode_forecast_vectors_for_global_weight_layer(
+        forecast_vectors: List[pd.DataFrame],
+    ) -> tuple[List[pd.DataFrame], Dict[str, Dict[str, str]]]:
+        """Encode all streams into one synthetic global WeightLayer ticker."""
+        if not forecast_vectors:
+            return [], {}
+
+        combined = pd.concat(forecast_vectors, ignore_index=True)
+        if combined.empty:
+            return [], {}
+
+        required_cols = {"ticker", "datetime", "model_name", "forecast", "signal", "timeframe"}
+        if not required_cols.issubset(set(combined.columns)):
+            return [], {}
+
+        encoded = combined.copy()
+        encoded["stream_id"] = encoded.apply(
+            lambda row: _build_global_stream_id(
+                ticker=str(row["ticker"]),
+                timeframe=str(row["timeframe"]),
+                model_name=str(row["model_name"]),
+            ),
+            axis=1,
+        )
+        encoded["ticker"] = _GLOBAL_WEIGHT_LAYER_TICKER
+        encoded["model_name"] = encoded["stream_id"]
+
+        decode_map = {
+            str(row["stream_id"]): {
+                "ticker": str(row["ticker"]),
+                "timeframe": str(row["timeframe"]),
+                "original_model_name": str(row["model_name"]),
+            }
+            for row in (
+                combined.assign(
+                    stream_id=combined.apply(
+                        lambda r: _build_global_stream_id(
+                            ticker=str(r["ticker"]),
+                            timeframe=str(r["timeframe"]),
+                            model_name=str(r["model_name"]),
+                        ),
+                        axis=1,
+                    )
+                )[
+                    ["stream_id", "ticker", "timeframe", "model_name"]
+                ]
+                .drop_duplicates(subset=["stream_id"], keep="first")
+                .to_dict("records")
             )
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Invalid JSON in sector allocation configuration file: {exc}"
-            ) from exc
+        }
 
-        if not isinstance(config, dict):
-            raise ValueError("Sector allocation root must be a JSON object")
+        encoded_df = encoded[["ticker", "datetime", "model_name", "forecast", "signal"]].copy()
+        return [encoded_df], decode_map
 
-        self._validate_sector_allocation_node(config, seen_tickers=set(), node_path="root")
-        return config
-
-    def _validate_sector_allocation_node(
+    def _build_global_adapter_rollups(
         self,
-        node: Dict[str, Any],
-        seen_tickers: Set[str],
-        node_path: str,
-    ) -> None:
-        """Recursively validate a sector allocation node."""
-        weight = node.get("weight")
-        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
-            raise ValueError(f"Node '{node_path}' weight must be > 0")
+        stream_decode_map: Dict[str, Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """Build ticker/timeframe rollups from fitted synthetic-stream weights."""
+        global_weights = self.weight_layer.weights_.get(_GLOBAL_WEIGHT_LAYER_TICKER)
+        if global_weights is None or global_weights.empty:
+            return {
+                "synthetic_ticker": _GLOBAL_WEIGHT_LAYER_TICKER,
+                "stream_decode_map": stream_decode_map,
+                "stream_weights": {},
+                "ticker_rollups": {},
+                "timeframe_rollups": {},
+            }
 
-        has_children = "children" in node
-        has_tickers = "tickers" in node
-        if has_children == has_tickers:
-            raise ValueError(
-                f"Node '{node_path}' must define exactly one of 'children' or 'tickers'"
-            )
+        stream_weights = {
+            str(stream_id): float(weight)
+            for stream_id, weight in global_weights.to_dict().items()
+        }
+        ticker_rollups: Dict[str, float] = {}
+        timeframe_rollups: Dict[str, float] = {}
+        for stream_id, weight in stream_weights.items():
+            decoded = stream_decode_map.get(stream_id)
+            if decoded is None:
+                continue
+            ticker = str(decoded["ticker"])
+            timeframe = str(decoded["timeframe"])
+            ticker_rollups[ticker] = ticker_rollups.get(ticker, 0.0) + float(weight)
+            timeframe_rollups[timeframe] = timeframe_rollups.get(timeframe, 0.0) + float(weight)
 
-        if has_children:
-            children = node["children"]
-            if not isinstance(children, list) or len(children) == 0:
-                raise ValueError(f"Node '{node_path}' children must be a non-empty list")
-            for idx, child in enumerate(children):
-                if not isinstance(child, dict):
-                    raise ValueError(f"Node '{node_path}.children[{idx}]' must be an object")
-                self._validate_sector_allocation_node(
-                    child,
-                    seen_tickers=seen_tickers,
-                    node_path=f"{node_path}.children[{idx}]",
-                )
-            return
+        return {
+            "synthetic_ticker": _GLOBAL_WEIGHT_LAYER_TICKER,
+            "stream_decode_map": stream_decode_map,
+            "stream_weights": stream_weights,
+            "ticker_rollups": dict(sorted(ticker_rollups.items())),
+            "timeframe_rollups": dict(sorted(timeframe_rollups.items())),
+        }
 
-        tickers = node["tickers"]
-        if not isinstance(tickers, list) or len(tickers) == 0:
-            raise ValueError(f"Node '{node_path}' must define at least one ticker")
-        if not all(isinstance(t, str) and t for t in tickers):
-            raise ValueError(f"Node '{node_path}' tickers must be non-empty strings")
-        if len(set(tickers)) != len(tickers):
-            raise ValueError(f"Node '{node_path}' contains duplicate tickers within a leaf")
-
-        duplicates = [t for t in tickers if t in seen_tickers]
-        if duplicates:
-            raise ValueError(
-                f"Duplicate ticker in sector allocation config: {duplicates[0]}"
-            )
-        seen_tickers.update(tickers)
-
-        ticker_weights = node.get("ticker_weights")
-        if ticker_weights is None:
-            return
-
-        if not isinstance(ticker_weights, dict):
-            raise ValueError(f"Node '{node_path}' ticker_weights must be an object")
-        if set(ticker_weights.keys()) != set(tickers):
-            raise ValueError(
-                f"Node '{node_path}' ticker_weights keys must match tickers exactly"
-            )
-        for ticker, tw in ticker_weights.items():
-            if (
-                not isinstance(tw, (int, float))
-                or isinstance(tw, bool)
-                or tw <= 0
-            ):
-                raise ValueError(
-                    f"Node '{node_path}' ticker_weights values must be > 0 (ticker={ticker})"
-                )
-
-    def _resolve_sector_allocation(self, config: Dict[str, Any]) -> Dict[str, float]:
-        """Resolve sector tree into a normalised ticker → weight mapping."""
-        resolved: Dict[str, float] = {}
-        if "children" in config:
-            children = config["children"]
-            total_weight = sum(child["weight"] for child in children)
-            for child in children:
-                contribution = child["weight"] / total_weight
-                self._resolve_sector_allocation_node(child, contribution, resolved)
-        elif "tickers" in config:
-            self._resolve_sector_allocation_node(config, 1.0, resolved)
-        else:
-            raise ValueError(
-                "Sector allocation root must define exactly one of 'children' or 'tickers'"
-            )
-
-        total_resolved = sum(resolved.values())
-        if total_resolved <= 0:
-            raise ValueError("Resolved sector allocation produced zero total weight")
-        return {t: w / total_resolved for t, w in resolved.items()}
-
-    def _resolve_sector_allocation_node(
+    def _decode_global_weight_layer_output(
         self,
-        node: Dict[str, Any],
-        parent_contribution: float,
-        resolved: Dict[str, float],
-    ) -> None:
-        """Recursively accumulate ticker contributions from a validated node tree."""
-        if "children" in node:
-            children = node["children"]
-            total_weight = sum(child["weight"] for child in children)
-            for child in children:
-                contribution = parent_contribution * (child["weight"] / total_weight)
-                self._resolve_sector_allocation_node(child, contribution, resolved)
-            return
+        encoded_vectors: List[pd.DataFrame],
+        stream_decode_map: Dict[str, Dict[str, str]],
+    ) -> pd.DataFrame:
+        """Decode synthetic global outputs back to ticker-level forecast scores."""
+        if not encoded_vectors:
+            return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
 
-        tickers = node["tickers"]
-        ticker_weights = node.get("ticker_weights")
-        if ticker_weights is None:
-            equal_share = parent_contribution / len(tickers)
-            for ticker in tickers:
-                resolved[ticker] = resolved.get(ticker, 0.0) + equal_share
-            return
+        combined = pd.concat(encoded_vectors, ignore_index=True)
+        if combined.empty:
+            return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
 
-        total_ticker_weight = sum(ticker_weights[t] for t in tickers)
-        for ticker in tickers:
-            ticker_share = parent_contribution * (ticker_weights[ticker] / total_ticker_weight)
-            resolved[ticker] = resolved.get(ticker, 0.0) + ticker_share
+        global_weights = self.weight_layer.weights_.get(_GLOBAL_WEIGHT_LAYER_TICKER)
+        if global_weights is None:
+            available_models = combined["model_name"].unique()
+            n_models = len(available_models)
+            equal_weight = 1.0 / n_models if n_models > 0 else 1.0
+            global_weights = pd.Series(
+                {m: equal_weight for m in available_models},
+                dtype=float,
+            )
+
+        weighted = combined.copy()
+        weighted["weight"] = weighted["model_name"].map(global_weights)
+        missing_models = weighted[weighted["weight"].isna()]["model_name"].unique()
+        if len(missing_models) > 0:
+            n_known = len(global_weights)
+            fallback_weight = (
+                1.0 / (n_known + len(missing_models))
+                if n_known > 0
+                else 1.0 / len(missing_models)
+            )
+            weighted["weight"] = weighted["weight"].fillna(fallback_weight)
+
+        weighted["weighted_forecast"] = weighted["forecast"] * weighted["weight"]
+        decoded_lookup = weighted["model_name"].map(stream_decode_map)
+        weighted["ticker"] = decoded_lookup.map(
+            lambda value: str(value["ticker"]) if isinstance(value, dict) else ""
+        )
+        weighted = weighted[weighted["ticker"] != ""].copy()
+        if weighted.empty:
+            return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
+
+        grouped = (
+            weighted.groupby(["ticker", "datetime"], as_index=False)["weighted_forecast"]
+            .sum()
+            .sort_values(["ticker", "datetime"])
+        )
+        global_fdm = float(self.weight_layer.fdm_.get(_GLOBAL_WEIGHT_LAYER_TICKER, 1.0))
+        grouped["forecast_score"] = (grouped["weighted_forecast"] * global_fdm).clip(
+            lower=-2.0,
+            upper=2.0,
+        )
+        return grouped[["ticker", "datetime", "forecast_score"]].reset_index(drop=True)
 
     # ------------------------------------------------------------------
     # Instrument weight helper
@@ -2530,18 +2553,24 @@ class GlobalPortfolio:
             forecast_vectors=eligible_vectors,
             global_returns=global_returns,
         )
-        signals_df = self._build_global_signals_df(normalized_vectors)
+        encoded_fit_vectors, stream_decode_map = (
+            self._encode_forecast_vectors_for_global_weight_layer(normalized_vectors)
+        )
+        signals_df = self._build_global_signals_df(encoded_fit_vectors)
         if signals_df.empty:
             raise ValueError("Global strategy signals are empty after normalization")
 
         # Step 4 — fit WeightLayer
         self.weight_layer.fit(
-            forecast_vectors=normalized_vectors,
+            forecast_vectors=encoded_fit_vectors,
             signals=signals_df,
         )
         self.weight_layer_diagnostics_ = self.weight_layer.get_diagnostics()
-        self.global_tf_weights_compat_ = self._derive_tf_weights_from_strategy_diagnostics(
-            self.weight_layer_diagnostics_
+        self.global_adapter_diagnostics_ = self._build_global_adapter_rollups(
+            stream_decode_map=stream_decode_map
+        )
+        self.global_tf_weights_compat_ = dict(
+            self.global_adapter_diagnostics_.get("timeframe_rollups", {})
         )
 
         # Step 5 — compute global IDM
@@ -2609,8 +2638,21 @@ class GlobalPortfolio:
             daily_grid=daily_grid,
         )
 
-        # Step 2 — combine via WeightLayer
-        combined = self.weight_layer.combine(forecast_vectors)
+        encoded_predict_vectors, stream_decode_map = (
+            self._encode_forecast_vectors_for_global_weight_layer(forecast_vectors)
+        )
+        if not encoded_predict_vectors:
+            return pd.DataFrame(
+                columns=['ticker', 'datetime', 'forecast_score', 'position_fraction']
+            )
+
+        # Step 2 — combine via WeightLayer + adapter decode.
+        # Keep the raw synthetic combine call for diagnostics parity.
+        _ = self.weight_layer.combine(encoded_predict_vectors)
+        combined = self._decode_global_weight_layer_output(
+            encoded_vectors=encoded_predict_vectors,
+            stream_decode_map=stream_decode_map,
+        )
 
         if combined.empty:
             return pd.DataFrame(
@@ -2664,11 +2706,15 @@ class GlobalPortfolio:
                     .get("mean_fdm", 1.0)
                 ),
                 "daily_grid_len": int(
-                    self.weight_layer_diagnostics_
-                    .get("summary", {})
-                    .get("n_tickers", 0)
+                    len(
+                        self.global_adapter_diagnostics_.get(
+                            "stream_decode_map",
+                            {},
+                        )
+                    )
                 ),
                 "diagnostics": self.weight_layer_diagnostics_,
+                "adapter_diagnostics": self.global_adapter_diagnostics_,
             },
         }
 

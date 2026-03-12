@@ -1,40 +1,42 @@
-"""Clustered weight layer for forecast combination.
-
-This module combines model forecasts using one of two clustered allocation modes:
-
-- ``cluster_equal``: cluster first, then equal weight across clusters.
-- ``cluster_corr_ulcer``: cluster first, then weight clusters by inverse
-  average positive correlation only. The legacy name is retained for
-  compatibility, but ulcer-risk tilt has been removed.
-"""
+"""Weight layer with equal, inverse-correlation, and HRP allocation modes."""
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass as _dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+from scipy.cluster.hierarchy import fcluster, leaves_list, linkage as scipy_linkage
+from scipy.spatial.distance import squareform
+from sklearn.covariance import LedoitWolf
 
 logger = logging.getLogger(__name__)
+
+_WEIGHT_METHODS = {
+    "equal_signal",
+    "inverse_avg_pairwise_corr",
+    "hrp_cluster_equal",
+    "hrp_classic",
+}
+_EPSILON = 1e-12
 
 
 @_dataclass(frozen=True)
 class WeightLayerConfig:
-    """Configuration for the clustered weight layer."""
+    """Configuration for the weight layer."""
 
-    weighting_method: str = "cluster_equal"
+    weighting_method: str = "equal_signal"
     rho_cut: float = 0.70
     fdm_max: float = 2.0
     group_weight_cap: float = 0.25
 
     def __post_init__(self) -> None:
-        valid_methods = {"cluster_equal", "cluster_corr_ulcer"}
-        if self.weighting_method not in valid_methods:
+        if self.weighting_method not in _WEIGHT_METHODS:
             raise ValueError(
-                f"weighting_method must be one of {sorted(valid_methods)}, "
+                f"weighting_method must be one of {sorted(_WEIGHT_METHODS)}, "
                 f"got '{self.weighting_method}'"
             )
         if not (0.0 <= self.rho_cut <= 1.0):
@@ -55,6 +57,7 @@ class BaseWeightLayer(ABC):
         self.fdm_: Dict[str, float] = {}
         self.weights_: Dict[str, pd.Series] = {}
         self.model_names_: Dict[str, List[str]] = {}
+        self.mean_signal_correlation_: Dict[str, float] = {}
         self.mean_cluster_correlation_: Dict[str, float] = {}
         self.cluster_assignments_: Dict[str, Dict[str, str]] = {}
         self.cluster_weights_: Dict[str, Dict[str, float]] = {}
@@ -118,7 +121,7 @@ class BaseWeightLayer(ABC):
             available_models = ticker_forecasts["model_name"].unique()
             n_models = len(available_models)
             equal_weight = 1.0 / n_models if n_models > 0 else 1.0
-            ticker_weights = pd.Series({m: equal_weight for m in available_models})
+            ticker_weights = pd.Series({m: equal_weight for m in available_models}, dtype=float)
             logger.warning(
                 "Ticker %s not seen during fit(), using equal weights (%0.4f per model)",
                 ticker,
@@ -185,15 +188,13 @@ class BaseWeightLayer(ABC):
                 "cluster_assignments": self.cluster_assignments_.get(ticker, {}),
                 "cluster_weights": self.cluster_weights_.get(ticker, {}),
                 "cluster_metrics": self.cluster_metrics_.get(ticker, {}),
+                "mean_signal_correlation": self.mean_signal_correlation_.get(ticker, 1.0),
                 "mean_cluster_correlation": self.mean_cluster_correlation_.get(ticker, 1.0),
             }
 
         fdm_values = list(self.fdm_.values())
         n_models_per_ticker = [len(self.model_names_.get(ticker, [])) for ticker in self.fdm_]
-        cluster_counts = [
-            len(self.cluster_weights_.get(ticker, {}))
-            for ticker in self.fdm_
-        ]
+        cluster_counts = [len(self.cluster_weights_.get(ticker, {})) for ticker in self.fdm_]
 
         return {
             "is_fitted": True,
@@ -236,96 +237,36 @@ def _pivot_ticker_forecasts(
     existing_models = [model for model in available_models if model in pivot.columns]
     if not existing_models:
         return pd.DataFrame()
-    pivot = pivot[existing_models]
-    return pivot.dropna(how="all")
+    return pivot[existing_models].dropna(how="all")
 
 
-def _extract_cluster_assignments(
-    forecast_pivot: pd.DataFrame,
-    rho_cut: float,
-) -> Dict[str, str]:
-    """Cluster model forecast series using hierarchical correlation clustering."""
-    model_names = list(forecast_pivot.columns)
-    if len(model_names) <= 1 or len(forecast_pivot) < 2:
-        return {model: "cluster_1" for model in model_names}
-
-    from scipy.cluster.hierarchy import fcluster, linkage as scipy_linkage
-    from scipy.spatial.distance import squareform
-
-    corr = forecast_pivot.corr().fillna(0.0).clip(lower=0.0)
-    for column in forecast_pivot.columns:
-        if forecast_pivot[column].nunique(dropna=True) <= 1:
-            corr.loc[column, :] = 1.0
-            corr.loc[:, column] = 1.0
-    corr_values = corr.to_numpy(copy=True)
-    dist = np.sqrt(np.clip(0.5 * (1.0 - corr_values), 0.0, None))
-    np.fill_diagonal(dist, 0.0)
-
-    if len(model_names) == 2:
-        if corr_values[0, 1] >= rho_cut:
-            return {model_names[0]: "cluster_1", model_names[1]: "cluster_1"}
-        return {model_names[0]: "cluster_1", model_names[1]: "cluster_2"}
-
-    condensed = squareform(dist, checks=False)
-    if not np.all(np.isfinite(condensed)):
-        return {model: "cluster_1" for model in model_names}
-
-    linkage_matrix = scipy_linkage(condensed, method="ward")
-    dist_threshold = float(np.sqrt(0.5 * (1.0 - rho_cut)))
-    labels = fcluster(linkage_matrix, dist_threshold, criterion="distance")
-    normalized_labels = {
-        raw_label: f"cluster_{idx}"
-        for idx, raw_label in enumerate(sorted(set(labels)), start=1)
-    }
-    return {
-        model: normalized_labels[int(label)]
-        for model, label in zip(model_names, labels)
-    }
+def _safe_normalize(weights: pd.Series | np.ndarray, labels: Sequence[str]) -> pd.Series:
+    values = weights.to_numpy(dtype=float) if isinstance(weights, pd.Series) else np.asarray(weights, dtype=float)
+    total = float(values.sum())
+    if total <= 0.0:
+        equal_weight = 1.0 / len(labels) if labels else 1.0
+        return pd.Series({label: equal_weight for label in labels}, dtype=float)
+    return pd.Series({label: float(value / total) for label, value in zip(labels, values)}, dtype=float)
 
 
-def _build_cluster_forecasts(
-    forecast_pivot: pd.DataFrame,
-    cluster_assignments: Dict[str, str],
-) -> pd.DataFrame:
-    """Aggregate model forecasts equally within each cluster."""
-    clusters = sorted(set(cluster_assignments.values()))
-    cluster_series = {
-        cluster: forecast_pivot[
-            [model for model, mapped_cluster in cluster_assignments.items() if mapped_cluster == cluster]
-        ].mean(axis=1)
-        for cluster in clusters
-    }
-    return pd.DataFrame(cluster_series)
-
-
-def _compute_cluster_correlation(cluster_forecasts: pd.DataFrame) -> pd.DataFrame:
-    """Compute cluster-level correlation matrix with negative values floored to zero."""
-    if cluster_forecasts.empty or len(cluster_forecasts.columns) == 0:
-        return pd.DataFrame()
-
-    corr = cluster_forecasts.corr().fillna(0.0).clip(lower=0.0)
-    for column in cluster_forecasts.columns:
-        if cluster_forecasts[column].nunique(dropna=True) <= 1:
-            corr.loc[column, :] = 1.0
-            corr.loc[:, column] = 1.0
-    np.fill_diagonal(corr.values, 1.0)
-    return corr
+def _positive_clipped_correlation(corr_matrix: pd.DataFrame) -> pd.DataFrame:
+    clipped = corr_matrix.clip(lower=0.0)
+    np.fill_diagonal(clipped.values, 1.0)
+    return clipped
 
 
 def _mean_off_diagonal_correlation(corr_matrix: pd.DataFrame) -> float:
-    """Mean upper-triangle correlation, assuming negative values already clipped away."""
     n_cols = len(corr_matrix.columns)
     if n_cols <= 1:
         return 1.0
     mask = np.triu(np.ones((n_cols, n_cols), dtype=bool), k=1)
-    correlations = corr_matrix.to_numpy()[mask]
+    correlations = corr_matrix.to_numpy(dtype=float)[mask]
     if len(correlations) == 0:
         return 1.0
     return float(correlations.mean())
 
 
 def _compute_fdm_from_corr_matrix(corr_matrix: pd.DataFrame, fdm_max: float) -> float:
-    """Compute FDM from cluster-level correlation."""
     if len(corr_matrix.columns) <= 1:
         return 1.0
     mean_corr = _mean_off_diagonal_correlation(corr_matrix)
@@ -334,7 +275,6 @@ def _compute_fdm_from_corr_matrix(corr_matrix: pd.DataFrame, fdm_max: float) -> 
 
 
 def _apply_group_weight_cap(weights: np.ndarray, cap: float) -> np.ndarray:
-    """Iteratively cap cluster weights and redistribute residual weight."""
     n_weights = len(weights)
     if cap >= 1.0 or n_weights <= 1:
         return weights
@@ -361,28 +301,219 @@ def _apply_group_weight_cap(weights: np.ndarray, cap: float) -> np.ndarray:
     return clipped / total if total > 0.0 else np.ones(n_weights) / n_weights
 
 
-def _distribute_cluster_weights_to_models(
-    model_names: List[str],
+def _covariance_to_correlation(covariance: pd.DataFrame) -> pd.DataFrame:
+    std = np.sqrt(np.clip(np.diag(covariance.to_numpy(dtype=float)), 0.0, None))
+    scale = np.outer(std, std)
+    corr_values = np.divide(
+        covariance.to_numpy(dtype=float),
+        scale,
+        out=np.zeros_like(covariance.to_numpy(dtype=float)),
+        where=scale > 0.0,
+    )
+    corr_values = np.clip(corr_values, -1.0, 1.0)
+    np.fill_diagonal(corr_values, 1.0)
+    return pd.DataFrame(corr_values, index=covariance.index, columns=covariance.columns)
+
+
+def _prepare_signal_matrix(forecast_pivot: pd.DataFrame) -> pd.DataFrame:
+    filled = forecast_pivot.fillna(0.0).astype(float)
+    sample_std = filled.std(axis=0, ddof=1)
+    scale = sample_std.replace(0.0, 1.0).fillna(1.0)
+    return filled.divide(scale, axis=1)
+
+
+def _estimate_covariance_and_correlation(
+    standardized_pivot: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    estimator = LedoitWolf()
+    estimator.fit(standardized_pivot.to_numpy(dtype=float))
+    covariance = pd.DataFrame(
+        estimator.covariance_,
+        index=standardized_pivot.columns,
+        columns=standardized_pivot.columns,
+    )
+    correlation = _covariance_to_correlation(covariance)
+    positive_corr = _positive_clipped_correlation(correlation.copy())
+    return covariance, correlation, positive_corr
+
+
+def _build_linkage_matrix(full_corr: pd.DataFrame) -> np.ndarray:
+    dist = np.sqrt(np.clip(0.5 * (1.0 - full_corr.to_numpy(dtype=float)), 0.0, None))
+    np.fill_diagonal(dist, 0.0)
+    condensed = squareform(dist, checks=False)
+    if len(condensed) == 0 or not np.all(np.isfinite(condensed)):
+        raise ValueError("non-finite HRP distance matrix")
+    return scipy_linkage(condensed, method="ward")
+
+
+def _extract_cluster_assignments(
+    model_names: Sequence[str],
+    linkage_matrix: np.ndarray,
+    rho_cut: float,
+) -> Dict[str, str]:
+    if len(model_names) <= 1:
+        return {str(model_names[0]): "cluster_1"} if model_names else {}
+
+    dist_threshold = float(np.sqrt(0.5 * (1.0 - rho_cut)))
+    labels = fcluster(linkage_matrix, dist_threshold, criterion="distance")
+    normalized_labels = {
+        int(raw_label): f"cluster_{idx}"
+        for idx, raw_label in enumerate(sorted(set(labels)), start=1)
+    }
+    return {
+        str(model): normalized_labels[int(label)]
+        for model, label in zip(model_names, labels)
+    }
+
+
+def _build_cluster_forecasts(
+    signal_pivot: pd.DataFrame,
+    cluster_assignments: Dict[str, str],
+) -> pd.DataFrame:
+    clusters = sorted(set(cluster_assignments.values()))
+    cluster_series = {
+        cluster: signal_pivot[
+            [
+                model
+                for model, mapped_cluster in cluster_assignments.items()
+                if mapped_cluster == cluster
+            ]
+        ].mean(axis=1)
+        for cluster in clusters
+    }
+    return pd.DataFrame(cluster_series)
+
+
+def _build_singleton_assignments(model_names: Sequence[str]) -> Dict[str, str]:
+    return {model: f"cluster_{idx}" for idx, model in enumerate(model_names, start=1)}
+
+
+def _build_singleton_metrics(
+    weights: pd.Series,
+    positive_corr: pd.DataFrame,
+    *,
+    include_scores: bool,
+) -> tuple[Dict[str, str], Dict[str, float], Dict[str, Dict[str, float | int | None]]]:
+    assignments = _build_singleton_assignments(list(weights.index))
+    cluster_weights = {
+        assignments[model_name]: float(weight)
+        for model_name, weight in weights.items()
+    }
+    metrics = {
+        assignments[model_name]: {
+            "avg_positive_corr": _average_peer_correlation(positive_corr, model_name),
+            "ulcer_index": None,
+            "score": (
+                float(1.0 / (1.0 + _average_peer_correlation(positive_corr, model_name)))
+                if include_scores
+                else None
+            ),
+            "member_count": 1,
+        }
+        for model_name in weights.index
+    }
+    return assignments, cluster_weights, metrics
+
+
+def _average_peer_correlation(corr_matrix: pd.DataFrame, label: str) -> float:
+    if label not in corr_matrix.columns or len(corr_matrix.columns) <= 1:
+        return 0.0
+    peers = corr_matrix.loc[label].drop(label)
+    return float(peers.mean()) if len(peers) > 0 else 0.0
+
+
+def _build_cluster_metrics(
+    cluster_assignments: Dict[str, str],
+    cluster_corr: pd.DataFrame,
+    *,
+    include_scores: bool,
+) -> Dict[str, Dict[str, float | int | None]]:
+    clusters = sorted(set(cluster_assignments.values()))
+    metrics: Dict[str, Dict[str, float | int | None]] = {}
+    for cluster in clusters:
+        avg_positive_corr = _average_peer_correlation(cluster_corr, cluster)
+        metrics[cluster] = {
+            "avg_positive_corr": avg_positive_corr,
+            "ulcer_index": None,
+            "score": float(1.0 / (1.0 + avg_positive_corr)) if include_scores else None,
+            "member_count": int(sum(1 for group in cluster_assignments.values() if group == cluster)),
+        }
+    return metrics
+
+
+def _cluster_corr_from_assignments(
+    signal_pivot: pd.DataFrame,
+    cluster_assignments: Dict[str, str],
+) -> tuple[pd.DataFrame, float]:
+    cluster_forecasts = _build_cluster_forecasts(signal_pivot, cluster_assignments)
+    if cluster_forecasts.empty or len(cluster_forecasts.columns) <= 1:
+        return pd.DataFrame(), 1.0
+    cluster_corr = _positive_clipped_correlation(cluster_forecasts.corr().fillna(0.0))
+    return cluster_corr, _mean_off_diagonal_correlation(cluster_corr)
+
+
+def _split_cluster_weights_to_models(
+    model_names: Sequence[str],
     cluster_assignments: Dict[str, str],
     cluster_weights: Dict[str, float],
 ) -> pd.Series:
-    """Split cluster weights equally within each cluster."""
-    model_weights: Dict[str, float] = {}
+    weights: Dict[str, float] = {}
     for cluster, cluster_weight in cluster_weights.items():
         members = [model for model in model_names if cluster_assignments[model] == cluster]
         per_model = cluster_weight / len(members) if members else 0.0
         for model in members:
-            model_weights[model] = per_model
+            weights[model] = per_model
+    return _safe_normalize(pd.Series(weights, dtype=float), list(model_names))
 
-    total = sum(model_weights.values())
-    if total <= 0.0:
-        equal_weight = 1.0 / len(model_names) if model_names else 1.0
-        return pd.Series({model: equal_weight for model in model_names})
-    return pd.Series({model: weight / total for model, weight in model_weights.items()})
+
+def _inverse_variance_weights(covariance: pd.DataFrame) -> pd.Series:
+    labels = list(covariance.index)
+    diag = np.diag(covariance.to_numpy(dtype=float))
+    inv_diag = np.where(diag > _EPSILON, 1.0 / diag, 0.0)
+    if float(inv_diag.sum()) <= 0.0:
+        return _safe_normalize(np.ones(len(labels), dtype=float), labels)
+    return _safe_normalize(inv_diag, labels)
+
+
+def _cluster_variance(covariance: pd.DataFrame) -> float:
+    ivp = _inverse_variance_weights(covariance)
+    weights = ivp.to_numpy(dtype=float)
+    cov_values = covariance.to_numpy(dtype=float)
+    return float(weights @ cov_values @ weights)
+
+
+def _hrp_recursive_weights(
+    covariance: pd.DataFrame,
+    ordered_models: Sequence[str],
+) -> pd.Series:
+    if len(ordered_models) == 1:
+        return pd.Series({ordered_models[0]: 1.0}, dtype=float)
+
+    split_idx = len(ordered_models) // 2
+    left_models = list(ordered_models[:split_idx])
+    right_models = list(ordered_models[split_idx:])
+    left_cov = covariance.loc[left_models, left_models]
+    right_cov = covariance.loc[right_models, right_models]
+
+    left_variance = _cluster_variance(left_cov)
+    right_variance = _cluster_variance(right_cov)
+    denom = left_variance + right_variance
+    left_weight = 0.5 if denom <= 0.0 else right_variance / denom
+    right_weight = 1.0 - left_weight
+
+    left_alloc = _hrp_recursive_weights(covariance, left_models) * left_weight
+    right_alloc = _hrp_recursive_weights(covariance, right_models) * right_weight
+    combined = pd.concat([left_alloc, right_alloc])
+    return _safe_normalize(combined, list(combined.index))
+
+
+def _equal_weights(model_names: Sequence[str]) -> pd.Series:
+    equal_weight = 1.0 / len(model_names) if model_names else 1.0
+    return pd.Series({model: equal_weight for model in model_names}, dtype=float)
 
 
 class ClusteredWeightLayer(BaseWeightLayer):
-    """Always-clustered weight layer with two allocation modes."""
+    """Weight layer supporting equal, inverse-correlation, and HRP modes."""
 
     def __init__(self, config: Optional[WeightLayerConfig] = None) -> None:
         self._wl_config = config or WeightLayerConfig()
@@ -413,6 +544,7 @@ class ClusteredWeightLayer(BaseWeightLayer):
         self.fdm_.clear()
         self.weights_.clear()
         self.model_names_.clear()
+        self.mean_signal_correlation_.clear()
         self.mean_cluster_correlation_.clear()
         self.cluster_assignments_.clear()
         self.cluster_weights_.clear()
@@ -433,141 +565,148 @@ class ClusteredWeightLayer(BaseWeightLayer):
             if not available_models:
                 continue
 
-            forecast_pivot = _pivot_ticker_forecasts(ticker_forecasts, available_models)
             if len(available_models) == 1:
-                self._store_single_cluster_result(
-                    ticker=ticker,
-                    model_names=available_models,
-                )
+                self._store_single_model_result(ticker=ticker, model_name=available_models[0])
                 continue
 
+            forecast_pivot = _pivot_ticker_forecasts(ticker_forecasts, available_models)
             if forecast_pivot.empty or len(forecast_pivot) < 2:
                 self._store_equal_fallback_result(
                     ticker=ticker,
                     model_names=available_models,
-                    reason="insufficient forecast history for clustering",
+                    reason="insufficient forecast history for covariance estimation",
                 )
                 continue
-
-            cluster_assignments = _extract_cluster_assignments(
-                forecast_pivot=forecast_pivot,
-                rho_cut=self._wl_config.rho_cut,
-            )
-            cluster_forecasts = _build_cluster_forecasts(
-                forecast_pivot=forecast_pivot,
-                cluster_assignments=cluster_assignments,
-            )
-
-            if cluster_forecasts.empty:
+            if int(forecast_pivot.nunique(dropna=True).max()) <= 1:
                 self._store_equal_fallback_result(
                     ticker=ticker,
                     model_names=available_models,
-                    reason="unable to build cluster forecasts",
+                    reason="all forecast vectors are constant in-sample",
                 )
                 continue
 
-            corr_matrix = _compute_cluster_correlation(cluster_forecasts)
-            cluster_names = list(cluster_forecasts.columns)
-            cluster_count = len(cluster_names)
-
-            if cluster_count <= 1:
-                self._store_single_cluster_result(
+            try:
+                signal_pivot = _prepare_signal_matrix(forecast_pivot)
+                covariance, full_corr, positive_corr = _estimate_covariance_and_correlation(
+                    signal_pivot
+                )
+                linkage_matrix = _build_linkage_matrix(full_corr)
+            except Exception as exc:
+                logger.warning(
+                    "Ticker %s falling back to equal weights after HRP prep failure: %s",
+                    ticker,
+                    exc,
+                )
+                self._store_equal_fallback_result(
                     ticker=ticker,
                     model_names=available_models,
-                    cluster_assignments=cluster_assignments,
+                    reason="invalid covariance or linkage inputs",
                 )
                 continue
 
-            if self.weight_method == "cluster_equal":
-                raw_weights = np.ones(cluster_count) / cluster_count
-                metrics = {
-                    cluster: {
-                        "avg_positive_corr": float(corr_matrix.loc[cluster].drop(cluster).mean()),
-                        "ulcer_index": None,
-                        "score": None,
-                        "member_count": int(
-                            sum(
-                                1
-                                for model in available_models
-                                if cluster_assignments[model] == cluster
-                            )
-                        ),
-                    }
-                    for cluster in cluster_names
-                }
-            else:
-                raw_scores = []
-                metrics = {}
-                for cluster in cluster_names:
-                    avg_positive_corr = float(corr_matrix.loc[cluster].drop(cluster).mean())
-                    score = 1.0 / (1.0 + avg_positive_corr)
-                    raw_scores.append(score)
-                    metrics[cluster] = {
-                        "avg_positive_corr": avg_positive_corr,
-                        "ulcer_index": None,
-                        "score": float(score),
-                        "member_count": int(
-                            sum(
-                                1
-                                for model in available_models
-                                if cluster_assignments[model] == cluster
-                            )
-                        ),
-                    }
-                raw_weights = np.asarray(raw_scores, dtype=float)
-                if raw_weights.sum() <= 0.0:
-                    raw_weights = np.ones(cluster_count) / cluster_count
-                else:
-                    raw_weights = raw_weights / raw_weights.sum()
+            mean_signal_corr = _mean_off_diagonal_correlation(positive_corr)
+            fdm = _compute_fdm_from_corr_matrix(
+                corr_matrix=positive_corr,
+                fdm_max=self._wl_config.fdm_max,
+            )
 
-            capped_weights = _apply_group_weight_cap(
-                raw_weights,
-                self._wl_config.group_weight_cap,
-            )
-            cluster_weights = {
-                cluster: float(weight)
-                for cluster, weight in zip(cluster_names, capped_weights)
-            }
-            model_weights = _distribute_cluster_weights_to_models(
-                model_names=available_models,
-                cluster_assignments=cluster_assignments,
-                cluster_weights=cluster_weights,
-            )
+            if self.weight_method == "equal_signal":
+                model_weights = _equal_weights(available_models)
+                cluster_assignments, cluster_weights, cluster_metrics = _build_singleton_metrics(
+                    model_weights,
+                    positive_corr,
+                    include_scores=False,
+                )
+                mean_cluster_corr = mean_signal_corr
+            elif self.weight_method == "inverse_avg_pairwise_corr":
+                raw_scores = np.asarray(
+                    [
+                        1.0 / (1.0 + _average_peer_correlation(positive_corr, model_name))
+                        for model_name in available_models
+                    ],
+                    dtype=float,
+                )
+                model_weights = _safe_normalize(raw_scores, available_models)
+                cluster_assignments, cluster_weights, cluster_metrics = _build_singleton_metrics(
+                    model_weights,
+                    positive_corr,
+                    include_scores=True,
+                )
+                mean_cluster_corr = mean_signal_corr
+            else:
+                cluster_assignments = _extract_cluster_assignments(
+                    available_models,
+                    linkage_matrix,
+                    self._wl_config.rho_cut,
+                )
+                cluster_corr, mean_cluster_corr = _cluster_corr_from_assignments(
+                    signal_pivot,
+                    cluster_assignments,
+                )
+                cluster_metrics = _build_cluster_metrics(
+                    cluster_assignments,
+                    cluster_corr,
+                    include_scores=False,
+                )
+
+                if self.weight_method == "hrp_cluster_equal":
+                    clusters = sorted(set(cluster_assignments.values()))
+                    base_weights = np.ones(len(clusters), dtype=float) / len(clusters)
+                    capped = _apply_group_weight_cap(
+                        base_weights,
+                        self._wl_config.group_weight_cap,
+                    )
+                    cluster_weights = {
+                        cluster: float(weight)
+                        for cluster, weight in zip(clusters, capped)
+                    }
+                    model_weights = _split_cluster_weights_to_models(
+                        available_models,
+                        cluster_assignments,
+                        cluster_weights,
+                    )
+                else:
+                    ordered_models = [available_models[idx] for idx in leaves_list(linkage_matrix)]
+                    model_weights = _hrp_recursive_weights(covariance, ordered_models)
+                    model_weights = model_weights.reindex(available_models).fillna(0.0)
+                    model_weights = _safe_normalize(model_weights, available_models)
+                    cluster_weights = {
+                        cluster: float(
+                            model_weights[
+                                [model for model in available_models if cluster_assignments[model] == cluster]
+                            ].sum()
+                        )
+                        for cluster in sorted(set(cluster_assignments.values()))
+                    }
+                    if cluster_corr.empty:
+                        mean_cluster_corr = 1.0
 
             self.weights_[ticker] = model_weights
             self.model_names_[ticker] = available_models
             self.cluster_assignments_[ticker] = cluster_assignments
             self.cluster_weights_[ticker] = cluster_weights
-            self.cluster_metrics_[ticker] = metrics
-            self.mean_cluster_correlation_[ticker] = _mean_off_diagonal_correlation(corr_matrix)
-            self.fdm_[ticker] = _compute_fdm_from_corr_matrix(
-                corr_matrix=corr_matrix,
-                fdm_max=self._wl_config.fdm_max,
-            )
+            self.cluster_metrics_[ticker] = cluster_metrics
+            self.mean_signal_correlation_[ticker] = mean_signal_corr
+            self.mean_cluster_correlation_[ticker] = mean_cluster_corr
+            self.fdm_[ticker] = fdm
 
         self.is_fitted_ = True
         return self
 
-    def _store_single_cluster_result(
-        self,
-        ticker: str,
-        model_names: List[str],
-        cluster_assignments: Optional[Dict[str, str]] = None,
-    ) -> None:
-        cluster_map = cluster_assignments or {model: "cluster_1" for model in model_names}
-        equal_weight = 1.0 / len(model_names) if model_names else 1.0
-        self.weights_[ticker] = pd.Series({model: equal_weight for model in model_names})
-        self.model_names_[ticker] = model_names
-        self.cluster_assignments_[ticker] = cluster_map
+    def _store_single_model_result(self, ticker: str, model_name: str) -> None:
+        self.weights_[ticker] = pd.Series({model_name: 1.0}, dtype=float)
+        self.model_names_[ticker] = [model_name]
+        self.cluster_assignments_[ticker] = {model_name: "cluster_1"}
         self.cluster_weights_[ticker] = {"cluster_1": 1.0}
         self.cluster_metrics_[ticker] = {
             "cluster_1": {
                 "avg_positive_corr": 0.0,
                 "ulcer_index": None,
-                "score": None if self.weight_method == "cluster_equal" else 1.0,
-                "member_count": len(model_names),
+                "score": None,
+                "member_count": 1,
             }
         }
+        self.mean_signal_correlation_[ticker] = 1.0
         self.mean_cluster_correlation_[ticker] = 1.0
         self.fdm_[ticker] = 1.0
 
@@ -577,17 +716,39 @@ class ClusteredWeightLayer(BaseWeightLayer):
         model_names: List[str],
         reason: str,
     ) -> None:
-        logger.warning("Ticker %s falling back to one-cluster equal weights: %s", ticker, reason)
-        self._store_single_cluster_result(ticker=ticker, model_names=model_names)
+        logger.warning("Ticker %s falling back to equal weights: %s", ticker, reason)
+        equal_weights = _equal_weights(model_names)
+        cluster_assignments = _build_singleton_assignments(model_names)
+        cluster_weights = {
+            cluster_assignments[model_name]: float(equal_weights[model_name])
+            for model_name in model_names
+        }
+        cluster_metrics = {
+            cluster_assignments[model_name]: {
+                "avg_positive_corr": 0.0,
+                "ulcer_index": None,
+                "score": None,
+                "member_count": 1,
+            }
+            for model_name in model_names
+        }
+        self.weights_[ticker] = equal_weights
+        self.model_names_[ticker] = model_names
+        self.cluster_assignments_[ticker] = cluster_assignments
+        self.cluster_weights_[ticker] = cluster_weights
+        self.cluster_metrics_[ticker] = cluster_metrics
+        self.mean_signal_correlation_[ticker] = 1.0
+        self.mean_cluster_correlation_[ticker] = 1.0
+        self.fdm_[ticker] = 1.0
 
 
 def WeightLayer(
-    weight_method: str = "cluster_equal",
+    weight_method: str = "equal_signal",
     fdm_max: float = 2.0,
     config: Optional[WeightLayerConfig] = None,
     **kwargs: float,
 ) -> BaseWeightLayer:
-    """Factory for the clustered weight layer."""
+    """Factory for the weight layer."""
     if config is None:
         if "risk_tilt_alpha" in kwargs:
             raise ValueError("risk_tilt_alpha is no longer supported by WeightLayer")

@@ -6,14 +6,16 @@
 
 ## Pipeline
 
-The pipeline has two levels. Within each timeframe, the per-TF path produces a `forecast_score`. Those per-TF scores are then combined cross-timeframe by `GlobalWeightLayer` before final position sizing.
+The pipeline has two levels. Within each timeframe, the per-TF path produces model streams.
+Those streams are then adapter-encoded and combined cross-ticker/timeframe by the existing
+`WeightLayer` inside `GlobalPortfolio` before final position sizing.
 
 ```
 BaseModels → DiversifiedEnsemble → WeightLayer → TFPortfolio (D) ──┐
   (0/1)        (per-model           (combined       (position        │
-  signals)      forecasts)           forecast        fractions       ├→ GlobalWeightLayer → GlobalPortfolio → PositionSizer
-                                     + FDM)          + IDM)          │   (cross-TF           (top-level        (contract
-                                                  TFPortfolio (W) ──┤    HRP + FDM)          orchestrator)     quantities)
+  signals)      forecasts)           forecast        fractions       ├→ GlobalPortfolio(adapter + WeightLayer) → PositionSizer
+                                     + FDM)          + IDM)          │   (cross-stream        (top-level        (contract
+                                                  TFPortfolio (W) ──┤    diversification)     orchestrator)     quantities)
                                                   TFPortfolio (M) ──┘
 ```
 
@@ -58,7 +60,7 @@ contracts = (position_fraction × capital) / (price × multiplier × fx_rate)
 |---|---|---|---|
 | FDM | WeightLayer (per-TF) | **2.0** | Forecast value correlations (model-level, within one timeframe) |
 | IDM | TFPortfolio | **2.5** | Instrument return correlations (instrument-level, within one timeframe) |
-| cross-TF FDM | GlobalWeightLayer | **2.0** | Forecast score correlations across timeframes (after resampling to daily grid) |
+| cross-stream FDM | GlobalPortfolio-internal WeightLayer | **2.0** | Encoded stream correlations across tickers/timeframes/strategies |
 
 All three use the same functional form: `√(1 / (mean_corr + ε))`. The higher cap on IDM reflects that instrument-level diversification can be greater than forecast-level diversification.
 
@@ -70,7 +72,6 @@ All three use the same functional form: `√(1 / (mean_corr + ε))`. The higher 
 ensemble/
 ├── diversified_ensemble.py  # Owns base models; generates per-model vol-scaled forecasts
 ├── weight_layer.py          # Per-TF: combines forecasts; applies intra-TF FDM
-├── global_weight_layer.py   # Cross-TF: HRP combination of TF forecast streams + cross-TF FDM
 ├── portfolio.py             # TFPortfolio (per-TF IDM), GlobalPortfolio (top-level orchestrator)
 │                            # Portfolio = TFPortfolio (backward-compatible alias)
 └── __init__.py
@@ -147,17 +148,17 @@ contracts = sizer.calculate_positions(positions)
 ### Multi-timeframe (two-level architecture)
 
 ```python
-from ensemble import TFPortfolio, GlobalPortfolio, GlobalWeightLayer, GlobalWeightLayerConfig
+from ensemble import TFPortfolio, GlobalPortfolio, WeightLayer
 from utils.enums import TimeFrame
 
 # 1. Build one TFPortfolio per timeframe
 tf_daily = TFPortfolio(trading_timeframe=TimeFrame.D, ...)
 tf_weekly = TFPortfolio(trading_timeframe=TimeFrame.W, ...)
 
-# 2. Wrap in GlobalPortfolio with a GlobalWeightLayer
+# 2. Wrap in GlobalPortfolio with WeightLayer (adapter-driven global combine)
 global_p = GlobalPortfolio(
     tf_portfolios=[tf_daily, tf_weekly],
-    global_weight_layer=GlobalWeightLayer(GlobalWeightLayerConfig()),
+    weight_layer=WeightLayer(weight_method="hrp_classic", fdm_max=2.0),
 )
 
 # 3. Fit: supply candles and instrument returns per timeframe

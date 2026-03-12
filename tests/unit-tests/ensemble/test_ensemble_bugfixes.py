@@ -39,19 +39,19 @@ class TestValidateBaseModelConfig:
 class TestWeightLayerFactory:
     """Tests for WeightLayer factory fdm_max and defaults."""
 
-    def test_fdm_max_used_for_cluster_equal(self) -> None:
-        """WeightLayer(weight_method='cluster_equal', fdm_max=1.5) results in fdm_max=1.5."""
-        layer = WeightLayer(weight_method="cluster_equal", fdm_max=1.5)
+    def test_fdm_max_used_for_equal_signal(self) -> None:
+        """WeightLayer(weight_method='equal_signal', fdm_max=1.5) results in fdm_max=1.5."""
+        layer = WeightLayer(weight_method="equal_signal", fdm_max=1.5)
         assert layer.fdm_max == 1.5
 
     def test_fdm_max_default_2(self) -> None:
         """Default fdm_max is 2.0 (per spec)."""
-        layer = WeightLayer(weight_method="cluster_equal")
+        layer = WeightLayer(weight_method="equal_signal")
         assert layer.fdm_max == 2.0
 
     def test_config_overrides_fdm_max_arg(self) -> None:
         """When config is provided, config.fdm_max is used."""
-        config = WeightLayerConfig(weighting_method="cluster_equal", fdm_max=1.8)
+        config = WeightLayerConfig(weighting_method="equal_signal", fdm_max=1.8)
         layer = WeightLayer(config=config, fdm_max=99.0)
         assert layer.fdm_max == 1.8
 
