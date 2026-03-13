@@ -208,6 +208,58 @@ The mapping from Kibot ticker symbols to Norgate back-adjusted symbols is define
 | US | &ZB_CCB | Fixed Income |
 | TU | &ZT_CCB | Fixed Income |
 
+## Intraday Data Setup
+
+Intraday data (M1–H4) comes from Kibot and requires back-adjustment for contract rolls. A unified script handles both extraction and adjustment.
+
+### One-Command Setup
+
+```bash
+python scripts/setup_intraday_data.py --parallel
+```
+
+This runs two stages:
+1. **Extract**: Pulls intraday parquets from `data/kibot_data.zip` → `data/intraday_original/`
+2. **Back-adjust**: Applies Norgate-guided roll detection → `data/intraday_adjusted/`
+
+### Directory Layout
+
+```
+data/
+  intraday_original/    ← raw Kibot intraday (not back-adjusted)
+    ES/
+      M1_ES.parquet
+      M5_ES.parquet
+      H1_ES.parquet
+      ...
+  intraday_adjusted/    ← back-adjusted (used by pipeline)
+    ES/
+      M1_ES.parquet
+      M5_ES.parquet
+      H1_ES.parquet
+      ...
+```
+
+### CLI Options
+
+```bash
+python scripts/setup_intraday_data.py                     # both stages, all tickers
+python scripts/setup_intraday_data.py --extract-only       # only extract from zip
+python scripts/setup_intraday_data.py --adjust-only        # only back-adjust
+python scripts/setup_intraday_data.py --ticker ES          # single ticker
+python scripts/setup_intraday_data.py --parallel           # parallel back-adjustment
+```
+
+### Re-running
+
+- To re-extract: run with `--extract-only` (overwrites `intraday_original/`)
+- To re-adjust after new Norgate data: run with `--adjust-only --parallel`
+- The pipeline (`load_data()`) reads from `intraday_adjusted/` for all intraday TimeFrames (M1–H4)
+
+### Frontend Comparison
+
+The frontend serves intraday candles from `data/intraday_adjusted/`. The "Compare Raw" button overlays the original (non-back-adjusted) data from `data/intraday_original/` for visual comparison.
+
 ## File Format
 
 All parquets in `data/ohlc_data/` follow this schema (consumed by `utils/core/helpers.py:load_data()`):

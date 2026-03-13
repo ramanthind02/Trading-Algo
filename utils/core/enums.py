@@ -3,10 +3,25 @@ from dataclasses import dataclass, field
 
 
 class TimeFrame(Enum):
-    """Simplified TimeFrame enum for daily, weekly, and monthly data only."""
-    D = 60 * 60 * 24
-    W = 60 * 60 * 24 * 7
-    M = 60 * 60 * 24 * 30
+    """TimeFrame enum covering intraday (M1-H4) and daily+ (D/W/M) data."""
+    M1  = 60
+    M2  = 60 * 2
+    M3  = 60 * 3
+    M4  = 60 * 4
+    M5  = 60 * 5
+    M6  = 60 * 6
+    M7  = 60 * 7
+    M8  = 60 * 8
+    M9  = 60 * 9
+    M10 = 60 * 10
+    M15 = 60 * 15
+    M30 = 60 * 30
+    H1  = 60 * 60
+    H2  = 60 * 60 * 2
+    H4  = 60 * 60 * 4
+    D   = 60 * 60 * 24
+    W   = 60 * 60 * 24 * 7
+    M   = 60 * 60 * 24 * 30
 
 
     def __lt__(self, other):

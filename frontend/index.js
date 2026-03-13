@@ -65,7 +65,7 @@ class ChartManager {
     const resp = await fetch(`/timeframes/${ticker}`);
     const timeframes = await resp.json();
     this._buildSwitcher(timeframes);
-    this._resetKibot();
+    await this._resetKibot();
 
     await this._fetchAndRender();
   }
@@ -91,7 +91,7 @@ class ChartManager {
     });
   }
 
-  _onTfClick(tf) {
+  async _onTfClick(tf) {
     if (tf === this.currentInterval) return;
 
     this._intervalElements.forEach((el, i) => {
@@ -100,7 +100,7 @@ class ChartManager {
     this.currentInterval = tf;
     this.candles = [];
     this._clearDateRange();
-    this._resetKibot();
+    await this._resetKibot();
     this._fetchAndRender();
   }
 
@@ -202,9 +202,9 @@ class ChartManager {
     document.getElementById('cap_warning').textContent = '';
   }
 
-  // ── Kibot comparison overlay ──────────────────────────────────
+  // ── Kibot / Raw comparison overlay ───────────────────────────
 
-  _kibotTimeframes = ['D', 'W', 'M'];
+  _dailyTimeframes = ['D', 'W', 'M'];
 
   _initKibotToggle() {
     const btn = document.getElementById('kibot_toggle_btn');
@@ -217,15 +217,12 @@ class ChartManager {
     this.kibotVisible = false;
     const btn = document.getElementById('kibot_toggle_btn');
     if (!btn) return;
-    btn.textContent = 'Compare Kibot';
+    const label = this._dailyTimeframes.includes(this.currentInterval)
+      ? 'Compare Kibot' : 'Compare Raw';
+    btn.textContent = label;
     btn.classList.remove('kibot-active');
 
-    if (!this._kibotTimeframes.includes(this.currentInterval)) {
-      btn.style.display = 'none';
-      return;
-    }
-
-    // Probe server to check if Kibot comparison data exists for this ticker
+    // Probe server to check if comparison data exists for this ticker/tf
     try {
       const resp = await fetch(`/candles/${this.currentTicker}/${this.currentInterval}/kibot?count=1`);
       btn.style.display = resp.ok ? 'inline-block' : 'none';
@@ -238,7 +235,9 @@ class ChartManager {
     const btn = document.getElementById('kibot_toggle_btn');
     if (this.kibotVisible) {
       this._removeKibotSeries();
-      btn.textContent = 'Compare Kibot';
+      const label = this._dailyTimeframes.includes(this.currentInterval)
+        ? 'Compare Kibot' : 'Compare Raw';
+      btn.textContent = label;
       btn.classList.remove('kibot-active');
       this.kibotVisible = false;
       return;
@@ -268,10 +267,13 @@ class ChartManager {
       this.kibotSeries.setData(data.candles);
 
       this.kibotVisible = true;
-      btn.textContent = 'Hide Kibot';
+      btn.textContent = this._dailyTimeframes.includes(this.currentInterval)
+        ? 'Hide Kibot' : 'Hide Raw';
       btn.classList.add('kibot-active');
     } catch {
-      btn.textContent = 'Compare Kibot';
+      const label = this._dailyTimeframes.includes(this.currentInterval)
+        ? 'Compare Kibot' : 'Compare Raw';
+      btn.textContent = label;
     }
     btn.disabled = false;
   }

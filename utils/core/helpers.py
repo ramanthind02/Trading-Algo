@@ -12,6 +12,12 @@ from utils.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+_INTRADAY_TFS = {
+    TimeFrame.M1, TimeFrame.M2, TimeFrame.M3, TimeFrame.M4, TimeFrame.M5,
+    TimeFrame.M6, TimeFrame.M7, TimeFrame.M8, TimeFrame.M9, TimeFrame.M10,
+    TimeFrame.M15, TimeFrame.M30, TimeFrame.H1, TimeFrame.H2, TimeFrame.H4,
+}
+
 
 def is_dst(dt: datetime) -> bool:
     """Check if datetime is in daylight saving time."""
@@ -108,7 +114,10 @@ def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1
         (p for p in _helpers_path.parents if (p / "pyproject.toml").exists()),
         _helpers_path.parents[2],
     )
-    base_dir = project_root / "data" / "ohlc_data"
+    if timeframe in _INTRADAY_TFS:
+        base_dir = project_root / "data" / "intraday_adjusted"
+    else:
+        base_dir = project_root / "data" / "ohlc_data"
     file_path = base_dir / ticker.name / f"{timeframe.name}_{ticker.name}.parquet"
 
     if file_path.exists():

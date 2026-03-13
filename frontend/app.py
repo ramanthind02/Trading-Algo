@@ -10,6 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 INTRADAY_DIR = ROOT_DIR / "data" / "intraday_adjusted"
 DAILY_DIR = ROOT_DIR / "data" / "ohlc_data"
 KIBOT_BACKUP_DIR = ROOT_DIR / "data" / "ohlc_data_kibot_backup"
+INTRADAY_ORIGINAL_DIR = ROOT_DIR / "data" / "intraday_original"
 
 # Tickers not migrated to Norgate — backup is identical to current data
 KIBOT_ONLY_TICKERS = {"NG", "TLT"}
@@ -155,14 +156,15 @@ def candles(ticker: str, tf: str):
 
 @app.route("/candles/<ticker>/<tf>/kibot")
 def candles_kibot(ticker: str, tf: str):
-    """Return Kibot backup candle data for comparison overlay."""
-    if tf not in DAILY_TFS:
-        return jsonify({"error": "Kibot backup only available for D/W/M"}), 400
-
-    if ticker in KIBOT_ONLY_TICKERS:
-        return jsonify({"error": "Ticker was not migrated to Norgate"}), 404
-
-    path = KIBOT_BACKUP_DIR / ticker / f"{tf}_{ticker}.parquet"
+    """Return comparison overlay data (Kibot backup for D/W/M, raw original for intraday)."""
+    if tf in DAILY_TFS:
+        if ticker in KIBOT_ONLY_TICKERS:
+            return jsonify({"error": "Ticker was not migrated to Norgate"}), 404
+        path = KIBOT_BACKUP_DIR / ticker / f"{tf}_{ticker}.parquet"
+    elif tf in INTRADAY_TFS:
+        path = INTRADAY_ORIGINAL_DIR / ticker / f"{tf}_{ticker}.parquet"
+    else:
+        return jsonify({"error": "Invalid timeframe"}), 400
     if not path.exists():
         return jsonify({"error": "No Kibot backup for this ticker/tf"}), 404
 
