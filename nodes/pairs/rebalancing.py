@@ -1,11 +1,14 @@
-"""Monthly rebalancing pairs-trading node (ES / TLT).
+"""Monthly rebalancing pairs-trading node.
 
-Compares percentage gains of ES and TLT over the first 15 calendar days
-of each month and generates a directional signal for ES:
+Compares percentage gains of the primary ticker and a cross-ticker over the
+first 15 calendar days of each month and generates a directional signal for
+the primary ticker:
 
-- **TLT outperforms** → long ES from day 15 to end of month (signal = 1).
-- **ES outperforms** → flat during month, then long ES from day 25 through
-  the 5th trading day of the *next* month (signal = 1 in that window).
+- **Cross-ticker outperforms** → long primary ticker from day 15 to end of
+  month (signal = 1).
+- **Primary ticker outperforms** → flat during month, then long primary ticker
+  from day 25 through the 5th trading day of the *next* month (signal = 1 in
+  that window).
 - **Observation period (days 1–15)** → signal = 0.
 
 Example
@@ -29,12 +32,12 @@ from utils.data.cross_ticker_store import CrossTickerDataStore
 
 
 class RebalancingNode(BiasNode):
-    """Monthly rebalancing pairs node comparing ES vs TLT performance.
+    """Monthly rebalancing pairs node comparing primary ticker vs cross-ticker performance.
 
     Parameters
     ----------
     ticker : Ticker
-        Primary ticker (ES candles streamed via ``add_candle``).
+        Primary ticker (candles streamed via ``add_candle``).
     tf : TimeFrame
         Timeframe.
     cross_tickers : list[str] | None
@@ -80,8 +83,8 @@ class RebalancingNode(BiasNode):
 
         # Monthly state
         self._current_period: Optional[Tuple[int, int]] = None
-        self._month_start_es: Optional[float] = None
-        self._month_start_tlt: Optional[float] = None
+        self._month_start_ticker: Optional[float] = None
+        self._month_start_cross: Optional[float] = None
         self._decision: Optional[str] = None
         self._trading_day_count: int = 0
         self._carry_over_signal: int = 0
@@ -99,28 +102,28 @@ class RebalancingNode(BiasNode):
         # Detect month change → reset state
         if (year, month) != self._current_period:
             self._current_period = (year, month)
-            self._month_start_es = None
-            self._month_start_tlt = None
+            self._month_start_ticker = None
+            self._month_start_cross = None
             self._decision = None
             self._trading_day_count = 0
 
         self._trading_day_count += 1
 
         # Fetch cross-ticker candle
-        tlt_candle = self._store.get_candle(self.cross_ticker, candle.tf, dt)
-        if tlt_candle is None:
+        cross_candle = self._store.get_candle(self.cross_ticker, candle.tf, dt)
+        if cross_candle is None:
             return [0.0]
 
         # Record first close of month for both tickers
-        if self._month_start_es is None:
-            self._month_start_es = candle.close
-            self._month_start_tlt = tlt_candle.close
-            # Carry-over from previous month's ES-wins: long ES through day 5
+        if self._month_start_ticker is None:
+            self._month_start_ticker = candle.close
+            self._month_start_cross = cross_candle.close
+            # Carry-over from previous month's ticker-wins: long ticker through day 5
             if self._carry_over_signal and self._trading_day_count <= 5:
                 return [1.0]
             return [0.0]
 
-        # Carry-over: ES won last month → long ES until 5th trading day
+        # Carry-over: ticker won last month → long ticker until 5th trading day
         if self._carry_over_signal and self._trading_day_count <= 5:
             if self._trading_day_count == 5:
                 self._carry_over_signal = 0
@@ -128,8 +131,8 @@ class RebalancingNode(BiasNode):
 
         # Observation period: first 15 calendar days (or first trading day after)
         if self._decision is None:
-            es_pct = (candle.close - self._month_start_es) / self._month_start_es
-            tlt_pct = (tlt_candle.close - self._month_start_tlt) / self._month_start_tlt
+            ticker_pct = (candle.close - self._month_start_ticker) / self._month_start_ticker
+            cross_pct = (cross_candle.close - self._month_start_cross) / self._month_start_cross
 
             # Make decision on day 15, or the first trading day on/after day 15
             should_decide = (
@@ -137,21 +140,21 @@ class RebalancingNode(BiasNode):
                 or (dt.day >= 13 and self._trading_day_count >= 10)
             )
             if should_decide:
-                if tlt_pct > es_pct:
-                    self._decision = "tlt_wins"
+                if cross_pct > ticker_pct:
+                    self._decision = "cross_wins"
                 else:
-                    self._decision = "es_wins"
+                    self._decision = "ticker_wins"
                     self._carry_over_signal = 1
                 # For the decision day itself, fall through to act immediately
             else:
                 return [0.0]  # still in observation
 
         # Decision made — act on it
-        if self._decision == "tlt_wins":
+        if self._decision == "cross_wins":
             return [1.0]
 
-        if self._decision == "es_wins":
-            # Long ES at end-of-month zone (day 25+) into next month
+        if self._decision == "ticker_wins":
+            # Long ticker at end-of-month zone (day 25+) into next month
             if dt.day >= 25:
                 return [1.0]
             return [0.0]

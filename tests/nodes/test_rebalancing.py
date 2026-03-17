@@ -1,10 +1,10 @@
-"""Unit tests for the RebalancingNode (ES / TLT monthly rebalancing).
+"""Unit tests for the RebalancingNode (monthly rebalancing pairs node).
 
 Tests cover:
 - Column naming conventions
 - Observation period returns 0
-- TLT outperforms → long ES signal
-- ES outperforms → flat then long ES at month end + carry-over
+- Cross-ticker outperforms → long primary ticker signal
+- Primary ticker outperforms → flat then long at month end + carry-over
 - Month transitions and state reset
 - Missing cross-ticker data returns neutral
 - Singleton compatibility
