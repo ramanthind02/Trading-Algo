@@ -30,6 +30,7 @@ class TestParameterSensitivityReportDataclass(unittest.TestCase):
             param_names=["lookback"],
             metric_name="sortino",
             stability_threshold=0.8,
+            metric_floor=2.0,
             grid_results=pd.DataFrame(),
             stable_regions=[],
             mean_stability_ratio=0.0,
@@ -49,6 +50,7 @@ class TestParameterSensitivityReportDataclass(unittest.TestCase):
             param_names=["p"],
             metric_name="sortino",
             stability_threshold=0.8,
+            metric_floor=2.0,
             grid_results=pd.DataFrame(),
             stable_regions=[],
             mean_stability_ratio=0.0,
@@ -145,18 +147,18 @@ class Test2DReportGeneration(unittest.TestCase):
         report = generate_parameter_sensitivity_report(
             self.df, ["fast", "slow"], "sortino",
         )
+        # MPS selects by raw objective (peak cell or fallback); recommended are ranked by raw
         if len(report.recommended_combinations) >= 2:
-            # Verify descending order by checking the smoothed values
-            smoothed_col = "smoothed_sortino"
             param_cols = ["param1_value", "param2_value"]
             grid = report.grid_results
+            raw_col = "sortino"
             for i in range(len(report.recommended_combinations) - 1):
                 combo_i = report.recommended_combinations[i]
                 combo_next = report.recommended_combinations[i + 1]
                 mask_i = (grid[param_cols[0]] == combo_i[0]) & (grid[param_cols[1]] == combo_i[1])
                 mask_next = (grid[param_cols[0]] == combo_next[0]) & (grid[param_cols[1]] == combo_next[1])
-                val_i = grid.loc[mask_i, smoothed_col].iloc[0]
-                val_next = grid.loc[mask_next, smoothed_col].iloc[0]
+                val_i = grid.loc[mask_i, raw_col].iloc[0]
+                val_next = grid.loc[mask_next, raw_col].iloc[0]
                 self.assertGreaterEqual(val_i, val_next)
 
 

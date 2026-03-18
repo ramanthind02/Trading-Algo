@@ -382,7 +382,7 @@ class TestRSISignal(unittest.TestCase):
             self.assertEqual(signals, [0.0, 0.0, -1.0, 0.0, 0.0, 0.0])
 
     def test_long_short_mode_fixed_exit(self):
-        """Verify long-short mode exits to flat after fixed bars."""
+        """Verify long_short mode exits to flat after fixed bars."""
         with patch("nodes.rsi_signal.compute_rsi_initial") as mock_init, \
              patch("nodes.rsi_signal.update_rsi") as mock_update:
             mock_init.return_value = (1.0, 1.0)
@@ -400,7 +400,7 @@ class TestRSISignal(unittest.TestCase):
                 rsi_period=2,
                 oversold=30.0,
                 overbought=70.0,
-                strategy_mode="long-short",
+                strategy_mode="long_short",
                 exit_policy="threshold_or_bars",
                 exit_bars=2,
             )

@@ -1,4 +1,7 @@
-"""Continuous quantile binning model with grid search over bin counts."""
+"""Continuous quantile binning model with grid search over bin counts.
+
+Outputs binary signals: 1 in selected long bin, -1 in selected short bin, 0 elsewhere.
+"""
 
 from __future__ import annotations
 
@@ -6,13 +9,14 @@ import numpy as np
 import pandas as pd
 
 from feature_selection.base_models.base_model import BinningModelBase
+from utils.core.enums import Direction, DirectionInput
 
 
 class ContinuousBinningModel(BinningModelBase):
     """Continuous feature model using quantile binning with grid search.
 
-    This model tests multiple bin counts and selects the single best bin per
-    direction based on t-statistic. Supports coverage-adjusted Sharpe output.
+    Selects the best bin per direction by t-statistic; predict() returns
+    binary values (0, 1 for long; 0, -1 for short).
     """
 
     model_type = "continuous_binning"
@@ -20,21 +24,8 @@ class ContinuousBinningModel(BinningModelBase):
     def __init__(
         self,
         n_bins: int = 15,
-        selection_metric: str = "sharpe",
-        strategy: str = "long",
-        normalize_by: str | None = "ewsd",
-        metric_threshold: float = 0.0,
-        t_threshold: float = 2.0,
-        min_region_width: int = 2,
-        shrinkage_k: float = 20.0,
-        long_clip_min: float = 0.5,
-        long_clip_max: float = 2.0,
-        short_clip_min: float = 0.5,
-        short_clip_max: float = 2.0,
         bin_counts: list[int] | None = None,
-        use_coverage_bonus: bool = False,
-        coverage_bonus_per_10pct: float = 0.02,
-        max_coverage_bonus: float = 0.2,
+        strategy: DirectionInput = Direction.LONG,
         bin_index_min: int = 0,
         bin_index_max: int | None = None,
     ) -> None:
@@ -46,61 +37,51 @@ class ContinuousBinningModel(BinningModelBase):
             Default bin count (used if bin_counts is None).
         bin_counts : list[int] | None
             List of bin counts to test in grid search. If None, uses [n_bins].
-        use_coverage_bonus : bool
-            Whether to add coverage bonus to Sharpe ratio.
-        coverage_bonus_per_10pct : float
-            Bonus added per 10% coverage above 10% floor.
-        max_coverage_bonus : float
-            Maximum coverage bonus cap.
+        strategy : DirectionInput
+            Direction enum or canonical direction string.
         bin_index_min : int
             Minimum bin index to consider for selection (inclusive). Default 0.
         bin_index_max : int | None
             Maximum bin index to consider (inclusive). None means no cap (all bins).
         """
         self.bin_counts = bin_counts if bin_counts is not None else [n_bins]
-        self.use_coverage_bonus = use_coverage_bonus
-        self.coverage_bonus_per_10pct = coverage_bonus_per_10pct
-        self.max_coverage_bonus = max_coverage_bonus
         self.bin_index_min = bin_index_min
         self.bin_index_max = bin_index_max
 
         super().__init__(
             n_bins=n_bins,
-            selection_metric=selection_metric,
-            normalize_by=normalize_by,
+            selection_metric="t_stat",
+            normalize_by="ewsd",
             strategy=strategy,
-            metric_threshold=metric_threshold,
-            t_threshold=t_threshold,
-            min_region_width=min_region_width,
-            shrinkage_k=shrinkage_k,
-            long_clip_min=long_clip_min,
-            long_clip_max=long_clip_max,
-            short_clip_min=short_clip_min,
-            short_clip_max=short_clip_max,
+            metric_threshold=0.0,
+            t_threshold=2.0,
+            min_region_width=2,
+            shrinkage_k=20.0,
+            long_clip_min=1.0,
+            long_clip_max=1.0,
+            short_clip_min=1.0,
+            short_clip_max=1.0,
         )
 
     def clone(self) -> ContinuousBinningModel:
         """Return a new unfitted instance with the same constructor arguments."""
         return ContinuousBinningModel(
             n_bins=self.n_bins,
-            selection_metric=self.selection_metric,
-            strategy=self.strategy,
-            normalize_by=self.normalize_by,
-            metric_threshold=self.metric_threshold,
-            t_threshold=self.t_threshold,
-            min_region_width=self.min_region_width,
-            shrinkage_k=self.shrinkage_k,
-            long_clip_min=self.long_clip_min,
-            long_clip_max=self.long_clip_max,
-            short_clip_min=self.short_clip_min,
-            short_clip_max=self.short_clip_max,
             bin_counts=list(self.bin_counts),
-            use_coverage_bonus=self.use_coverage_bonus,
-            coverage_bonus_per_10pct=self.coverage_bonus_per_10pct,
-            max_coverage_bonus=self.max_coverage_bonus,
+            strategy=self.strategy,
             bin_index_min=self.bin_index_min,
             bin_index_max=self.bin_index_max,
         )
+
+    def get_params(self, deep: bool = True) -> dict[str, object]:
+        """Expose constructor parameters for vault persistence (only accepted by __init__)."""
+        return {
+            "n_bins": self.n_bins,
+            "bin_counts": list(self.bin_counts),
+            "strategy": self.strategy.value,
+            "bin_index_min": self.bin_index_min,
+            "bin_index_max": self.bin_index_max,
+        }
 
     def fit(
         self,
@@ -174,35 +155,23 @@ class ContinuousBinningModel(BinningModelBase):
                     if self.bin_index_min <= int(b) <= self.bin_index_max
                 ]
 
-            # Select best bin per direction
+            # Select best bin per direction by t-stat
             best_long_bin, best_short_bin = self._select_best_bins(bin_stats, allowed_bins)
 
-            # Compute coverage-adjusted Sharpe for winning bins
-            total_obs = len(df_copy)
             if best_long_bin is not None:
-                long_coverage = bin_stats[best_long_bin]["count"] / total_obs
-                long_sharpe = self._compute_coverage_adjusted_sharpe(
-                    bin_stats[best_long_bin], long_coverage
-                )
                 long_t_stat = bin_stats[best_long_bin]["t_stat"]
             else:
-                long_sharpe = long_t_stat = float("-inf")
+                long_t_stat = float("-inf")
 
             if best_short_bin is not None:
-                short_coverage = bin_stats[best_short_bin]["count"] / total_obs
-                short_sharpe = self._compute_coverage_adjusted_sharpe(
-                    bin_stats[best_short_bin], short_coverage
-                )
-                # Raw t-stat (negative for short bins); do not use abs() so long_short
-                # compares long (positive) vs short magnitude via -short_t_stat.
                 short_t_stat = bin_stats[best_short_bin]["t_stat"]
             else:
-                short_sharpe = short_t_stat = float("-inf")
+                short_t_stat = float("-inf")
 
             # Track best result by highest t-stat (sign-aware per strategy)
-            if self.strategy == "long":
+            if self.strategy == Direction.LONG:
                 score = long_t_stat
-            elif self.strategy == "short":
+            elif self.strategy == Direction.SHORT:
                 score = -short_t_stat  # more negative short t-stat -> higher score
             else:  # long_short
                 score = max(long_t_stat, -short_t_stat)
@@ -216,8 +185,6 @@ class ContinuousBinningModel(BinningModelBase):
                     "bin_stats": bin_stats,
                     "best_long_bin": best_long_bin,
                     "best_short_bin": best_short_bin,
-                    "long_sharpe": long_sharpe,
-                    "short_sharpe": short_sharpe,
                 }
 
         if best_result is None:
@@ -226,7 +193,7 @@ class ContinuousBinningModel(BinningModelBase):
             )
 
         # Reject long-only fit when no profitable long bin exists
-        if self.strategy == "long" and best_result["best_long_bin"] is None:
+        if self.strategy == Direction.LONG and best_result["best_long_bin"] is None:
             raise ValueError(
                 "No long bin with positive t-stat; cannot fit long-only model."
             )
@@ -237,12 +204,10 @@ class ContinuousBinningModel(BinningModelBase):
         self.bin_edges_ = self._extract_bin_edges(df, best_result["ordered_bins"])
         self.bin_stats_ = best_result["bin_stats"]
 
-        # Store selected bins and coverage-adjusted sharpes
+        # Store selected bins (binary output: 1 / -1 in predict)
         self.selected_bins_ = {
             "long": best_result["best_long_bin"],
             "short": best_result["best_short_bin"],
-            "long_sharpe": best_result["long_sharpe"],
-            "short_sharpe": best_result["short_sharpe"],
         }
 
         # Build position multipliers for selected bins only
@@ -254,14 +219,8 @@ class ContinuousBinningModel(BinningModelBase):
         # Store fit config
         self.fit_config_ = {
             "n_bins": self.n_bins,
-            "selection_metric": self.selection_metric,
-            "strategy": self.strategy,
-            "metric_threshold": self.metric_threshold,
-            "t_threshold": self.t_threshold,
-            "min_region_width": self.min_region_width,
-            "shrinkage_k": self.shrinkage_k,
+            "strategy": self.strategy.value,
             "bin_counts": self.bin_counts,
-            "use_coverage_bonus": self.use_coverage_bonus,
             "bin_index_min": self.bin_index_min,
             "bin_index_max": self.bin_index_max,
         }
@@ -296,67 +255,27 @@ class ContinuousBinningModel(BinningModelBase):
 
         return best_long_bin, best_short_bin
 
-    def _compute_coverage_adjusted_sharpe(self, bin_stat: dict, coverage: float) -> float:
-        """Compute coverage-adjusted Sharpe ratio.
-
-        Parameters
-        ----------
-        bin_stat : dict
-            Per-bin statistics from _calculate_bin_stats.
-        coverage : float
-            Fraction of observations in this bin (0 to 1).
-
-        Returns
-        -------
-        float
-            Coverage-adjusted Sharpe ratio.
-        """
-        base_sharpe = bin_stat["sharpe"]
-
-        if not self.use_coverage_bonus:
-            return base_sharpe
-
-        # Coverage bonus: +bonus per 10% above 10% floor
-        coverage_pct = coverage * 100
-        bonus = 0.0
-        if coverage_pct > 10:
-            bonus = ((coverage_pct - 10) / 10) * self.coverage_bonus_per_10pct
-            bonus = min(bonus, self.max_coverage_bonus)
-
-        return base_sharpe + bonus
-
     def _build_position_multipliers_from_selected_bins(self) -> None:
-        """Build position multipliers dict from selected bins.
-
-        Populates position_multipliers_by_strategy_ and active_bins_by_strategy_
-        based on selected_bins_.
-        """
+        """Build binary position multipliers (1 / -1) from selected bins."""
         multipliers_long: dict[int, float] = {}
         multipliers_short: dict[int, float] = {}
         multipliers_long_short: dict[int, float] = {}
 
         if self.selected_bins_["long"] is not None:
             bin_idx = self.selected_bins_["long"]
-            sharpe = self.selected_bins_["long_sharpe"]
-            multipliers_long[bin_idx] = sharpe
-            multipliers_long_short[bin_idx] = sharpe
+            multipliers_long[bin_idx] = 1.0
+            multipliers_long_short[bin_idx] = 1.0
 
         if self.selected_bins_["short"] is not None:
             bin_idx = self.selected_bins_["short"]
-            sharpe = self.selected_bins_["short_sharpe"]
-            # For short: coverage-adjusted Sharpe is based on raw Sharpe (which may be negative)
-            # We want the multiplier to be negative, so just use the raw value
-            # (if base Sharpe is negative, coverage bonus makes it less negative, but it stays negative)
-            multipliers_short[bin_idx] = sharpe  # Keep as-is (should be negative or made negative)
-            multipliers_long_short[bin_idx] = sharpe  # Keep as-is
+            multipliers_short[bin_idx] = -1.0
+            multipliers_long_short[bin_idx] = -1.0
 
         self.position_multipliers_by_strategy_ = {
             "long": multipliers_long,
             "short": multipliers_short,
             "long_short": multipliers_long_short,
         }
-
-        # Also update active_bins_by_strategy_ for backwards compat
         self.active_bins_by_strategy_ = {
             "long": list(multipliers_long.keys()),
             "short": list(multipliers_short.keys()),

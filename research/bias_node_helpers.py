@@ -23,7 +23,7 @@ from feature_selection.base_models import (
     QuantileBinningModel,
     TwoBinBinningModel,
 )
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
 
 
 def build_feature_metadata(features_df: pd.DataFrame) -> Dict[str, Any]:
@@ -52,7 +52,7 @@ def get_binning_model(
     is_continuous: bool,
     n_bins: int = 10,
     selection_metric: str = "sortino",
-    strategy: str = "long",
+    strategy: DirectionInput = "long",
 ) -> Union[QuantileBinningModel, TwoBinBinningModel]:
     """Return QuantileBinningModel or TwoBinBinningModel based on is_continuous."""
     if is_continuous:
@@ -78,7 +78,7 @@ def get_best_feature_from_permutation(perm_df: Optional[pd.DataFrame]) -> Option
     return best_row["feature"]
 
 
-_VALID_STRATEGIES = ("long", "short", "long-short")
+_VALID_STRATEGIES = ("long", "short", "long_short")
 
 
 def test_bias_node(
@@ -95,7 +95,7 @@ def test_bias_node(
     use_cache: bool = False,
     target_col: str = "log_return",
     binning_model: Optional[BinningModelBase] = None,
-    strategy: str = "long",
+    strategy: DirectionInput = "long",
 ) -> Optional[Dict[str, Any]]:
     """
     Test a bias node and generate summary report.
@@ -109,8 +109,8 @@ def test_bias_node(
     binning_model : BinningModelBase, optional
         If provided, this model is used for binning. If None, one is chosen from
         get_binning_model(is_continuous) (QuantileBinningModel or TwoBinBinningModel).
-    strategy : str, default='long'
-        Signal strategy: 'long', 'short', or 'long-short'.
+    strategy : DirectionInput, default='long'
+        Signal strategy: 'long', 'short', or 'long_short'.
     target_col : str, default='log_return'
         Target column for extraction and report (e.g. 'log_return', 'log_return_atr', 'log_return_ewsd').
 
@@ -120,8 +120,7 @@ def test_bias_node(
         Analysis results including permutation_test, features_df, targets_df,
         binning_model, extract_time, strategy; or None if extraction/report failed.
     """
-    if strategy not in _VALID_STRATEGIES:
-        raise ValueError(f"strategy must be one of {_VALID_STRATEGIES}, got {strategy!r}")
+    strategy = coerce_direction(strategy, field_name="strategy").value
     print(f"\n{'='*70}")
     print(f"Testing: {node_name} [{strategy.upper()}] {'[CACHED]' if use_cache else '[STREAMING]'}")
     print(f"{'='*70}")
@@ -223,7 +222,7 @@ def generate_node_tearsheet(
     features_df: Optional[pd.DataFrame] = None,
     targets_df: Optional[pd.DataFrame] = None,
     bias_spec: Optional[Dict[str, Any]] = None,
-    strategy: str = "long-short",
+    strategy: DirectionInput = "long_short",
     target_col: str = "log_return",
     tickers: Optional[Union[Ticker, List[Ticker]]] = None,
     binning_model: Optional[BinningModelBase] = None,
@@ -249,7 +248,7 @@ def generate_node_tearsheet(
         Permutation results and pre-extracted features/targets from test_bias_node
     bias_spec : dict, optional
         Kept for API compatibility; not used
-    strategy : str, default='long-short'
+    strategy : DirectionInput, default='long_short'
         Passed to binning_model.predict() only (which exposure to emit). Does not affect
         return calculation: returns are always position_fraction * instrument_return
         (position is already signed -1/0/1 from node or binning model).
@@ -273,8 +272,7 @@ def generate_node_tearsheet(
 
     if bias_spec is not None:
         pass  # unused, API compatibility
-    if strategy not in _VALID_STRATEGIES:
-        raise ValueError(f"strategy must be one of {_VALID_STRATEGIES}, got {strategy!r}")
+    strategy = coerce_direction(strategy, field_name="strategy").value
 
     print(f"\n  Generating QuantStats tearsheet for {node_name} [{strategy}]...")
 

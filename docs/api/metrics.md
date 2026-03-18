@@ -169,11 +169,11 @@ breached, idx, reason = check_drawdown_breach(equity=equity, max_drawdown_pct=0.
 
 `generate_tearsheet`
 - Type: function
-- Signature: `generate_tearsheet(strategy_returns: pd.Series, baseline_returns: pd.Series | None = None, feature_name: str = "Strategy", output_file: str | None = None, mode: str = "full") -> None`
+- Signature: `generate_tearsheet(strategy_returns: pd.Series, baseline_returns: pd.Series | None = None, feature_name: str = "Strategy", output_file: str | None = None, mode: str = "full", timeframe: TimeFrame = TimeFrame.D) -> None`
 - Behavior: QuantStats wrapper for report generation (`html`/`full`/`basic`/`metrics`).
 - Raises: `ImportError` if QuantStats missing, `TypeError` for invalid series/index, `ValueError` for unknown mode.
 - Logging/side effects: emits warnings when QuantStats is unavailable at import time; prints save path in `html` mode.
-- Constraints: expects daily return series with `DatetimeIndex`; timezone info is stripped internally; uses `compounded=False`.
+- Constraints: expects `DatetimeIndex`; timezone info is stripped internally; uses `compounded=False`. For sub-daily (`H1`/`H4`) inputs, returns are additively resampled to daily before passing to QuantStats.
 
 `compute_baseline_results`
 - Type: function

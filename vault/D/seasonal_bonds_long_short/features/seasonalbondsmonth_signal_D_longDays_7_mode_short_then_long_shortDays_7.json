@@ -1,0 +1,40 @@
+{
+  "feature_name": "seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7",
+  "created_at": "2026-03-07T05:20:46.082929+00:00",
+  "updated_at": "2026-03-07T05:20:46.082945+00:00",
+  "bias_node_spec": {
+    "module_name": "seasonal_bonds_month",
+    "timeframes": [
+      "D"
+    ]
+  },
+  "tickers": [
+    "TLT"
+  ],
+  "base_models": [
+    {
+      "model_id": "rule_based_3",
+      "model_name": "seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3",
+      "bias_node_params": {},
+      "binning_model_type": "rule_based",
+      "strategy": "long_short",
+      "binning_model_params": {
+        "n_bins": 3,
+        "selection_metric": "t_stat",
+        "normalize_by": null,
+        "metric_threshold": 0.0,
+        "t_threshold": 0.0,
+        "min_region_width": 1,
+        "shrinkage_k": 20.0,
+        "long_clip_min": 0.5,
+        "long_clip_max": 2.0,
+        "short_clip_min": 0.5,
+        "short_clip_max": 2.0
+      },
+      "requires_fit": false,
+      "is_fitted": false,
+      "fitted_params": null,
+      "members": []
+    }
+  ]
+}

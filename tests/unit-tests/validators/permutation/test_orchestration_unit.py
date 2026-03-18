@@ -9,7 +9,6 @@ from feature_selection.validation.config import (
     InSamplePermutationConfig,
     OutOfSamplePermutationConfig,
     PermutationTestConfig,
-    WalkforwardPermutationConfig,
 )
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from feature_selection.validation.reports import (
@@ -24,13 +23,11 @@ from feature_selection.validation.reports import (
 
 
 def test_permutation_test_config_defaults() -> None:
-    """PermutationTestConfig has the correct defaults."""
+    """PermutationTestConfig has the correct defaults (Stage 3 removed)."""
     config = PermutationTestConfig()
     assert config.nreps == 1000
     assert config.alpha == 0.10
-    assert config.top_k == 3
     assert config.permutation_mode_stage2 == 'candle_shuffle'
-    assert config.min_folds_stable == 3
     assert config.random_seed is None
     assert config.in_sample.nreps == 1000
     assert config.in_sample.alpha == 0.10
@@ -38,8 +35,6 @@ def test_permutation_test_config_defaults() -> None:
     assert config.in_sample.permutation_mode_stage2 == 'candle_shuffle'
     assert config.in_sample.run_stage1 is True
     assert config.in_sample.run_stage2 is True
-    assert config.walkforward.top_k == 3
-    assert config.walkforward.min_folds_stable == 3
 
 
 def test_permutation_test_config_rejects_in_sample_config_plus_legacy_scalars() -> None:
@@ -48,15 +43,6 @@ def test_permutation_test_config_rejects_in_sample_config_plus_legacy_scalars() 
         PermutationTestConfig(
             in_sample=InSamplePermutationConfig(nreps=200),
             nreps=500,
-        )
-
-
-def test_permutation_test_config_rejects_walkforward_config_plus_legacy_scalars() -> None:
-    """Walkforward nested config and walkforward legacy scalars cannot be mixed."""
-    with pytest.raises(ValueError, match='walkforward'):
-        PermutationTestConfig(
-            walkforward=WalkforwardPermutationConfig(top_k=2),
-            top_k=5,
         )
 
 
@@ -293,7 +279,6 @@ def test_stage2_uses_single_batch_call_for_rule_based_passers(monkeypatch: pytes
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
     monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_batch)
     monkeypatch.setattr(orchestration, 'run_pipeline_permutation_rule_based', fail_if_single_stage2_called)
-    monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
 
     suite = orchestration.run_permutation_test_suite(
         candles_df=candles,
@@ -577,7 +562,6 @@ def test_suite_runs_oos_on_stage2_passers_by_default(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
     monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
-    monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 
     suite = orchestration.run_permutation_test_suite(
@@ -719,7 +703,6 @@ def test_suite_can_switch_oos_source_to_stable_intersection(
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
     monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
-    monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 
     config = PermutationTestConfig(
@@ -747,8 +730,9 @@ def test_suite_can_switch_oos_source_to_stable_intersection(
         feature_name='test',
     )
 
-    assert sorted(suite.phase3_oos_reports.keys()) == ['lookback_5']
-    assert called_combos == ['lookback_5']
+    # With Stage 3 removed, stable_params is always empty, so stable_intersection yields no OOS candidates.
+    assert sorted(suite.phase3_oos_reports.keys()) == []
+    assert called_combos == []
 
 
 def test_oos_uses_configured_objective_metric_only_for_oos(
@@ -765,7 +749,6 @@ def test_oos_uses_configured_objective_metric_only_for_oos(
     sample_returns = pd.Series([1.0, -0.5], index=pd.RangeIndex(2))
     stage1_objective_values: list[float] = []
     stage2_objective_values: list[float] = []
-    walkforward_objective_values: list[float] = []
     oos_objective_values: list[float] = []
 
     def extractor(df: pd.DataFrame, params: dict) -> pd.Series:
@@ -824,26 +807,6 @@ def test_oos_uses_configured_objective_metric_only_for_oos(
             for item in kwargs['items']  # type: ignore[index]
         }
 
-    def fake_walkforward(**kwargs: object) -> WalkforwardStabilityReport:
-        walkforward_objective_values.append(float(kwargs['objective_func'](sample_returns)))  # type: ignore[index,operator]
-        return WalkforwardStabilityReport(
-            feature_name='test',
-            feature_type='rule_based',
-            fold_results=[
-                FoldResult(
-                    fold_id='fold_1',
-                    fold_period=('2020-01-01', '2020-01-08'),
-                    top_k_params=['lookback_3'],
-                    smoothed_objectives={'lookback_3': 1.0},
-                    passed_permutation_overlay=[True],
-                ),
-            ],
-            consistency_metrics={'overlap_rate': 1.0},
-            is_stable=True,
-            stability_verdict='STABLE',
-            top_k=1,
-        )
-
     def fake_oos(**kwargs: object) -> OutOfSamplePermutationReport:
         combo = str(kwargs['param_combo'])
         oos_objective_values.append(float(kwargs['objective_func'](sample_returns)))  # type: ignore[index,operator]
@@ -879,7 +842,6 @@ def test_oos_uses_configured_objective_metric_only_for_oos(
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
     monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
-    monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 
     suite = orchestration.run_permutation_test_suite(
@@ -906,7 +868,6 @@ def test_oos_uses_configured_objective_metric_only_for_oos(
     assert suite.ensemble_candidates == ['lookback_3']
     assert stage1_objective_values == [-123.0]
     assert stage2_objective_values == [-123.0]
-    assert walkforward_objective_values == [-123.0]
     assert oos_objective_values == [2.0]
 
 
@@ -1018,7 +979,6 @@ def test_oos_combo_exception_does_not_abort_suite(
 
     monkeypatch.setattr(orchestration, 'run_vector_shuffle_test', fake_stage1)
     monkeypatch.setattr(orchestration, '_run_pipeline_permutation_rule_based_batch', fake_stage2_rule_batch)
-    monkeypatch.setattr(orchestration, 'run_walkforward_stability', fake_walkforward)
     monkeypatch.setattr(orchestration, 'run_oos_permutation_for_param', fake_oos)
 
     suite = orchestration.run_permutation_test_suite(

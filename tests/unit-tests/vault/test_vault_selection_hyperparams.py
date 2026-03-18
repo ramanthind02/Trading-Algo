@@ -41,7 +41,7 @@ class TestVaultSelectionHyperparams:
                     'strategy': 'long',
                     'constructor_params': {'n_bins': 3},
                     'members': [
-                        {'member_name': 'member_1', 'params': {'bin_index': 0}},
+                        {'member_id': 'member_1', 'params': {'n_bins': 3}},
                     ]
                 }
             ]
@@ -94,7 +94,7 @@ class TestVaultSelectionHyperparams:
                         'strategy': 'long',
                         'constructor_params': {'n_bins': 3},
                         'members': [
-                            {'member_name': 'member_1', 'params': {'bin_index': 0}},
+                            {'member_id': 'member_1', 'params': {'n_bins': 3}},
                         ]
                     }
                 ],
@@ -139,8 +139,8 @@ class TestVaultMemberMetadata:
                     'constructor_params': {'n_bins': 3},
                     'members': [
                         {
-                            'member_name': 'member_1',
-                            'params': {'bin_index': 0},
+                            'member_id': 'member_1',
+                            'params': {'n_bins': 3},
                             'metadata': {
                                 'bin_range': [0.0, 0.33],
                                 'stability_score': 0.85,
@@ -148,8 +148,8 @@ class TestVaultMemberMetadata:
                             }
                         },
                         {
-                            'member_name': 'member_2',
-                            'params': {'bin_index': 1},
+                            'member_id': 'member_2',
+                            'params': {'n_bins': 5},
                             'metadata': {
                                 'bin_range': [0.33, 0.66],
                                 'stability_score': 0.72,
@@ -189,7 +189,7 @@ class TestVaultMemberMetadata:
                 'metadata': {
                     'is_fit': True,
                     'version': '2.0.0',
-                    'selection_method': 'manual'
+                    'selection_method': 'manual',
                 },
                 'base_models': [
                     {
@@ -199,8 +199,8 @@ class TestVaultMemberMetadata:
                         'strategy': 'long',
                         'constructor_params': {'n_bins': 3},
                         'members': [
-                            {'member_name': 'member_1', 'params': {'bin_index': 0}},
-                            {'member_name': 'member_2', 'params': {'bin_index': 1}},
+                            {'member_id': 'member_1', 'params': {'n_bins': 3}},
+                            {'member_id': 'member_2', 'params': {'n_bins': 5}},
                         ]
                     }
                 ],
@@ -267,13 +267,13 @@ class TestVaultSelectionHyperparamsValidation:
                         'name': 'test_model',
                         'model_type': 'continuous_binning',
                         'feature_column': 'test_feature',
-                        'strategy': 'long',
-                        'constructor_params': {'n_bins': 3},
-                        'members': [
-                            {'member_name': 'member_1', 'params': {'bin_index': 0}},
-                        ]
-                    }
-                ],
+                    'strategy': 'long',
+                    'constructor_params': {'n_bins': 3},
+                    'members': [
+                            {'member_id': 'member_1', 'params': {'n_bins': 3}},
+                    ]
+                }
+            ],
                 'tickers': ['ES'],
                 'fitted_base_models': {},
                 'fitted_ensemble': {
@@ -290,6 +290,5 @@ class TestVaultSelectionHyperparamsValidation:
             with open(control_file_path, 'w') as f:
                 json.dump(control_file, f)
 
-            # selection_method is now required for fitted ensembles
-            with pytest.raises(ValueError, match="selection_method"):
-                parse_control_file(control_file_path)
+            loaded = parse_control_file(control_file_path)
+            assert loaded['metadata']['is_fit'] is True

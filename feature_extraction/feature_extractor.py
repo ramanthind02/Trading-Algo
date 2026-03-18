@@ -175,6 +175,37 @@ def _safe_log_return(close: pd.Series, open_: pd.Series) -> pd.Series:
     return out
 
 
+def _find_feature_column(columns: List[str], keyword: str) -> Optional[str]:
+    """Find a feature column by keyword while skipping non-feature columns."""
+    candidates = [
+        col for col in columns
+        if col != "ticker" and keyword in col.lower()
+    ]
+    if not candidates:
+        return None
+    # Prefer canonical patterns like atr_* or *_atr_* over incidental substring matches.
+    prioritized = sorted(
+        candidates,
+        key=lambda col: (
+            0 if col.lower().startswith(f"{keyword}_") or f"_{keyword}_" in col.lower() else 1,
+            len(col),
+            col,
+        ),
+    )
+    return prioritized[0]
+
+
+def _normalize_timeframes(
+    timeframes: Optional[List[Union[TimeFrame, str]]],
+) -> List[TimeFrame]:
+    """Normalize timeframe inputs to TimeFrame enums."""
+    raw_timeframes: List[Union[TimeFrame, str]] = timeframes or [TimeFrame.D]
+    return [
+        TimeFrame[tf] if isinstance(tf, str) else tf
+        for tf in raw_timeframes
+    ]
+
+
 def _compute_targets(price_df: pd.DataFrame, atr_col: Optional[str] = None, ewsd_col: Optional[str] = None) -> pd.DataFrame:
     """Compute target columns from price data."""
     raw_return = (price_df['close'] / price_df['open']) - 1
@@ -231,7 +262,7 @@ def compute_forward_returns(
     features_df : pd.DataFrame, optional
         Features dataframe containing ATR and EWSD columns for normalization.
         If provided, MUST contain:
-        - An ATR column (identified by containing 'atr' and '252' in the name)
+        - An ATR column (identified by containing 'atr' in the name)
         - An EWSD column (identified by containing 'ewsd' in the name)
         Will compute log_return_atr and log_return_ewsd using these columns.
         If not provided, only raw_return and log_return will be computed.
@@ -306,25 +337,15 @@ def compute_forward_returns(
         # Get original datetime index (before dropping first row)
         original_datetime_index = _ensure_utc_datetime_index(ticker_candles['datetime'].values)
         
-        # Find ATR column (contains 'atr' and '252' in name)
-        atr_col = next(
-            (col for col in ticker_features_indexed.columns 
-             if col != 'ticker' and 'atr' in col.lower() and '252' in col),
-            None
-        )
-        
-        # Find EWSD column (contains 'ewsd' in name)
-        ewsd_col = next(
-            (col for col in ticker_features_indexed.columns 
-             if col != 'ticker' and 'ewsd' in col.lower()),
-            None
-        )
+        # Find ATR / EWSD columns.
+        atr_col = _find_feature_column(list(ticker_features_indexed.columns), "atr")
+        ewsd_col = _find_feature_column(list(ticker_features_indexed.columns), "ewsd")
         
         # Validate that ATR and EWSD columns are found
         if atr_col is None:
             raise ValueError(
                 f"ATR column not found in features_df. "
-                f"Expected a column containing 'atr' and '252' in the name. "
+                f"Expected a column containing 'atr' in the name. "
                 f"Available columns: {list(ticker_features_indexed.columns)}"
             )
         
@@ -498,7 +519,7 @@ def _extract_features_single_ticker(
             price_df = price_df.set_index('datetime')
         use_cache = False  # Must stream from override so features reflect shuffled data
     else:
-        price_df = helpers.load_data(ticker, TimeFrame.D, start=start, end=end)
+        price_df = helpers.load_data(ticker, timeframes[0], start=start, end=end)
         price_df.set_index('datetime', inplace=True)
     # Ensure timezone is UTC (may already be timezone-aware)
     if price_df.index.tz is None:
@@ -610,6 +631,7 @@ def _extract_features_single_ticker(
 
     # STREAMING PATH: Iterate over candles (slow)
     else:
+        active_timeframe = timeframes[0]
         for idx, (dt, row) in enumerate(price_df.iterrows()):
             candle = Candle(
                 datetime=dt,
@@ -619,19 +641,18 @@ def _extract_features_single_ticker(
                 close=float(row['close']),
                 volume=float(row.get('volume', 0)),
                 ticker=ticker,
-                tf=TimeFrame.D
+                tf=active_timeframe,
             )
 
             for bias_node in bias_nodes:
-                if bias_node.tf == TimeFrame.D:
-                    values = bias_node.add_candle(candle)
-                    start_col, end_col = node_to_cols[bias_node]
+                values = bias_node.add_candle(candle)
+                start_col, end_col = node_to_cols[bias_node]
 
-                    for i in range(min(len(values), end_col - start_col)):
-                        val = values[i]
-                        if hasattr(val, 'value'):
-                            val = val.value
-                        feature_data[idx, start_col + i] = float(val) if val is not None else np.nan
+                for i in range(min(len(values), end_col - start_col)):
+                    val = values[i]
+                    if hasattr(val, 'value'):
+                        val = val.value
+                    feature_data[idx, start_col + i] = float(val) if val is not None else np.nan
 
     # Create features DataFrame
     features_df = pd.DataFrame(feature_data, index=price_df.index, columns=column_names)
@@ -642,8 +663,8 @@ def _extract_features_single_ticker(
     # Return[t+1] = (close[t+1]/open[t+1] - 1) is the return from open[t+1] to close[t+1]
     # This ensures no lookahead: Feature[t] uses only data available at end of day t
     # and predicts the return for the NEXT day (t+1)
-    atr_col = next((col for col in features_df.columns if 'atr' in col.lower() and '252' in col), None)
-    ewsd_col = next((col for col in features_df.columns if 'ewsd' in col.lower()), None)
+    atr_col = _find_feature_column(list(features_df.columns), "atr")
+    ewsd_col = _find_feature_column(list(features_df.columns), "ewsd")
     
     # Compute intraday returns: Return[t] = (close[t]/open[t] - 1)
     # This is the return DURING day t (from open to close)
@@ -784,17 +805,16 @@ def extract_features(
         start = datetime(1990, 1, 1)
     if end is None:
         end = datetime.now()
-    if timeframes is None:
-        timeframes = [TimeFrame.D]
+    timeframes = _normalize_timeframes(timeframes)
     if filter_specs is None:
         filter_specs = []
-    
+
     # Normalize ticker to list
     if isinstance(ticker, Ticker):
         tickers = [ticker]
     else:
         tickers = ticker
-    
+
     # Build per-ticker override when provided (for permutation: features from shuffled candles)
     override_by_ticker: Dict[Ticker, pd.DataFrame] = {}
     if candles_override is not None and not candles_override.empty and 'ticker' in candles_override.columns:
@@ -953,17 +973,16 @@ def extract_features_with_forward_returns(
         start = datetime(1990, 1, 1)
     if end is None:
         end = datetime.now()
-    if timeframes is None:
-        timeframes = [TimeFrame.D]
+    timeframes = _normalize_timeframes(timeframes)
     if filter_specs is None:
         filter_specs = []
-    
+
     # Normalize ticker to list
     if isinstance(ticker, Ticker):
         tickers = [ticker]
     else:
         tickers = ticker
-    
+
     # Load candles to compute forward returns
     have_candles_override = candles_override is not None
     candles_df = candles_override
@@ -1003,16 +1022,17 @@ def extract_features_with_forward_returns(
     )
 
     # Extract ATR features (mandatory for volatility scaling)
+    bars_per_year = timeframes[0].bars_per_year
     atr_features_df, _ = extract_features(
         module_name='atr',
-        params={'period': 252},
+        params={'period': bars_per_year},
         **extract_kw,
     )
 
     # Extract EWSD features (mandatory for volatility scaling)
     ewsd_features_df, _ = extract_features(
         module_name='ewsd',
-        params={},  # Use default parameters
+        params={'long_run_window': 10 * bars_per_year},
         **extract_kw,
     )
     

@@ -16,6 +16,7 @@ import pandas as pd
 
 from feature_selection.validation.objective_metrics import metric_calmar, metric_profit_factor
 from feature_selection.base_models.utils import build_member_model_name
+from utils.core.enums import Direction, DirectionInput, coerce_direction
 
 
 class BinningModelBase(ABC):
@@ -28,7 +29,7 @@ class BinningModelBase(ABC):
         n_bins: int = 3,
         selection_metric: str = "sharpe",
         normalize_by: Optional[str] = "ewsd",
-        strategy: str = "long",
+        strategy: DirectionInput = Direction.LONG,
         metric_threshold: float = 0.0,
         t_threshold: float = 2.0,
         min_region_width: int = 2,
@@ -41,7 +42,7 @@ class BinningModelBase(ABC):
         self.n_bins = n_bins
         self.selection_metric = selection_metric
         self.normalize_by = normalize_by
-        self.strategy = strategy
+        self.strategy = coerce_direction(strategy, field_name="strategy")
 
         self.metric_threshold = metric_threshold
         self.t_threshold = t_threshold
@@ -70,12 +71,6 @@ class BinningModelBase(ABC):
         self.fit_config_: Dict[str, object] = {}
         self.model_version_ = "binning_v2"
         self.is_fitted_ = False
-
-    @staticmethod
-    def _normalize_strategy(strategy: str) -> str:
-        if strategy == "long-short":
-            return "long_short"
-        return strategy
 
     def _reset_fitted_state(self) -> None:
         self.bin_edges_ = None
@@ -437,21 +432,17 @@ class BinningModelBase(ABC):
     def predict(
         self,
         feature_data: pd.Series,
-        strategy: str = "long",
+        strategy: DirectionInput = Direction.LONG,
         normalization_data: Optional[pd.Series] = None,
         scaled: bool = False,
     ) -> pd.Series:
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before calling predict()")
 
-        normalized_strategy = self._normalize_strategy(strategy)
-        if normalized_strategy not in {"long", "short", "long_short"}:
-            raise ValueError(
-                f"Unknown strategy: {strategy!r}. Use 'long', 'short', or 'long_short'/'long-short'"
-            )
+        normalized_strategy = coerce_direction(strategy, field_name="strategy")
 
         bins = self._assign_bins(feature_data)
-        multipliers = self.position_multipliers_by_strategy_.get(normalized_strategy, {})
+        multipliers = self.position_multipliers_by_strategy_.get(normalized_strategy.value, {})
 
         raw = bins.map(
             lambda bin_idx: float(multipliers.get(self._predict_bin_key(int(bin_idx)), 0.0))
@@ -496,7 +487,7 @@ class BinningModelBase(ABC):
         feature_data: pd.Series,
         target_data: pd.Series,
         objective_metric: "ObjectiveMetric",
-        strategy: str = "long",
+        strategy: DirectionInput = Direction.LONG,
         normalization_data: Optional[pd.Series] = None,
     ) -> float:
         self.fit(feature_data, target_data, normalization_data=normalization_data)
@@ -551,7 +542,7 @@ class BinningModelBase(ABC):
             "name": model_name,
             "model_type": self.model_type,
             "feature_column": self.feature_column,
-            "strategy": self.strategy,
+            "strategy": self.strategy.value,
             "constructor_params": params,
             "members": [
                 {"member_name": model_name, "params": params},
@@ -574,7 +565,7 @@ class BinningModelBase(ABC):
                 "or ensure the Series has a name attribute (e.g., df['column_name'])."
             )
 
-        base_model_name = f"{self.feature_column}_{self.strategy}"
+        base_model_name = f"{self.feature_column}_{self.strategy.value}"
         return build_member_model_name(base_model_name, member_identity)
 
     def get_params(self, deep: bool = True) -> Dict[str, object]:
@@ -582,7 +573,7 @@ class BinningModelBase(ABC):
             "n_bins": self.n_bins,
             "selection_metric": self.selection_metric,
             "normalize_by": self.normalize_by,
-            "strategy": self.strategy,
+            "strategy": self.strategy.value,
             "metric_threshold": self.metric_threshold,
             "t_threshold": self.t_threshold,
             "min_region_width": self.min_region_width,
@@ -596,13 +587,21 @@ class BinningModelBase(ABC):
     def set_params(self, **params: object) -> "BinningModelBase":
         for key, value in params.items():
             if hasattr(self, key):
-                setattr(self, key, value)
+                if key == "strategy":
+                    setattr(self, key, coerce_direction(value, field_name="strategy"))
+                else:
+                    setattr(self, key, value)
             else:
                 raise ValueError(f"Invalid parameter {key} for estimator {type(self).__name__}")
         self._reset_fitted_state()
         return self
 
-    def score(self, X: pd.Series, y: pd.Series, strategy: str = "long") -> float:
+    def score(
+        self,
+        X: pd.Series,
+        y: pd.Series,
+        strategy: DirectionInput = Direction.LONG,
+    ) -> float:
         if not self.is_fitted_:
             raise ValueError("Model must be fitted before calling score()")
         signals = self.predict(X, strategy=strategy)
@@ -611,11 +610,14 @@ class BinningModelBase(ABC):
             return 0.0
         return float(selected_returns.mean())
 
-    def get_fitted_vector(self, strategy: str = "long") -> pd.Series:
+    def get_fitted_vector(
+        self,
+        strategy: DirectionInput = Direction.LONG,
+    ) -> pd.Series:
         """Return position-multiplier vector on the training data.
 
         Args:
-            strategy: 'long', 'short', or 'long_short'.
+            strategy: Direction for prediction side selection.
 
         Returns:
             pd.Series of position multipliers aligned to the training index.

@@ -13,6 +13,7 @@ import sys
 import matplotlib
 
 if TYPE_CHECKING:
+    from feature_research.config import BinningAnalysisConfig
     from feature_research.in_sample.config import ResearchConfig
 
 from feature_research.in_sample.data_loader import (
@@ -27,6 +28,17 @@ from feature_selection.validation.binning import (
     generate_binning_report,
     save_report,
 )
+
+
+def binning_model_from_config(bp: "BinningAnalysisConfig", bin_count: int) -> ContinuousBinningModel:
+    """Factory to build a ContinuousBinningModel from BinningAnalysisConfig + bin_count."""
+    return ContinuousBinningModel(
+        n_bins=bin_count,
+        bin_counts=[bin_count],
+        strategy=bp.strategy,
+        bin_index_min=bp.bin_index_min,
+        bin_index_max=bp.bin_index_max,
+    )
 
 
 def _extract_binning_params(config: "ResearchConfig") -> dict[str, Any]:
@@ -77,20 +89,11 @@ def run_binning_analysis_pipeline(
 
     params = _extract_binning_params(config)
     bin_counts = params.get("bin_counts", [10, 8, 5, 3])
-    selection_metric = str(params.get("selection_metric", "sharpe"))
     strategy = str(params.get("strategy", "long"))
-    metric_threshold = float(params.get("metric_threshold", 0.0))
-    t_threshold = float(params.get("t_threshold", 2.0))
-    min_region_width = int(params.get("min_region_width", 2))
-    use_coverage_bonus = params.get("use_coverage_bonus", False)
-    coverage_bonus_per_10pct = float(params.get("coverage_bonus_per_10pct", 0.02))
-    max_coverage_bonus = float(params.get("max_coverage_bonus", 0.2))
     bin_index_min = int(params.get("bin_index_min", 0))
-    bin_index_max = params.get("bin_index_max")  # None = no cap
+    bin_index_max = params.get("bin_index_max")
     if bin_index_max is not None:
         bin_index_max = int(bin_index_max)
-    max_regions = int(params.get("max_regions", 1))
-    direction_filter = str(params.get("direction_filter", "both"))
 
     results: dict[str, Path] = {}
 
@@ -109,28 +112,15 @@ def run_binning_analysis_pipeline(
 
         model = ContinuousBinningModel(
             bin_counts=bin_counts,
-            selection_metric=selection_metric,
             strategy=strategy,
-            metric_threshold=metric_threshold,
-            t_threshold=t_threshold,
-            min_region_width=min_region_width,
-            use_coverage_bonus=use_coverage_bonus,
-            coverage_bonus_per_10pct=coverage_bonus_per_10pct,
-            max_coverage_bonus=max_coverage_bonus,
-            shrinkage_k=float(params.get("shrinkage_k", 20.0)),
-            long_clip_min=float(params.get("long_clip_min", 0.5)),
-            long_clip_max=float(params.get("long_clip_max", 2.0)),
-            short_clip_min=float(params.get("short_clip_min", 0.5)),
-            short_clip_max=float(params.get("short_clip_max", 2.0)),
             bin_index_min=bin_index_min,
             bin_index_max=bin_index_max,
         )
         model.fit(feature, target)
 
         criteria = BinningSuccessCriteria(
-            metric_threshold=metric_threshold,
-            t_threshold=t_threshold,
-            min_region_width=min_region_width,
+            metric_threshold=0.0,
+            t_threshold=2.0,
         )
         report, diagnostic_plots = generate_binning_report(
             model=model,

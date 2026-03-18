@@ -2,7 +2,7 @@
 
 > **Path:** `ensemble/`  
 > **Status:** Stable (with active evolution in diagnostics and fallback paths)  
-> **Last updated:** 2026-02-13
+> **Last updated:** 2026-03-04
 
 ## Purpose
 `ensemble` is the portfolio-construction layer between base models and execution:
@@ -69,7 +69,7 @@ Input(s):
   - `volatility`: per-sample series/array or `dict[ticker, float]`
 - Control file shape (`ensemble_utils.parse_control_file`):
   - Required top-level keys: `metadata`, `base_models`
-  - Each base model in `base_models` must have a `members` array (v2.0.0+)
+  - `members` in each base model is optional (if present, supports legacy and new member schemas)
   - `metadata.is_fit: bool`
   - When `is_fit=True`, required keys: `fitted_base_models`, `fitted_ensemble`
 
@@ -82,6 +82,9 @@ Output(s):
 - `PortfolioManager.predict(...)`:
   - Fractions only when no position sizer
   - Contract-sized output (adds `target_dollars, contracts, notional_value, notional_pct`) when sizer provided
+- `portfolio_tester` helpers:
+  - `resample_positions_to_daily(...)`: ticker/datetime/position_fraction daily-aligned frame for combined tearsheet paths
+  - `aggregate_intraday_returns_to_daily(...)`: daily-summed log-return series when multiple observations exist per calendar day
 
 ## Public API reference
 
@@ -192,6 +195,8 @@ class Portfolio:
     def __init__(
         self,
         ensembles: Optional[List] = None,
+        ensemble_names: Optional[List[str]] = None,
+        vault_root: str = "vault",
         trading_timeframe: TimeFrame = TimeFrame.D,
         target_volatility: Optional[float] = None,
         max_position_pct: float = 2.0,
@@ -215,8 +220,10 @@ def print_diagnostics(self) -> None
 
 Behavior:
 - Combines ensemble outputs using `WeightLayer` (or averaging fallback if not fitted).
+- Auto-loads ensembles from `vault/{D,W,M}/*` when `ensembles=None`; pass
+  `ensemble_names=[...]` to filter by full directory names.
 - Applies instrument weights, IDM, and optional cap to produce `position_fraction`.
-- Supports hierarchical sector allocation configs that resolve to ticker-level instrument weights.
+- Supports hierarchical sector allocation configs that resolve to ticker-level instrument weights. See [Sector allocation (methodology)](../methodology/sector_allocation.md) for JSON schema, validation rules, and examples.
 
 Risk stack order:
 1. Forecast combination (already volatility-adjusted upstream)
@@ -254,6 +261,26 @@ Behavior:
 Raises / logging:
 - Raises `ValueError` for missing required candle columns.
 - Logs warnings/errors for per-portfolio fit/predict failures and execution conversion fallbacks.
+
+### portfolio_tester utilities
+Type: module-level functions (`ensemble.portfolio_tester`)
+
+Signatures:
+```python
+def resample_positions_to_daily(
+    positions_df: pd.DataFrame,
+    daily_dates_per_ticker: dict[object, pd.DatetimeIndex],
+) -> pd.DataFrame
+
+def aggregate_intraday_returns_to_daily(returns: pd.Series) -> pd.Series
+```
+
+Behavior:
+- `resample_positions_to_daily` forward-fills sparse timeframe positions (e.g., weekly/monthly) across ticker-specific daily calendars and fills pre-signal periods with `0.0`.
+- `aggregate_intraday_returns_to_daily` detects intraday return density via duplicate normalized dates and sums per day (log-return additive contract).
+
+Notes / constraints:
+- QuantStats tearsheets expect daily return inputs; use these helpers before report generation when combining mixed-frequency or intraday strategy streams.
 
 ### Vault and control interfaces (cross-module surfaces)
 Type: module-level functions used by ensemble public flow

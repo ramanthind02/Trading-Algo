@@ -10,6 +10,7 @@ from matplotlib.figure import Figure
 
 from feature_selection.base_models.base_model import BinningModelBase
 from feature_selection.validation.binning.diagnostics import RegionMetadata
+from utils.core.enums import Direction, DirectionInput, coerce_direction
 
 matplotlib.use("Agg")
 
@@ -141,14 +142,14 @@ def plot_region_boundaries(
 
 def plot_position_multiplier_curve(
     model: BinningModelBase,
-    strategy: str = "long",
+    strategy: DirectionInput = Direction.LONG,
     figsize: tuple[int, int] = (10, 6),
 ) -> Figure:
     """Step function showing position multipliers across feature range.
 
     Args:
         model: Fitted binning model
-        strategy: Trading strategy ("long" or "short")
+        strategy: Trading strategy direction
         figsize: Figure size in inches
 
     Returns:
@@ -156,10 +157,12 @@ def plot_position_multiplier_curve(
     """
     fig, ax = plt.subplots(figsize=figsize)
 
+    direction = coerce_direction(strategy, field_name="strategy")
+    strategy_key = direction.value
     stats = model.bin_stats_
     ordered_bins = sorted(stats.keys())
-    multipliers = model.position_multipliers_by_strategy_.get(strategy, {})
-    active_bins = set(model.active_bins_by_strategy_.get(strategy, []))
+    multipliers = model.position_multipliers_by_strategy_.get(strategy_key, {})
+    active_bins = set(model.active_bins_by_strategy_.get(strategy_key, []))
 
     # Build step edges and values
     edges: list[float] = []
@@ -188,7 +191,7 @@ def plot_position_multiplier_curve(
     ax.set_xlabel("Feature Value")
     ax.set_ylabel("Position Multiplier")
     ax.set_title(
-        f"Position Multiplier Curve — {strategy}"
+        f"Position Multiplier Curve — {strategy_key}"
         + (f" ({model.feature_column})" if model.feature_column else "")
     )
 
@@ -200,7 +203,7 @@ def create_diagnostic_panel(
     model: BinningModelBase,
     feature_data: pd.Series,
     regions: list[RegionMetadata],
-    strategy: str = "long",
+    strategy: DirectionInput = Direction.LONG,
     figsize: tuple[int, int] = (18, 12),
 ) -> Figure:
     """Combined 3-panel figure (heatmap, boundaries, multiplier curve).
@@ -209,7 +212,9 @@ def create_diagnostic_panel(
         model: Fitted binning model
         feature_data: Original feature values
         regions: List of detected regions
-        strategy: Trading strategy ("long" or "short")
+        strategy: Trading strategy direction
+    direction = coerce_direction(strategy, field_name="strategy")
+    strategy_key = direction.value
         figsize: Figure size in inches
 
     Returns:
@@ -254,8 +259,8 @@ def create_diagnostic_panel(
 
     # --- Panel 3: Position multiplier curve ---
     ax_mult = axes[2]
-    multipliers = model.position_multipliers_by_strategy_.get(strategy, {})
-    active_bins = set(model.active_bins_by_strategy_.get(strategy, []))
+    multipliers = model.position_multipliers_by_strategy_.get(strategy_key, {})
+    active_bins = set(model.active_bins_by_strategy_.get(strategy_key, []))
 
     edges: list[float] = []
     mults: list[float] = []
@@ -279,13 +284,13 @@ def create_diagnostic_panel(
     ax_mult.axhline(0, color="black", linewidth=0.5, linestyle="-")
     ax_mult.set_xlabel("Feature Value")
     ax_mult.set_ylabel("Position Multiplier")
-    ax_mult.set_title(f"Position Multiplier Curve — {strategy}")
+    ax_mult.set_title(f"Position Multiplier Curve — {strategy_key}")
 
     # Shared super-title
     n_bins = getattr(model, "n_bins", "?")
     feature_col = model.feature_column or "unknown"
     fig.suptitle(
-        f"Binning Diagnostics: {feature_col} | n_bins={n_bins} | strategy={strategy}",
+        f"Binning Diagnostics: {feature_col} | n_bins={n_bins} | strategy={strategy_key}",
         fontsize=14,
         fontweight="bold",
         y=1.01,

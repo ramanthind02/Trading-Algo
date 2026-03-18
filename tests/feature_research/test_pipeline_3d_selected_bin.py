@@ -7,21 +7,18 @@ from typing import cast
 
 import pandas as pd
 
-from feature_research.pipeline import (
-    _combo_key,
-    _expand_params_with_selected_bin,
-    _build_continuous_walkforward_evaluator,
-)
+from feature_research.core_helpers import combo_key, expand_params_with_selected_bin
+from utils.evaluation.walkforward.evaluators import build_continuous_walkforward_evaluator
 from feature_research.in_sample.config import load_config
-from feature_research.walkforward.config import WalkforwardResearchConfig
-from feature_research.walkforward.runner import run_walkforward_research
-from feature_research.walkforward.io import _build_selected_params_detailed
+from utils.evaluation.walkforward.config import WalkforwardResearchConfig
+from utils.evaluation.walkforward.runner import run_walkforward_research
+from utils.evaluation.walkforward.io import _build_selected_params_detailed
 
 
 def test_expand_params_with_selected_bin_yields_one_per_bin() -> None:
-    """_expand_params_with_selected_bin with one entry {lookback: 5, bin_count: 3} yields three entries."""
+    """expand_params_with_selected_bin with one entry {lookback: 5, bin_count: 3} yields three entries."""
     params_list = [{"lookback": 5, "bin_count": 3}]
-    out = _expand_params_with_selected_bin(params_list)
+    out = expand_params_with_selected_bin(params_list)
     assert len(out) == 3
     assert out[0] == {"lookback": 5, "bin_count": 3, "selected_bin": 0}
     assert out[1] == {"lookback": 5, "bin_count": 3, "selected_bin": 1}
@@ -31,7 +28,7 @@ def test_expand_params_with_selected_bin_yields_one_per_bin() -> None:
 def test_expand_params_with_selected_bin_skips_when_no_bin_count() -> None:
     """When bin_count is missing, list is returned unchanged."""
     params_list = [{"lookback": 5}]
-    out = _expand_params_with_selected_bin(params_list)
+    out = expand_params_with_selected_bin(params_list)
     assert out == [{"lookback": 5}]
 
 
@@ -41,7 +38,7 @@ def test_expand_params_with_selected_bin_multiple_combos() -> None:
         {"lookback": 2, "bin_count": 2},
         {"lookback": 3, "bin_count": 2},
     ]
-    out = _expand_params_with_selected_bin(params_list)
+    out = expand_params_with_selected_bin(params_list)
     assert len(out) == 4
     labels = ["|".join(f"{k}={v}" for k, v in sorted(p.items())) for p in out]
     assert "bin_count=2|lookback=2|selected_bin=0" in labels
@@ -58,9 +55,9 @@ def test_continuous_evaluator_with_selected_bin_returns_forced_bin_meta() -> Non
     feature = pd.Series(0.5, index=index, name="feat")
     target = pd.Series(0.01, index=index, name="target")
     combo_feature_target = {
-        _combo_key({"lookback": 5, "bin_count": 3}): pd.DataFrame({"feature": feature, "target": target}),
+        combo_key({"lookback": 5, "bin_count": 3}): pd.DataFrame({"feature": feature, "target": target}),
     }
-    evaluator = _build_continuous_walkforward_evaluator(combo_feature_target, config)
+    evaluator = build_continuous_walkforward_evaluator(combo_feature_target, config)
     fold_candles = pd.DataFrame({"close": target}, index=index)
     params = {"lookback": 5, "bin_count": 3, "selected_bin": 1}
     train_end = pd.Timestamp("2020-06-30")
@@ -85,8 +82,8 @@ def test_continuous_evaluator_lookup_ignores_selected_bin_for_combo_key() -> Non
     target = pd.Series(0.01, index=index, name="target")
     df = pd.DataFrame({"feature": feature, "target": target})
     # Only 2D key in the dict
-    combo_feature_target = {_combo_key({"lookback": 7, "bin_count": 5}): df}
-    evaluator = _build_continuous_walkforward_evaluator(combo_feature_target, config)
+    combo_feature_target = {combo_key({"lookback": 7, "bin_count": 5}): df}
+    evaluator = build_continuous_walkforward_evaluator(combo_feature_target, config)
     fold_candles = pd.DataFrame({"close": target}, index=index)
     # 3D params: lookup must succeed via key without selected_bin
     params = {"lookback": 7, "bin_count": 5, "selected_bin": 0}
@@ -105,9 +102,9 @@ def test_walkforward_3d_grid_produces_param_label_with_selected_bin(tmp_path: ob
     candles_df = pd.DataFrame({"close": target}, index=index)
     feature = pd.Series(0.4, index=index, name="feat")
     combo_feature_target = {
-        _combo_key({"lookback": 5, "bin_count": 2}): pd.DataFrame({"feature": feature, "target": target}),
+        combo_key({"lookback": 5, "bin_count": 2}): pd.DataFrame({"feature": feature, "target": target}),
     }
-    param_grid = _expand_params_with_selected_bin([{"lookback": 5, "bin_count": 2}])
+    param_grid = expand_params_with_selected_bin([{"lookback": 5, "bin_count": 2}])
     assert len(param_grid) == 2
     wf_config = WalkforwardResearchConfig(
         train_start=datetime(2020, 1, 1),
@@ -119,7 +116,7 @@ def test_walkforward_3d_grid_produces_param_label_with_selected_bin(tmp_path: ob
         min_fold_samples=10,
         output_root=Path(str(tmp_path)),
     )
-    evaluator = _build_continuous_walkforward_evaluator(combo_feature_target, config)
+    evaluator = build_continuous_walkforward_evaluator(combo_feature_target, config)
     report = run_walkforward_research(
         candles_df=candles_df,
         target=target,

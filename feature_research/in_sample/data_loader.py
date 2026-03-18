@@ -16,12 +16,16 @@ if TYPE_CHECKING:
     from feature_research.in_sample.config import ResearchConfig
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
-from feature_research.config import FeatureType
+from feature_research.bootstrap import find_repo_root
+from feature_research.config import FeatureType, RAW_TARGET_COLS
 from utils.cache.cache_manager import CacheManager
-from utils.core.enums import TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
 
-_UNNORMALIZED_RETURN_COLS: frozenset[str] = frozenset({"log_return", "raw_return"})
+
+def _resolve_project_root() -> Path | None:
+    this_file = Path(__file__).resolve()
+    return find_repo_root(this_file)
 
 
 def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -133,18 +137,9 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
     if not config.populate_cache:
         return
 
-    # Resolve the repository root in the same way as run_is.py:
-    # walk up until we find either a pyproject.toml or a .git directory.
-    this_file = Path(__file__).resolve()
-    search_root = this_file.parent
-    project_root: Path | None = None
-    for parent in (search_root, *search_root.parents):
-        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            project_root = parent
-            break
+    project_root = _resolve_project_root()
     if project_root is None:
-        # Fallback to the workspace-level default (kept for safety)
-        project_root = this_file.parents[3]
+        project_root = Path(__file__).resolve().parents[3]
 
     candle_dir = project_root / "data" / "ohlc_data"
     if not candle_dir.exists():
@@ -181,10 +176,139 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
         tickers=config.tickers,
         start_date=start_date,
         end_date=end_date,
+        timeframe=timeframes[0],
         show_progress=True,
         overwrite_existing=False,
     )
     print(f"[data_loader] Cache populated: {summary}")
+
+
+def get_tickers_with_coverage_for_config(config: "ResearchConfig") -> list[Ticker]:
+    """Return tickers that have OHLC data covering [config.start, config.end].
+
+    Tickers whose data starts after config.start or ends before config.end are
+    excluded so pipelines (walkforward, permutation, OOS) do not hit cache
+    misses for partial ranges.
+
+    Returns
+    -------
+    list
+        Subset of config.tickers with full coverage. May be empty if no ticker
+        has data for the config range.
+    """
+    project_root = _resolve_project_root()
+    if project_root is None:
+        return list(config.tickers)
+    candle_dir = project_root / "data" / "ohlc_data"
+    if not candle_dir.exists():
+        return list(config.tickers)
+    manager = CacheManager(candle_dir=str(candle_dir))
+    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
+    timeframes = [
+        TimeFrame[t] if isinstance(t, str) else t
+        for t in (
+            timeframes_raw
+            if isinstance(timeframes_raw, list)
+            else [timeframes_raw]
+        )
+    ]
+    ranges = manager.get_available_date_range_per_ticker(
+        tickers=config.tickers,
+        timeframes=timeframes,
+    )
+    start_ts = pd.Timestamp(config.start)
+    end_ts = pd.Timestamp(config.end)
+    covered = [
+        t
+        for t in config.tickers
+        if t in ranges
+        and ranges[t][0] <= start_ts.to_pydatetime()
+        and ranges[t][1] >= end_ts.to_pydatetime()
+    ]
+    return covered
+
+
+def get_available_date_ranges_for_tickers(
+    config: "ResearchConfig", tickers: list[Ticker]
+) -> dict[Ticker, tuple[pd.Timestamp, pd.Timestamp]]:
+    """Return per-ticker (min_date, max_date) from OHLC data for error messages.
+
+    Used when no tickers have full coverage so we can report what range each
+    ticker actually has (e.g. suggest narrowing config.start/end or oos_window).
+    """
+    project_root = _resolve_project_root()
+    if project_root is None or not (project_root / "data" / "ohlc_data").exists():
+        return {}
+    manager = CacheManager(candle_dir=str(project_root / "data" / "ohlc_data"))
+    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
+    timeframes = [
+        TimeFrame[t] if isinstance(t, str) else t
+        for t in (
+            timeframes_raw
+            if isinstance(timeframes_raw, list)
+            else [timeframes_raw]
+        )
+    ]
+    ranges = manager.get_available_date_range_per_ticker(
+        tickers=tickers,
+        timeframes=timeframes,
+    )
+    return {
+        t: (pd.Timestamp(ranges[t][0]), pd.Timestamp(ranges[t][1]))
+        for t in tickers
+        if t in ranges
+    }
+
+
+def get_effective_range_and_tickers(
+    config: "ResearchConfig",
+) -> tuple[pd.Timestamp, pd.Timestamp, list[Ticker]] | None:
+    """Return effective date range and tickers when no ticker has full coverage.
+
+    Used as fallback so pipelines can run with whatever OHLC data is available
+    instead of raising. Intersection of all tickers' ranges (clipped to config)
+    is used when non-empty; otherwise the single ticker with largest overlap.
+
+    Returns
+    -------
+    tuple of (effective_start, effective_end, tickers) or None
+        None if no OHLC data exists (e.g. no data/ohlc_data or empty ranges).
+    """
+    ranges = get_available_date_ranges_for_tickers(config, list(config.tickers))
+    if not ranges:
+        return None
+    start_ts = pd.Timestamp(config.start)
+    end_ts = pd.Timestamp(config.end)
+    # Intersection clipped to requested range: all tickers have data in [s, e]
+    effective_start = max(start_ts, max(r[0] for r in ranges.values()))
+    effective_end = min(end_ts, min(r[1] for r in ranges.values()))
+    if effective_start < effective_end:
+        covering = [
+            t
+            for t in config.tickers
+            if t in ranges
+            and ranges[t][0] <= effective_start
+            and ranges[t][1] >= effective_end
+        ]
+        if covering:
+            return (effective_start, effective_end, covering)
+    # Fallback: single ticker with largest overlap with [config.start, config.end]
+    def overlap_seconds(ticker: Ticker) -> float:
+        r0, r1 = ranges[ticker][0], ranges[ticker][1]
+        low = max(start_ts.to_pydatetime(), r0)
+        high = min(end_ts.to_pydatetime(), r1)
+        return (pd.Timestamp(high) - pd.Timestamp(low)).total_seconds()
+
+    best = max(
+        (t for t in ranges),
+        key=overlap_seconds,
+    )
+    if overlap_seconds(best) <= 0:
+        return None
+    r0, r1 = ranges[best][0], ranges[best][1]
+    eff_start = max(start_ts, pd.Timestamp(r0))
+    eff_end = min(end_ts, pd.Timestamp(r1))
+    return (eff_start, eff_end, [best])
 
 
 def load_features_for_combo(
@@ -261,7 +385,7 @@ def load_features_for_combo(
     # For CONTINUOUS: all validations are ok
     # For RULE_BASED: skip multi-ticker raw return check (already checked at config level)
     if config.feature_type == FeatureType.CONTINUOUS:
-        if target_col_name in _UNNORMALIZED_RETURN_COLS:
+        if target_col_name in RAW_TARGET_COLS:
             unique_tickers = (
                 int(features_df["ticker"].nunique())
                 if "ticker" in features_df.columns

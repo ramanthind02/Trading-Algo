@@ -11,14 +11,12 @@ OOSCandidateSource = Literal['stage2_passers', 'stable_intersection']
 _DEFAULT_NREPS = 1000
 _DEFAULT_ALPHA = 0.10
 _DEFAULT_METRIC_THRESHOLD = 0.0
-_DEFAULT_TOP_K = 3
 _DEFAULT_PERMUTATION_MODE_STAGE2: PermutationModeStage2 = 'candle_shuffle'
-_DEFAULT_MIN_FOLDS_STABLE = 3
 
 
 @dataclass(frozen=True)
 class InSamplePermutationConfig:
-    """Stage 1/2 in-sample permutation settings."""
+    """Stage 1/2 in-sample permutation settings (no walkforward Stage 3)."""
 
     nreps: int = _DEFAULT_NREPS
     alpha: float = _DEFAULT_ALPHA
@@ -27,15 +25,6 @@ class InSamplePermutationConfig:
     n_jobs_stage2_reps: int = 1
     run_stage1: bool = True
     run_stage2: bool = True
-    run_stage3_walkforward: bool = True  # False in in-sample phase; True in walkforward phase
-
-
-@dataclass(frozen=True)
-class WalkforwardPermutationConfig:
-    """Stage 3 walkforward stability settings."""
-
-    top_k: int = _DEFAULT_TOP_K
-    min_folds_stable: int = _DEFAULT_MIN_FOLDS_STABLE
 
 
 @dataclass(frozen=True)
@@ -62,10 +51,9 @@ class PermutationReportConfig:
 
 @dataclass(frozen=True, init=False)
 class PermutationTestConfig:
-    """Configuration for permutation test suite (T013-T017)."""
+    """Configuration for permutation test suite (Stage 1 + 2 only; no walkforward Stage 3)."""
 
     in_sample: InSamplePermutationConfig
-    walkforward: WalkforwardPermutationConfig
     out_of_sample: OutOfSamplePermutationConfig
     report: PermutationReportConfig
     random_seed: Optional[int]
@@ -75,20 +63,21 @@ class PermutationTestConfig:
         nreps: int = _DEFAULT_NREPS,
         alpha: float = _DEFAULT_ALPHA,
         metric_threshold: float = _DEFAULT_METRIC_THRESHOLD,
-        top_k: int = _DEFAULT_TOP_K,
         random_seed: Optional[int] = None,
         permutation_mode_stage2: PermutationModeStage2 = _DEFAULT_PERMUTATION_MODE_STAGE2,
-        min_folds_stable: int = _DEFAULT_MIN_FOLDS_STABLE,
         n_jobs_stage2_reps: int = 1,
         run_stage1: bool = True,
         run_stage2: bool = True,
-        run_stage3_walkforward: bool = True,
         *,
         in_sample: InSamplePermutationConfig | None = None,
-        walkforward: WalkforwardPermutationConfig | None = None,
         out_of_sample: OutOfSamplePermutationConfig | None = None,
         report: PermutationReportConfig | None = None,
         objective_metric: ObjectiveMetricSpec | None = None,
+        # Ignored (Stage 3 removed): top_k, min_folds_stable, run_stage3_walkforward, walkforward
+        top_k: int = 3,
+        min_folds_stable: int = 3,
+        run_stage3_walkforward: bool = False,
+        walkforward: object = None,
     ) -> None:
         if in_sample is not None and any(
             (
@@ -102,16 +91,6 @@ class PermutationTestConfig:
         ):
             raise ValueError(
                 'Provide in_sample or legacy in-sample scalar args, not both.',
-            )
-
-        if walkforward is not None and any(
-            (
-                top_k != _DEFAULT_TOP_K,
-                min_folds_stable != _DEFAULT_MIN_FOLDS_STABLE,
-            ),
-        ):
-            raise ValueError(
-                'Provide walkforward or legacy walkforward scalar args, not both.',
             )
 
         if out_of_sample is not None and objective_metric is not None:
@@ -128,16 +107,10 @@ class PermutationTestConfig:
             n_jobs_stage2_reps=n_jobs_stage2_reps,
             run_stage1=run_stage1,
             run_stage2=run_stage2,
-            run_stage3_walkforward=run_stage3_walkforward,
-        )
-        resolved_walkforward = walkforward or WalkforwardPermutationConfig(
-            top_k=top_k,
-            min_folds_stable=min_folds_stable,
         )
         resolved_report = report or PermutationReportConfig()
 
         object.__setattr__(self, 'in_sample', resolved_in_sample)
-        object.__setattr__(self, 'walkforward', resolved_walkforward)
         object.__setattr__(self, 'out_of_sample', resolved_out_of_sample)
         object.__setattr__(self, 'report', resolved_report)
         object.__setattr__(self, 'random_seed', random_seed)
@@ -155,10 +128,6 @@ class PermutationTestConfig:
         return self.in_sample.metric_threshold
 
     @property
-    def top_k(self) -> int:
-        return self.walkforward.top_k
-
-    @property
     def permutation_mode_stage2(self) -> PermutationModeStage2:
         return self.in_sample.permutation_mode_stage2
 
@@ -167,20 +136,12 @@ class PermutationTestConfig:
         return self.in_sample.n_jobs_stage2_reps
 
     @property
-    def run_stage3_walkforward(self) -> bool:
-        return self.in_sample.run_stage3_walkforward
-
-    @property
     def run_stage1(self) -> bool:
         return self.in_sample.run_stage1
 
     @property
     def run_stage2(self) -> bool:
         return self.in_sample.run_stage2
-
-    @property
-    def min_folds_stable(self) -> int:
-        return self.walkforward.min_folds_stable
 
     @property
     def objective_metric(self) -> ObjectiveMetricSpec:

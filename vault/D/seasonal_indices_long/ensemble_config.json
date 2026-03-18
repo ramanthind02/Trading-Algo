@@ -1,13 +1,10 @@
 {
   "timeframe": "D",
-  "ensemble_name": "seasonal_indices",
+  "ensemble_name": "seasonal",
   "direction": "long",
   "tickers": [
-    "ES",
-    "NQ",
-    "RTY",
-    "YM"
+    "ES"
   ],
-  "created_at": "2026-02-08T00:30:12.240008+00:00",
-  "updated_at": "2026-02-08T00:30:12.240021+00:00"
+  "created_at": "2026-03-07T04:14:08.340194+00:00",
+  "updated_at": "2026-03-07T04:14:08.340202+00:00"
 }

@@ -31,7 +31,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -43,10 +43,15 @@ logger = logging.getLogger(__name__)
 
 # Required for volatility-scaled targets (log_return_atr, log_return_ewsd).
 # extract_features_with_forward_returns always requests these when building targets.
-REQUIRED_AUXILIARY_SPECS = [
-    {"module_name": "atr", "params": {"period": 252}},
-    {"module_name": "ewsd", "params": {}},
-]
+def get_auxiliary_specs_for_timeframe(tf: TimeFrame) -> list[dict]:
+    """Return ATR + EWSD auxiliary specs for volatility-scaled targets."""
+    return [
+        {"module_name": "atr", "params": {"period": tf.bars_per_year}},
+        {"module_name": "ewsd", "params": {"long_run_window": 10 * tf.bars_per_year}},
+    ]
+
+
+REQUIRED_AUXILIARY_SPECS = get_auxiliary_specs_for_timeframe(TimeFrame.D)
 
 
 def _spec_matches(spec: Dict[str, Any], module_name: str, params: Dict[str, Any]) -> bool:
@@ -240,6 +245,51 @@ class CacheManager:
         if not all_mins or not all_maxes:
             return None
         return (min(all_mins), max(all_maxes))
+
+    def get_available_date_range_per_ticker(
+        self,
+        tickers: List[Ticker],
+        timeframes: List[TimeFrame],
+    ) -> Dict[Ticker, Tuple[datetime, datetime]]:
+        """Return (min_date, max_date) per ticker from OHLC parquet files.
+
+        Only tickers that have at least one parquet file with data are included.
+        Used to filter config.tickers to those that cover a requested date range.
+        """
+        result: Dict[Ticker, tuple] = {}
+        for ticker in tickers:
+            ticker_mins: List[datetime] = []
+            ticker_maxes: List[datetime] = []
+            for tf in timeframes:
+                ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
+                tf_str = tf.name if hasattr(tf, "name") else str(tf)
+                possible_paths = [
+                    Path(self.candle_dir) / f"{ticker_str}_{tf_str}.parquet",
+                    Path(self.candle_dir) / tf_str / f"{ticker_str}.parquet",
+                    Path(self.candle_dir) / ticker_str / f"{tf_str}.parquet",
+                    Path(self.candle_dir) / f"{ticker_str}.parquet",
+                    Path(self.candle_dir) / ticker_str / f"{tf_str}_{ticker_str}.parquet",
+                ]
+                candle_path = next((p for p in possible_paths if p.exists()), None)
+                if candle_path is None:
+                    continue
+                try:
+                    df = pd.read_parquet(candle_path)
+                    if "datetime" in df.columns:
+                        dts = pd.to_datetime(df["datetime"])
+                    elif isinstance(df.index, pd.DatetimeIndex):
+                        dts = df.index
+                    else:
+                        dts = pd.to_datetime(df.reset_index().iloc[:, 0])
+                    if len(dts) == 0:
+                        continue
+                    ticker_mins.append(pd.Timestamp(dts.min()).to_pydatetime())
+                    ticker_maxes.append(pd.Timestamp(dts.max()).to_pydatetime())
+                except Exception as e:
+                    logger.warning("Could not read date range from %s: %s", candle_path, e)
+            if ticker_mins and ticker_maxes:
+                result[ticker] = (min(ticker_mins), max(ticker_maxes))
+        return result
 
     def _compute_bias_node_output(
         self,
@@ -490,7 +540,8 @@ class CacheManager:
         end_date: datetime,
         max_workers: int = 4,
         overwrite_existing: bool = True,
-        show_progress: bool = True
+        show_progress: bool = True,
+        timeframe: TimeFrame = TimeFrame.D,
     ) -> Dict[str, Any]:
         """
         Populate caches for multiple bias node specifications.
@@ -514,6 +565,8 @@ class CacheManager:
             Whether to overwrite existing caches
         show_progress : bool
             Whether to print progress
+        timeframe : TimeFrame
+            Active research timeframe used to scale required ATR/EWSD auxiliary specs.
 
         Returns
         -------
@@ -533,7 +586,7 @@ class CacheManager:
 
         # Ensure required auxiliary bias nodes (atr, ewsd) are included for volatility-scaled targets
         specs_to_use = list(bias_node_specs)
-        for aux in REQUIRED_AUXILIARY_SPECS:
+        for aux in get_auxiliary_specs_for_timeframe(timeframe):
             if not any(
                 _spec_matches(spec, aux["module_name"], aux["params"])
                 for spec in bias_node_specs
@@ -925,7 +978,7 @@ def main():
     parser.add_argument(
         '--workers',
         type=int,
-        default=4,
+        default=8,
         help='Number of concurrent workers (default: 4)'
     )
 
