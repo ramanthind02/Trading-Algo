@@ -201,12 +201,12 @@ def _default_continuous_in_sample_defaults(
 def _default_rule_based_in_sample_defaults(
     tf: TimeFrame = TimeFrame.D,
 ) -> InSamplePhaseDefaultsConfig:
-    """Rule-based preset: buy_hold bias node (no params). Uses DEFAULT_TIMEFRAME."""
+    """Rule-based preset: rebalancing node (ES vs TLT). Uses DEFAULT_TIMEFRAME."""
     return InSamplePhaseDefaultsConfig(
         bias_spec={
-            "module_name": "eoy_sp500",
+            "module_name": "rebalancing",
             "timeframes": [DEFAULT_TIMEFRAME],
-            "params": {},
+            "params": {"cross_tickers": ["TLT"]},
         },
         target_col="log_return_atr",
         strategy=Direction.LONG,
@@ -397,9 +397,9 @@ def load_config() -> ResearchConfig:
     #     params_to_save={"short_period": 4, "long_period": 120, "rsi_period": 2},
     # )
     vault_save = VaultSaveConfig(
-        ensemble_name="mr_indices",
+        ensemble_name="rebalancing_es_tlt",
         direction=Direction.LONG,
-        params_to_save={},
+        params_to_save={"cross_tickers": ["TLT"]},
     )
     # ==========================================================================
     # EDIT ABOVE

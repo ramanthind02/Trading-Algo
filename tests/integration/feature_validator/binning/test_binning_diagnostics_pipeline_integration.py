@@ -148,12 +148,7 @@ def test_rsi_pipeline_binning_diagnostics_end_to_end() -> None:
 
     model = ContinuousBinningModel(
         bin_counts=[10, 5, 3],  # Test grid search
-        selection_metric="sharpe",
         strategy="long",
-        use_coverage_bonus=True,
-        metric_threshold=0.0,
-        t_threshold=0.5,
-        min_region_width=1,
     )
     model.fit(feature_series, target_series)
 

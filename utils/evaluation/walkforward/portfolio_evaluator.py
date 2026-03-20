@@ -25,6 +25,29 @@ from utils.data.cross_ticker_store import CrossTickerDataStore, extract_cross_ti
 RULE_BASED_BIN_COUNT: int = 3
 
 
+def _ensure_cross_ticker_data(
+    param_combos: list[dict[str, Any]],
+    timeframes: list[TimeFrame],
+) -> None:
+    """Ensure cross-ticker data is loaded in the CrossTickerDataStore for the given params."""
+    cross_names: set[str] = set()
+    for combo in param_combos:
+        cross_names.update(extract_cross_ticker_names(combo))
+
+    if not cross_names:
+        return
+
+    store = CrossTickerDataStore.get_instance()
+    for name in cross_names:
+        try:
+            ct = Ticker[name]
+        except KeyError:
+            continue
+        for tf in timeframes:
+            if not store.is_loaded(ct, tf):
+                store.load(ct, tf)
+
+
 # Param keys that belong to the binning model only; never pass to the bias node (e.g. RSI).
 BINNING_ONLY_PARAM_KEYS: frozenset[str] = frozenset({"bin_count", "selected_bin"})
 

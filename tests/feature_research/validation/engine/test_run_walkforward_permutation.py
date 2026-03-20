@@ -39,6 +39,7 @@ def _minimal_research_config() -> object:
     return types.SimpleNamespace(
         walkforward=types.SimpleNamespace(objective_metric_name="mean_return"),
         bias_spec={"timeframes": [None]},
+        binning_params=None,
     )
 
 

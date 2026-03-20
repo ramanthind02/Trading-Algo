@@ -9,6 +9,7 @@ Default config: RSI lookback=5, Ticker.ES, 2020-2023.
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -17,16 +18,20 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.config import OBJECTIVE_METRIC_PRESETS
-from feature_research.in_sample.config import (
+from feature_research.config import (
+    BinningAnalysisConfig,
+    FeatureType,
+    InSampleDefaultsCatalog,
+    InSamplePhaseDefaultsConfig,
     PermutationResearchConfig,
     ResearchConfig,
+    build_objective_metric_presets,
 )
 from feature_research.pipeline import (
     run_eda_pipeline,
     run_permutation_pipeline,
 )
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import Direction, Ticker, TimeFrame
 
 
 def _project_root() -> Path:
@@ -50,6 +55,46 @@ def _skip_if_missing_data_prereq(exc: Exception) -> None:
         pytest.skip(f"Missing data prerequisite for permutation suite: {message}")
 
 
+def _make_test_config(
+    *,
+    tickers: list[Ticker],
+    start: datetime,
+    end: datetime,
+    bias_spec: dict,
+    reports_dir: Path,
+    objective_metric_name: str = "t_stat",
+    permutation: PermutationResearchConfig | None = None,
+) -> ResearchConfig:
+    """Build a ResearchConfig suitable for continuous EDA integration tests."""
+    presets = build_objective_metric_presets(TimeFrame.D)
+    if permutation is None:
+        permutation = PermutationResearchConfig(
+            objective_metric=presets[objective_metric_name],
+            enabled=False,
+        )
+    catalog = InSampleDefaultsCatalog(
+        continuous=InSamplePhaseDefaultsConfig(
+            bias_spec=bias_spec,
+            target_col="log_return",
+            strategy=Direction.LONG_SHORT,
+            reports_dir=reports_dir,
+        ),
+        rule_based=InSampleDefaultsCatalog.default_for().rule_based,
+    )
+    return ResearchConfig(
+        tickers=tickers,
+        start=start,
+        end=end,
+        use_cache=True,
+        populate_cache=True,
+        permutation=permutation,
+        objective_metric_presets=presets,
+        binning_params=BinningAnalysisConfig(),
+        feature_type=FeatureType.CONTINUOUS,
+        in_sample_defaults=catalog,
+    )
+
+
 @pytest.mark.integration
 def test_continuous_eda_pipeline_smoke(
     tickers: list[Ticker] | None = None,
@@ -70,7 +115,7 @@ def test_continuous_eda_pipeline_smoke(
     _skip_if_no_data()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = ResearchConfig(
+        config = _make_test_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -79,10 +124,6 @@ def test_continuous_eda_pipeline_smoke(
                 "timeframes": [TimeFrame.D],
                 "params": {"lookback": lookback},
             },
-            target_col="log_return",
-            strategy="long_short",
-            use_cache=True,
-            populate_cache=True,
             reports_dir=Path(tmpdir),
         )
         results = run_eda_pipeline(config, Path(tmpdir))
@@ -129,7 +170,7 @@ def test_continuous_eda_pipeline_multi_combo(
     lookbacks = lookbacks or [5, 10]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = ResearchConfig(
+        config = _make_test_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -138,10 +179,6 @@ def test_continuous_eda_pipeline_multi_combo(
                 "timeframes": [TimeFrame.D],
                 "params": {"lookback": lookbacks},
             },
-            target_col="log_return",
-            strategy="long_short",
-            use_cache=True,
-            populate_cache=True,
             reports_dir=Path(tmpdir),
         )
         results = run_eda_pipeline(config, Path(tmpdir))
@@ -164,8 +201,10 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
     _skip_if_no_data()
     lookbacks = lookbacks or [3, 5]
 
+    presets = build_objective_metric_presets(TimeFrame.D)
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = ResearchConfig(
+        config = _make_test_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -174,12 +213,9 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
                 "timeframes": [TimeFrame.D],
                 "params": {"lookback": lookbacks},
             },
-            target_col="log_return",
-            strategy="long_short",
-            use_cache=True,
-            populate_cache=True,
             reports_dir=Path(tmpdir),
             permutation=PermutationResearchConfig(
+                objective_metric=presets["t_stat"],
                 enabled=True,
                 nreps_stage1=10,
             ),

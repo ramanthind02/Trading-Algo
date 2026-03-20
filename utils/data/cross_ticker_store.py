@@ -48,6 +48,10 @@ logger = logging.getLogger(__name__)
 
 CROSS_TICKERS_PARAM_KEY = "cross_tickers"
 
+# Params whose values are inherently list[str] and must never be unwrapped
+# during grid expansion or normalization.
+SCALAR_LIST_PARAM_KEYS: frozenset[str] = frozenset({CROSS_TICKERS_PARAM_KEY})
+
 
 def extract_cross_ticker_names(params: Mapping[str, Any]) -> set[str]:
     """Return normalized cross-ticker names from canonical params contract.

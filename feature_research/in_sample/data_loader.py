@@ -21,6 +21,7 @@ from feature_research.config import FeatureType, RAW_TARGET_COLS
 from utils.cache.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
+from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS
 
 
 def _resolve_project_root() -> Path | None:
@@ -43,7 +44,10 @@ def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
     """
     params = bias_spec.get("params", {})
     keys = list(params.keys())
-    values = [v if isinstance(v, list) else [v] for v in params.values()]
+    values = [
+        v if (isinstance(v, list) and k not in SCALAR_LIST_PARAM_KEYS) else [v]
+        for k, v in zip(keys, params.values())
+    ]
     combos = [dict(zip(keys, combo)) for combo in product(*values)] if keys else [{}]
     return [
         {

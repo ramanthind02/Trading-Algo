@@ -584,7 +584,7 @@ class TestStoreTimezoneHandling:
 
 class TestEnsureCrossTickerData:
     def test_loads_cross_tickers_from_params(self) -> None:
-        from feature_research.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         _ensure_cross_ticker_data(
             [{"cross_tickers": ["NQ"], "lookback": 20}],
             [TimeFrame.D],
@@ -594,7 +594,7 @@ class TestEnsureCrossTickerData:
 
     def test_skips_already_loaded(self) -> None:
         """Should not re-load if data is already in the store."""
-        from feature_research.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         store = CrossTickerDataStore.get_instance()
         # Pre-populate with custom data
         custom_df = _make_ohlcv_df(base_close=999.0, n_rows=5)
@@ -610,7 +610,7 @@ class TestEnsureCrossTickerData:
         assert candle.close == 999.0
 
     def test_noop_without_cross_tickers(self) -> None:
-        from feature_research.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         _ensure_cross_ticker_data(
             [{"lookback": 14}],
             [TimeFrame.D],
@@ -619,7 +619,7 @@ class TestEnsureCrossTickerData:
         assert store.loaded_tickers() == []
 
     def test_handles_unknown_ticker_gracefully(self) -> None:
-        from feature_research.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         # Should not raise for unknown ticker name
         _ensure_cross_ticker_data(
             [{"cross_tickers": ["INVALID_XYZ"], "lookback": 20}],
@@ -629,7 +629,7 @@ class TestEnsureCrossTickerData:
         assert store.loaded_tickers() == []
 
     def test_loads_multiple_timeframes(self) -> None:
-        from feature_research.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         _ensure_cross_ticker_data(
             [{"cross_tickers": ["ES"], "lookback": 20}],
             [TimeFrame.D, TimeFrame.W],

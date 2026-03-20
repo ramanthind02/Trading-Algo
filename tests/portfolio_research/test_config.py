@@ -69,7 +69,8 @@ def test_discover_ensemble_dirs_uses_vault_relative_paths(tmp_path: Path, monkey
     discovered = cfg._discover_ensemble_dirs()
 
     assert "example_ensemble_long" in discovered
-    assert discovered["example_ensemble_long"].startswith("vault/D/example_ensemble_long")
+    expected = str(Path("vault/D/example_ensemble_long"))
+    assert discovered["example_ensemble_long"].startswith(expected)
 
 
 def test_load_config_returns_portfolio_research_config() -> None:

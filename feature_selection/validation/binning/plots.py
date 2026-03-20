@@ -213,13 +213,13 @@ def create_diagnostic_panel(
         feature_data: Original feature values
         regions: List of detected regions
         strategy: Trading strategy direction
-    direction = coerce_direction(strategy, field_name="strategy")
-    strategy_key = direction.value
         figsize: Figure size in inches
 
     Returns:
         Matplotlib Figure with 3 subplots
     """
+    direction = coerce_direction(strategy, field_name="strategy")
+    strategy_key = direction.value
     fig, axes = plt.subplots(3, 1, figsize=figsize)
 
     # --- Panel 1: Bin heatmap ---

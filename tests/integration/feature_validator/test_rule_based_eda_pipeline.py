@@ -16,16 +16,20 @@ import pytest
 
 matplotlib.use("Agg")
 
-from feature_research.config import FeatureType
-from feature_research.in_sample.config import (
+from feature_research.config import (
+    BinningAnalysisConfig,
+    FeatureType,
+    InSampleDefaultsCatalog,
+    InSamplePhaseDefaultsConfig,
     PermutationResearchConfig,
     ResearchConfig,
+    build_objective_metric_presets,
 )
 from feature_research.pipeline import (
     run_eda_pipeline,
     run_permutation_pipeline,
 )
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import Direction, Ticker, TimeFrame
 
 
 def _project_root() -> Path:
@@ -49,6 +53,46 @@ def _skip_if_missing_data_prereq(exc: Exception) -> None:
         pytest.skip(f"Missing data prerequisite for permutation suite: {message}")
 
 
+def _make_rule_based_config(
+    *,
+    tickers: list[Ticker],
+    start: datetime,
+    end: datetime,
+    bias_spec: dict,
+    reports_dir: Path,
+    objective_metric_name: str = "t_stat",
+    permutation: PermutationResearchConfig | None = None,
+) -> ResearchConfig:
+    """Build a ResearchConfig suitable for rule-based EDA integration tests."""
+    presets = build_objective_metric_presets(TimeFrame.D)
+    if permutation is None:
+        permutation = PermutationResearchConfig(
+            objective_metric=presets[objective_metric_name],
+            enabled=False,
+        )
+    catalog = InSampleDefaultsCatalog(
+        continuous=InSampleDefaultsCatalog.default_for().continuous,
+        rule_based=InSamplePhaseDefaultsConfig(
+            bias_spec=bias_spec,
+            target_col="log_return",
+            strategy=Direction.LONG,
+            reports_dir=reports_dir,
+        ),
+    )
+    return ResearchConfig(
+        tickers=tickers,
+        start=start,
+        end=end,
+        use_cache=True,
+        populate_cache=True,
+        permutation=permutation,
+        objective_metric_presets=presets,
+        binning_params=BinningAnalysisConfig(),
+        feature_type=FeatureType.RULE_BASED,
+        in_sample_defaults=catalog,
+    )
+
+
 @pytest.mark.integration
 def test_rule_based_eda_pipeline_smoke(
     tickers: list[Ticker] | None = None,
@@ -69,8 +113,7 @@ def test_rule_based_eda_pipeline_smoke(
     _skip_if_no_data()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = ResearchConfig(
-            feature_type=FeatureType.RULE_BASED,
+        config = _make_rule_based_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -86,10 +129,6 @@ def test_rule_based_eda_pipeline_smoke(
                     "exit_bars": 5,
                 },
             },
-            target_col="log_return",
-            strategy="long",
-            use_cache=True,
-            populate_cache=True,
             reports_dir=Path(tmpdir),
         )
         results = run_eda_pipeline(config, Path(tmpdir))
@@ -131,8 +170,7 @@ def test_rule_based_eda_pipeline_multi_combo(
     rsi_periods = rsi_periods or [2, 3]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = ResearchConfig(
-            feature_type=FeatureType.RULE_BASED,
+        config = _make_rule_based_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -148,10 +186,6 @@ def test_rule_based_eda_pipeline_multi_combo(
                     "exit_bars": 5,
                 },
             },
-            target_col="log_return",
-            strategy="long",
-            use_cache=True,
-            populate_cache=True,
             reports_dir=Path(tmpdir),
         )
         results = run_eda_pipeline(config, Path(tmpdir))
@@ -172,9 +206,10 @@ def test_rule_based_pipeline_can_run_permutation_suite_mode(
     _skip_if_no_data()
     rsi_periods = rsi_periods or [2, 3]
 
+    presets = build_objective_metric_presets(TimeFrame.D)
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = ResearchConfig(
-            feature_type=FeatureType.RULE_BASED,
+        config = _make_rule_based_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -190,12 +225,9 @@ def test_rule_based_pipeline_can_run_permutation_suite_mode(
                     "exit_bars": 5,
                 },
             },
-            target_col="log_return",
-            strategy="long",
-            use_cache=True,
-            populate_cache=True,
             reports_dir=Path(tmpdir),
             permutation=PermutationResearchConfig(
+                objective_metric=presets["t_stat"],
                 enabled=True,
                 nreps_stage1=10,
             ),

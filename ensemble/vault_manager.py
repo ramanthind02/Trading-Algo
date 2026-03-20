@@ -37,6 +37,7 @@ except ImportError:
     TwoBinBinningModel = None
 
 from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
+from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS
 
 # Type hint for forward reference
 if TYPE_CHECKING:
@@ -225,12 +226,16 @@ def _requires_fit(model_type: str) -> bool:
 
 
 def _normalize_bias_node_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Normalize per-model bias params; unwrap singleton lists from legacy payloads."""
+    """Normalize per-model bias params; unwrap singleton lists from legacy payloads.
+
+    List-valued params that are semantically multi-valued (e.g. ``cross_tickers``)
+    are preserved as-is even when they contain a single element.
+    """
     if not params:
         return {}
     normalized: Dict[str, Any] = {}
     for key, value in params.items():
-        if isinstance(value, list) and len(value) == 1:
+        if isinstance(value, list) and len(value) == 1 and key not in SCALAR_LIST_PARAM_KEYS:
             normalized[key] = value[0]
         else:
             normalized[key] = value
@@ -239,8 +244,9 @@ def _normalize_bias_node_params(params: Optional[Dict[str, Any]]) -> Dict[str, A
 
 def _model_id_token(value: Any) -> str:
     """Create a stable token safe for model-id suffixes."""
-    if isinstance(value, list) and len(value) == 1:
-        value = value[0]
+    if isinstance(value, list):
+        # Join list elements for a clean token (e.g. ["TLT"] -> "tlt")
+        value = "_".join(str(v) for v in value)
     token = re.sub(r"[^A-Za-z0-9]+", "-", str(value)).strip("-").lower()
     return token or "na"
 

@@ -248,13 +248,13 @@ class BaseModel:
         
         # Extract single values from lists in params (BaseModel doesn't do grid expansion)
         # If params contain lists, extract first value (for compatibility with extract_features_for_bias_node)
-        # Exception: cross_tickers is inherently a list param and must NOT be unwrapped.
-        from utils.data.cross_ticker_store import CROSS_TICKERS_PARAM_KEY
+        # Exception: scalar-list params (e.g. cross_tickers) must NOT be unwrapped.
+        from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS
 
         cleaned_params = {}
         for key, value in bias_node_spec['params'].items():
-            if key == CROSS_TICKERS_PARAM_KEY:
-                # cross_tickers is always list[str]; never unwrap
+            if key in SCALAR_LIST_PARAM_KEYS:
+                # Inherently list-valued param; never unwrap
                 cleaned_params[key] = value
             elif isinstance(value, list):
                 if len(value) == 0:
@@ -368,7 +368,7 @@ class BaseModel:
         if not cross_names:
             return
 
-        from utils.core.enums import Ticker as _Ticker
+        from utils.core.enums import Ticker as _Ticker, TimeFrame as _TF
         store = CrossTickerDataStore.get_instance()
         for normalized in cross_names:
             try:
@@ -376,8 +376,9 @@ class BaseModel:
             except KeyError:
                 continue
             for tf in timeframes:
-                if not store.is_loaded(ct, tf):
-                    store.load(ct, tf)
+                tf_enum = _TF[tf] if isinstance(tf, str) else tf
+                if not store.is_loaded(ct, tf_enum):
+                    store.load(ct, tf_enum)
 
     def add_candle(self, candle: Candle, tf: TimeFrame, ticker: Optional[Ticker] = None) -> None:
         """

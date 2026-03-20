@@ -44,5 +44,6 @@ CANONICAL_MODULE_IMPORTS = {
     "williamsr": "nodes.mean_reversion.oscillators.williamsr",
     "zscore_rsi": "nodes.mean_reversion.rsi.zscore_rsi",
     "rebalancing": "nodes.pairs.rebalancing",
+    "rebalancing_cross": "nodes.pairs.rebalancing_cross",
     "spread": "nodes.pairs.spread",
 }

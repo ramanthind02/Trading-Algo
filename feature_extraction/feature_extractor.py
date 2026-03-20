@@ -53,24 +53,35 @@ import pandas as pd
 import utils.core.helpers as helpers
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.models import Candle
-from utils.data.cross_ticker_store import extract_cross_ticker_names
+from utils.data.cross_ticker_store import extract_cross_ticker_names, SCALAR_LIST_PARAM_KEYS
+
+
+def _is_grid_axis(key: str, value: object) -> bool:
+    """Return True if *value* should be expanded as a grid dimension."""
+    return isinstance(value, list) and key not in SCALAR_LIST_PARAM_KEYS
 
 
 def _expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Expand parameter grid to list of parameter dicts."""
+    """Expand parameter grid to list of parameter dicts.
+
+    List-valued params registered in ``SCALAR_LIST_PARAM_KEYS`` (e.g.
+    ``cross_tickers``) are treated as atomic scalars, not grid dimensions.
+    """
     if not isinstance(params, dict):
         return [{}]
-    
-    # Check if any values are lists (grid search)
-    has_lists = any(isinstance(v, list) for v in params.values())
-    
-    if not has_lists:
+
+    has_grid = any(_is_grid_axis(k, v) for k, v in params.items())
+
+    if not has_grid:
         return [params]
-    
-    # Grid search: expand all combinations
+
+    # Grid search: expand all combinations (scalar-list keys kept as-is)
     keys = list(params.keys())
-    values = [v if isinstance(v, list) else [v] for v in params.values()]
-    
+    values = [
+        v if _is_grid_axis(k, v) else [v]
+        for k, v in params.items()
+    ]
+
     return [dict(zip(keys, combo)) for combo in product(*values)]
 
 
