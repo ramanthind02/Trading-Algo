@@ -12,7 +12,7 @@ from data_cleaning.back_adjustment.validator import (
     compare_roll_dates,
     generate_comparison_report,
 )
-from utils.enums import Ticker
+from utils.core.enums import Ticker
 
 
 def _make_aligned_data(

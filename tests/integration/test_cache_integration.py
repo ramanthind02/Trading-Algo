@@ -477,7 +477,7 @@ class TestEndToEnd:
                 'timeframes': [TimeFrame.D],
                 'params': {'lookback': 14}
             },
-            'model_type': 'continuous_binning',
+            'model_type': 'ContinuousBinningModel',
             'constructor_params': {'n_bins': 5}
         }
 
@@ -534,7 +534,8 @@ class TestCacheManagerIntegration:
             show_progress=False
         )
 
-        assert result['success'] == 1
+        # 1 user spec + 2 auxiliary (atr, ewsd) = 3 total
+        assert result['success'] == 3
 
         # Verify cache can be loaded
         cache = BiasNodeCache(

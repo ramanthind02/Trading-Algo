@@ -98,6 +98,54 @@ Build: `python utils/compute/cython/setup_cython.py build_ext --inplace`
 
 The node API (`_compute_candle`) is unchanged — only the inner math moves into a helper.
 
+## Multi-ticker nodes (pairs trading)
+
+Use the `CrossTickerDataStore` side-channel instead of changing the `Candle` contract.
+
+### Params contract (required)
+
+- In bias-node specs, use exactly one key: `params["cross_tickers"]`
+- Value must be `list[str]` of ticker enum names, e.g. `["NQ"]` or `["NQ", "GC"]`
+
+### Node pattern
+
+1. Keep `add_candle(self, candle: Candle)` unchanged for the primary ticker
+2. In `_compute_candle`, fetch the secondary ticker candle by datetime:
+
+```python
+from utils.data.cross_ticker_store import CrossTickerDataStore
+
+self._store = CrossTickerDataStore.get_instance()
+other = self._store.get_candle(Ticker.NQ, candle.tf, candle.datetime)
+if other is None:
+    return [0.0]  # neutral fallback
+```
+
+3. Return neutral `0.0` when cross data is missing (avoid NaN propagation)
+
+### Where cross data is loaded
+
+- **Research/EDA/training/permutation**: preloaded during feature extraction/base-model setup
+- **Forecast server (MT5)**: preloaded from historical buffers, then updated every loop
+- **TWS one-shot script**: loaded from fetched candles or IB fallback fetch
+
+### Minimal spec example
+
+```python
+bias_spec = {
+    "module_name": "spread",
+    "timeframes": [TimeFrame.D],
+    "params": {"cross_tickers": ["NQ"], "lookback": 20},
+}
+```
+
+### Test commands
+
+```bash
+python -m pytest tests/nodes/test_cross_ticker.py -q
+python -m pytest tests/unit-tests/validators/permutation/test_data_loader_candle_override_unit.py -q
+```
+
 ## Common Mistakes Checklist
 
 - [ ] Forgot `ensure_standardized_columns()` at end of `__init__`

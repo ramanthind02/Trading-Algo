@@ -19,9 +19,33 @@ from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.base_models.rule_based import RuleBasedModel
 from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
 from utils.core.helpers import build_feature_column_name
+from utils.data.cross_ticker_store import CrossTickerDataStore, extract_cross_ticker_names
 
 # RuleBasedModel has exactly 3 bins (-1, 0, 1 -> indices 0, 1, 2).
 RULE_BASED_BIN_COUNT: int = 3
+
+
+def _ensure_cross_ticker_data(
+    param_combos: list[dict[str, Any]],
+    timeframes: list[TimeFrame],
+) -> None:
+    """Ensure cross-ticker data is loaded in the CrossTickerDataStore for the given params."""
+    cross_names: set[str] = set()
+    for combo in param_combos:
+        cross_names.update(extract_cross_ticker_names(combo))
+
+    if not cross_names:
+        return
+
+    store = CrossTickerDataStore.get_instance()
+    for name in cross_names:
+        try:
+            ct = Ticker[name]
+        except KeyError:
+            continue
+        for tf in timeframes:
+            if not store.is_loaded(ct, tf):
+                store.load(ct, tf)
 
 
 # Param keys that belong to the binning model only; never pass to the bias node (e.g. RSI).
@@ -493,6 +517,8 @@ def evaluate_fold_portfolio(
     per_signal_oos_sharpe: dict[str, float] | None = None
     per_signal_oos_returns: dict[str, pd.Series] | None = None
     per_ticker_oos_returns: dict[str, pd.Series] | None = None
+
+    _ensure_cross_ticker_data(selected_params, [timeframe])
 
     if feature_data_by_combo and len(selected_params) > 0:
         base_model, train_features_df, test_features_df = _build_one_base_model_with_members(

@@ -23,7 +23,11 @@ def normalize_timeframe_from_bias_spec(
 
 def combo_key(params: Mapping[str, object]) -> tuple[tuple[str, object], ...]:
     """Convert params dict to hashable sorted tuple for use as dict key."""
-    return tuple(sorted(params.items(), key=lambda item: item[0]))
+
+    def _hashable(v: object) -> object:
+        return tuple(v) if isinstance(v, list) else v
+
+    return tuple(sorted(((k, _hashable(v)) for k, v in params.items()), key=lambda item: item[0]))
 
 
 def normalize_datetime_index(index: pd.Index) -> pd.DatetimeIndex:

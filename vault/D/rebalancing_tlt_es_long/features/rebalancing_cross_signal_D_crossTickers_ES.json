@@ -1,0 +1,44 @@
+{
+  "feature_name": "rebalancing_cross_signal_D_crossTickers_ES",
+  "created_at": "2026-03-20T16:01:39.940130+00:00",
+  "updated_at": "2026-03-20T16:01:39.940130+00:00",
+  "bias_node_spec": {
+    "module_name": "rebalancing_cross",
+    "timeframes": [
+      "D"
+    ]
+  },
+  "tickers": [
+    "TLT"
+  ],
+  "base_models": [
+    {
+      "model_id": "rule_based_3_cross_tickers_es",
+      "model_name": "rebalancing_cross_signal_D_crossTickers_ES::rule_based_3_cross_tickers_es",
+      "bias_node_params": {
+        "cross_tickers": [
+          "ES"
+        ]
+      },
+      "binning_model_type": "rule_based",
+      "strategy": "long",
+      "binning_model_params": {
+        "n_bins": 3,
+        "selection_metric": "t_stat",
+        "normalize_by": null,
+        "metric_threshold": 0.0,
+        "t_threshold": 0.0,
+        "min_region_width": 1,
+        "shrinkage_k": 20.0,
+        "long_clip_min": 0.5,
+        "long_clip_max": 2.0,
+        "short_clip_min": 0.5,
+        "short_clip_max": 2.0
+      },
+      "requires_fit": false,
+      "is_fitted": false,
+      "fitted_params": null,
+      "members": []
+    }
+  ]
+}

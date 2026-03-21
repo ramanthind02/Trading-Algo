@@ -136,6 +136,7 @@ def test_calculate_oos_returns_from_positions_preserves_multi_ticker_aggregation
         series_name="portfolio_returns",
     )
 
+    # After reindex to full candle calendar, dates[0] is filled with 0.0
     expected = pd.Series(
         [
             0.0,

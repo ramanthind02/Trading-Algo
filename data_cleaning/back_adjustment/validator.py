@@ -8,7 +8,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from utils.enums import Ticker
+from utils.core.enums import Ticker
 
 _DEFAULT_REPORT_DIR = Path("docs/library/Data/comparisons")
 

@@ -1953,7 +1953,9 @@ class DiversifiedEnsemble:
         metadata['version'] = '2.0.0'
         if self.base_tf is not None:
             metadata['base_tf'] = self.base_tf.name
-        
+        if self.is_fitted_ and 'selection_method' not in metadata:
+            metadata['selection_method'] = 'manual'
+
         # Extract fitted base model states if fitted
         fitted_base_models = None
         fitted_ensemble = None

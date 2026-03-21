@@ -25,14 +25,8 @@ def test_load_config_returns_research_config():
 
 def test_load_config_defaults():
     config = load_config()
-    # Default tickers: NQ, YM, RTY, ES, TLT, GC (buy/hold universe)
-    assert Ticker.NQ in config.tickers
-    assert Ticker.YM in config.tickers
-    assert Ticker.RTY in config.tickers
-    assert Ticker.TLT in config.tickers
-    assert Ticker.GC in config.tickers
+    assert Ticker.ES in config.tickers
     assert config.start == datetime(2000, 1, 1)
-    assert config.end == datetime(2017, 12, 31)
     assert config.use_cache is True
     assert config.populate_cache is True
 

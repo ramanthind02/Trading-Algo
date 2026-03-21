@@ -138,18 +138,17 @@ def test_rsi_pipeline_binning_diagnostics_end_to_end() -> None:
     feature_col = "rsi_signal_D_lookback_5"
     assert feature_col in features_df.columns
 
-    feature_series = features_df[feature_col].copy()
+    # features_df and targets_df share the same row-aligned index from extraction.
+    # With multi-ticker data the datetime index has duplicates (one row per ticker),
+    # so we cannot use .loc reindexing. Instead, build an aligned mask and select.
+    valid_mask = features_df[feature_col].notna()
+    feature_series = features_df.loc[valid_mask, feature_col].copy()
     feature_series.name = feature_col
-    target_series = targets_df.loc[feature_series.index, "log_return"]
+    target_series = targets_df.loc[valid_mask, "log_return"].copy()
 
     model = ContinuousBinningModel(
         bin_counts=[10, 5, 3],  # Test grid search
-        selection_metric="sharpe",
         strategy="long",
-        use_coverage_bonus=True,
-        metric_threshold=0.0,
-        t_threshold=0.5,
-        min_region_width=1,
     )
     model.fit(feature_series, target_series)
 

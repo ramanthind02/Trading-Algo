@@ -248,9 +248,15 @@ class BaseModel:
         
         # Extract single values from lists in params (BaseModel doesn't do grid expansion)
         # If params contain lists, extract first value (for compatibility with extract_features_for_bias_node)
+        # Exception: scalar-list params (e.g. cross_tickers) must NOT be unwrapped.
+        from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS
+
         cleaned_params = {}
         for key, value in bias_node_spec['params'].items():
-            if isinstance(value, list):
+            if key in SCALAR_LIST_PARAM_KEYS:
+                # Inherently list-valued param; never unwrap
+                cleaned_params[key] = value
+            elif isinstance(value, list):
                 if len(value) == 0:
                     raise ValueError(f"Parameter '{key}' has empty list. Provide at least one value.")
                 elif len(value) > 1:
@@ -276,6 +282,9 @@ class BaseModel:
                     filter_specs=filter_specs,
                 )
                 self.bias_nodes[(ticker, tf)] = bias_node
+
+        # Pre-load cross-ticker data for pairs/spread nodes
+        self._preload_cross_ticker_data(cleaned_params, bias_node_spec['timeframes'])
         
         # Track feature values as candles are added
         # Maps datetime -> feature value
@@ -312,14 +321,14 @@ class BaseModel:
         if feature_column is not None:
             self._member_feature_columns[name] = feature_column
 
-    def get_member_feature_columns(self) -> List[str]:
+    def get_member_feature_columns(self) -> list[str]:
         """
         Return the list of feature column names used by members (for ensemble required_columns).
 
         Returns the primary feature_column if set, plus each member's feature_column when
         provided via add_member(..., feature_column=...). Deduplicated and order-preserving.
         """
-        columns: List[str] = []
+        columns: list[str] = []
         if self.feature_column:
             columns.append(self.feature_column)
         for _name, _bm in self.members:
@@ -346,7 +355,31 @@ class BaseModel:
             return getattr(self.binning_model, name)
         
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
-    
+
+    @staticmethod
+    def _preload_cross_ticker_data(params: dict, timeframes: list) -> None:
+        """Pre-load cross-ticker data into the store for ``cross_tickers`` params."""
+        from utils.data.cross_ticker_store import (
+            CrossTickerDataStore,
+            extract_cross_ticker_names,
+        )
+
+        cross_names = extract_cross_ticker_names(params)
+        if not cross_names:
+            return
+
+        from utils.core.enums import Ticker as _Ticker, TimeFrame as _TF
+        store = CrossTickerDataStore.get_instance()
+        for normalized in cross_names:
+            try:
+                ct = _Ticker[normalized]
+            except KeyError:
+                continue
+            for tf in timeframes:
+                tf_enum = _TF[tf] if isinstance(tf, str) else tf
+                if not store.is_loaded(ct, tf_enum):
+                    store.load(ct, tf_enum)
+
     def add_candle(self, candle: Candle, tf: TimeFrame, ticker: Optional[Ticker] = None) -> None:
         """
         Stream candle to appropriate bias node and track feature value.

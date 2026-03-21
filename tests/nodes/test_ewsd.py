@@ -110,14 +110,27 @@ def test_log_return_ewsd_coverage_matches_atr_when_cache_available() -> None:
         load_features_for_combo,
     )
 
+    from feature_research.config import InSampleDefaultsCatalog, InSamplePhaseDefaultsConfig
+
     config = None
     try:
         config = load_config()
     except ValueError as exc:
         pytest.skip(f"Skipping coverage check, config unavailable: {exc}")
     assert config is not None
-    config_ewsd = replace(config, target_col="log_return_ewsd", populate_cache=False)
-    config_atr = replace(config, target_col="log_return_atr", populate_cache=False)
+
+    def _with_target_col(cfg, target_col: str):
+        """Return a new config with a different target_col in the active phase defaults."""
+        phase = cfg._phase_defaults
+        new_phase = replace(phase, target_col=target_col)
+        if cfg.feature_type.value == "continuous":
+            new_catalog = replace(cfg.in_sample_defaults, continuous=new_phase)
+        else:
+            new_catalog = replace(cfg.in_sample_defaults, rule_based=new_phase)
+        return replace(cfg, in_sample_defaults=new_catalog, populate_cache=False)
+
+    config_ewsd = _with_target_col(config, "log_return_ewsd")
+    config_atr = _with_target_col(config, "log_return_atr")
 
     single_spec = expand_bias_specs(config.bias_spec)[0]
     data_ewsd = None

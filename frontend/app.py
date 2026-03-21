@@ -9,6 +9,11 @@ from flask_cors import CORS
 ROOT_DIR = Path(__file__).resolve().parent.parent
 INTRADAY_DIR = ROOT_DIR / "data" / "intraday_adjusted"
 DAILY_DIR = ROOT_DIR / "data" / "ohlc_data"
+KIBOT_BACKUP_DIR = ROOT_DIR / "data" / "ohlc_data_kibot_backup"
+INTRADAY_ORIGINAL_DIR = ROOT_DIR / "data" / "intraday_original"
+
+# Tickers not migrated to Norgate — backup is identical to current data
+KIBOT_ONLY_TICKERS = {"NG", "TLT"}
 
 INTRADAY_TFS = [
     "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10",
@@ -147,6 +152,45 @@ def candles(ticker: str, tf: str):
             resp["cap"] = MAX_CANDLES
 
     return jsonify(resp)
+
+
+@app.route("/candles/<ticker>/<tf>/kibot")
+def candles_kibot(ticker: str, tf: str):
+    """Return comparison overlay data (Kibot backup for D/W/M, raw original for intraday)."""
+    if tf in DAILY_TFS:
+        if ticker in KIBOT_ONLY_TICKERS:
+            return jsonify({"error": "Ticker was not migrated to Norgate"}), 404
+        path = KIBOT_BACKUP_DIR / ticker / f"{tf}_{ticker}.parquet"
+    elif tf in INTRADAY_TFS:
+        path = INTRADAY_ORIGINAL_DIR / ticker / f"{tf}_{ticker}.parquet"
+    else:
+        return jsonify({"error": "Invalid timeframe"}), 400
+    if not path.exists():
+        return jsonify({"error": "No Kibot backup for this ticker/tf"}), 404
+
+    df = pd.read_parquet(path)
+
+    # Apply same date filtering as main candles endpoint
+    date_from = request.args.get("from")
+    date_to = request.args.get("to")
+    if date_from:
+        ts_from = int(pd.Timestamp(date_from).timestamp())
+        df = df[df["timestamp"] >= ts_from]
+    if date_to:
+        ts_to = int(pd.Timestamp(date_to + " 23:59:59").timestamp())
+        df = df[df["timestamp"] <= ts_to]
+
+    count = min(int(request.args.get("count", MAX_CANDLES)), MAX_CANDLES)
+    before = request.args.get("before")
+    if before:
+        df = df[df["timestamp"] < int(before)]
+    df = df.tail(count)
+
+    records = [
+        {"time": int(row["timestamp"]), "value": float(row["close"])}
+        for row in df.to_dict("records")
+    ]
+    return jsonify({"candles": records})
 
 
 def _first_timestamp(path: Path) -> int:
