@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from feature_selection.base_models import ContinuousBinningModel, RuleBasedModel
-from feature_selection.base_models.feature_base_model import build_member_model_name
+from feature_selection.base_models.utils import build_member_model_name
 
 
 def test_new_model_names_exported() -> None:

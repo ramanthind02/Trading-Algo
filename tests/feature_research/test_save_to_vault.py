@@ -20,50 +20,64 @@ from feature_research.config import (
 )
 from feature_research.save_to_vault import (
     _binning_params_to_constructor_params,
-    _resolve_single_combo,
+    _resolve_param_combos,
     _run,
 )
 
 
-def test_resolve_single_combo_uses_params_to_save_when_set() -> None:
+def test_resolve_param_combos_uses_params_to_save_when_set() -> None:
     bias_spec = {
         "module_name": "cyclical_rsi",
         "timeframes": ["D"],
         "params": {"short_period": [4, 8], "long_period": [120], "rsi_period": [2]},
     }
     params_to_save = {"short_period": 4, "long_period": 120, "rsi_period": 2}
-    combo = _resolve_single_combo(bias_spec, params_to_save)
-    assert combo["module_name"] == "cyclical_rsi"
-    assert combo["params"] == params_to_save
-    assert combo["timeframes"] == ["D"]
+    combos = _resolve_param_combos(bias_spec, params_to_save)
+    assert len(combos) == 1
+    assert combos[0]["module_name"] == "cyclical_rsi"
+    assert combos[0]["params"] == params_to_save
+    assert combos[0]["timeframes"] == ["D"]
 
 
-def test_resolve_single_combo_uses_first_expanded_when_params_to_save_none() -> None:
+def test_resolve_param_combos_uses_expanded_when_params_to_save_none() -> None:
     bias_spec = {
         "module_name": "cyclical_rsi",
         "timeframes": ["D"],
         "params": {"short_period": [4], "long_period": [120], "rsi_period": [2]},
     }
-    combo = _resolve_single_combo(bias_spec, None)
-    assert combo["module_name"] == "cyclical_rsi"
-    assert combo["params"] == {"short_period": 4, "long_period": 120, "rsi_period": 2}
+    combos = _resolve_param_combos(bias_spec, None)
+    assert len(combos) == 1
+    assert combos[0]["module_name"] == "cyclical_rsi"
+    assert combos[0]["params"] == {"short_period": 4, "long_period": 120, "rsi_period": 2}
 
 
-def test_resolve_single_combo_raises_when_no_combos() -> None:
+def test_resolve_param_combos_raises_when_no_combos() -> None:
     bias_spec = {
         "module_name": "cyclical_rsi",
         "timeframes": ["D"],
         "params": {},
     }
-    expanded = _resolve_single_combo(bias_spec, None)
-    assert expanded["params"] == {}
+    expanded = _resolve_param_combos(bias_spec, None)
+    assert len(expanded) == 1
+    assert expanded[0]["params"] == {}
     bias_spec_empty_lists = {
         "module_name": "cyclical_rsi",
         "timeframes": ["D"],
         "params": {"x": []},
     }
     with pytest.raises(ValueError, match="No param combo to save"):
-        _resolve_single_combo(bias_spec_empty_lists, None)
+        _resolve_param_combos(bias_spec_empty_lists, None)
+
+
+def test_resolve_param_combos_returns_multiple_when_none_and_grid_has_many() -> None:
+    bias_spec = {
+        "module_name": "cyclical_rsi",
+        "timeframes": ["D"],
+        "params": {"short_period": [4, 8], "long_period": [120], "rsi_period": [2]},
+    }
+    combos = _resolve_param_combos(bias_spec, None)
+    assert len(combos) == 2
+    assert combos[0]["params"]["long_period"] == 120
 
 
 def test_binning_params_to_constructor_params() -> None:

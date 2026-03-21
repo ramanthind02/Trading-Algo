@@ -21,12 +21,10 @@ class WalkforwardSelectionMethod(str, Enum):
 
 
 class WeightLayerAlgorithm(str, Enum):
-    INVERSE_CORRELATION = "inverse_correlation"
-    EQUAL_FLAT = "equal_flat"
-    EQUAL_GROUPED = "equal_grouped"
-    INV_DOWNSIDE_VOL_GROUPED = "inv_downside_vol_grouped"
-    DOWNSIDE_HRP_GROUPED = "downside_hrp_grouped"
-    DOWNSIDE_HRP_FLAT = "downside_hrp_flat"
+    EQUAL_SIGNAL = "equal_signal"
+    INVERSE_AVG_PAIRWISE_CORR = "inverse_avg_pairwise_corr"
+    HRP_CLUSTER_EQUAL = "hrp_cluster_equal"
+    HRP_CLASSIC = "hrp_classic"
 
 
 class MemberPredictionMode(str, Enum):
@@ -79,7 +77,7 @@ class WalkforwardResearchConfig:
     selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.TOP_K
     marginal_peak: object = field(default=None)  # MarginalPeakConfig | None
     # --- Configurable weight layer method ---
-    weight_layer_algorithm: WeightLayerAlgorithm | str = WeightLayerAlgorithm.INVERSE_CORRELATION
+    weight_layer_algorithm: WeightLayerAlgorithm | str = WeightLayerAlgorithm.EQUAL_SIGNAL
     weight_layer_config: object = field(default=None)  # WeightLayerConfig | None
     # --- Member forecast strength mapping in walkforward stage-2 fast path ---
     member_prediction_mode: MemberPredictionMode | str = MemberPredictionMode.BINARY

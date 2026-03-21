@@ -1,4 +1,4 @@
-"""Tests for control-file member schema validation."""
+"""Tests for single-feature control-file schema validation."""
 
 import json
 import tempfile
@@ -23,25 +23,26 @@ def _base_model_config() -> dict:
     }
 
 
-def test_base_model_config_allows_missing_members() -> None:
+def test_base_model_config_allows_missing_members_key() -> None:
     config = _base_model_config()
     validate_base_model_config(config, index=0)
 
 
-def test_base_model_config_allows_empty_members() -> None:
+def test_base_model_config_rejects_members_key_even_if_empty() -> None:
     config = _base_model_config()
     config["members"] = []
-    validate_base_model_config(config, index=0)
-
-
-def test_base_model_members_must_be_list() -> None:
-    config = _base_model_config()
-    config["members"] = "not_a_list"
-    with pytest.raises(ValueError, match="members"):
+    with pytest.raises(ValueError, match="not supported"):
         validate_base_model_config(config, index=0)
 
 
-def test_base_model_members_accept_new_and_legacy_shapes() -> None:
+def test_base_model_config_rejects_members_key_when_non_list() -> None:
+    config = _base_model_config()
+    config["members"] = "not_a_list"
+    with pytest.raises(ValueError, match="not supported"):
+        validate_base_model_config(config, index=0)
+
+
+def test_base_model_config_rejects_member_payload_shape() -> None:
     config = _base_model_config()
     config["members"] = [
         {
@@ -54,7 +55,8 @@ def test_base_model_members_accept_new_and_legacy_shapes() -> None:
             "params": {"n_bins": 5},
         },
     ]
-    validate_base_model_config(config, index=0)
+    with pytest.raises(ValueError, match="not supported"):
+        validate_base_model_config(config, index=0)
 
 
 def test_control_file_accepts_legacy_schema_without_members() -> None:
@@ -65,7 +67,7 @@ def test_control_file_accepts_legacy_schema_without_members() -> None:
     validate_control_file(control_file)
 
 
-def test_parse_control_file_with_members() -> None:
+def test_parse_control_file_with_members_fails() -> None:
     control_file = {
         "metadata": {"is_fit": False, "version": "2.0.0"},
         "base_models": [
@@ -85,9 +87,8 @@ def test_parse_control_file_with_members() -> None:
         json.dump(control_file, f)
         filepath = f.name
     try:
-        result = parse_control_file(filepath)
-        assert "base_models" in result
-        assert len(result["base_models"]) == 1
+        with pytest.raises(ValueError, match="not supported"):
+            parse_control_file(filepath)
     finally:
         Path(filepath).unlink(missing_ok=True)
 

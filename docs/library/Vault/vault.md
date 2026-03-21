@@ -116,19 +116,13 @@ Each feature JSON contains:
 - `feature_name` — canonical feature key (for example `rsi_signal_D`)
 - `bias_node_spec` — top-level shared spec (`module_name`, `timeframes`) with no params
 - `tickers` — training ticker universe for the ensemble feature
-- `base_models` — list of model variants
+- `base_models` — list with exactly one base model entry
 - `created_at`, `updated_at` — metadata timestamps
 
 Each base model entry contains:
 - `model_id`, `model_name`
 - `bias_node_params` (params moved from top-level spec into per-model entries)
 - `binning_model_type`, `strategy`, `binning_model_params`
-- `requires_fit`, `is_fitted`, `fitted_params`
-- optional `members` list (may be empty or omitted)
-
-Each member entry contains:
-- `member_name`
-- `binning_model_type`, `binning_model_params`
 - `requires_fit`, `is_fitted`, `fitted_params`
 
 ### `is_fit` Flag + Selection Metadata
@@ -148,6 +142,7 @@ metadata = {
 
 - [[base_model]] — BaseModel composition and binning strategy
 - [[portfolio]] — how vault ensembles are loaded into Portfolio
+- [[monitoring]] — strategy decay monitoring store (signal/target vectors, CUSUM, rolling Sharpe)
 
 ---
 

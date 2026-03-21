@@ -46,6 +46,7 @@ from ensemble.portfolio_tester import (
     calculate_strategy_returns_from_positions,
     calculate_baseline_returns
 )
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 
 
 # Hardcoded buy_hold feature config (from vault/D/buy_hold_long/features/buy_hold_signal_D.json)
@@ -103,6 +104,14 @@ BUY_HOLD_FEATURE_CONFIG = {
         }
     ]
 }
+
+
+def _daily_volatility_for(candles_df: pd.DataFrame) -> pd.DataFrame:
+    if "timeframe" in candles_df.columns:
+        daily_candles = candles_df[candles_df["timeframe"] == TimeFrame.D]
+        if not daily_candles.empty:
+            return compute_daily_ewsd_volatility(daily_candles)
+    return compute_daily_ewsd_volatility(candles_df)
 
 
 def create_ensemble_from_config(
@@ -264,7 +273,8 @@ class TestPortfolioIntegration:
         
         # Predict on test data
         print("\nPredicting on test data...")
-        positions = tester.predict(test_candles)
+        daily_volatility_df = _daily_volatility_for(pd.concat([train_candles, test_candles], ignore_index=True))
+        positions = tester.predict(test_candles, daily_volatility_df=daily_volatility_df)
         
         # Validate outputs
         print("\nValidating outputs...")
@@ -365,7 +375,8 @@ class TestPortfolioIntegration:
         
         # Predict on test data
         print("\nPredicting on test data...")
-        positions = tester.predict(test_candles)
+        daily_volatility_df = _daily_volatility_for(pd.concat([train_candles, test_candles], ignore_index=True))
+        positions = tester.predict(test_candles, daily_volatility_df=daily_volatility_df)
         
         # Validate outputs
         print("\nValidating outputs...")
@@ -450,7 +461,8 @@ class TestPortfolioIntegration:
         
         # Test predict accepts DataFrame
         print("\nTesting predict()...")
-        positions = tester.predict(candles)
+        daily_volatility_df = _daily_volatility_for(candles)
+        positions = tester.predict(candles, daily_volatility_df=daily_volatility_df)
         
         # Validate output format
         assert isinstance(positions, pd.DataFrame), "Output should be DataFrame"
@@ -522,7 +534,11 @@ class TestPortfolioIntegration:
         
         # Test ensemble prediction
         print("\nTesting ensemble prediction...")
-        ensemble_pred = ensemble.predict_from_candles(candles)
+        daily_volatility_df = _daily_volatility_for(candles)
+        ensemble_pred = ensemble.predict_from_candles(
+            candles,
+            daily_volatility_df=daily_volatility_df,
+        )
         print(f"Ensemble prediction type: {type(ensemble_pred)}")
         if isinstance(ensemble_pred, pd.DataFrame):
             print(f"Ensemble prediction shape: {ensemble_pred.shape}")

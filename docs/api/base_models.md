@@ -103,8 +103,6 @@ def predict(self, candles_df: pd.DataFrame, strategy: str = "long",
 def stream_predict(self, candles_df: pd.DataFrame, strategy: str = "long") -> pd.Series
 def vectorized_predict(self, candles_df: pd.DataFrame, strategy: str = "long",
                        start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> pd.Series
-def predict_members_from_candles(self, candles_df: pd.DataFrame, strategy: str = "long") -> pd.DataFrame
-def get_fitted_params_for_members(self) -> Dict[str, Dict[str, Any]]
 def save_to_vault(self, ensemble_dir: Optional[str] = None,
                   tickers: Optional[List[Ticker]] = None) -> str
 def update_fitted_params_in_vault(self, ensemble_dir: str, model_id: str,
@@ -117,8 +115,7 @@ Notes / Constraints:
 - Tickers in `candles_df` must be a subset of model tickers.
 - Cached mode (`use_cache=True`) requires complete cache coverage or raises cache miss errors.
 - `predict()` preserves model state in streaming mode (no automatic reset).
-- `fit()` also fits attached members on the same aligned feature/target data;
-  pre-fitted members with `requires_fit=False` are skipped.
+- `BaseModel` is strictly single-feature/single-combo; member APIs are not supported.
 
 No-lookahead / time alignment:
 - Streaming fit/predict sorts candles by `datetime` before per-candle processing to preserve causal feature state.

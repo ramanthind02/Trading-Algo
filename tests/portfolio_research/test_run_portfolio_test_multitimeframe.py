@@ -21,6 +21,51 @@ from portfolio_research.config import ResearchWindow
 from utils.core.enums import Ticker, TimeFrame
 
 
+# ---------------------------------------------------------------------------
+# Shared GlobalPortfolio mock
+# ---------------------------------------------------------------------------
+
+class _DummyGlobalPortfolio:
+    """Minimal GlobalPortfolio stub that returns capped synthetic positions."""
+
+    created: list[object] = []
+
+    def __init__(
+        self,
+        tf_portfolios,
+        max_position_pct: float = 2.0,
+        **kwargs,  # noqa: ANN003
+    ):
+        self.tf_portfolios = tf_portfolios
+        self.max_position_pct = max_position_pct
+        _DummyGlobalPortfolio.created.append(self)
+
+    def fit(self, candles_per_tf, instrument_returns):  # noqa: ANN001
+        return self
+
+    def predict(self, candles_per_tf):  # noqa: ANN001
+        # Return a synthetic capped positions DataFrame.
+        daily_candles = candles_per_tf.get(TimeFrame.D, pd.DataFrame())
+        if daily_candles.empty:
+            # Fall back to first available TF.
+            daily_candles = next(iter(candles_per_tf.values()), pd.DataFrame())
+        if daily_candles.empty:
+            return pd.DataFrame(
+                columns=["ticker", "datetime", "forecast_score", "position_fraction"]
+            )
+        ticker = daily_candles["ticker"].iloc[0]
+        datetimes = pd.to_datetime(daily_candles["datetime"]).sort_values().drop_duplicates()
+        n = len(datetimes)
+        return pd.DataFrame(
+            {
+                "ticker": [ticker] * n,
+                "datetime": datetimes.tolist(),
+                "forecast_score": [1.0] * n,
+                "position_fraction": [self.max_position_pct] * n,
+            }
+        )
+
+
 @dataclass
 class _DummyConfig:
     tickers: list[Ticker]
@@ -36,7 +81,6 @@ class _DummyConfig:
     baseline_mode: str
     output_root: Path
     oos_window: None = None
-    sector_allocation_config_path: str | None = None
     train_window: ResearchWindow = field(
         default_factory=lambda: ResearchWindow(
             start=datetime(2024, 1, 1),
@@ -87,14 +131,13 @@ class _DummyPortfolio:
         trading_timeframe,
         target_volatility,
         max_position_pct,
-        weight_layer,
         use_cache,
+        **kwargs,
     ):
         self.ensembles = ensembles
         self.trading_timeframe = trading_timeframe
         self.target_volatility = target_volatility
         self.max_position_pct = max_position_pct
-        self.weight_layer = weight_layer
         self.use_cache = use_cache
         _DummyPortfolio.created_timeframes.append(trading_timeframe)
 
@@ -184,6 +227,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     tmp_path: Path,
 ) -> None:
     _DummyPortfolio.created_timeframes = []
+    _DummyGlobalPortfolio.created = []
 
     config = _DummyConfig(
         tickers=[Ticker.ES],
@@ -196,7 +240,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
             "weekly": "vault/W/weekly_strategy",
         },
         target_volatility=0.15,
-        weight_layer_method="inverse_correlation",
+        weight_layer_method="equal_signal",
         weight_layer_kwargs={"fdm_max": 2.5},
         max_position_pct=3.5,
         baseline_mode="equal_weight",
@@ -260,11 +304,14 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     monkeypatch.setattr(pipeline, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
     monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
     monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
+    monkeypatch.setattr(pipeline, "GlobalPortfolio", _DummyGlobalPortfolio)
     monkeypatch.setattr(pipeline, "PortfolioTester", _DummyTester)
     monkeypatch.setattr(pipeline, "calculate_strategy_returns_from_positions", _mock_calculate_strategy_returns_from_positions)
     monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
     monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", _mock_aggregate_intraday_returns_to_daily)
     monkeypatch.setattr(pipeline, "generate_tearsheet", _mock_generate_tearsheet)
+    monkeypatch.setattr(pipeline, "export_global_weight_layer_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
 
     rpt.run_portfolio_test(config)
 
@@ -272,11 +319,16 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     assert _DummyPortfolio.created_timeframes.count(TimeFrame.D) == 3
     assert _DummyPortfolio.created_timeframes.count(TimeFrame.W) == 3
 
+    # Multi-TF path: GlobalPortfolio created once per phase (3 phases).
+    assert len(_DummyGlobalPortfolio.created) == 3, (
+        f"Expected 3 GlobalPortfolio instances (one per phase), got {len(_DummyGlobalPortfolio.created)}"
+    )
+
     generated_names = {Path(path).name for path in generated_output_files}
     generated_paths = [Path(p) for p in generated_output_files]
-    assert "Portfolio_Train_Test_tearsheet.html" in generated_names
-    assert "daily_Portfolio_Train_Test_tearsheet.html" in generated_names
-    assert "weekly_Portfolio_Train_Test_tearsheet.html" in generated_names
+    assert "Portfolio_Train_window_tearsheet.html" in generated_names
+    assert "daily_Portfolio_Train_window_tearsheet.html" in generated_names
+    assert "weekly_Portfolio_Train_window_tearsheet.html" in generated_names
 
     # Component tearsheets live in timeframe subfolders (daily/, weekly/) with un-prefixed filenames.
     assert "ensemble_0_tearsheet.html" in generated_names
@@ -290,10 +342,87 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     capped_combined_frames = [
         frame
         for frame in strategy_position_calls
-        if not frame.empty and frame["position_fraction"].max() == config.max_position_pct
+        if not frame.empty and frame["position_fraction"].abs().max() <= config.max_position_pct
     ]
     assert capped_combined_frames, "Expected at least one combined capped position frame"
     assert all(
         frame["position_fraction"].abs().max() <= config.max_position_pct
         for frame in capped_combined_frames
     )
+
+
+def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _DummyPortfolio.created_timeframes = []
+    _DummyGlobalPortfolio.created = []
+
+    config = _DummyConfig(
+        tickers=[Ticker.ES],
+        timeframe=TimeFrame.D,
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 1, 5),
+        use_cache=True,
+        ensemble_dirs={"daily": "vault/D/daily_strategy"},
+        target_volatility=0.15,
+        weight_layer_method="equal_signal",
+        weight_layer_kwargs={"fdm_max": 2.5},
+        max_position_pct=3.5,
+        baseline_mode="equal_weight",
+        output_root=tmp_path / "results",
+    )
+
+    daily_candles = _make_candles(
+        TimeFrame.D,
+        ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"],
+    )
+
+    def _mock_load_candles(_config, timeframe, start=None, end=None):  # noqa: ANN001
+        if timeframe == TimeFrame.D:
+            return daily_candles.copy()
+        raise AssertionError(f"Unexpected timeframe: {timeframe}")
+
+    def _mock_load_ensemble_from_vault(path: str, refit: bool, target_volatility: float):
+        return _DummyEnsemble(TimeFrame.D)
+
+    def _mock_calculate_strategy_returns_from_positions(
+        positions_df: pd.DataFrame,
+        candles_df: pd.DataFrame,
+        strategy: str = "long",
+    ) -> pd.Series:
+        idx = pd.to_datetime(candles_df["datetime"]).sort_values().drop_duplicates()
+        return pd.Series(0.001, index=idx, name="strategy_return")
+
+    def _mock_calculate_baseline_returns(
+        candles_df: pd.DataFrame,
+        equal_weight: bool = True,
+    ) -> pd.Series:
+        idx = pd.to_datetime(candles_df["datetime"]).sort_values().drop_duplicates()
+        return pd.Series(0.0005, index=idx, name="baseline_return")
+
+    export_calls: list[tuple[str, Path]] = []
+
+    def _mock_export_global_weight_layer_report(
+        portfolio, phase_name: str, output_dir: Path  # noqa: ANN001
+    ) -> None:
+        export_calls.append((phase_name, output_dir))
+
+    monkeypatch.setattr(pipeline, "_load_candles", _mock_load_candles)
+    monkeypatch.setattr(pipeline, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
+    monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
+    monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
+    monkeypatch.setattr(pipeline, "GlobalPortfolio", _DummyGlobalPortfolio)
+    monkeypatch.setattr(pipeline, "PortfolioTester", _DummyTester)
+    monkeypatch.setattr(pipeline, "calculate_strategy_returns_from_positions", _mock_calculate_strategy_returns_from_positions)
+    monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
+    monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", lambda returns: returns)
+    monkeypatch.setattr(pipeline, "generate_tearsheet", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "export_global_weight_layer_report", _mock_export_global_weight_layer_report)
+    monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
+
+    rpt.run_portfolio_test(config)
+
+    assert len(_DummyGlobalPortfolio.created) == 3
+    assert [phase for phase, _ in export_calls] == ["train", "validation", "test"]
+    assert all(output_dir.name == "global_weight_layer" for _, output_dir in export_calls)

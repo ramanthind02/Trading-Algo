@@ -416,7 +416,7 @@ This section specifies how the **continuous** feature explorer handles multiple 
 ### 15.7 Permutation test: simple backtest vs portfolio backtest
 
 - The permutation test must support two modes:
-  - **Simple backtesting**: Uses the existing in-memory criterion (fit model on feature, predict, compute metric on selected returns). Target column is configurable (e.g. `log_return`, `log_return_atr`, `log_return_ewsd`). No volatility scaling; fast.
+  - **Simple backtesting**: Uses the existing in-memory criterion (fit model on feature, predict, compute metric on selected returns). Target column is configurable (e.g. `log_return`, `log_return_ewsd`, `log_return_ewsd`). No volatility scaling; fast.
   - **Portfolio backtest**: The **feature is backtested via the portfolio** (ensemble/portfolio tester). The feature experiences **volatility scaling** and the same execution path as in production, giving more realistic results. The user can choose this when they want results that reflect portfolio-level behavior.
 - API: the user can choose between simple and portfolio backtest (e.g. `permutation_backtest_mode: Literal['simple', 'portfolio'] = 'simple'`). For simple mode, `target_col` (or a list of target columns to try) is used. For portfolio mode, the explorer calls into the portfolio/backtest infrastructure with the selected (param combo, n_bins) configuration; implementation details (how portfolio is invoked, what data it receives) are follow-on.
 

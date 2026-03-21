@@ -1,0 +1,10 @@
+ticker,cluster_id,timeframe,model_name,model_weight,cluster_weight,avg_positive_corr,ulcer_index,score,phase
+ES,cluster_3,seasonalindiceseof_signal_D_smaPeriod_200,seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_0,0.335146759426578,0.335146759426578,0.0,,1.0,test
+ES,cluster_1,buy_hold_signal_M,buy_hold_signal_M::rule_based_3__M::ensemble_0,0.33242662028671105,0.33242662028671105,0.008182675435321267,,0.9918837373080348,test
+ES,cluster_2,turnaroundtuesday_signal_D_mode_tue_wed,turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1,0.33242662028671105,0.33242662028671105,0.008182675435321267,,0.9918837373080348,test
+GC,cluster_1,buy_hold_signal_M,buy_hold_signal_M::rule_based_3__M::ensemble_0,1.0,1.0,0.0,,1.0,test
+NQ,cluster_1,buy_hold_signal_M,buy_hold_signal_M::rule_based_3__M::ensemble_0,0.5,0.5,0.0,,1.0,test
+NQ,cluster_2,turnaroundtuesday_signal_D_mode_tue_wed,turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1,0.5,0.5,0.0,,1.0,test
+RTY,cluster_1,buy_hold_signal_M,buy_hold_signal_M::rule_based_3__M::ensemble_0,1.0,1.0,0.0,,1.0,test
+TLT,cluster_1,buy_hold_signal_M,buy_hold_signal_M::rule_based_3__M::ensemble_0,0.5,0.5,0.0,,1.0,test
+TLT,cluster_2,seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7,seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_2,0.5,0.5,0.0,,1.0,test

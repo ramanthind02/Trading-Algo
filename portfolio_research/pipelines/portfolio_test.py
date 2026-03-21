@@ -11,9 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
-from ensemble.portfolio import Portfolio
+from ensemble.portfolio import GlobalPortfolio, Portfolio, TFPortfolio
 from ensemble.portfolio_tester import (
     PortfolioTester,
     aggregate_intraday_returns_to_daily,
@@ -24,6 +25,8 @@ from ensemble.portfolio_tester import (
 from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from portfolio_research.weight_layer_report import export_global_weight_layer_report
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 from utils.core.enums import TimeFrame
 from utils.evaluation.walkforward.runner import _sanitize_tearsheet_name
 
@@ -129,26 +132,37 @@ def _enable_cache(ensemble: Any, use_cache: bool) -> Any:
     return ensemble
 
 
+def _build_instrument_returns(daily_candles: pd.DataFrame) -> pd.DataFrame:
+    """Build a (date × ticker) instrument-returns DataFrame from daily candles.
+
+    Used as input to ``GlobalPortfolio.fit`` for IDM and WeightLayer fitting.
+    """
+    if daily_candles.empty:
+        return pd.DataFrame()
+
+    df = daily_candles[["ticker", "datetime", "close"]].copy()
+    df["datetime"] = pd.to_datetime(df["datetime"]).dt.floor("s")
+    pivot_close = df.pivot_table(
+        index="datetime", columns="ticker", values="close", aggfunc="last"
+    )
+    pivot_close.columns.name = None
+    log_returns = np.log(pivot_close / pivot_close.shift(1))
+    return log_returns.dropna(how="all")
+
+
 def _build_tester_for_timeframe(
     timeframe: TimeFrame,
     config: Any,
     grouped_ensembles: dict[TimeFrame, list[Any]],
 ) -> PortfolioTester:
     """Build PortfolioTester for a specific timeframe."""
-    weight_layer = WeightLayer(
-        weight_method=config.weight_layer_method,
-        **dict(config.weight_layer_kwargs),
-    )
     portfolio_kw: dict[str, Any] = {
         "ensembles": grouped_ensembles[timeframe],
         "trading_timeframe": timeframe,
         "target_volatility": config.target_volatility,
         "max_position_pct": config.max_position_pct,
-        "weight_layer": weight_layer,
         "use_cache": config.use_cache,
     }
-    if config.sector_allocation_config_path is not None:
-        portfolio_kw["sector_allocation_config_path"] = config.sector_allocation_config_path
     portfolio = Portfolio(**portfolio_kw)
     return PortfolioTester(portfolio, baseline_mode=config.baseline_mode)
 
@@ -232,7 +246,12 @@ def _evaluate_phase(
     grouped_ensembles: dict[TimeFrame, list[Any]],
     unique_timeframes: list[TimeFrame],
 ) -> PhaseResult:
-    """Evaluate a portfolio phase: fit on train window, test on test window."""
+    """Evaluate a portfolio phase: fit on train window, test on test window.
+
+    Portfolio tearsheet naming: phase-level combined → Portfolio_{phase}_window_tearsheet.html;
+    per-timeframe → {tf_label}_Portfolio_{phase}_window_tearsheet.html. Composite (multi-window)
+    tearsheets use composite_name e.g. Validation_and_Test_windows → Portfolio_{name}_tearsheet.html.
+    """
     phase_out = config.output_root / output_dir_name
     phase_out.mkdir(parents=True, exist_ok=True)
     portfolio_dir = phase_out / "portfolio"
@@ -287,13 +306,13 @@ def _evaluate_phase(
     print(f"{phase_title} daily train: {len(daily_train_candles)} candles")
     print(f"{phase_title} daily test : {len(daily_test_candles)} candles")
 
+    # Daily EWSD volatility is computed once and aligned downstream to each TF.
+    daily_volatility_all = compute_daily_ewsd_volatility(candles_by_timeframe[TimeFrame.D])
+
     daily_dates_per_ticker = _build_daily_dates_per_ticker(daily_test_candles)
-    daily_positions_by_timeframe: list[pd.DataFrame] = []
     testers_by_timeframe: dict[TimeFrame, PortfolioTester] = {}
     per_tf_strategy_returns: dict[TimeFrame, pd.Series] = {}
     per_tf_baseline_returns: dict[TimeFrame, pd.Series] = {}
-
-    has_multiple_timeframes = len(unique_timeframes) >= 2
 
     for timeframe in unique_timeframes:
         tf_train_candles = train_candles_by_timeframe[timeframe]
@@ -307,6 +326,7 @@ def _evaluate_phase(
         print(f"  Predicting {tf_label} portfolio...")
         tester.predict(
             tf_test_candles,
+            daily_volatility_df=daily_volatility_all,
             return_ensemble_predictions=True,
             return_base_model_predictions=True,
         )
@@ -325,8 +345,6 @@ def _evaluate_phase(
                 native_positions,
                 daily_dates_per_ticker,
             )
-
-        daily_positions_by_timeframe.append(daily_positions)
         testers_by_timeframe[timeframe] = tester
 
         strategy_returns = tester.calculate_strategy_returns(
@@ -337,15 +355,41 @@ def _evaluate_phase(
         per_tf_strategy_returns[timeframe] = aggregate_intraday_returns_to_daily(strategy_returns)
         per_tf_baseline_returns[timeframe] = aggregate_intraday_returns_to_daily(baseline_returns)
 
-    combined_positions = (
-        pd.concat(daily_positions_by_timeframe, ignore_index=True)
-        .groupby(["ticker", "datetime"], as_index=False)["position_fraction"]
-        .sum()
+    # Always build GlobalPortfolio so the global WeightLayer is fitted and reported
+    # even for a single-timeframe run.
+    tf_portfolios = [testers_by_timeframe[tf].portfolio for tf in unique_timeframes]
+    global_portfolio = GlobalPortfolio(
+        tf_portfolios=tf_portfolios,
+        weight_layer=WeightLayer(
+            weight_method=config.weight_layer_method,
+            **dict(config.weight_layer_kwargs),
+        ),
+        max_position_pct=config.max_position_pct,
     )
-    combined_positions["position_fraction"] = combined_positions["position_fraction"].clip(
-        -config.max_position_pct,
-        config.max_position_pct,
+    instrument_returns = _build_instrument_returns(daily_train_candles)
+    global_portfolio.fit(
+        train_candles_by_timeframe,
+        instrument_returns,
+        daily_volatility_df=daily_volatility_all,
     )
+    export_global_weight_layer_report(
+        global_portfolio,
+        phase_name=output_dir_name,
+        output_dir=phase_out / "global_weight_layer",
+    )
+    global_positions_raw = global_portfolio.predict(
+        test_candles_by_timeframe,
+        daily_volatility_df=daily_volatility_all,
+    )
+    global_positions_raw["datetime"] = pd.to_datetime(
+        global_positions_raw["datetime"]
+    ).dt.floor("s")
+    combined_positions = global_positions_raw[
+        ["ticker", "datetime", "position_fraction"]
+    ].copy()
+    combined_positions["position_fraction"] = combined_positions[
+        "position_fraction"
+    ].clip(-config.max_position_pct, config.max_position_pct)
 
     combined_strategy_returns = calculate_strategy_returns_from_positions(
         combined_positions,
@@ -358,7 +402,7 @@ def _evaluate_phase(
     combined_strategy_returns = aggregate_intraday_returns_to_daily(combined_strategy_returns)
     combined_baseline_returns = aggregate_intraday_returns_to_daily(combined_baseline_returns)
 
-    combined_output_file = portfolio_dir / f"Portfolio_{phase_title}_Test_tearsheet.html"
+    combined_output_file = portfolio_dir / f"Portfolio_{phase_title}_window_tearsheet.html"
     generate_tearsheet(
         strategy_returns=combined_strategy_returns,
         baseline_returns=combined_baseline_returns,
@@ -367,10 +411,10 @@ def _evaluate_phase(
         mode="html",
     )
 
-    if has_multiple_timeframes:
+    if len(unique_timeframes) >= 2:
         for timeframe in unique_timeframes:
             tf_label = _timeframe_label(timeframe)
-            tf_output_file = portfolio_dir / f"{tf_label}_Portfolio_{phase_title}_Test_tearsheet.html"
+            tf_output_file = portfolio_dir / f"{tf_label}_Portfolio_{phase_title}_window_tearsheet.html"
             generate_tearsheet(
                 strategy_returns=per_tf_strategy_returns[timeframe],
                 baseline_returns=per_tf_baseline_returns[timeframe],
@@ -507,13 +551,13 @@ def run_portfolio_test_pipeline(config: Any) -> None:
     )
     _generate_composite_tearsheet(
         [validation_result, test_result],
-        "Validation_Test",
+        "Validation_and_Test_windows",
         combined_portfolio_dir,
     )
 
     _generate_composite_tearsheet(
         [train_result, validation_result, test_result],
-        "Train_Validation_Test",
+        "Train_Validation_and_Test_windows",
         combined_portfolio_dir,
     )
 

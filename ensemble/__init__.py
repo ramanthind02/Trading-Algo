@@ -10,21 +10,21 @@ Date: 2025-11-23
 """
 
 from .diversified_ensemble import DiversifiedEnsemble
-from .portfolio import Portfolio
+from .portfolio import GlobalPortfolio, Portfolio, TFPortfolio
 from .portfolio_manager import PortfolioManager
 from .weight_layer import (
     BaseWeightLayer,
-    InverseCorrelationWeighter,
-    InverseCorrelationWeightLayer,
+    ClusteredWeightLayer,
     WeightLayer,
 )
 
 __all__ = [
     'DiversifiedEnsemble',
+    'GlobalPortfolio',
     'Portfolio',
+    'TFPortfolio',
     'PortfolioManager',
     'WeightLayer',
     'BaseWeightLayer',
-    'InverseCorrelationWeightLayer',
-    'InverseCorrelationWeighter',
+    'ClusteredWeightLayer',
 ]

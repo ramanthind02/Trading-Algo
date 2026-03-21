@@ -93,8 +93,9 @@ def test_ewsd_matches_fast_volatility_blending() -> None:
     assert rel_err < 0.20
 
 
-def test_log_return_ewsd_coverage_matches_atr_when_cache_available() -> None:
+def test_log_return_ewsd_coverage_is_close_to_log_return_when_cache_available() -> None:
     from dataclasses import replace
+    from feature_research.config import FeatureType
 
     project_root = Path(__file__).resolve().parents[2]
     data_dir = project_root / "data" / "ohlc_data"
@@ -119,38 +120,38 @@ def test_log_return_ewsd_coverage_matches_atr_when_cache_available() -> None:
         pytest.skip(f"Skipping coverage check, config unavailable: {exc}")
     assert config is not None
 
-    def _with_target_col(cfg, target_col: str):
-        """Return a new config with a different target_col in the active phase defaults."""
-        phase = cfg._phase_defaults
-        new_phase = replace(phase, target_col=target_col)
-        if cfg.feature_type.value == "continuous":
-            new_catalog = replace(cfg.in_sample_defaults, continuous=new_phase)
-        else:
-            new_catalog = replace(cfg.in_sample_defaults, rule_based=new_phase)
-        return replace(cfg, in_sample_defaults=new_catalog, populate_cache=False)
+    active_defaults = config.in_sample_defaults.for_feature_type(config.feature_type)
+    defaults_ewsd = replace(active_defaults, target_col="log_return_ewsd")
+    defaults_log = replace(active_defaults, target_col="log_return")
+    if config.feature_type == FeatureType.CONTINUOUS:
+        catalog_ewsd = replace(config.in_sample_defaults, continuous=defaults_ewsd)
+        catalog_log = replace(config.in_sample_defaults, continuous=defaults_log)
+    else:
+        catalog_ewsd = replace(config.in_sample_defaults, rule_based=defaults_ewsd)
+        catalog_log = replace(config.in_sample_defaults, rule_based=defaults_log)
 
-    config_ewsd = _with_target_col(config, "log_return_ewsd")
-    config_atr = _with_target_col(config, "log_return_atr")
+    config_ewsd = replace(config, in_sample_defaults=catalog_ewsd, populate_cache=False)
+    config_log = replace(config, in_sample_defaults=catalog_log, populate_cache=False)
 
     single_spec = expand_bias_specs(config.bias_spec)[0]
     data_ewsd = None
-    data_atr = None
+    data_log = None
     try:
         data_ewsd = load_features_for_combo(single_spec, config_ewsd)
-        data_atr = load_features_for_combo(single_spec, config_atr)
+        data_log = load_features_for_combo(single_spec, config_log)
     except Exception as exc:
         pytest.skip(f"Skipping coverage check, feature cache unavailable: {exc}")
-    if data_ewsd is None or data_atr is None:
+    if data_ewsd is None or data_log is None:
         pytest.skip("Skipping coverage check, could not load feature/target data")
     assert data_ewsd is not None
-    assert data_atr is not None
+    assert data_log is not None
 
     _, target_ewsd, _ = data_ewsd
-    _, target_atr, _ = data_atr
+    _, target_log, _ = data_log
 
     n_ewsd = len(target_ewsd)
-    n_atr = len(target_atr)
-    if n_atr == 0:
-        pytest.skip("Skipping coverage check, ATR target length is zero")
+    n_log = len(target_log)
+    if n_log == 0:
+        pytest.skip("Skipping coverage check, log_return target length is zero")
 
-    assert n_ewsd / n_atr > 0.95
+    assert n_ewsd / n_log > 0.95

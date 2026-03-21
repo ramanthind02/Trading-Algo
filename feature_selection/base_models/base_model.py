@@ -396,6 +396,7 @@ class BinningModelBase(ABC):
 
         self.feature_column = feature_data.name
         self._training_feature_data = feature_data.copy()
+        self._training_target_data = target_data.copy()
 
         df = pd.DataFrame({"feature": feature_data, "target": target_data}).dropna()
         if len(df) < max(10, self.n_bins * 5):

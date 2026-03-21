@@ -7,8 +7,11 @@ validate_control_file strictness, load_feature_base_models raise on missing file
 
 import tempfile
 from pathlib import Path
+import sys
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from ensemble.ensemble_utils import validate_base_model_config
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
@@ -36,19 +39,19 @@ class TestValidateBaseModelConfig:
 class TestWeightLayerFactory:
     """Tests for WeightLayer factory fdm_max and defaults."""
 
-    def test_fdm_max_used_for_equal_grouped(self) -> None:
-        """WeightLayer(weight_method='equal_grouped', fdm_max=1.5) results in fdm_max=1.5."""
-        layer = WeightLayer(weight_method="equal_grouped", fdm_max=1.5)
+    def test_fdm_max_used_for_equal_signal(self) -> None:
+        """WeightLayer(weight_method='equal_signal', fdm_max=1.5) results in fdm_max=1.5."""
+        layer = WeightLayer(weight_method="equal_signal", fdm_max=1.5)
         assert layer.fdm_max == 1.5
 
     def test_fdm_max_default_2(self) -> None:
         """Default fdm_max is 2.0 (per spec)."""
-        layer = WeightLayer(weight_method="inverse_correlation")
+        layer = WeightLayer(weight_method="equal_signal")
         assert layer.fdm_max == 2.0
 
     def test_config_overrides_fdm_max_arg(self) -> None:
         """When config is provided, config.fdm_max is used."""
-        config = WeightLayerConfig(weighting_method="equal_flat", fdm_max=1.8)
+        config = WeightLayerConfig(weighting_method="equal_signal", fdm_max=1.8)
         layer = WeightLayer(config=config, fdm_max=99.0)
         assert layer.fdm_max == 1.8
 

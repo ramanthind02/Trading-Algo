@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from ensemble.vault_manager import (
     add_feature_to_ensemble,
@@ -97,7 +98,7 @@ def test_add_feature_writes_feature_name_only(tmp_path) -> None:
     assert payload["base_models"][0]["requires_fit"] is True
 
 
-def test_load_models_merges_bias_node_params_and_members(tmp_path) -> None:
+def test_load_models_merges_bias_node_params_single_model(tmp_path) -> None:
     ensemble_dir = create_ensemble_directory(
         timeframe=TimeFrame.D,
         ensemble_name="load_members",
@@ -105,10 +106,6 @@ def test_load_models_merges_bias_node_params_and_members(tmp_path) -> None:
         vault_root=str(tmp_path / "vault"),
     )
     model = _make_base_model(lookback=5)
-    model.add_member(
-        "cb10",
-        ContinuousBinningModel(n_bins=4, strategy="long"),
-    )
     add_feature_to_ensemble(
         feature_name="rsi_signal_D",
         bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
@@ -125,12 +122,9 @@ def test_load_models_merges_bias_node_params_and_members(tmp_path) -> None:
     assert len(loaded) == 1
     loaded_model = next(iter(loaded.values()))
     assert loaded_model.bias_node_spec["params"]["lookback"] == 5
-    assert loaded_model.members[0][0] == "cb10"
-    # Continuous member is reset unfitted for walkforward refit.
-    assert loaded_model.members[0][1].is_fitted_ is False
 
 
-def test_update_member_fitted_params_path(tmp_path) -> None:
+def test_update_fitted_params_path(tmp_path) -> None:
     ensemble_dir = create_ensemble_directory(
         timeframe=TimeFrame.D,
         ensemble_name="member_update",
@@ -145,16 +139,6 @@ def test_update_member_fitted_params_path(tmp_path) -> None:
         base_model=model,
         ensemble_dir=ensemble_dir,
         tickers=[Ticker.ES],
-        members=[
-            {
-                "member_name": "cb10",
-                "binning_model_type": "continuous_binning",
-                "binning_model_params": {"n_bins": 10, "selection_metric": "t_stat"},
-                "requires_fit": True,
-                "is_fitted": False,
-                "fitted_params": None,
-            }
-        ],
     )
     model_id = Path(ensemble_dir).joinpath("features", "rsi_signal_D.json")
     with open(model_id, "r") as handle:
@@ -166,16 +150,15 @@ def test_update_member_fitted_params_path(tmp_path) -> None:
         ensemble_dir=ensemble_dir,
         feature_name="rsi_signal_D",
         model_id=base_model_id,
-        member_name="cb10",
         fitted_params=fitted_payload,
         train_start="2020-01-01",
         train_end="2020-12-31",
     )
     with open(model_id, "r") as handle:
         updated = json.load(handle)
-    member = updated["base_models"][0]["members"][0]
-    assert member["is_fitted"] is True
-    assert member["fitted_params"]["model_version"] == "binning_v2"
+    entry = updated["base_models"][0]
+    assert entry["is_fitted"] is True
+    assert entry["fitted_params"]["model_version"] == "binning_v2"
 
 
 def test_list_specs_names_and_validate(tmp_path) -> None:
@@ -208,3 +191,57 @@ def test_list_specs_names_and_validate(tmp_path) -> None:
     assert names[0].startswith("rsi_signal_D::")
 
     validate_ensemble_directory(ensemble_dir)
+
+
+def test_validate_rejects_legacy_members_schema(tmp_path) -> None:
+    ensemble_dir = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="reject_members",
+        direction=Direction.LONG,
+        vault_root=str(tmp_path / "vault"),
+    )
+    model = _make_base_model(lookback=2)
+    add_feature_to_ensemble(
+        feature_name="rsi_signal_D",
+        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
+        bias_node_params={"lookback": 2},
+        base_model=model,
+        ensemble_dir=ensemble_dir,
+        tickers=[Ticker.ES],
+    )
+    feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
+    with open(feature_file, "r") as handle:
+        payload = json.load(handle)
+    payload["base_models"][0]["members"] = []
+    with open(feature_file, "w") as handle:
+        json.dump(payload, handle, indent=2)
+
+    with pytest.raises(ValueError, match="legacy members schema"):
+        validate_ensemble_directory(ensemble_dir)
+
+
+def test_validate_rejects_multiple_base_models_in_feature_file(tmp_path) -> None:
+    ensemble_dir = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="reject_multi_models",
+        direction=Direction.LONG,
+        vault_root=str(tmp_path / "vault"),
+    )
+    model = _make_base_model(lookback=2)
+    add_feature_to_ensemble(
+        feature_name="rsi_signal_D",
+        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
+        bias_node_params={"lookback": 2},
+        base_model=model,
+        ensemble_dir=ensemble_dir,
+        tickers=[Ticker.ES],
+    )
+    feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
+    with open(feature_file, "r") as handle:
+        payload = json.load(handle)
+    payload["base_models"].append(dict(payload["base_models"][0], model_id="dup", model_name="rsi_signal_D::dup"))
+    with open(feature_file, "w") as handle:
+        json.dump(payload, handle, indent=2)
+
+    with pytest.raises(ValueError, match="exactly one base model"):
+        validate_ensemble_directory(ensemble_dir)

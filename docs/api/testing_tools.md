@@ -1,15 +1,15 @@
 # testing_tools
 
-> **Path:** `utils/evaluation/permutation_test/`, `utils/evaluation/robustness_test/`, `utils/simulation/prop_firm_simulator/`, `plotting/`  
+> **Path:** `utils/evaluation/permutation_test/`, `utils/evaluation/robustness_test/`, `utils/simulation/prop_firm_simulator/`, `prop_firms/`, `plotting/`  
 > **Status:** Draft  
 > **Last updated:** 2026-02-13
 
 ## Purpose
-This document covers the research/testing APIs for significance testing, resampling-based robustness checks, and prop-firm challenge simulation, plus plotting helpers used by demo/research-style scripts.
+This document covers the research/testing APIs for significance testing, resampling-based robustness checks, legacy and provider-oriented prop-firm simulation, plus plotting helpers used by demo/research-style scripts.
 
 ## Public API policy (what we document)
 This doc includes:
-- Re-exports in `utils/evaluation/permutation_test/__init__.py`, `utils/evaluation/robustness_test/__init__.py`, and `utils/simulation/prop_firm_simulator/__init__.py`
+- Re-exports in `utils/evaluation/permutation_test/__init__.py`, `utils/evaluation/robustness_test/__init__.py`, `utils/simulation/prop_firm_simulator/__init__.py`, and `prop_firms/__init__.py`
 - Public top-level functions/classes in `plotting/robustness.py` and `plotting/prop_firm.py`
 - Public methods required to call those classes effectively
 
@@ -315,6 +315,48 @@ Examples
 ```python
 from utils.simulation.prop_firm_simulator import print_statistics
 print_statistics(stats, verbose=True)
+```
+
+### `prop_firms`
+
+`SimulationRequest`, `SimulationResult`, `SimulationSummary`  
+Type: dataclasses  
+Behavior: Shared provider-oriented request/result contracts for daily return driven prop-firm simulations.
+
+`PayoutPolicy`, `ResetPolicy`, `AccountPhase`, `AccountStatus`, `BreachReason`  
+Type: enums  
+Behavior: Typed lifecycle controls and terminal status values used by provider engines.
+
+`LucidRuleEngine`, `create_lucid_simulator`, `load_lucid_account`, `load_lucid_accounts`  
+Type: class + functions  
+Signature:
+```python
+class LucidRuleEngine(BasePropFirmEngine[LucidState]):
+    def simulate(self, request: SimulationRequest) -> SimulationResult: ...
+
+def create_lucid_simulator(config_path: Path | None = None) -> LucidRuleEngine: ...
+def load_lucid_account(account_code: str, config_path: Path | None = None) -> AccountDefinition: ...
+def load_lucid_accounts(config_path: Path | None = None) -> dict[str, AccountDefinition]: ...
+```
+Behavior: Loads LucidFlex account definitions from `prop_firms/lucid/config.json` and simulates evaluation, funded, scaling-plan, payout, and optional holdings/exposure validation through one daily engine.
+
+Examples
+```python
+import pandas as pd
+
+from prop_firms import SimulationRequest, create_lucid_simulator
+
+simulator = create_lucid_simulator()
+result = simulator.simulate(
+    SimulationRequest(
+        account_code="25000",
+        returns=pd.Series(
+            [0.026, 0.024, 0.01],
+            index=pd.date_range("2026-01-05", periods=3, freq="B"),
+        ),
+    )
+)
+print(result.summary.final_status)
 ```
 
 ### `plotting` APIs used by scripts

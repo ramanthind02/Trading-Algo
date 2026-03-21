@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from feature_research.config import OOSWindowConfig
 from utils.core.enums import Ticker, TimeFrame
@@ -68,17 +69,15 @@ class PortfolioResearchConfig:
     target_volatility : float
         Target annual volatility for ensembles/portfolio.
     weight_layer_method : str
-        WeightLayer method (e.g. 'inverse_correlation').
+        WeightLayer method (for example ``'equal_signal'`` or ``'hrp_classic'``).
     weight_layer_kwargs : Mapping[str, Any]
-        Extra kwargs for WeightLayer (e.g. fdm_max).
+        Extra kwargs for WeightLayer (e.g. fdm_max, group_weight_cap).
     max_position_pct : float
         Max position as fraction of capital (e.g. 3.5).
     baseline_mode : str
         'equal_weight' or 'buy_hold' for PortfolioTester.
     output_root : Path
         Root directory for tearsheets and artifacts.
-    sector_allocation_config_path : str | None
-        Optional path to sector allocation JSON; when set, passed to Portfolio.
     """
 
     tickers: list[Ticker]
@@ -96,12 +95,11 @@ class PortfolioResearchConfig:
     oos_window: OOSWindowConfig | None = None
     ensemble_dirs: Mapping[str, str] = field(default_factory=dict)
     target_volatility: float = 0.15
-    weight_layer_method: str = "inverse_correlation"
+    weight_layer_method: str = "equal_signal"
     weight_layer_kwargs: Mapping[str, Any] = field(default_factory=dict)
     max_position_pct: float = 3.5
     baseline_mode: str = "equal_weight"
     output_root: Path = field(default_factory=lambda: _PORTFOLIO_RESEARCH_DIR / "results")
-    sector_allocation_config_path: str | None = None
 
     def __post_init__(self) -> None:
         if self.baseline_mode not in ("equal_weight", "buy_hold"):
@@ -124,16 +122,27 @@ class PortfolioResearchConfig:
             )
 
 
-def _discover_ensemble_dirs() -> Mapping[str, str]:
-    """Discover all ensemble directories under vault/ for use as defaults.
+def _discover_ensemble_dirs(
+    allowed_timeframes: Iterable[TimeFrame] | None = None,
+) -> Mapping[str, str]:
+    """Discover ensemble directories under vault/ for use as defaults.
 
     An ensemble folder is any directory under vault/<TF>/ whose leaf directory
     contains a 'features' subdirectory with at least one *.json file. The name
     is the leaf directory name; the path is repository-relative.
+
+    When ``allowed_timeframes`` is provided, only those vault timeframe folders
+    are considered.
     """
     vault_root = _PORTFOLIO_RESEARCH_DIR.parent / "vault"
     if not vault_root.exists():
         return {}
+
+    allowed_tf_names = (
+        {timeframe.name for timeframe in allowed_timeframes}
+        if allowed_timeframes is not None
+        else None
+    )
 
     def _has_feature_json(features_dir: Path) -> bool:
         return features_dir.is_dir() and any(
@@ -143,6 +152,12 @@ def _discover_ensemble_dirs() -> Mapping[str, str]:
     timeframe_dirs = [
         d for d in vault_root.iterdir() if d.is_dir()
     ]
+    if allowed_tf_names is not None:
+        timeframe_dirs = [
+            timeframe_dir
+            for timeframe_dir in timeframe_dirs
+            if timeframe_dir.name in allowed_tf_names
+        ]
 
     ensembles = {
         ensemble_dir.name: str(
@@ -150,7 +165,10 @@ def _discover_ensemble_dirs() -> Mapping[str, str]:
         )
         for tf_dir in timeframe_dirs
         for ensemble_dir in tf_dir.iterdir()
-        if ensemble_dir.is_dir() and _has_feature_json(ensemble_dir / "features")
+        if (
+            ensemble_dir.is_dir()
+            and _has_feature_json(ensemble_dir / "features")
+        )
     }
 
     return ensembles
@@ -199,19 +217,20 @@ def load_config() -> PortfolioResearchConfig:
         test_end=datetime(2025, 12, 31),
     )
 
-    # By default, use all ensembles discoverable in the vault. Researchers can
-    # override this by assigning a custom mapping here.
-    ensemble_dirs = _discover_ensemble_dirs()
+    # By default, use daily + monthly ensembles.
+    ensemble_dirs = _discover_ensemble_dirs(
+        allowed_timeframes=(TimeFrame.D, TimeFrame.M),
+    )
 
     target_volatility = 0.15
-    weight_layer_method = "inverse_correlation"
-    weight_layer_kwargs = {"fdm_max": 2.5}
+    weight_layer_method = "equal_signal"
+    weight_layer_kwargs = {
+        "fdm_max": 2.0,
+        "group_weight_cap": 1.0,
+    }
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"
-    sector_allocation_config_path = str(
-        _PORTFOLIO_RESEARCH_DIR.parent / "feature_research" / "config" / "sector_buy_hold_60_20_20.json"
-    )
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -237,5 +256,4 @@ def load_config() -> PortfolioResearchConfig:
         max_position_pct=max_position_pct,
         baseline_mode=baseline_mode,
         output_root=output_root,
-        sector_allocation_config_path=sector_allocation_config_path,
     )

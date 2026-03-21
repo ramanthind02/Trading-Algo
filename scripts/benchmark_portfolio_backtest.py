@@ -35,6 +35,8 @@ from ensemble.portfolio_tester import PortfolioTester  # noqa: E402
 from ensemble.vault_manager import load_ensemble_from_vault  # noqa: E402
 from ensemble.weight_layer import WeightLayer  # noqa: E402
 from portfolio_research.config import load_config  # noqa: E402
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility  # noqa: E402
+from utils.core.enums import TimeFrame  # noqa: E402
 from utils.core.helpers import load_data_multi_ticker  # noqa: E402
 
 
@@ -70,8 +72,8 @@ def _slice_candles_by_date(
     return candles.loc[mask].copy()
 
 
-def _load_data_from_config(config) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load train and test candles using portfolio_research config walkforward bounds."""
+def _load_data_from_config(config) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load train/test candles and daily EWSD volatility using portfolio_research bounds."""
     wf_train_start, wf_train_end, wf_test_start, wf_test_end = (
         config.walkforward_train_test_bounds()
     )
@@ -89,7 +91,17 @@ def _load_data_from_config(config) -> tuple[pd.DataFrame, pd.DataFrame]:
     test_candles = _slice_candles_by_date(
         full, pd.Timestamp(wf_test_start), pd.Timestamp(wf_test_end)
     )
-    return train_candles, test_candles
+    if config.timeframe == TimeFrame.D:
+        daily_candles = full
+    else:
+        daily_candles = load_data_multi_ticker(
+            tickers=config.tickers,
+            timeframe=TimeFrame.D,
+            start=datetime(start_ts.year, start_ts.month, start_ts.day),
+            end=datetime(end_ts.year, end_ts.month, end_ts.day),
+        )
+    daily_volatility_df = compute_daily_ewsd_volatility(daily_candles)
+    return train_candles, test_candles, daily_volatility_df
 
 
 def _load_ensembles_from_config(config) -> list:
@@ -126,8 +138,6 @@ def _build_portfolio_and_tester(config, ensembles: list) -> tuple:
         "weight_layer": weight_layer,
         "use_cache": config.use_cache,
     }
-    if getattr(config, "sector_allocation_config_path", None) is not None:
-        portfolio_kw["sector_allocation_config_path"] = config.sector_allocation_config_path
     portfolio = Portfolio(**portfolio_kw)
     tester = PortfolioTester(portfolio=portfolio, baseline_mode=config.baseline_mode)
     return portfolio, tester
@@ -153,7 +163,7 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
 
     # Load data
     t0 = time.perf_counter()
-    train_candles, test_candles = _load_data_from_config(config)
+    train_candles, test_candles, daily_volatility_df = _load_data_from_config(config)
     t_load_data = time.perf_counter() - t0
     print(f"Loaded train: {len(train_candles)} candles, test: {len(test_candles)} candles in {t_load_data:.2f}s")
     print()
@@ -166,7 +176,7 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
     for _ in range(warmup):
         _p, _t = _build_portfolio_and_tester(config, ensembles)
         _t.fit(train_candles)
-        _t.predict(train_candles)
+        _t.predict(train_candles, daily_volatility_df=daily_volatility_df)
     print("Warmup done.\n")
 
     # Timed runs: each run = new portfolio+tester, then time fit -> predict -> returns
@@ -183,12 +193,13 @@ def run_benchmark(warmup: int = 1, runs: int = 2) -> None:
         fit_times.append(time.perf_counter() - t0)
 
         t0 = time.perf_counter()
-        tester.predict(test_candles)
+        tester.predict(test_candles, daily_volatility_df=daily_volatility_df)
         predict_times.append(time.perf_counter() - t0)
 
         t0 = time.perf_counter()
         tester.predict(
             test_candles,
+            daily_volatility_df=daily_volatility_df,
             return_ensemble_predictions=True,
             return_base_model_predictions=True,
         )
@@ -243,14 +254,14 @@ def run_profile_mode() -> None:
     print("Loading ensembles and data (from portfolio_research config)...")
     t0 = time.perf_counter()
     ensembles = _load_ensembles_from_config(config)
-    train_candles, test_candles = _load_data_from_config(config)
+    train_candles, test_candles, daily_volatility_df = _load_data_from_config(config)
     print(f"Loaded in {time.perf_counter() - t0:.2f}s\n")
 
     portfolio, tester = _build_portfolio_and_tester(config, ensembles)
 
     def _target() -> None:
         tester.fit(train_candles)
-        tester.predict(test_candles)
+        tester.predict(test_candles, daily_volatility_df=daily_volatility_df)
 
     profile_path = _PROJECT_ROOT / "benchmark_portfolio.prof"
     print("Profiling one fit + predict (this may take ~80s)...")

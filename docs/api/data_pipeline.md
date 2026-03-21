@@ -43,7 +43,7 @@ features_df, targets_df = extract_features_for_bias_node(
     ticker=[Ticker.ES, Ticker.NQ],
     start=datetime(2015, 1, 1),
     end=datetime(2024, 12, 31),
-    target_col="log_return_atr",
+    target_col="log_return_ewsd",
 )
 
 explorer = FeatureExplorer(
@@ -54,7 +54,7 @@ explorer = FeatureExplorer(
 
 report = explorer.generate_summary_report(
     binning_model=QuantileBinningModel(n_bins=10),
-    target_col="log_return_atr",
+    target_col="log_return_ewsd",
     strategy="long",
     show_plots=False,
 )
@@ -63,14 +63,14 @@ report = explorer.generate_summary_report(
 ## Data contracts
 Input(s):
 - Candles/price data frames must include `datetime`, `open`, `close`; multi-ticker flows also require `ticker`.
-- Forward-return scaling expects ATR/EWSD feature columns when using `compute_forward_returns(..., features_df=...)`.
-- ATR/EWSD auxiliary extraction is timeframe-aware in feature-research flows (`ATR period = bars_per_year`, `EWSD long_run_window = 10 * bars_per_year`).
+- Forward-return scaling expects EWSD feature columns when using `compute_forward_returns(..., features_df=...)`.
+- Auxiliary extraction for volatility-scaled targets is EWSD-only and uses daily settings (`long_run_window = 2520`).
 - Feature extraction APIs accept single `Ticker` or `List[Ticker]`; multi-ticker alignment may use millisecond index offsets.
 - EDA APIs require `features_df.index.equals(targets_df.index)`.
 
 Output(s):
 - Feature extraction returns `(features_df, targets_df)` where both are row-aligned and include optional `ticker`.
-- Targets contain `raw_return`, `log_return`, `log_return_atr`, `log_return_ewsd` (when available/required).
+- Targets contain `raw_return`, `log_return`, `log_return_ewsd`.
 - EDA/reporting entry points return dict/DataFrame bundles (figures, metrics, permutation tables, summary stats).
 
 ## Public API reference
@@ -134,22 +134,21 @@ compute_forward_returns(
     features_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame
 ```
-Description: computes shifted forward returns so `Feature[t]` predicts `Return[t+1]`, including ATR/EWSD normalization.
+Description: computes shifted forward returns so `Feature[t]` predicts `Return[t+1]`, including EWSD normalization when available.
 
 Parameters:
 - `candles_df`: must contain `datetime`, `open`, `close`, `ticker`.
-- `features_df`: required in current implementation; must include ticker-aligned ATR and EWSD columns.
-  ATR detection is keyword-based (not tied to a `252` suffix), so non-daily ATR columns are supported.
+- `features_df`: optional; when provided, EWSD normalization uses ticker-aligned EWSD columns.
 
 Returns:
-- DataFrame indexed by datetime with `raw_return`, `log_return`, `log_return_atr`, `log_return_ewsd`, `ticker`.
+- DataFrame indexed by datetime with `raw_return`, `log_return`, `log_return_ewsd`, `ticker`.
 
 Raises:
-- `ValueError` for missing `features_df`, missing ATR/EWSD columns, empty ticker features, all-NaN scaling series, or alignment failures.
+- `ValueError` for alignment/schema failures.
 
 Notes / Constraints:
 - Last row per ticker is dropped after `shift(-1)` (no forward target available).
-- Normalization uses ATR/EWSD from `t+1` to match shifted return horizon.
+- Normalization uses EWSD from `t+1` to match shifted return horizon.
 
 ### `extract_features`
 Type: function  
@@ -193,15 +192,13 @@ extract_features_with_forward_returns(
     use_cache: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]
 ```
-Description: convenience orchestration API that extracts main features plus mandatory ATR/EWSD and then computes aligned forward returns.
+Description: convenience orchestration API that extracts main features plus mandatory EWSD and then computes aligned forward returns.
 
 Raises:
 - `ValueError` for invalid `target_col`, no extracted features, no computed targets, or feature/target merge alignment failures.
 
 Notes / Constraints:
-- In timeframe-aware feature research, auxiliary extraction uses active timeframe scaling:
-  - `atr(period=timeframes[0].bars_per_year)`
-  - `ewsd(long_run_window=10 * timeframes[0].bars_per_year)`
+- Auxiliary extraction is EWSD-only (`ewsd(long_run_window=10 * timeframes[0].bars_per_year)`).
 
 ### `extract_features_for_bias_node`
 Type: function  
@@ -427,7 +424,7 @@ grid = {
 results = analyzer.analyze_nd_parameters(
     feature_grid=grid,
     param_names=["lookback"],
-    target_col="log_return_atr",
+    target_col="log_return_ewsd",
 )
 ```
 
@@ -444,11 +441,11 @@ results = analyzer.analyze_nd_parameters(
 ## Target alignment and no-lookahead constraints
 - Core rule: features at timestamp `t` are trained/evaluated against returns for `t+1` (via `shift(-1)` on intraday returns).
 - Last sample per ticker is dropped because forward return is unavailable.
-- ATR/EWSD scaling must use the same forward horizon (`t+1`) as the shifted return, not contemporaneous `t` values.
+- EWSD scaling must use the same forward horizon (`t+1`) as the shifted return, not contemporaneous `t` values.
 - Multi-ticker alignment is performed with datetime+`ticker` joins; optional millisecond offsets are a collision-avoidance mechanism, not a temporal signal.
 - Any custom consumer must preserve index equality between `features_df` and `targets_df` before EDA/modeling.
 
 ## Open questions
 Q1: `data_cleaning/data_cleaning.py` currently behaves as script-style utilities (print/continue on errors). Should this surface be formalized with raised exceptions and logger-based events for production use?
 
-Q2: `compute_forward_returns` type hints mark `features_df` optional, but current behavior requires it (for ATR/EWSD normalization). Should the annotation/docs be tightened to required?
+Q2: Should `compute_forward_returns` hard-fail when EWSD features are absent and `log_return_ewsd` is requested, instead of falling back to unscaled values?

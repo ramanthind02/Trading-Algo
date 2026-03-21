@@ -130,3 +130,28 @@ def test_portfolio_research_config_invalid_baseline_mode_raises() -> None:
             ensemble_dirs={"a": "vault/D/some_ensemble"},
             baseline_mode="invalid",
         )
+
+
+def test_portfolio_research_config_rejects_removed_sector_surface() -> None:
+    with pytest.raises(TypeError):
+        PortfolioResearchConfig(
+            tickers=[Ticker.ES],
+            timeframe=TimeFrame.D,
+            start=datetime(2000, 1, 1),
+            end=datetime(2023, 12, 31),
+            use_cache=True,
+            train_window=ResearchWindow(
+                start=datetime(2000, 1, 1),
+                end=datetime(2005, 12, 31),
+            ),
+            validation_window=ResearchWindow(
+                start=datetime(2006, 1, 1),
+                end=datetime(2010, 12, 31),
+            ),
+            test_window=ResearchWindow(
+                start=datetime(2011, 1, 1),
+                end=datetime(2015, 12, 31),
+            ),
+            ensemble_dirs={"a": "vault/D/some_ensemble"},
+            sector_allocation_config_path="feature_research/config/sector.json",  # type: ignore[call-arg]
+        )

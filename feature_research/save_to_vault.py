@@ -29,29 +29,48 @@ from feature_research.in_sample.data_loader import (
 from utils.core.enums import coerce_direction
 
 
-def _resolve_single_combo(
+def _resolve_param_combos(
     bias_spec: dict[str, Any],
-    params_to_save: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """Resolve the single param combo for vault save."""
-    if params_to_save is not None:
-        return {
-            "module_name": bias_spec["module_name"],
-            "timeframes": bias_spec.get("timeframes", []),
-            "params": params_to_save,
-        }
+    params_to_save: dict[str, Any] | list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Resolve one or more param combos for vault save."""
     expanded = expand_bias_specs(bias_spec)
     if not expanded:
         raise ValueError(
             "No param combo to save: bias_spec has no params or expand_bias_specs returned empty. "
             "Set vault_save.params_to_save in feature_research.config.load_config()."
         )
-    first = expanded[0]
-    return {
-        "module_name": first["module_name"],
-        "timeframes": first["timeframes"],
-        "params": first.get("params", {}),
-    }
+
+    def _normalize_combo(params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "module_name": bias_spec["module_name"],
+            "timeframes": bias_spec.get("timeframes", []),
+            "params": params,
+        }
+
+    if params_to_save is None or params_to_save == {}:
+        return [
+            {
+                "module_name": combo["module_name"],
+                "timeframes": combo.get("timeframes", []),
+                "params": combo.get("params", {}),
+            }
+            for combo in expanded
+        ]
+
+    if isinstance(params_to_save, dict):
+        return [_normalize_combo(params_to_save)]
+
+    if not isinstance(params_to_save, list):
+        raise ValueError(
+            "vault_save.params_to_save must be dict, list[dict], or None"
+        )
+    if not params_to_save:
+        raise ValueError("vault_save.params_to_save list cannot be empty")
+    if not all(isinstance(combo, dict) for combo in params_to_save):
+        raise ValueError("vault_save.params_to_save list entries must be dicts")
+
+    return [_normalize_combo(combo) for combo in params_to_save]
 
 
 def _binning_params_to_constructor_params(
@@ -83,55 +102,11 @@ def _run() -> None:
     phase_defaults = base.in_sample_defaults.for_feature_type(base.feature_type)
     bias_spec = phase_defaults.bias_spec
 
-    bias_spec_for_combo = _resolve_single_combo(bias_spec, base.vault_save.params_to_save)
+    bias_specs_for_save = _resolve_param_combos(bias_spec, base.vault_save.params_to_save)
     populate_cache_if_needed(research_config)
-
-    result = load_features_for_combo(bias_spec_for_combo, research_config)
-    if result is None:
-        print(
-            "Failed to load feature/target for the chosen param combo; check cache and bias_spec.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    feature_series, target_series, feature_col = result
-
-    timeframes_raw = bias_spec_for_combo.get("timeframes", [base.timeframe])
-    tf_list = timeframes_raw[0:1] if isinstance(timeframes_raw, list) else [timeframes_raw]
-    tf = tf_list[0] if tf_list else base.timeframe
-    tf_name = tf.name if hasattr(tf, "name") else str(tf)
-    bias_node_spec = {
-        "module_name": bias_spec_for_combo["module_name"],
-        "timeframes": [tf_name],
-        "params": bias_spec_for_combo["params"],
-    }
 
     strategy = coerce_direction(research_config.strategy, field_name="research_config.strategy")
     vault_direction = coerce_direction(base.vault_save.direction, field_name="vault_save.direction")
-
-    if base.feature_type == FeatureType.CONTINUOUS:
-        constructor_params = _binning_params_to_constructor_params(research_config.binning_params)
-        binning_model = ContinuousBinningModel(**constructor_params)
-        binning_model.fit(feature_series, target_series)
-    else:
-        rule_params = {
-            "strategy": strategy,
-            "selection_metric": "t_stat",
-        }
-        binning_model = RuleBasedModel(**rule_params)
-
-    feature_config = {
-        "bias_node_spec": bias_node_spec,
-        "model_type": "continuous_binning" if base.feature_type == FeatureType.CONTINUOUS else "rule_based",
-        "constructor_params": binning_model.get_params(),
-        "strategy": strategy.value,
-    }
-    base_model = BaseModel(
-        feature_config=feature_config,
-        tickers=research_config.tickers,
-        binning_model=binning_model,
-        use_cache=research_config.use_cache,
-    )
-    base_model.feature_column = feature_col
 
     ensemble_dir = create_ensemble_directory(
         base.timeframe,
@@ -139,14 +114,71 @@ def _run() -> None:
         vault_direction,
         research_config.tickers,
     )
-    add_feature_to_ensemble(
-        feature_name=feature_col,
-        bias_node_spec=bias_node_spec,
-        base_model=base_model,
-        ensemble_dir=ensemble_dir,
-        tickers=research_config.tickers,
-    )
-    print(f"Saved feature '{feature_col}' to vault: {ensemble_dir}")
+    success_count = 0
+    failed: list[str] = []
+    for bias_spec_for_combo in bias_specs_for_save:
+        combo_label = str(bias_spec_for_combo.get("params", {}))
+        try:
+            result = load_features_for_combo(bias_spec_for_combo, research_config)
+            if result is None:
+                failed.append(combo_label)
+                continue
+            feature_series, target_series, feature_col = result
+
+            timeframes_raw = bias_spec_for_combo.get("timeframes", [base.timeframe])
+            tf_list = timeframes_raw[0:1] if isinstance(timeframes_raw, list) else [timeframes_raw]
+            tf = tf_list[0] if tf_list else base.timeframe
+            tf_name = tf.name if hasattr(tf, "name") else str(tf)
+            bias_node_spec = {
+                "module_name": bias_spec_for_combo["module_name"],
+                "timeframes": [tf_name],
+                "params": bias_spec_for_combo["params"],
+            }
+
+            if base.feature_type == FeatureType.CONTINUOUS:
+                constructor_params = _binning_params_to_constructor_params(research_config.binning_params)
+                binning_model = ContinuousBinningModel(**constructor_params)
+                binning_model.fit(feature_series, target_series)
+            else:
+                rule_params = {
+                    "strategy": strategy,
+                    "selection_metric": "t_stat",
+                }
+                binning_model = RuleBasedModel(**rule_params)
+
+            feature_config = {
+                "bias_node_spec": bias_node_spec,
+                "model_type": "continuous_binning" if base.feature_type == FeatureType.CONTINUOUS else "rule_based",
+                "constructor_params": binning_model.get_params(),
+                "strategy": strategy.value,
+            }
+            base_model = BaseModel(
+                feature_config=feature_config,
+                tickers=research_config.tickers,
+                binning_model=binning_model,
+                use_cache=research_config.use_cache,
+            )
+            base_model.feature_column = feature_col
+
+            add_feature_to_ensemble(
+                feature_name=feature_col,
+                bias_node_spec=bias_node_spec,
+                base_model=base_model,
+                ensemble_dir=ensemble_dir,
+                tickers=research_config.tickers,
+            )
+            success_count += 1
+            print(f"Saved feature '{feature_col}' to vault: {ensemble_dir}")
+        except Exception as exc:
+            failed.append(f"{combo_label}: {exc}")
+
+    if failed:
+        print(
+            f"Failed to save {len(failed)} combo(s): {failed}",
+            file=sys.stderr,
+        )
+    if success_count == 0 or failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -112,7 +112,7 @@ def test_bias_node(
     strategy : DirectionInput, default='long'
         Signal strategy: 'long', 'short', or 'long_short'.
     target_col : str, default='log_return'
-        Target column for extraction and report (e.g. 'log_return', 'log_return_atr', 'log_return_ewsd').
+        Target column for extraction and report (e.g. 'log_return', 'log_return_ewsd').
 
     Returns
     -------
@@ -253,7 +253,7 @@ def generate_node_tearsheet(
         return calculation: returns are always position_fraction * instrument_return
         (position is already signed -1/0/1 from node or binning model).
     target_col : str, default='log_return'
-        Target column in targets_df for fitting (e.g. 'log_return', 'log_return_atr', 'log_return_ewsd').
+        Target column in targets_df for fitting (e.g. 'log_return', 'log_return_ewsd').
     tickers : Ticker or List[Ticker], optional
         Tickers to include in the tearsheet. If None, inferred from features_df['ticker'].
     binning_model : BinningModelBase, optional

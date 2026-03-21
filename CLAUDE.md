@@ -63,10 +63,15 @@ This keeps the main branch history linear and readable, with each merge represen
 
 ### Pipeline (data flows left to right)
 
+The pipeline has two levels: a per-timeframe level and a cross-timeframe global level.
+
 ```
-Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → WeightLayer → Portfolio → PositionSizer
-                  (nodes/)      (feature_      (ensemble/)           (ensemble/)   (ensemble/) (execution/)
-                                selection/)
+                                                                     ┌─ forecast_score_D ─┐
+Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → WeightLayer → TFPortfolio (D) ──┤
+                  (nodes/)      (feature_      (ensemble/)           (ensemble/)   (ensemble/)       ├→ GlobalWeightLayer → GlobalPortfolio → PositionSizer
+                                selection/)                                                           │  (cross-TF HRP+FDM)  (ensemble/)       (execution/)
+                                                                     TFPortfolio (W) ── forecast_W ──┤
+                                                                     TFPortfolio (M) ── forecast_M ──┘
 ```
 
 **Bias Nodes** (`nodes/`): 50+ technical indicators (RSI, ATR, EWMAC, etc.). Each produces one feature column per instrument. Naming convention: `{module}_{feature}_{timeframe}_{param}_{value}` (e.g., `rsi_signal_D_lookback_14`).
@@ -77,7 +82,11 @@ Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → Weigh
 
 **WeightLayer** (`ensemble/weight_layer.py`): Combines forecasts using inverse-correlation weights and applies FDM (Forecast Diversification Multiplier): `FDM = min(√(1 / (mean_corr + 0.01)), 2.0)`.
 
-**Portfolio** (`ensemble/portfolio.py`): Applies instrument weights and IDM (Instrument Diversification Multiplier): `IDM = min(√(1 / (mean_corr + 0.01)), 2.5)`.
+**TFPortfolio** (`ensemble/portfolio.py`): Per-timeframe portfolio. Applies instrument weights and IDM (Instrument Diversification Multiplier): `IDM = min(√(1 / (mean_corr + 0.01)), 2.5)`. `Portfolio` is a backward-compatible alias for `TFPortfolio`.
+
+**GlobalWeightLayer** (`ensemble/global_weight_layer.py`): Combines per-timeframe `forecast_score` streams using downside HRP across timeframes, applies a cross-TF FDM (same formula, cap 2.0). Non-daily TF streams are forward-filled to a daily grid before combination. Single-TF fallback: weight=1.0, FDM=1.0.
+
+**GlobalPortfolio** (`ensemble/portfolio.py`): Top-level class owning multiple `TFPortfolio` instances and one `GlobalWeightLayer`. Orchestrates fit/predict across all timeframes and produces the final `['ticker', 'datetime', 'forecast_score', 'position_fraction']` output.
 
 **PositionSizer** (`execution/position_sizer.py`): Converts position fractions to contract quantities: `contracts = (position_fraction × capital) / (price × multiplier × fx_rate)`.
 

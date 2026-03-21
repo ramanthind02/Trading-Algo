@@ -994,7 +994,7 @@ def test_run_portfolio_simulation_builds_weight_layer_config_from_algorithm(
                 (),
                 {
                     "objective_metric_name": "sharpe",
-                    "weight_layer_algorithm": WeightLayerAlgorithm.EQUAL_FLAT,
+                    "weight_layer_algorithm": WeightLayerAlgorithm.EQUAL_SIGNAL,
                     "weight_layer_config": None,
                 },
             )(),
@@ -1012,7 +1012,7 @@ def test_run_portfolio_simulation_builds_weight_layer_config_from_algorithm(
 
     forwarded = captured.get("weight_layer_config")
     assert isinstance(forwarded, WeightLayerConfig)
-    assert forwarded.weighting_method == WeightLayerAlgorithm.EQUAL_FLAT.value
+    assert forwarded.weighting_method == WeightLayerAlgorithm.EQUAL_SIGNAL.value
 
 
 def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_config(
@@ -1050,8 +1050,7 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
         ]
     )
     existing = WeightLayerConfig(
-        weighting_method=WeightLayerAlgorithm.INVERSE_CORRELATION.value,
-        group_method="correlation_clustering",
+        weighting_method=WeightLayerAlgorithm.EQUAL_SIGNAL.value,
         rho_cut=0.65,
     )
 
@@ -1081,7 +1080,7 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
                 (),
                 {
                     "objective_metric_name": "sharpe",
-                    "weight_layer_algorithm": WeightLayerAlgorithm.EQUAL_GROUPED,
+                    "weight_layer_algorithm": WeightLayerAlgorithm.HRP_CLASSIC,
                     "weight_layer_config": existing,
                 },
             )(),
@@ -1099,8 +1098,7 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
 
     forwarded = captured.get("weight_layer_config")
     assert isinstance(forwarded, WeightLayerConfig)
-    assert forwarded.weighting_method == WeightLayerAlgorithm.EQUAL_GROUPED.value
-    assert forwarded.group_method == "correlation_clustering"
+    assert forwarded.weighting_method == WeightLayerAlgorithm.HRP_CLASSIC.value
     assert forwarded.rho_cut == pytest.approx(0.65)
 
 
@@ -1682,7 +1680,12 @@ def test_evaluate_fold_portfolio_returns_per_ticker_oos_returns_shape(
         def fit_from_candles(self, _candles: pd.DataFrame, target_data: pd.Series | None = None) -> None:
             _ = target_data
 
-        def predict_from_candles(self, _candles: pd.DataFrame) -> dict[str, pd.DataFrame]:
+        def predict_from_candles(
+            self,
+            _candles: pd.DataFrame,
+            daily_volatility_df: pd.DataFrame | None = None,
+        ) -> dict[str, pd.DataFrame]:
+            _ = daily_volatility_df
             return {"portfolio": positions_df}
 
     def _fake_build_research_portfolio(**_kwargs: object) -> _FakePortfolio:

@@ -1,150 +1,113 @@
 # Weight Layer
 
-> **Role:** Receives per-model vol-scaled forecasts from one or more DiversifiedEnsembles → combines into a single `forecast_score` per ticker → applies FDM.
->
-> **Defaults:** FDM cap is **2.0** (per project spec). Use `WeightLayerConfig(fdm_max=...)` or `WeightLayer(..., fdm_max=...)` to override.
+`WeightLayer` in `ensemble/weight_layer.py` combines the global forecast streams produced by `GlobalPortfolio`.
 
-```
-Base Models → DiversifiedEnsemble → WeightLayer → Portfolio → PositionSizer
-```
+The `WeightLayer` implementation itself is unchanged in the global sector cutover.
+`GlobalPortfolio` now adapts multi-ticker/timeframe streams into a synthetic ticker
+(`__GLOBAL__`) and decodes weighted outputs back to real tickers after combine.
 
----
-
-## Design Principle: No Sharpe Tilt
-
-Each forecast entering the WeightLayer is already vol-targeted:
-
-```
-F_i = (τ / (σ × √h_i)) × X_i
+```text
+Base Models -> DiversifiedEnsemble -> TFPortfolio -> GlobalPortfolio(weight_layer=WeightLayer(...))
 ```
 
-- `τ` = target volatility (e.g. 0.20)
-- `σ` = instrument blended volatility
-- `h_i` = exposure fraction (`1 / n_bins`)
-- `X_i` = binary signal (0 or 1)
+## Modes
 
-Upstream [[param_stability]] already filters for stable, high-quality params. **The WeightLayer's objective is purely diversification — not Sharpe ranking.**
+| Mode | Behavior |
+|---|---|
+| `equal_signal` | Equal weight across all signals |
+| `inverse_avg_pairwise_corr` | Weight signals by inverse average positive pairwise correlation |
+| `hrp_cluster_equal` | Build HRP linkage, cut at `rho_cut`, equal weight across groups, equal weight within each group |
+| `hrp_classic` | Classic HRP recursive bisection on the linkage tree |
 
-> [!warning] Why no Sharpe weighting here
-> - Sharpe from a single fold is a high-variance estimate — amplifies noise
-> - Adds a second layer of performance ranking on top of param selection (implicit look-ahead)
-> - Breaks the clean separation: signal quality → param selection; portfolio construction → WeightLayer
+`equal_signal` is the default.
 
-All weighting methods are purely **risk-based**. No expected return estimation.
+## Estimation Stack
 
----
+For each ticker:
 
-## Grouping Strategy
+1. Build a date x model forecast matrix.
+2. Drop all-empty rows and fill remaining gaps with `0.0`.
+3. Standardize each signal by its full-sample in-sample sample standard deviation.
+4. Fit Ledoit-Wolf covariance on the standardized matrix.
+5. Derive correlation from that covariance.
+6. Use full correlation for HRP distance/linkage, and positive-clipped correlation for scoring and FDM.
 
-Signals are assigned to groups before any correlation-based weighting. This is the most important structural decision.
+Distance for clustering:
 
-**Why group?** Within a feature family (e.g. RSI params [3, 4, 5]), signals are near-perfectly correlated by construction → near-singular matrix → unstable weights. Grouping reduces the allocation problem from N signals to K groups (typically 3–8).
-
-- **Within-group:** signals near-identical → equal weights are near-optimal with zero estimation error
-- **Across-group:** genuinely different feature families → correlation-based allocation adds real value
-
-**Primary method (preferred):** pre-specified by feature family — determined by DiversifiedEnsemble config, never changes fold-to-fold, cannot overfit.
-
-**Fallback (data-driven):** hierarchical clustering with pre-committed cutoff `ρ_cut = 0.70` on full-period correlation. Binary membership decision — estimation noise has limited impact on a binary outcome.
-
----
-
-## Algorithm (5 Steps)
-
-### Step 1: Within-Group Aggregation
-```
-group_signal_k(t) = mean(F_i(t)  for i in group_k)
-group_return_k(t) = mean(r_i(t)  for i in group_k)
-```
-Equal weights within groups are the default production setting.
-
-### Step 2: Downside Semi-Covariance Matrix `Σ^down`
-```
-r_k^-(t) = min(group_return_k(t), 0)
-Σ^down_kl = (1/T) × Σ_t [ r_k^-(t) × r_l^-(t) ]
-```
-Apply Ledoit-Wolf shrinkage. Uses each signal's own negative returns (no reference portfolio required).
-
-### Step 3: HRP Recursive Bisection on `Σ^down`
-```
-C^down_kl = Σ^down_kl / sqrt(Σ^down_kk × Σ^down_ll)
-D_kl      = sqrt(0.5 × (1 - C^down_kl))
-```
-Ward linkage hierarchical clustering on D. At each binary split:
-```
-v_L = Var_R / (Var_L + Var_R)
-v_R = Var_L / (Var_L + Var_R)
-```
-Normalise final group weights to sum to 1.
-
-### Step 4: Combined Forecast
-```
-raw_forecast(t) = Σ_k  w_k × group_signal_k(t)
+```text
+d_ij = sqrt((1 - rho_ij) / 2)
 ```
 
-### Step 5: Apply FDM
-```
-scaled_forecast(t) = raw_forecast(t) × FDM
-```
+Linkage:
 
----
-
-## Method Ladder
-
-| Level | Method | Free params | Notes |
-|---|---|---|---|
-| 0 | Equal weights (flat) | 0 | Hard baseline |
-| 1 | Equal within group, equal across group | 0 | Tests grouping structure alone |
-| 2 | Equal within group, inverse downside vol across group | K scalars | No matrix estimation |
-| 3 | Equal within group, Downside-HRP across group | K×K matrix | Default production candidate |
-| 4 | Downside-HRP on all N signals (no grouping) | N×N matrix | Control: does grouping improve stability? |
-
-Use the **simplest method that consistently beats the next simpler method** by: Sharpe improvement ≥ 0.10 AND max drawdown reduction ≥ 10%, sustained across ensembles. Thresholds pre-committed before seeing results.
-
----
-
-## Forecast Diversification Multiplier (FDM)
-
-Without FDM, combining positively correlated signals produces lower realised vol than the individual target → systematically under-sizes positions.
-
-```
-mean_corr = mean of off-diagonal entries of C^down
-FDM = min(sqrt(1 / (mean_corr + 0.01)), FDM_max)
+```text
+Ward linkage
 ```
 
-- `FDM_max = 2.0` (pre-committed cap)
-- `mean_corr → 1` (identical signals): FDM → 1 (no scaling)
-- `mean_corr → 0` (independent signals): FDM → 10, capped at 2.0
-- Typical range in practice: **FDM 1.2–1.8**
+## Weighting
 
-For Levels 0–1 (equal weights), FDM uses full-period correlation instead of downside.
+### `equal_signal`
 
----
+```text
+model_weight_i = 1 / N
+```
 
-## Key Config Params
+### `inverse_avg_pairwise_corr`
+
+For each signal `i`:
+
+```text
+score_i = 1 / (1 + mean_positive_corr_i)
+weight_i = score_i / sum(scores)
+```
+
+### `hrp_cluster_equal`
+
+1. Build the full HRP tree.
+2. Cut the tree at `rho_cut`.
+3. Assign equal weight across groups.
+4. Apply `group_weight_cap`.
+5. Split each group equally across members.
+
+### `hrp_classic`
+
+1. Build the full HRP tree.
+2. Order leaves quasi-diagonally.
+3. Recursively split the ordered tree.
+4. Allocate left/right branches inversely to branch variance using inverse-variance branch weights.
+
+`group_weight_cap` does not apply to `hrp_classic`.
+
+## FDM
+
+FDM is based on the raw signal-level positive-clipped correlation matrix for all modes:
+
+```text
+mean_corr = mean(off_diagonal(signal_corr_positive))
+FDM = min(sqrt(1 / (mean_corr + 0.01)), fdm_max)
+```
+
+Single-model and fallback cases use `FDM = 1.0`.
+
+## Config
 
 | Parameter | Default | Description |
 |---|---|---|
-| `weighting_method` | `inverse_correlation` | `equal_flat`, `equal_grouped`, `inv_downside_vol_grouped`, `downside_hrp_grouped`, `downside_hrp_flat` |
-| `group_method` | `feature_family` | `feature_family` or `correlation_clustering` |
-| `rho_cut` | `0.70` | Cutoff for data-driven grouping |
-| `fdm_max` | `2.0` | Cap on FDM |
-| `shrinkage` | `ledoit_wolf` | Shrinkage estimator for `Σ^down` |
-| `weight_stability_threshold` | `0.20` | Max fold-to-fold shift before diagnostic warning |
+| `weighting_method` | `equal_signal` | One of the four modes above |
+| `rho_cut` | `0.70` | Cut threshold for reporting groups and `hrp_cluster_equal` |
+| `fdm_max` | `2.0` | FDM cap |
+| `group_weight_cap` | `0.25` | Hard cap for `hrp_cluster_equal` group weights |
 
-All parameters are pre-committed before any walkforward fold begins.
+## Diagnostics
 
----
+Per ticker, the layer reports:
 
-## Output Contract
+- `weights`
+- `cluster_assignments`
+- `cluster_weights`
+- `cluster_metrics`
+- `fdm`
+- `mean_signal_correlation`
+- `mean_cluster_correlation`
 
-| Field | Type | Description |
-|---|---|---|
-| `ticker` | str | Instrument identifier |
-| `forecast_score` | float | FDM-scaled combined forecast |
-
-Diagnostics logged per fold: `group_weights`, `fdm`, `mean_downside_corr`, `downside_corr_matrix`, `weight_stability_flag`.
-
----
-
-**See also:** [[portfolio]], [[param_stability]], [[base_model]]
+The `cluster_*` field names are retained for compatibility with existing reports, but they now represent generic allocation groups for non-clustered modes.

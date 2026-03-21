@@ -191,7 +191,7 @@ def _default_continuous_in_sample_defaults(
                 "rsi_period": [2]
             },
         },
-        target_col="log_return_atr",
+        target_col="log_return_ewsd",
         strategy=Direction.LONG,
         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
         binning_params_overrides={"bin_counts": [10]},
@@ -208,7 +208,7 @@ def _default_rule_based_in_sample_defaults(
             "timeframes": [DEFAULT_TIMEFRAME],
             "params": {"cross_tickers": ["TLT"]},
         },
-        target_col="log_return_atr",
+        target_col="log_return_ewsd",
         strategy=Direction.LONG,
         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "rule_based",
     )
@@ -243,7 +243,7 @@ class VaultSaveConfig:
 
     ensemble_name: str
     direction: DirectionInput
-    params_to_save: dict[str, Any] | None = None  # single param combo; None = first from bias_spec
+    params_to_save: dict[str, Any] | list[dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -383,7 +383,7 @@ def load_config() -> ResearchConfig:
     #             "timeframes": [timeframe],
     #             "params": {"short_period": [4], "long_period": [120], "rsi_period": [2]},
     #         },
-    #         target_col="log_return_atr",
+    #         target_col="log_return_ewsd",
     #         strategy="long",
     #         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
     #     ),
@@ -394,6 +394,8 @@ def load_config() -> ResearchConfig:
     # vault_save = VaultSaveConfig(
     #     ensemble_name="mean_reversion_indices",
     #     direction=Direction.LONG,
+    #     # dict -> one combo, list[dict] -> selected combos, None/{}
+    #     # -> all combos from in_sample_defaults.*.bias_spec
     #     params_to_save={"short_period": 4, "long_period": 120, "rsi_period": 2},
     # )
     vault_save = VaultSaveConfig(

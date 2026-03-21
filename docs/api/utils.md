@@ -213,12 +213,12 @@ Behavior: orchestrates multi-node, multi-ticker cache population.
 `CacheManager.populate_cache`  
 Type: method  
 Signature: `populate_cache(bias_node_specs, tickers, start_date, end_date, max_workers=4, overwrite_existing=True, show_progress=True, timeframe=TimeFrame.D) -> dict`  
-Behavior: computes and persists cache for requested matrix; auto-adds required auxiliary `atr`/`ewsd` specs scaled by `timeframe`.
+Behavior: computes and persists cache for requested matrix; auto-adds required auxiliary `ewsd` spec with daily settings.
 
 `get_auxiliary_specs_for_timeframe`  
 Type: function  
 Signature: `get_auxiliary_specs_for_timeframe(tf: TimeFrame) -> list[dict]`  
-Behavior: returns required ATR/EWSD auxiliary specs for volatility-scaled targets using timeframe-aware windows.
+Behavior: returns required EWSD auxiliary spec for volatility-scaled targets (daily settings).
 
 `CacheManager.populate_cache_for_vault`  
 Type: method  

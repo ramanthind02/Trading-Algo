@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Union
 import numpy as np
 import pandas as pd
 
+from ensemble.ensemble_utils import normalize_ticker_key
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
 
 
@@ -128,6 +129,7 @@ def calculate_log_returns_from_candles(candles_df: pd.DataFrame) -> pd.Series:
 
     candles_sorted = candles_df.sort_values(['ticker', 'datetime']).copy()
     candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
+    candles_sorted['ticker'] = candles_sorted['ticker'].map(normalize_ticker_key)
 
     # Compute log returns per ticker using vectorized groupby + diff
     candles_sorted['log_close'] = np.log(candles_sorted['close'])
@@ -183,6 +185,7 @@ def calculate_strategy_returns_from_positions(
     candles_sorted['datetime'] = pd.to_datetime(candles_sorted['datetime'])
     # Normalize to bar granularity for (datetime, ticker) merge
     candles_sorted['datetime'] = candles_sorted['datetime'].dt.floor('s')
+    candles_sorted['ticker'] = candles_sorted['ticker'].map(normalize_ticker_key)
 
     # Compute log returns per ticker (reused for all strategies)
     candles_sorted['log_close'] = np.log(candles_sorted['close'])
@@ -199,6 +202,7 @@ def calculate_strategy_returns_from_positions(
     positions = positions_df.copy()
     positions['datetime'] = pd.to_datetime(positions['datetime'])
     positions['datetime'] = positions['datetime'].dt.floor('s')
+    positions['ticker'] = positions['ticker'].map(normalize_ticker_key)
 
     # Merge to find, for each position at time t, the candle row and its next_datetime
     pos_with_next = positions.merge(
@@ -385,6 +389,7 @@ class PortfolioTester:
     def predict(
         self,
         candles_df: pd.DataFrame,
+        daily_volatility_df: pd.DataFrame,
         return_ensemble_predictions: bool = False,
         return_base_model_predictions: bool = False
     ) -> Union[pd.DataFrame, Dict[str, Any]]:
@@ -395,6 +400,9 @@ class PortfolioTester:
         ----------
         candles_df : pd.DataFrame
             Candles DataFrame for prediction
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility DataFrame with columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
         return_ensemble_predictions : bool, default=False
             If True, return ensemble-level predictions
         return_base_model_predictions : bool, default=False
@@ -409,6 +417,7 @@ class PortfolioTester:
         # Call portfolio predict with granularity flags
         result = self.portfolio.predict_from_candles(
             candles_df,
+            daily_volatility_df=daily_volatility_df,
             return_ensemble_predictions=return_ensemble_predictions,
             return_base_model_predictions=return_base_model_predictions
         )

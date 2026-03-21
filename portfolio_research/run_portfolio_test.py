@@ -32,7 +32,11 @@ if _repo_root is not None and str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 
 from portfolio_research.config import PortfolioResearchConfig, load_config
-from portfolio_research.pipelines.portfolio_test import run_portfolio_test_pipeline
+from portfolio_research.pipelines.portfolio_test import (
+    _build_daily_dates_per_ticker,
+    _group_ensembles_by_timeframe,
+    run_portfolio_test_pipeline,
+)
 
 
 def run_portfolio_test(config: PortfolioResearchConfig | None = None) -> None:

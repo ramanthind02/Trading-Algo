@@ -345,83 +345,6 @@ def _extract_bias_node_params_for_model(
     return _normalize_bias_node_params(parsed.get("params", {}))
 
 
-def _serialize_member_config(
-    member_name: str,
-    binning_model: Any,
-) -> Dict[str, Any]:
-    """Serialize a member model for vault persistence."""
-    member_model_type = _normalize_model_type(
-        getattr(binning_model, "model_type", binning_model.__class__.__name__)
-    )
-    params = dict(binning_model.get_params())
-    params.pop("strategy", None)
-    requires_fit = _requires_fit(member_model_type)
-    is_fitted = bool(getattr(binning_model, "is_fitted_", False))
-    fitted_params = None
-    if is_fitted:
-        try:
-            candidate = binning_model.get_fitted_params()
-            fitted_params = candidate if candidate.get("model_version") == "binning_v2" else None
-            if fitted_params is None:
-                is_fitted = False
-        except Exception:
-            fitted_params = None
-            is_fitted = False
-    return {
-        "member_name": member_name,
-        "binning_model_type": member_model_type,
-        "binning_model_params": params,
-        "requires_fit": requires_fit,
-        "is_fitted": is_fitted,
-        "fitted_params": fitted_params,
-    }
-
-
-def _normalize_member_entries(
-    members: Optional[List[Dict[str, Any]]]
-) -> List[Dict[str, Any]]:
-    """Normalize incoming member payloads into canonical new schema."""
-    if not members:
-        return []
-    normalized: List[Dict[str, Any]] = []
-    for member in members:
-        member_name = (
-            member.get("member_name")
-            or member.get("member_id")
-            or member.get("name")
-        )
-        if not member_name:
-            continue
-        model_type_raw = (
-            member.get("binning_model_type")
-            or member.get("model_type")
-            or "continuous_binning"
-        )
-        model_type = _normalize_model_type(model_type_raw)
-        params = (
-            member.get("binning_model_params")
-            or member.get("params")
-            or {}
-        )
-        requires_fit = bool(member.get("requires_fit", _requires_fit(model_type)))
-        is_fitted = bool(member.get("is_fitted", False))
-        fitted_params = member.get("fitted_params")
-        if fitted_params and fitted_params.get("model_version") != "binning_v2":
-            is_fitted = False
-            fitted_params = None
-        normalized.append(
-            {
-                "member_name": str(member_name),
-                "binning_model_type": model_type,
-                "binning_model_params": params,
-                "requires_fit": requires_fit,
-                "is_fitted": is_fitted,
-                "fitted_params": fitted_params,
-            }
-        )
-    return normalized
-
-
 # ============================================================================
 # Model ID Generation
 # ============================================================================
@@ -763,7 +686,6 @@ def add_feature_to_ensemble(
     base_model: Optional[BaseModel] = None,
     ensemble_dir: Optional[str] = None,
     tickers: Optional[List[Ticker]] = None,
-    members: Optional[List[Dict[str, Any]]] = None,
     **legacy_kwargs: Any,
 ) -> str:
     """
@@ -935,6 +857,15 @@ def add_feature_to_ensemble(
     if feature_file.exists():
         with open(feature_file, 'r') as f:
             feature_config = json.load(f)
+        existing_models = feature_config.get("base_models", [])
+        if len(existing_models) > 1:
+            raise ValueError(
+                f"Legacy multi-model feature file is not supported: {feature_file}"
+            )
+        if existing_models and "members" in existing_models[0]:
+            raise ValueError(
+                f"Legacy member schema is not supported: {feature_file}"
+            )
         
         # Validate existing tickers match ensemble tickers (if ensemble config exists)
         existing_ticker_names = sorted(feature_config.get('tickers', []))
@@ -963,23 +894,12 @@ def add_feature_to_ensemble(
     feature_config["bias_node_spec"] = serializable_bias_spec
     feature_config.pop("feature_column", None)
     
-    # Check if model_id already exists
-    existing_model_ids = [bm['model_id'] for bm in feature_config['base_models']]
-    if model_id in existing_model_ids:
+    if len(feature_config.get("base_models", [])) > 0:
         raise ValueError(
-            f"Model ID '{model_id}' already exists for feature '{feature_name}'. "
-            f"Existing model IDs: {existing_model_ids}"
+            f"Feature '{feature_name}' already has a base-model entry. "
+            "Single-feature schema allows exactly one base model per feature file."
         )
 
-    # Serialize member configs
-    if members is not None:
-        serialized_members = _normalize_member_entries(members)
-    else:
-        serialized_members = [
-            _serialize_member_config(member_name, member_model)
-            for member_name, member_model in getattr(base_model, "members", [])
-        ]
-    
     # Create base model entry
     model_entry = {
         'model_id': model_id,
@@ -991,7 +911,6 @@ def add_feature_to_ensemble(
         'requires_fit': _requires_fit(binning_model_type),
         'is_fitted': binning_model.is_fitted_,
         'fitted_params': None,
-        'members': serialized_members,
     }
     
     # Add fitted params if model is fitted
@@ -1168,81 +1087,63 @@ def load_feature_base_models(
             tickers = [Ticker.ES]
     
     models: Dict[Tuple[Ticker, str], BaseModel] = {}
-
-    for model_entry in feature_config.get("base_models", []):
-        model_id = model_entry["model_id"]
-
-        # Skip unfitted if fitted_only=True
-        if fitted_only and not model_entry.get("is_fitted", False):
-            continue
-
-        model_type = _normalize_model_type(
-            model_entry.get("binning_model_type", model_entry.get("model_type", "continuous_binning"))
+    feature_models = feature_config.get("base_models", [])
+    if len(feature_models) != 1:
+        raise ValueError(
+            f"Feature '{resolved_feature_name}' must contain exactly one base model; "
+            f"found {len(feature_models)} in {feature_file}"
         )
-        model_strategy = model_entry.get("strategy", "long")
-        model_params = dict(
-            model_entry.get("binning_model_params", model_entry.get("constructor_params", {}))
+    model_entry = feature_models[0]
+    if "members" in model_entry:
+        raise ValueError(
+            f"Legacy member schema is not supported in {feature_file}"
         )
-        model_params.pop("strategy", None)
+    model_id = model_entry["model_id"]
+    if fitted_only and not model_entry.get("is_fitted", False):
+        return models
 
-        merged_bias_spec = bias_node_spec.copy()
-        merged_bias_spec["params"] = _extract_bias_node_params_for_model(
-            model_entry,
-            feature_config,
-            resolved_feature_name,
+    model_type = _normalize_model_type(
+        model_entry.get("binning_model_type", model_entry.get("model_type", "continuous_binning"))
+    )
+    model_strategy = model_entry.get("strategy", "long")
+    model_params = dict(
+        model_entry.get("binning_model_params", model_entry.get("constructor_params", {}))
+    )
+    model_params.pop("strategy", None)
+
+    merged_bias_spec = bias_node_spec.copy()
+    merged_bias_spec["params"] = _extract_bias_node_params_for_model(
+        model_entry,
+        feature_config,
+        resolved_feature_name,
+    )
+
+    model_name = model_entry.get("model_name", f"{resolved_feature_name}::{model_id}")
+    model_fitted_params = None
+    if model_entry.get("is_fitted", False):
+        fitted_payload = model_entry.get("fitted_params")
+        if fitted_payload and fitted_payload.get("model_version") == "binning_v2":
+            model_fitted_params = fitted_payload
+
+    base_model_config = {
+        "name": model_name,
+        "feature_column": resolved_feature_name,
+        "model_type": model_type,
+        "strategy": model_strategy,
+        "constructor_params": model_params,
+        "bias_node_spec": merged_bias_spec,
+        "bias_node_params": merged_bias_spec["params"],
+    }
+
+    for ticker in tickers:
+        model_config_for_ticker = base_model_config.copy()
+        model_config_for_ticker["tickers"] = [ticker]
+        base_model = create_base_model_from_config(
+            model_config_for_ticker,
+            fitted_params=model_fitted_params,
         )
-
-        member_configs = _normalize_member_entries(model_entry.get("members"))
-        model_name = model_entry.get("model_name", f"{resolved_feature_name}::{model_id}")
-        model_fitted_params = None
-        if model_entry.get("is_fitted", False):
-            fitted_payload = model_entry.get("fitted_params")
-            if fitted_payload and fitted_payload.get("model_version") == "binning_v2":
-                model_fitted_params = fitted_payload
-
-        base_model_config = {
-            "name": model_name,
-            "feature_column": resolved_feature_name,
-            "model_type": model_type,
-            "strategy": model_strategy,
-            "constructor_params": model_params,
-            "bias_node_spec": merged_bias_spec,
-            "bias_node_params": merged_bias_spec["params"],
-            "members": member_configs,
-        }
-
-        for ticker in tickers:
-            model_config_for_ticker = base_model_config.copy()
-            model_config_for_ticker["tickers"] = [ticker]
-            base_model = create_base_model_from_config(
-                model_config_for_ticker,
-                fitted_params=model_fitted_params,
-            )
-            base_model.feature_column = resolved_feature_name
-
-            # Continuous members are intentionally loaded unfitted for walkforward refits.
-            member_cfg_by_name = {m["member_name"]: m for m in member_configs}
-            for member_name, member_model in getattr(base_model, "members", []):
-                member_cfg = member_cfg_by_name.get(member_name, {})
-                requires_fit = bool(
-                    member_cfg.get(
-                        "requires_fit",
-                        _requires_fit(
-                            member_cfg.get(
-                                "binning_model_type",
-                                getattr(member_model, "model_type", "continuous_binning"),
-                            )
-                        ),
-                    )
-                )
-                if requires_fit:
-                    if hasattr(member_model, "_reset_fitted_state"):
-                        member_model._reset_fitted_state()
-                    else:
-                        member_model.is_fitted_ = False
-
-            # Use (ticker, model_id) as key
-            models[(ticker, model_id)] = base_model
+        base_model.feature_column = resolved_feature_name
+        models[(ticker, model_id)] = base_model
     
     return models
 
@@ -1254,7 +1155,6 @@ def update_base_model_fitted_params(
     fitted_params: Dict[str, Any],
     train_start: str,
     train_end: str,
-    member_name: Optional[str] = None,
     **legacy_kwargs: Any,
 ) -> None:
     """
@@ -1293,51 +1193,34 @@ def update_base_model_fitted_params(
     with open(feature_file, "r") as handle:
         feature_config = json.load(handle)
 
+    feature_models = feature_config.get("base_models", [])
+    if len(feature_models) != 1:
+        raise ValueError(
+            f"Feature '{feature_name}' must contain exactly one base model; found {len(feature_models)}"
+        )
+    if "members" in feature_models[0]:
+        raise ValueError(
+            f"Legacy member schema is not supported in {feature_file}"
+        )
+
     model_found = False
-    for model_entry in feature_config.get("base_models", []):
+    for model_entry in feature_models:
         if model_entry.get("model_id") != model_id:
             continue
         model_found = True
         is_valid_v2 = bool(
             fitted_params and fitted_params.get("model_version") == "binning_v2"
         )
-
-        if member_name is None:
-            model_entry["is_fitted"] = is_valid_v2
-            model_entry["fitted_at"] = datetime.now(timezone.utc).isoformat()
-            model_entry["train_start"] = train_start
-            model_entry["train_end"] = train_end
-            model_entry["fitted_params"] = fitted_params if is_valid_v2 else None
-            if not is_valid_v2:
-                warnings.warn(
-                    f"Skipping non-binning_v2 fitted params for model '{model_id}'",
-                    RuntimeWarning,
-                )
-            break
-
-        members = _normalize_member_entries(model_entry.get("members"))
-        member_found = False
-        for member in members:
-            if member.get("member_name") != member_name:
-                continue
-            member_found = True
-            member["is_fitted"] = is_valid_v2
-            member["fitted_params"] = fitted_params if is_valid_v2 else None
-            member["train_start"] = train_start
-            member["train_end"] = train_end
-            member["fitted_at"] = datetime.now(timezone.utc).isoformat()
-            if not is_valid_v2:
-                warnings.warn(
-                    f"Skipping non-binning_v2 fitted params for member '{member_name}' "
-                    f"in model '{model_id}'",
-                    RuntimeWarning,
-                )
-            break
-        if not member_found:
-            raise ValueError(
-                f"Member '{member_name}' not found in model '{model_id}' for feature '{feature_name}'"
+        model_entry["is_fitted"] = is_valid_v2
+        model_entry["fitted_at"] = datetime.now(timezone.utc).isoformat()
+        model_entry["train_start"] = train_start
+        model_entry["train_end"] = train_end
+        model_entry["fitted_params"] = fitted_params if is_valid_v2 else None
+        if not is_valid_v2:
+            warnings.warn(
+                f"Skipping non-binning_v2 fitted params for model '{model_id}'",
+                RuntimeWarning,
             )
-        model_entry["members"] = members
         break
 
     if not model_found:
@@ -1346,27 +1229,6 @@ def update_base_model_fitted_params(
     feature_config["updated_at"] = datetime.now(timezone.utc).isoformat()
     with open(feature_file, "w") as handle:
         json.dump(feature_config, handle, indent=2)
-
-
-def save_member_fitted_params(
-    ensemble_dir: str,
-    feature_name: str,
-    model_id: str,
-    member_name: str,
-    fitted_params: Dict[str, Any],
-    train_start: str,
-    train_end: str,
-) -> None:
-    """Update fitted params for a specific member in a base-model entry."""
-    update_base_model_fitted_params(
-        ensemble_dir=ensemble_dir,
-        feature_name=feature_name,
-        model_id=model_id,
-        fitted_params=fitted_params,
-        train_start=train_start,
-        train_end=train_end,
-        member_name=member_name,
-    )
 
 
 def consolidate_feature_files(ensemble_dir: str) -> List[str]:
@@ -1471,7 +1333,6 @@ def consolidate_feature_files(ensemble_dir: str) -> List[str]:
                     "requires_fit": _requires_fit(model_type),
                     "is_fitted": model_is_fitted,
                     "fitted_params": fitted_payload,
-                    "members": _normalize_member_entries(model_entry.get("members")),
                 }
                 if model_is_fitted:
                     consolidated_model["fitted_at"] = model_entry.get(
@@ -1918,10 +1779,15 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
             raise ValueError(f"Invalid bias_node_spec.timeframes in {feature_file}: expected list")
 
         feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        
-        # Validate base models
+        feature_models = feature_config['base_models']
+        if len(feature_models) != 1:
+            raise ValueError(
+                f"Feature '{feature_name}' must contain exactly one base model, found {len(feature_models)}"
+            )
+
+        # Validate base model
         model_ids = []
-        for model_config in feature_config['base_models']:
+        for model_config in feature_models:
             # Check required keys
             required_model_keys = ['model_id', 'model_name', 'binning_model_type', 'strategy', 'binning_model_params']
             missing_model_keys = [key for key in required_model_keys if key not in model_config]
@@ -1964,24 +1830,10 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
                         f"{model_config['requires_fit']} (expected {expected_requires_fit})"
                     )
 
-            # Validate members structure if present
-            members = model_config.get('members')
-            if members is not None:
-                if not isinstance(members, list):
-                    raise ValueError(
-                        f"Model '{model_id}' in {feature_file} has invalid members type: {type(members)}"
-                    )
-                for member in members:
-                    if not isinstance(member, dict):
-                        raise ValueError(f"Model '{model_id}' in {feature_file} has non-dict member")
-                    if not (
-                        member.get('member_name')
-                        or member.get('member_id')
-                        or member.get('name')
-                    ):
-                        raise ValueError(
-                            f"Model '{model_id}' in {feature_file} has member without name key"
-                        )
+            if "members" in model_config:
+                raise ValueError(
+                    f"Model '{model_id}' in {feature_file} uses legacy members schema, which is unsupported"
+                )
         
         # Validate tickers match ensemble tickers (if ensemble config exists)
         if expected_ticker_names is not None:
@@ -2074,37 +1926,43 @@ def load_ensemble_from_vault(
             tf.name if isinstance(tf, TimeFrame) else str(tf)
             for tf in raw_timeframes
         ]
-
-        for model in feature_config.get('base_models', []):
-            bias_node_params = _extract_bias_node_params_for_model(
-                model,
-                feature_config,
-                feature_name,
+        feature_models = feature_config.get("base_models", [])
+        if len(feature_models) != 1:
+            raise ValueError(
+                f"Feature '{feature_name}' must contain exactly one base model; found {len(feature_models)}"
             )
-            merged_bias_spec = dict(feature_bias_spec)
-            merged_bias_spec['params'] = bias_node_params
-
-            model_type = _normalize_model_type(
-                model.get('binning_model_type', model.get('model_type', 'continuous_binning'))
+        model = feature_models[0]
+        if "members" in model:
+            raise ValueError(
+                f"Legacy member schema is not supported in {feature_file}"
             )
-            constructor_params = dict(
-                model.get('binning_model_params', model.get('constructor_params', {}))
-            )
-            constructor_params.pop('strategy', None)
-            members = _normalize_member_entries(model.get('members'))
+        bias_node_params = _extract_bias_node_params_for_model(
+            model,
+            feature_config,
+            feature_name,
+        )
+        merged_bias_spec = dict(feature_bias_spec)
+        merged_bias_spec['params'] = bias_node_params
 
-            base_model_config = {
-                'name': model.get('model_name', f"{feature_name}::{model['model_id']}"),
-                'feature_column': feature_name,
-                'model_type': model_type,
-                'strategy': model['strategy'],
-                'constructor_params': constructor_params,
-                'bias_node_spec': merged_bias_spec,
-                'bias_node_params': bias_node_params,
-                'members': members,
-                'tickers': feature_tickers,  # Include tickers so model knows which tickers it supports
-            }
-            base_models_config.append(base_model_config)
+        model_type = _normalize_model_type(
+            model.get('binning_model_type', model.get('model_type', 'continuous_binning'))
+        )
+        constructor_params = dict(
+            model.get('binning_model_params', model.get('constructor_params', {}))
+        )
+        constructor_params.pop('strategy', None)
+
+        base_model_config = {
+            'name': model.get('model_name', f"{feature_name}::{model['model_id']}"),
+            'feature_column': feature_name,
+            'model_type': model_type,
+            'strategy': model['strategy'],
+            'constructor_params': constructor_params,
+            'bias_node_spec': merged_bias_spec,
+            'bias_node_params': bias_node_params,
+            'tickers': feature_tickers,  # Include tickers so model knows which tickers it supports
+        }
+        base_models_config.append(base_model_config)
     
     if not base_models_config:
         raise ValueError(f"No base models found in ensemble directory: {ensemble_dir}")

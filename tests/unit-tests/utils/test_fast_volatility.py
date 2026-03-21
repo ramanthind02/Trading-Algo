@@ -1,12 +1,18 @@
 import numpy as np
 import pandas as pd
 import pytest
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 from ensemble.portfolio_tester import (
     calculate_log_returns_from_candles,
+    calculate_strategy_returns_from_positions,
     calculate_baseline_returns,
 )
+from utils.core.enums import Ticker
 
 
 def test_compute_ewsd_annualized_from_closes_flat_series() -> None:
@@ -61,3 +67,29 @@ def test_portfolio_tester_log_and_baseline_returns_shape() -> None:
     assert not baseline_eq.empty
     assert not baseline_single.empty
 
+
+def test_strategy_returns_normalize_ticker_keys_between_positions_and_candles() -> None:
+    dates = pd.date_range("2020-01-01", periods=4, freq="D")
+    candles = pd.DataFrame(
+        {
+            "datetime": dates,
+            "open": [100.0, 101.0, 102.0, 103.0],
+            "high": [101.0, 102.0, 103.0, 104.0],
+            "low": [99.0, 100.0, 101.0, 102.0],
+            "close": [100.0, 101.0, 102.0, 103.0],
+            "volume": [1_000_000.0] * 4,
+            "ticker": [Ticker.ES] * 4,
+        }
+    )
+    positions = pd.DataFrame(
+        {
+            "ticker": ["Ticker.ES"] * 3,
+            "datetime": dates[:3],
+            "position_fraction": [1.0, 1.0, 1.0],
+        }
+    )
+
+    returns = calculate_strategy_returns_from_positions(positions, candles)
+
+    assert isinstance(returns, pd.Series)
+    assert not returns.empty

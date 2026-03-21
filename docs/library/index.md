@@ -44,6 +44,7 @@
 
 ### Vault
 - [[Vault/vault]] — Validated feature storage, JSON control files, `is_fit` flag
+- [[Vault/monitoring]] — Strategy decay monitoring store: `(signal, target)` vectors, CUSUM, rolling Sharpe
 
 ### Deployment
 - [[Deployment/production]] — REST forecast server, production training pipeline

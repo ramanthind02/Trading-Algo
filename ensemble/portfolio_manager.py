@@ -164,7 +164,8 @@ class PortfolioManager:
     
     def predict(
         self,
-        candles_df: pd.DataFrame
+        candles_df: pd.DataFrame,
+        daily_volatility_df: pd.DataFrame,
     ) -> pd.DataFrame:
         """
         Generate positions from all portfolios using candles DataFrame.
@@ -176,6 +177,9 @@ class PortfolioManager:
         ----------
         candles_df : pd.DataFrame
             DataFrame with columns: datetime, open, high, low, close, volume, ticker, timeframe
+        daily_volatility_df : pd.DataFrame
+            Daily EWSD volatility DataFrame with columns:
+            ['datetime', 'ticker', 'ewsd_annual_vol'].
             
         Returns
         -------
@@ -205,7 +209,10 @@ class PortfolioManager:
                 try:
                     # Use new predict_from_candles method if available
                     if hasattr(portfolio, 'predict_from_candles'):
-                        positions_df = portfolio.predict_from_candles(tf_candles)
+                        positions_df = portfolio.predict_from_candles(
+                            tf_candles,
+                            daily_volatility_df=daily_volatility_df,
+                        )
                         positions_df['timeframe'] = tf
                         all_positions.append(positions_df)
                     else:

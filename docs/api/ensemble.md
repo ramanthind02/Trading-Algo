@@ -7,14 +7,14 @@
 ## Purpose
 `ensemble` is the portfolio-construction layer between base models and execution:
 - `DiversifiedEnsemble` turns base-model signals into per-model forecasts with volatility and exposure scaling.
-- `WeightLayer` combines model forecasts with per-ticker diversification weights and FDM.
+- `WeightLayer` combines the global forecast streams consumed by `GlobalPortfolio`.
 - `Portfolio` applies instrument weights, IDM, and position caps.
 - `PortfolioManager` orchestrates multiple timeframe portfolios and optional execution sizing.
 - `vault_manager` + `ensemble_utils` provide the control-file and vault interfaces these classes depend on.
 
 ## Public API policy (what we document)
 This document covers:
-- Symbols exported by `ensemble/__init__.py` (`DiversifiedEnsemble`, `Portfolio`, `PortfolioManager`, `WeightLayer`, `BaseWeightLayer`, `InverseCorrelationWeightLayer`, `InverseCorrelationWeighter`).
+- Symbols exported by `ensemble/__init__.py` (`DiversifiedEnsemble`, `Portfolio`, `PortfolioManager`, `WeightLayer`, `BaseWeightLayer`, `ClusteredWeightLayer`).
 - Cross-module public surfaces used by those symbols:
   - Control-file helpers in `ensemble/ensemble_utils.py`
   - Vault lifecycle helpers in `ensemble/vault_manager.py`
@@ -24,7 +24,7 @@ Private helpers prefixed with `_` are omitted unless required to understand the 
 
 ## Quickstart (minimal)
 ```python
-from ensemble import DiversifiedEnsemble, Portfolio, PortfolioManager, WeightLayer
+from ensemble import DiversifiedEnsemble, GlobalPortfolio, Portfolio, PortfolioManager, WeightLayer
 from execution import PositionSizer, ContractSpec
 from utils.core.enums import TimeFrame
 
@@ -34,16 +34,22 @@ ensemble = DiversifiedEnsemble(
     target_volatility=0.20,
 )
 
-# 2) Fit portfolio stack
+# 2) Fit the per-timeframe portfolio
 portfolio = Portfolio(
     ensembles=[ensemble],
     trading_timeframe=TimeFrame.D,
-    weight_layer=WeightLayer(weight_method="inverse_correlation", fdm_max=2.0),
     max_position_pct=2.0,
 )
 portfolio.fit_from_candles(candles_df, target_data=returns_series)
 
-# 3) Optional execution conversion
+# 3) Attach WeightLayer at the global portfolio level
+global_portfolio = GlobalPortfolio(
+    tf_portfolios=[portfolio],
+    weight_layer=WeightLayer(weight_method="equal_signal", fdm_max=2.0),
+)
+global_portfolio.fit({TimeFrame.D: candles_df}, instrument_returns=returns_df)
+
+# 4) Optional execution conversion
 sizer = PositionSizer(
     capital=1_000_000,
     contract_specs={"ES": ContractSpec(ticker="ES", price=5000, multiplier=50)},
@@ -69,14 +75,14 @@ Input(s):
   - `volatility`: per-sample series/array or `dict[ticker, float]`
 - Control file shape (`ensemble_utils.parse_control_file`):
   - Required top-level keys: `metadata`, `base_models`
-  - `members` in each base model is optional (if present, supports legacy and new member schemas)
+  - Each base model is single-stream; `members` payloads are unsupported
   - `metadata.is_fit: bool`
   - When `is_fit=True`, required keys: `fitted_base_models`, `fitted_ensemble`
 
 Output(s):
 - `DiversifiedEnsemble.predict_from_candles(..., return_base_model_predictions=False)`: `pd.DataFrame` with `ticker, datetime, forecast_score`. With `return_base_model_predictions=True`: `dict` with keys `'ensemble'` (DataFrame) and `'base_models'` (dict of DataFrames).
 - `DiversifiedEnsemble.predict(...)`: per-model forecast rows with `ticker, model_name, forecast, signal`
-- `WeightLayer.combine(...)`: ticker(+optional datetime)-level `forecast_score`
+- `WeightLayer.combine(...)`: ticker(+optional datetime)-level `forecast_score` for the global combiner
 - `Portfolio.predict(...)`: `ticker, forecast_score, position_fraction`
 - `Portfolio.predict_from_candles(...)`: `ticker, datetime, forecast_score, position_fraction`
 - `PortfolioManager.predict(...)`:
@@ -149,42 +155,44 @@ ensemble.fit_from_candles(train_candles, target_data=train_returns)
 forecast_vector = ensemble.predict(feature_df, ticker=ticker_series, volatility=vol_series)
 ```
 
-### WeightLayer / BaseWeightLayer / InverseCorrelationWeightLayer / InverseCorrelationWeighter
+### WeightLayer / BaseWeightLayer / ClusteredWeightLayer
 Type: factory + classes
 
 Factory signature:
 ```python
-def WeightLayer(weight_method: str = "inverse_correlation", fdm_max: float = 2.5, **kwargs) -> BaseWeightLayer
+def WeightLayer(weight_method: str = "equal_signal", fdm_max: float = 2.0, **kwargs) -> BaseWeightLayer
 ```
 
 Key class methods:
 ```python
 class BaseWeightLayer(ABC):
-    def fit(self, forecast_vectors: List[pd.DataFrame], signals: pd.DataFrame) -> "BaseWeightLayer"
+    def fit(
+        self,
+        forecast_vectors: List[pd.DataFrame],
+        signals: pd.DataFrame,
+        returns: Optional[pd.Series] = None,
+    ) -> "BaseWeightLayer"
     def combine(self, forecast_vectors: List[pd.DataFrame]) -> pd.DataFrame
     def get_diagnostics(self) -> Dict
-
-class InverseCorrelationWeighter:
-    def fit(self, signals: pd.DataFrame) -> "InverseCorrelationWeighter"
-    def get_weights(self) -> pd.Series
 ```
 
 Behavior:
-- Fits per-ticker model weights.
-- Calculates per-ticker FDM from forecast correlations and applies it during `combine`.
-- For sparse/insufficient signal cases, falls back to equal weights and `FDM=1.0`.
+- Used by `GlobalPortfolio`, not by `TFPortfolio`.
+- Supports four modes: `equal_signal`, `inverse_avg_pairwise_corr`, `hrp_cluster_equal`, and `hrp_classic`.
+- Uses full-sample in-sample signal standardization, Ledoit-Wolf covariance, derived correlation, and Ward linkage for the HRP modes.
+- Computes per-ticker FDM from raw signal-level positive-clipped correlations and applies it during `combine`.
+- For sparse/insufficient forecast history or invalid covariance inputs, falls back to equal weights and `FDM=1.0`.
 
 Forecast vector contract:
 - Each DataFrame in `forecast_vectors` must contain `ticker, model_name, forecast, signal`.
-- `datetime` is optional but strongly preferred; if present, combination is per `(ticker, datetime)`.
+- `datetime` is required for fitting; if present, combination is per `(ticker, datetime)`.
 
 Raises:
-- `ValueError` for empty fit inputs, unfitted `combine`, unknown `weight_method`, or invalid weighter access before fit.
+- `ValueError` for empty fit inputs, unfitted `combine`, or unknown `weight_method`.
 
 Logging:
-- `logger.info` for per-ticker fit progress and summary diagnostics.
-- `logger.warning` for insufficient data, unseen ticker/model fallbacks, and constant-column correlation edge cases.
-- `logger.debug` for detailed correlation/FDM diagnostics.
+- `logger.info` for per-ticker fit progress.
+- `logger.warning` for insufficient history and equal-weight fallbacks.
 
 ### Portfolio
 Type: class
@@ -219,11 +227,11 @@ def print_diagnostics(self) -> None
 ```
 
 Behavior:
-- Combines ensemble outputs using `WeightLayer` (or averaging fallback if not fitted).
+- Produces per-timeframe forecasts; `WeightLayer` is applied one level up by `GlobalPortfolio`.
 - Auto-loads ensembles from `vault/{D,W,M}/*` when `ensembles=None`; pass
   `ensemble_names=[...]` to filter by full directory names.
 - Applies instrument weights, IDM, and optional cap to produce `position_fraction`.
-- Supports hierarchical sector allocation configs that resolve to ticker-level instrument weights. See [Sector allocation (methodology)](../methodology/sector_allocation.md) for JSON schema, validation rules, and examples.
+- Active global/research sizing flows no longer consume sector-allocation JSON inputs.
 
 Risk stack order:
 1. Forecast combination (already volatility-adjusted upstream)
@@ -232,7 +240,7 @@ Risk stack order:
 4. Position cap (`max_position_pct`)
 
 Raises:
-- `ValueError` for empty/missing required columns, insufficient data for IDM fit, invalid sector config schema, or unfitted predict access.
+- `ValueError` for empty/missing required columns, insufficient data for IDM fit, or unfitted predict access.
 
 Logging:
 - Extensive `logger.debug/info/warning/error` around returns overlap, IDM/FDM fitting paths, and fallback behavior.
@@ -316,7 +324,7 @@ Behavior notes:
 
 ## Internal but required
 - `DiversifiedEnsemble` public construction depends on internal control-file initialization (`_initialize_from_control_file`) and model creation hooks through `ensemble_utils.create_base_model_from_config`.
-- `Portfolio.fit_from_candles`/`predict_from_candles` depend on internal conversion of ensemble outputs into WeightLayer forecast vectors (`ticker, datetime, model_name, forecast, signal`).
+- `GlobalPortfolio.fit` depends on internal conversion of TF strategy outputs into WeightLayer forecast vectors (`ticker, datetime, model_name, forecast, signal`).
 
 ## Errors & logging
 - Common exceptions:
@@ -342,7 +350,7 @@ contracts = position_sizer.calculate_positions(fractions)
 
 ## Open questions
 Q1:
-- `Portfolio.predict_from_candles` has both fitted WeightLayer and averaging fallback behavior; should the fallback remain public behavior or become an explicit error after `fit_from_candles` is expected?
+- `GlobalPortfolio.predict` has both fitted WeightLayer and averaging fallback behavior; should the fallback remain public behavior or become an explicit error after `fit` is expected?
 
 Q2:
 - `DiversifiedEnsemble.predict` docs and some comments mention binary `{0,1}`, but implementation accepts signed `{-1,0,1}` in several paths; confirm the official public signal contract.
