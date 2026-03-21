@@ -386,6 +386,30 @@ Observable behavior:
 - Always outputs `[1.0]`.
 - No effective warmup beyond first observation.
 
+### `nodes.pairs.spread.SpreadNode`
+Type: class
+
+Signature:
+```python
+class SpreadNode(BiasNode):
+    def __init__(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        cross_tickers: list[str] | None = None,
+        lookback: int = 20,
+    )
+```
+
+Observable behavior:
+- Streams primary ticker candles through normal `add_candle(...)`.
+- Fetches secondary ticker candles from `CrossTickerDataStore.get_candle(...)` at matching `(datetime, tf)`.
+- Outputs spread z-score after warmup; returns neutral `0.0` during warmup/missing cross data/near-zero spread variance.
+
+Cross-ticker params contract:
+- Bias-node specs must use `params["cross_tickers"]` (`list[str]`).
+- `SpreadNode` uses the first ticker in that list.
+
 ### `nodes.ts_feature.TimeSeriesFeatureNode`
 Type: class
 

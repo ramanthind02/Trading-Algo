@@ -133,7 +133,11 @@ class TestPopulateCache:
         ]
 
     def test_populate_cache_single_spec(self, cache_manager):
-        """Test populating cache for single spec."""
+        """Test populating cache for single spec.
+
+        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd)
+        for volatility-scaled targets, so 1 user spec + 2 aux = 3 total.
+        """
         specs = [{
             'module_name': 'rsi',
             'params': {'lookback': 14},
@@ -153,7 +157,11 @@ class TestPopulateCache:
         assert result['failed'] == 0
 
     def test_populate_cache_multiple_tickers(self, cache_manager):
-        """Test populating cache for multiple tickers."""
+        """Test populating cache for multiple tickers.
+
+        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd).
+        1 user spec + 2 aux = 3 specs, each for 2 tickers = 6 total.
+        """
         specs = [{
             'module_name': 'momentum',
             'params': {'lookback': 20},
@@ -172,7 +180,11 @@ class TestPopulateCache:
         assert result['success'] == 4
 
     def test_populate_cache_multiple_specs(self, cache_manager):
-        """Test populating cache for multiple specs."""
+        """Test populating cache for multiple specs.
+
+        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd).
+        2 user specs + 2 aux = 4 specs, each for 1 ticker = 4 total.
+        """
         specs = [
             {'module_name': 'rsi', 'params': {'lookback': 14}, 'timeframes': [TimeFrame.D]},
             {'module_name': 'rsi', 'params': {'lookback': 21}, 'timeframes': [TimeFrame.D]},

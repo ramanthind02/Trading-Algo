@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from utils.enums import Ticker
+from utils.core.enums import Ticker
 from data_cleaning.back_adjustment.roll_rules import (
     RollRule,
     get_roll_rule,

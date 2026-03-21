@@ -7,6 +7,7 @@ Basic functionality is tested in test_ensemble_base_models.py.
 """
 
 import unittest
+from unittest.mock import patch, MagicMock
 import pandas as pd
 import numpy as np
 import tempfile
@@ -22,11 +23,24 @@ from ensemble.diversified_ensemble import DiversifiedEnsemble
 from utils.core.enums import TimeFrame
 
 
+def _make_fake_bias_node(*args, **kwargs):
+    """Create a mock bias node that won't fail on module resolution."""
+    node = MagicMock()
+    node.add_candle.return_value = [0.0]
+    return node
+
+
 class TestDiversifiedEnsemble(unittest.TestCase):
     """Test cases for DiversifiedEnsemble class - error handling and edge cases."""
     
     def setUp(self):
         """Set up test data and fixtures."""
+        # Patch bias node creation to avoid "Could not find module file" for dummy modules
+        self._patcher1 = patch('utils.core.helpers.create_filtered_bias_node', side_effect=_make_fake_bias_node)
+        self._patcher2 = patch('utils.core.helpers.create_bias_node', side_effect=_make_fake_bias_node)
+        self._patcher1.start()
+        self._patcher2.start()
+
         # Create consistent test data
         np.random.seed(42)
         self.n_samples = 100
@@ -46,9 +60,9 @@ class TestDiversifiedEnsemble(unittest.TestCase):
         
         # Create target with some correlation structure
         self.y_valid = (
-            0.02 * self.X_valid['strategy_1'] +     
-            -0.01 * self.X_valid['strategy_2'] +    
-            0.015 * self.X_valid['strategy_3'] +    
+            0.02 * self.X_valid['strategy_1'] +
+            -0.01 * self.X_valid['strategy_2'] +
+            0.015 * self.X_valid['strategy_3'] +
             np.random.normal(0, 0.01, self.n_samples)
         )
         
@@ -57,6 +71,8 @@ class TestDiversifiedEnsemble(unittest.TestCase):
         
     def tearDown(self):
         """Clean up after tests."""
+        self._patcher1.stop()
+        self._patcher2.stop()
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         
@@ -290,11 +306,19 @@ class TestDiversifiedEnsembleEdgeCases(unittest.TestCase):
     
     def setUp(self):
         """Set up test data and fixtures."""
+        # Patch bias node creation to avoid "Could not find module file" for dummy modules
+        self._patcher1 = patch('utils.core.helpers.create_filtered_bias_node', side_effect=_make_fake_bias_node)
+        self._patcher2 = patch('utils.core.helpers.create_bias_node', side_effect=_make_fake_bias_node)
+        self._patcher1.start()
+        self._patcher2.start()
+
         np.random.seed(42)
         self.temp_dir = tempfile.mkdtemp()
     
     def tearDown(self):
         """Clean up after tests."""
+        self._patcher1.stop()
+        self._patcher2.stop()
         import shutil
         shutil.rmtree(self.temp_dir, ignore_errors=True)
     
@@ -311,7 +335,10 @@ class TestDiversifiedEnsembleEdgeCases(unittest.TestCase):
                 'constructor_params': {
                     'n_bins': 3,
                     'selection_metric': 'sortino'
-                }
+                },
+                'members': [
+                    {'member_name': 'default', 'params': {'n_bins': 3, 'selection_metric': 'sortino'}}
+                ],
             })
         
         control_file = {

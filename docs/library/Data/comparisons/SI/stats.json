@@ -1,0 +1,15 @@
+{
+  "return_correlation": 0.982055,
+  "mean_return_diff": 0.004308,
+  "max_return_diff": 0.066049,
+  "n_overlapping_days": 5212,
+  "n_divergent_dates": 6,
+  "divergent_dates": [
+    "2006-04-20",
+    "2006-06-13",
+    "2008-09-17",
+    "2008-10-02",
+    "2008-10-29",
+    "2009-03-19"
+  ]
+}

@@ -220,6 +220,9 @@ class ForecastServer:
         market_open = self.mt5_connector.is_market_open()
         market_status = "Open" if market_open else "Closed"
         logger.info(f"Market status: {market_status}")
+
+        cross_pairs = self._get_cross_tickers()
+        updated_cross_tickers: set[Ticker] = set()
         
         # Get latest candles and update MLManagers
         for ticker in self.tickers:
@@ -242,9 +245,18 @@ class ForecastServer:
                 
                 # Add candle to buffer and MLManager
                 self._add_candle(ticker, timeframe, latest_candle)
+
+                # If this traded ticker is also used as a cross-ticker,
+                # update the cross-ticker store from the same live candle.
+                if (ticker, timeframe) in cross_pairs:
+                    self._upsert_cross_ticker_candle(ticker, timeframe, latest_candle)
+                    updated_cross_tickers.add(ticker)
                 
             except Exception as e:
-                logger.error(f"❌ Error updating {ticker.name}: {e}")
+                logger.error(f"Error updating {ticker.name}: {e}")
+        
+        # Fetch latest candles for remaining cross-tickers (not updated above).
+        self._update_cross_ticker_latest(timeframe, skip_tickers=updated_cross_tickers)
         
         # Generate forecasts for all tickers using portfolio
         forecasts = self._generate_portfolio_forecasts(timeframe)
@@ -557,7 +569,107 @@ class ForecastServer:
             except Exception as e:
                 logger.error(f"❌ Error loading history for {ticker.name} {timeframe.name}: {e}")
         
-        logger.info("📚 Historical data loading complete")
+        logger.info("Historical data loading complete")
+
+        # Pre-load cross-ticker data referenced in bias node params.
+        self._load_cross_ticker_history()
+
+
+    def _get_cross_tickers(self) -> set[tuple[Ticker, TimeFrame]]:
+        """Discover cross-tickers from ensemble bias node specs."""
+        from utils.data.cross_ticker_store import extract_cross_ticker_names
+        cross: set[tuple[Ticker, TimeFrame]] = set()
+        for (_, timeframe), ensemble in self.ensembles.items():
+            for spec in ensemble.get_required_bias_nodes():
+                params = spec.get('params', {})
+                for ct_name in extract_cross_ticker_names(params):
+                    try:
+                        cross.add((Ticker[ct_name], timeframe))
+                    except KeyError:
+                        logger.warning(f"Unknown cross ticker '{ct_name}' in bias node params; skipping.")
+        return cross
+
+    def _load_cross_ticker_history(self) -> None:
+        """Fetch historical data for cross-tickers from MT5 and load into store."""
+        cross = self._get_cross_tickers()
+        if not cross:
+            return
+        import pandas as _pd
+        from utils.data.cross_ticker_store import CrossTickerDataStore
+        ct_store = CrossTickerDataStore.get_instance()
+        for ct_ticker, tf in cross:
+            if ct_store.is_loaded(ct_ticker, tf):
+                continue
+            try:
+                # If this ticker/timeframe was already loaded into candle buffers as a
+                # traded instrument, reuse it instead of fetching again.
+                buffered = self.candle_buffers.get((ct_ticker, tf), [])
+                if buffered:
+                    rows = [{
+                        'datetime': c.datetime, 'open': c.open, 'high': c.high,
+                        'low': c.low, 'close': c.close, 'volume': c.volume,
+                    } for c in buffered]
+                    ct_store.set_data(ct_ticker, tf, _pd.DataFrame(rows))
+                    logger.info(f"Loaded cross-ticker {ct_ticker.name} from traded history ({len(buffered)} candles)")
+                    continue
+
+                logger.info(f"Fetching cross-ticker history {ct_ticker.name} {tf.name}...")
+                candles = self.mt5_connector.get_historical_candles(
+                    ct_ticker.value, tf, count=self.lookback_candles
+                )
+                if candles:
+                    rows = [{
+                        'datetime': c.datetime, 'open': c.open, 'high': c.high,
+                        'low': c.low, 'close': c.close, 'volume': c.volume,
+                    } for c in candles]
+                    ct_store.set_data(ct_ticker, tf, _pd.DataFrame(rows))
+                    logger.info(f"Loaded cross-ticker {ct_ticker.name} ({len(candles)} candles)")
+            except Exception as e:
+                logger.warning(f"Failed to load cross-ticker {ct_ticker.name}: {e}")
+
+    def _upsert_cross_ticker_candle(self, ticker: Ticker, tf: TimeFrame, candle: Candle) -> None:
+        """Insert or replace the latest candle for a cross-ticker in the store."""
+        import pandas as _pd
+        from utils.data.cross_ticker_store import CrossTickerDataStore
+
+        ct_store = CrossTickerDataStore.get_instance()
+        row_df = _pd.DataFrame([{
+            'datetime': candle.datetime, 'open': candle.open,
+            'high': candle.high, 'low': candle.low,
+            'close': candle.close, 'volume': candle.volume,
+        }])
+        existing = ct_store._get_df(ticker, tf)
+        if existing is not None:
+            row_index = _pd.to_datetime(row_df['datetime'])
+            if row_index.tz is not None:
+                row_index = row_index.tz_localize(None)
+            row_df = row_df.set_index(row_index).drop(columns=['datetime'])
+            merged = _pd.concat([
+                existing[existing.index != row_df.index[0]], row_df
+            ]).sort_index()
+            ct_store.set_data(ticker, tf, merged)
+        else:
+            ct_store.set_data(ticker, tf, row_df)
+
+    def _update_cross_ticker_latest(
+        self,
+        timeframe: TimeFrame,
+        skip_tickers: Optional[set[Ticker]] = None,
+    ) -> None:
+        """Fetch latest candle for each cross-ticker and update the store."""
+        cross = self._get_cross_tickers()
+        if not cross:
+            return
+        skip_tickers = skip_tickers or set()
+        for ct_ticker, tf in cross:
+            if tf != timeframe or ct_ticker in skip_tickers:
+                continue
+            try:
+                candle = self.mt5_connector.get_latest_candle(ct_ticker.value, tf)
+                if candle is not None:
+                    self._upsert_cross_ticker_candle(ct_ticker, tf, candle)
+            except Exception as e:
+                logger.warning(f"Failed to update cross-ticker {ct_ticker.name}: {e}")
     
     def start(self) -> None:
         """Start the forecast server."""

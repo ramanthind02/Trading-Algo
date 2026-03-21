@@ -115,7 +115,9 @@ class TestFormulaVerification(unittest.TestCase):
 
         layer.fit(forecasts, signals)
 
-        self.assertAlmostEqual(layer.fdm_, 1.0, places=5)
+        # fdm_ is a per-ticker dict; single model should give FDM=1.0 for each ticker
+        for ticker, fdm_val in layer.fdm_.items():
+            self.assertAlmostEqual(fdm_val, 1.0, places=5)
 
     def test_fdm_capped_at_max(self):
         """FDM should be capped at fdm_max (2.0)."""
@@ -137,7 +139,9 @@ class TestFormulaVerification(unittest.TestCase):
 
         layer.fit(forecasts, signals)
 
-        self.assertLessEqual(layer.fdm_, 2.0)
+        # fdm_ is a per-ticker dict
+        for ticker, fdm_val in layer.fdm_.items():
+            self.assertLessEqual(fdm_val, 2.0)
 
     def test_idm_formula_single_instrument(self):
         """Single instrument should have IDM = 1.0."""
@@ -219,7 +223,9 @@ class TestWeightLayerIntegration(unittest.TestCase):
         self.assertTrue(layer.is_fitted_)
         self.assertIsNotNone(layer.weights_)
         self.assertIsNotNone(layer.fdm_)
-        self.assertGreater(layer.fdm_, 0)
+        # fdm_ is a per-ticker dict; check all values are positive
+        for ticker, fdm_val in layer.fdm_.items():
+            self.assertGreater(fdm_val, 0)
 
         # Combine
         result = layer.combine(forecasts)
@@ -248,7 +254,9 @@ class TestWeightLayerIntegration(unittest.TestCase):
 
         layer.fit(forecasts, signals)
 
-        self.assertAlmostEqual(layer.weights_.sum(), 1.0, places=5)
+        # weights_ is a per-ticker dict of pd.Series
+        for ticker, weights in layer.weights_.items():
+            self.assertAlmostEqual(weights.sum(), 1.0, places=5)
 
 
 class TestPortfolioIntegration(unittest.TestCase):
@@ -514,8 +522,9 @@ class TestFullPipeline(unittest.TestCase):
         weight_layer = WeightLayer(fdm_max=2.0)
         weight_layer.fit(forecast_vectors, signals)
 
-        # Single model should have FDM = 1.0
-        self.assertAlmostEqual(weight_layer.fdm_, 1.0, places=5)
+        # Single model should have FDM = 1.0 for each ticker
+        for ticker, fdm_val in weight_layer.fdm_.items():
+            self.assertAlmostEqual(fdm_val, 1.0, places=5)
 
         combined = weight_layer.combine(forecast_vectors)
 

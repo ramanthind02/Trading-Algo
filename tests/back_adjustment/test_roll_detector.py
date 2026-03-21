@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from data_cleaning.back_adjustment.roll_detector import RollEvent, detect_roll_dates
 from data_cleaning.back_adjustment.roll_rules import RollRule
-from utils.enums import Ticker
+from utils.core.enums import Ticker
 
 
 def _make_daily_series(

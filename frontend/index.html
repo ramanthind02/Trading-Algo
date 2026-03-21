@@ -66,6 +66,21 @@
       #load_more_btn:hover { opacity: 0.85; }
       #load_more_btn:disabled { opacity: 0.5; cursor: wait; }
 
+      #kibot_toggle_btn {
+        padding: 4px 10px;
+        font-size: 13px;
+        background: #fab387;
+        color: #1e1e2e;
+        border: 1px solid #fab387;
+        border-radius: 4px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: opacity 0.15s;
+      }
+      #kibot_toggle_btn:hover { opacity: 0.85; }
+      #kibot_toggle_btn:disabled { opacity: 0.5; cursor: wait; }
+      #kibot_toggle_btn.kibot-active { background: #f38ba8; border-color: #f38ba8; }
+
       .date-range {
         display: flex;
         align-items: center;
@@ -122,6 +137,7 @@
       <select id="ticker_selector"></select>
       <div id="timeframe_switcher"></div>
       <button id="load_more_btn">Load 500 More</button>
+      <button id="kibot_toggle_btn" style="display:none">Compare Kibot</button>
       <div class="date-range">
         <label>From</label>
         <input type="text" id="date_from" placeholder="YYYY-MM-DD" />
@@ -137,6 +153,6 @@
 
     <script src="./tv.js"></script>
     <script src="./tv_helpers.js"></script>
-    <script src="./index.js"></script>
+    <script src="./index.js?v=2"></script>
   </body>
 </html>

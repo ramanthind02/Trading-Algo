@@ -545,6 +545,9 @@ class BinningModelBase(ABC):
             "feature_column": self.feature_column,
             "strategy": self.strategy.value,
             "constructor_params": params,
+            "members": [
+                {"member_name": model_name, "params": params},
+            ],
         }
 
         try:

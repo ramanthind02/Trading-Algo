@@ -8,12 +8,15 @@ class ChartManager {
     this.hasMore = false;
     this.earliestTimestamp = null;
     this.htf = ['H4', 'D', 'W', 'M'];
+    this.kibotSeries = null;
+    this.kibotVisible = false;
     this.domElement = document.getElementById('tvchart');
 
     this.initializeChart();
     this._initTickerSelector();
     this._initLoadMore();
     this._initDateRange();
+    this._initKibotToggle();
   }
 
   initializeChart() {
@@ -56,10 +59,13 @@ class ChartManager {
     this.currentTicker = ticker;
     this.candles = [];
     this._clearDateRange();
+    this._removeKibotSeries();
+    this.kibotVisible = false;
 
     const resp = await fetch(`/timeframes/${ticker}`);
     const timeframes = await resp.json();
     this._buildSwitcher(timeframes);
+    await this._resetKibot();
 
     await this._fetchAndRender();
   }
@@ -85,7 +91,7 @@ class ChartManager {
     });
   }
 
-  _onTfClick(tf) {
+  async _onTfClick(tf) {
     if (tf === this.currentInterval) return;
 
     this._intervalElements.forEach((el, i) => {
@@ -94,6 +100,7 @@ class ChartManager {
     this.currentInterval = tf;
     this.candles = [];
     this._clearDateRange();
+    await this._resetKibot();
     this._fetchAndRender();
   }
 
@@ -193,6 +200,89 @@ class ChartManager {
     document.getElementById('date_from').value = '';
     document.getElementById('date_to').value = '';
     document.getElementById('cap_warning').textContent = '';
+  }
+
+  // ── Kibot / Raw comparison overlay ───────────────────────────
+
+  _dailyTimeframes = ['D', 'W', 'M'];
+
+  _initKibotToggle() {
+    const btn = document.getElementById('kibot_toggle_btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => this._toggleKibot());
+  }
+
+  async _resetKibot() {
+    this._removeKibotSeries();
+    this.kibotVisible = false;
+    const btn = document.getElementById('kibot_toggle_btn');
+    if (!btn) return;
+    const label = this._dailyTimeframes.includes(this.currentInterval)
+      ? 'Compare Kibot' : 'Compare Raw';
+    btn.textContent = label;
+    btn.classList.remove('kibot-active');
+
+    // Probe server to check if comparison data exists for this ticker/tf
+    try {
+      const resp = await fetch(`/candles/${this.currentTicker}/${this.currentInterval}/kibot?count=1`);
+      btn.style.display = resp.ok ? 'inline-block' : 'none';
+    } catch {
+      btn.style.display = 'none';
+    }
+  }
+
+  async _toggleKibot() {
+    const btn = document.getElementById('kibot_toggle_btn');
+    if (this.kibotVisible) {
+      this._removeKibotSeries();
+      const label = this._dailyTimeframes.includes(this.currentInterval)
+        ? 'Compare Kibot' : 'Compare Raw';
+      btn.textContent = label;
+      btn.classList.remove('kibot-active');
+      this.kibotVisible = false;
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+
+    const params = new URLSearchParams();
+    params.set('count', '5000');
+    const qs = params.toString();
+    const url = `/candles/${this.currentTicker}/${this.currentInterval}/kibot?${qs}`;
+
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        btn.textContent = 'No Kibot data';
+        btn.disabled = false;
+        return;
+      }
+      const data = await resp.json();
+
+      this.kibotSeries = this.chart.addLineSeries({
+        color: 'orange',
+        lineWidth: 2,
+      });
+      this.kibotSeries.setData(data.candles);
+
+      this.kibotVisible = true;
+      btn.textContent = this._dailyTimeframes.includes(this.currentInterval)
+        ? 'Hide Kibot' : 'Hide Raw';
+      btn.classList.add('kibot-active');
+    } catch {
+      const label = this._dailyTimeframes.includes(this.currentInterval)
+        ? 'Compare Kibot' : 'Compare Raw';
+      btn.textContent = label;
+    }
+    btn.disabled = false;
+  }
+
+  _removeKibotSeries() {
+    if (this.kibotSeries) {
+      this.chart.removeSeries(this.kibotSeries);
+      this.kibotSeries = null;
+    }
   }
 
   // ── Chart rendering ───────────────────────────────────────────────

@@ -27,7 +27,7 @@ from typing import List
 
 import pandas as pd
 
-from utils.enums import Ticker
+from utils.core.enums import Ticker
 from data_cleaning.back_adjustment.roll_rules import get_roll_rule
 from data_cleaning.back_adjustment.roll_detector import detect_roll_dates
 from data_cleaning.back_adjustment.gap_calculator import calculate_adjustments

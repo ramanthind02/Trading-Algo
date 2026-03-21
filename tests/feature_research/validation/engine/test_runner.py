@@ -1708,6 +1708,10 @@ def test_evaluate_fold_portfolio_returns_per_ticker_oos_returns_shape(
         "utils.evaluation.walkforward.portfolio_evaluator._calculate_oos_returns_from_positions",
         _fake_returns,
     )
+    monkeypatch.setattr(
+        "utils.evaluation.walkforward.portfolio_evaluator._ensure_cross_ticker_data",
+        lambda *_args, **_kwargs: None,
+    )
 
     result = evaluate_fold_portfolio(
         train_candles=train_candles,

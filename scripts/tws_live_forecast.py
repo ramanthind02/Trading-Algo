@@ -583,6 +583,41 @@ def main():
             config["portfolio"]["target_volatility"]
         )
 
+        # Discover cross-tickers from ensemble bias node specs and load into store.
+        from utils.data.cross_ticker_store import CrossTickerDataStore
+        from utils.core.enums import Ticker as _Ticker, TimeFrame as _TF
+        from utils.data.cross_ticker_store import extract_cross_ticker_names
+
+        ct_store = CrossTickerDataStore.get_instance()
+        cross_tickers_needed: set[str] = set()
+        for ensemble in portfolio.ensembles:
+            for spec in ensemble.get_required_bias_nodes():
+                cross_tickers_needed.update(extract_cross_ticker_names(spec.get('params', {})))
+
+        available_tickers = candles_df['ticker'].astype(str)
+        for ct_name in sorted(cross_tickers_needed):
+            try:
+                ct_ticker = _Ticker[ct_name]
+            except KeyError:
+                print(f"  Warning: Unknown cross ticker in ensemble config: {ct_name}")
+                continue
+
+            if ct_store.is_loaded(ct_ticker, _TF.D):
+                continue
+
+            existing_mask = available_tickers == ct_name
+            if existing_mask.any():
+                ct_store.set_data(ct_ticker, _TF.D, candles_df.loc[existing_mask].copy())
+                continue
+
+            if ct_name in TICKER_TO_TWS:
+                print(f"  Fetching cross-ticker data for {ct_name}...")
+                ct_candles = fetch_historical_candles(
+                    client, ct_name, lookback_days=config["data"]["lookback_days"]
+                )
+                if not ct_candles.empty:
+                    ct_store.set_data(ct_ticker, _TF.D, ct_candles)
+
         # Fit portfolio with historical data
         print("Fitting portfolio with historical data...")
         try:

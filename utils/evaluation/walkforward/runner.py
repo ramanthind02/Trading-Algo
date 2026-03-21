@@ -617,8 +617,11 @@ def _score_one_param_for_fold(
             if len(active_test_returns) == 0
             else float(objective_metric(active_test_returns))
         )
+    def _hashable(v: object) -> object:
+        return tuple(v) if isinstance(v, list) else v
+
     return {
-        **{column: params.get(column) for column in param_columns},
+        **{column: _hashable(params.get(column)) for column in param_columns},
         "param_label": _canonical_param_label(params),
         "raw_objective": train_objective,
         "oos_objective": oos_objective,
@@ -817,6 +820,9 @@ def _build_fold_scores(
 
         return (train_objective, oos_objective, trade_frequency, selected_long_bin)
 
+    def _hashable_param(v: object) -> object:
+        return tuple(v) if isinstance(v, list) else v
+
     param_columns = sorted({key for params in param_grid for key in params})
     train_end_ts = cast(pd.Timestamp, fold_row["train_end"])
     if n_jobs == 1:
@@ -825,7 +831,7 @@ def _build_fold_scores(
             train_objective, oos_objective, trade_frequency, selected_long_bin = score_param(params)
             raw_rows.append(
                 {
-                    **{column: params.get(column) for column in param_columns},
+                    **{column: _hashable_param(params.get(column)) for column in param_columns},
                     "param_label": _canonical_param_label(params),
                     "raw_objective": train_objective,
                     "oos_objective": oos_objective,

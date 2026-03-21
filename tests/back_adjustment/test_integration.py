@@ -5,7 +5,7 @@ import pytest
 import pandas as pd
 from pathlib import Path
 
-from utils.enums import Ticker
+from utils.core.enums import Ticker
 from data_cleaning.back_adjustment.orchestrator import process_ticker
 from data_cleaning.back_adjustment.validator import compare_price_levels
 

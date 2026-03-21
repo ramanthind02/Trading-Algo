@@ -111,6 +111,8 @@ def test_log_return_ewsd_coverage_is_close_to_log_return_when_cache_available() 
         load_features_for_combo,
     )
 
+    from feature_research.config import InSampleDefaultsCatalog, InSamplePhaseDefaultsConfig
+
     config = None
     try:
         config = load_config()

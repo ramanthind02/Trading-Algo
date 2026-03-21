@@ -75,9 +75,8 @@ BUY_HOLD_FEATURE_CONFIG = {
             },
             "is_fitted": True,
             "fitted_params": {
-                "thresholds": [],
-                "best_long_bin": 0,
-                "best_short_bin": 0,
+                "model_version": "binning_v2",
+                "bin_edges": [0.5],
                 "bin_stats": {
                     "0": {
                         "mean_return": 0.0004376395916674674,
@@ -89,6 +88,16 @@ BUY_HOLD_FEATURE_CONFIG = {
                         "feature_min": 1.0,
                         "feature_max": 1.0
                     }
+                },
+                "active_bins_by_strategy": {
+                    "long": [0],
+                    "short": [],
+                    "long_short": [0]
+                },
+                "position_multipliers_by_strategy": {
+                    "long": {"0": 1.0},
+                    "short": {},
+                    "long_short": {"0": 1.0}
                 }
             },
             "fitted_at": "2026-01-21T03:47:49.085981+00:00"
@@ -140,7 +149,10 @@ def create_ensemble_from_config(
             'model_type': model['binning_model_type'],  # Use model_type, not binning_model_type
             'strategy': model['strategy'],
             'constructor_params': model['binning_model_params'],  # Use constructor_params, not binning_model_params
-            'bias_node_spec': feature_config['bias_node_spec']  # Include bias_node_spec (timeframes as strings for JSON)
+            'bias_node_spec': feature_config['bias_node_spec'],  # Include bias_node_spec (timeframes as strings for JSON)
+            'members': [
+                {'member_name': model['model_name'], 'params': model['binning_model_params']}
+            ]
         }
         base_models_config.append(base_model_config)
     
@@ -151,7 +163,8 @@ def create_ensemble_from_config(
                 'created_at': feature_config['created_at'],
                 'updated_at': feature_config['updated_at'],
                 'is_fit': not refit,  # If refit=False, mark as fitted
-                'base_tf': 'D'
+                'base_tf': 'D',
+                **({'selection_method': 'manual'} if not refit else {})
             },
             'base_models': base_models_config,
             'tickers': feature_config['tickers']
@@ -180,7 +193,8 @@ def create_ensemble_from_config(
     ensemble = DiversifiedEnsemble(
         control_file_path=temp_path,
         target_volatility=0.20,
-        base_tf=TimeFrame.D
+        base_tf=TimeFrame.D,
+        use_cache=False
     )
     
     # Clean up temp file after ensemble loads it
@@ -201,16 +215,16 @@ class TestPortfolioIntegration:
     
     def test_portfolio_refit_scenario(self):
         """
-        Test portfolio with ensemble refitted from scratch.
-        
+        Test portfolio with pre-fitted ensemble on train/test split.
+
         Scenario:
         - Load real data (ES, NQ, YM, RTY) from 2010-2020 for training
-        - Refit ensemble from scratch
+        - Use pre-fitted params (buy_hold is constant, cannot refit with continuous_binning)
         - Test on 2020-2024 data
         - Validate outputs are position fractions
         """
         print("\n" + "="*70)
-        print("TEST: Portfolio with Refit Ensemble")
+        print("TEST: Portfolio with Pre-Fitted Ensemble (train/test split)")
         print("="*70)
         
         # Load training data (2010-2020)
@@ -233,10 +247,11 @@ class TestPortfolioIntegration:
             end=datetime(2024, 1, 1),
         )
         print(f"Loaded {len(test_candles)} test candles")
-        
-        # Create ensemble (refit from scratch)
-        print("\nCreating ensemble (refit=True)...")
-        ensemble = create_ensemble_from_config(BUY_HOLD_FEATURE_CONFIG, refit=True)
+
+        # Create ensemble with pre-fitted params (buy_hold is a constant feature
+        # that cannot be refitted with continuous_binning)
+        print("\nCreating ensemble (refit=False, pre-fitted)...")
+        ensemble = create_ensemble_from_config(BUY_HOLD_FEATURE_CONFIG, refit=False)
         
         # Create portfolio
         print("\nCreating portfolio...")
@@ -244,7 +259,6 @@ class TestPortfolioIntegration:
             ensembles=[ensemble],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0,
             max_position_pct=2.0
         )
         
@@ -344,7 +358,6 @@ class TestPortfolioIntegration:
             ensembles=[ensemble],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0,
             max_position_pct=2.0
         )
         
@@ -436,7 +449,6 @@ class TestPortfolioIntegration:
             ensembles=[ensemble],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         # Create PortfolioTester

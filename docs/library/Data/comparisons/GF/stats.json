@@ -1,0 +1,16 @@
+{
+  "return_correlation": 0.845989,
+  "mean_return_diff": 0.004037,
+  "max_return_diff": 0.077404,
+  "n_overlapping_days": 5215,
+  "n_divergent_dates": 7,
+  "divergent_dates": [
+    "2013-04-17",
+    "2019-04-16",
+    "2020-04-17",
+    "2020-10-19",
+    "2021-04-19",
+    "2022-04-18",
+    "2023-04-17"
+  ]
+}

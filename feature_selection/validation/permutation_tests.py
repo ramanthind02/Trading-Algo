@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import logging
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 import pandas as pd
@@ -208,6 +211,65 @@ def _permute_candles_with_seed(
     return prepared_shufflers.permute_with_seed(seed)
 
 
+def _update_cross_ticker_store_from_shuffled_candles(
+    shuffled_candles: pd.DataFrame,
+    timeframes: list | None = None,
+) -> None:
+    """Push shuffled candle data into CrossTickerDataStore so cross-ticker
+    bias nodes (e.g. SpreadNode) use the shuffled secondary-ticker data
+    during permutation re-extraction.
+
+    Parameters
+    ----------
+    shuffled_candles:
+        DataFrame that *may* contain a ``ticker`` column.  Each unique
+        ticker's slice is pushed via ``store.set_data()``.
+    timeframes:
+        TimeFrames to push for.  Defaults to ``[TimeFrame.D]`` when
+        ``None`` or when the candles lack a ``timeframe`` column.
+    """
+    try:
+        if "ticker" not in shuffled_candles.columns:
+            return
+
+        from utils.core.enums import Ticker, TimeFrame
+        from utils.data.cross_ticker_store import CrossTickerDataStore
+
+        store = CrossTickerDataStore.get_instance()
+
+        # Resolve timeframes
+        if timeframes is not None:
+            tfs = timeframes
+        elif "timeframe" in shuffled_candles.columns:
+            tfs = [
+                tf if isinstance(tf, TimeFrame) else TimeFrame[str(tf)]
+                for tf in shuffled_candles["timeframe"].unique()
+            ]
+        else:
+            tfs = [TimeFrame.D]
+
+        for raw_ticker, ticker_df in shuffled_candles.groupby("ticker"):
+            # Normalise raw_ticker (could be Ticker enum, its .value, or its .name)
+            if isinstance(raw_ticker, Ticker):
+                ticker_enum = raw_ticker
+            else:
+                raw_str = str(raw_ticker).strip().upper()
+                # Try enum name first (e.g. "ES"), then enum value (e.g. "US500")
+                ticker_enum = None
+                for member in Ticker:
+                    if member.name == raw_str or member.value == raw_str:
+                        ticker_enum = member
+                        break
+                if ticker_enum is None:
+                    continue  # unknown ticker — skip silently
+
+            for tf in tfs:
+                store.set_data(ticker_enum, tf, ticker_df.copy())
+    except Exception as exc:
+        # Never break the permutation loop for store-update failures
+        logger.warning("_update_cross_ticker_store_from_shuffled_candles failed: %s", exc)
+
+
 @dataclass(frozen=True)
 class _ContinuousPermutationBatchItem:
     """Internal Stage-2 continuous permutation batch input."""
@@ -289,6 +351,7 @@ def _run_one_rep_continuous(
         shuffled_candles = _permute_candles_with_seed(
             candles_prepared, seed, prepared_shufflers
         )
+        _update_cross_ticker_store_from_shuffled_candles(shuffled_candles)
     results: dict[str, tuple[float, bool]] = {}
     for combo_name, item in items_by_combo.items():
         cname, metric, no_trade = _stage2_continuous_combo_rep(
@@ -443,6 +506,7 @@ def _run_pipeline_permutation_continuous_batch(
                 shuffled_candles_rep = _permute_candles_with_seed(
                     candles_prepared, int(seeds[i]), prepared_shufflers
                 )
+                _update_cross_ticker_store_from_shuffled_candles(shuffled_candles_rep)
             seed_i = int(seeds[i])
 
             for combo_name, item in items_by_combo.items():
@@ -541,6 +605,7 @@ def _run_pipeline_permutation_rule_based_batch(
         shuffled_candles = _permute_candles_with_seed(
             candles_prepared, int(seeds[i]), prepared_shufflers
         )
+        _update_cross_ticker_store_from_shuffled_candles(shuffled_candles)
         for combo_name, item in items_by_combo.items():
             try:
                 shuffled_rule = item.rule_extractor(shuffled_candles).reindex(target.index)

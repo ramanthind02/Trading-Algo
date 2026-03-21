@@ -1,0 +1,106 @@
+{
+  "provider_name": "apex",
+  "program_name": "ApexTradovateEOD",
+  "accounts": {
+    "50000": {
+      "account_size": 50000.0,
+      "fees": {
+        "challenge_fee": 30.0,
+        "reset_fee": 0.0,
+        "activation_fee": 100.0
+      },
+      "metadata": {
+        "description": "50K Tradovate EOD trailing account"
+      },
+      "evaluation": {
+        "profit_target_amount": 3000.0,
+        "minimum_trading_days": 1,
+        "evaluation_expiry_calendar_days": 30,
+        "daily_loss_limit": 1000.0,
+        "max_contract_limit": {
+          "mini_contracts": 6,
+          "micro_contracts": 60
+        },
+        "drawdown_rule": {
+          "loss_limit_amount": 2000.0,
+          "initial_trail_balance": 1000000000000.0,
+          "locked_mll_balance": 1000000000000.0
+        }
+      },
+      "funded": {
+        "max_contract_limit": {
+          "mini_contracts": 4,
+          "micro_contracts": 40
+        },
+        "drawdown_rule": {
+          "loss_limit_amount": 2000.0,
+          "initial_trail_balance": 52100.0,
+          "locked_mll_balance": 50100.0
+        },
+        "payout_rule": {
+          "trader_profit_split": 1.0,
+          "min_request_amount": 500.0,
+          "max_profit_share": 1.0,
+          "max_payout_amount": 3000.0,
+          "max_requests_per_account": 6,
+          "protected_balance": 52100.0,
+          "payout_cap_schedule": [
+            1500.0,
+            1500.0,
+            2000.0,
+            2500.0,
+            2500.0,
+            3000.0
+          ],
+          "consistency_rule": {
+            "max_ratio": 0.5,
+            "cushion_multiplier": 1.0,
+            "inclusive_limit": false
+          },
+          "profit_day_rule": {
+            "required_days": 5,
+            "minimum_profit_amount": 250.0
+          }
+        },
+        "scaling_plan": [
+          {
+            "min_profit": 0.0,
+            "max_profit": 1499.0,
+            "daily_loss_limit": 1000.0,
+            "contract_limit": {
+              "mini_contracts": 2,
+              "micro_contracts": 20
+            }
+          },
+          {
+            "min_profit": 1500.0,
+            "max_profit": 2999.0,
+            "daily_loss_limit": 1000.0,
+            "contract_limit": {
+              "mini_contracts": 3,
+              "micro_contracts": 30
+            }
+          },
+          {
+            "min_profit": 3000.0,
+            "max_profit": 5999.0,
+            "daily_loss_limit": 2000.0,
+            "contract_limit": {
+              "mini_contracts": 4,
+              "micro_contracts": 40
+            }
+          },
+          {
+            "min_profit": 6000.0,
+            "max_profit": null,
+            "daily_loss_limit": 3000.0,
+            "contract_limit": {
+              "mini_contracts": 4,
+              "micro_contracts": 40
+            }
+          }
+        ]
+      }
+    }
+  }
+}

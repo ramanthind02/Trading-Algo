@@ -484,7 +484,11 @@ def build_feature_column_name(
     if params:
         for key in sorted(params.keys()):
             name_parts.append(_to_camel_case(str(key)))
-            name_parts.append(str(params[key]))
+            val = params[key]
+            if isinstance(val, (list, tuple)):
+                name_parts.append("_".join(str(v) for v in val))
+            else:
+                name_parts.append(str(val))
     return '_'.join(name_parts)
 
 

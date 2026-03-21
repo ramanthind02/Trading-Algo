@@ -24,7 +24,6 @@ class TestPortfolioManager:
             ensembles=[],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         # Create manager
@@ -45,7 +44,6 @@ class TestPortfolioManager:
             ensembles=[],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         # Create position sizer
@@ -72,7 +70,6 @@ class TestPortfolioManager:
             ensembles=[],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         # Create manager
@@ -105,7 +102,6 @@ class TestPortfolioManager:
             ensembles=[],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         # Create manager
@@ -140,14 +136,12 @@ class TestPortfolioManager:
             ensembles=[],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         weekly_portfolio = Portfolio(
             ensembles=[],
             trading_timeframe=TimeFrame.W,
             target_volatility=0.15,
-            dm=1.5
         )
         
         # Create manager
@@ -188,7 +182,6 @@ class TestPortfolioManager:
             ensembles=[],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         manager = PortfolioManager(
@@ -210,7 +203,6 @@ class TestPortfolioManager:
             ensembles=[],
             trading_timeframe=TimeFrame.D,
             target_volatility=0.20,
-            dm=2.0
         )
         
         manager = PortfolioManager(
