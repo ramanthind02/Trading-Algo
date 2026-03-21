@@ -14,6 +14,7 @@
 
 ### Bias Nodes
 - [[bias_nodes/creating_nodes]] — How to implement a new technical indicator node
+- [[bias_nodes/central_cache_architecture]] — Planned SSOT candle/bias cache and datetime-driven portfolio orchestration
 - [[bias_nodes/norgate]] — Norgate data integration and OHLCV sourcing
 
 ### Feature Selection

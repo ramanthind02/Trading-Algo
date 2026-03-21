@@ -2,6 +2,9 @@
 
 > **Scope:** Full pipeline from BaseModels to tradeable contracts (Robert Carver methodology).
 
+> [!note] Planned orchestration
+> The code today passes `candles_per_tf` and `daily_volatility_df` into `GlobalPortfolio.fit` / `predict`. A **planned** unified flow—central candle/bias cache, datetime-driven `fit`/`predict`, fail-fast on cache miss—is described in [[bias_nodes/central_cache_architecture]].
+
 ---
 
 ## Pipeline

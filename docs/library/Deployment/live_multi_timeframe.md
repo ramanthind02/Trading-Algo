@@ -156,4 +156,4 @@ The prediction logic is **identical** in both paths — the only difference is h
 
 ---
 
-**See also:** [[multi_timeframe]], [[portfolio]], [[production]]
+**See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[bias_nodes/central_cache_architecture]]
