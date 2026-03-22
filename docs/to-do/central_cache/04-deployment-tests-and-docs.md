@@ -17,10 +17,18 @@ Move live and training orchestration to the central cache model, then cut verifi
 - `tests/integration/test_cache_integration.py`
 - `tests/integration/test_portfolio_integration.py`
 - `tests/portfolio_research/test_run_portfolio_test_multitimeframe.py`
+- `tests/feature_research/validation/engine/test_portfolio_evaluator.py`
+- `tests/feature_research/validation/engine/test_runner.py`
 - `tests/unit-tests/ensemble/test_global_portfolio.py`
 - `tests/unit-tests/ensemble/test_volatility_input_contract.py`
 - `tests/nodes/test_cross_ticker.py`
 - `tests/nodes/test_rebalancing.py`
+
+### Research and evaluation callers
+
+- `utils/evaluation/walkforward/portfolio_evaluator.py`
+- research flows under `tests/portfolio_research/`
+- feature-research portfolio evaluation flows under `tests/feature_research/`
 
 ### Docs
 
@@ -87,6 +95,7 @@ Decide and document:
 - daily-grid alignment and higher-TF carry behavior
 - cross-ticker dependency correctness
 - cache population behavior already covered in `tests/unit-tests/utils/test_cache_manager.py`
+- portfolio behavior in research and walkforward evaluation paths
 
 ### Tests to rewrite
 
@@ -95,6 +104,7 @@ Rewrite tests that currently pin:
 - `candles_per_tf` as the portfolio contract
 - `daily_volatility_df` as a required external input
 - `CrossTickerDataStore` lazy auto-load and `None` fallback behavior
+- research and evaluation helpers that still build candle-frame portfolio inputs
 
 When rewriting, preserve useful existing assertions from `tests/unit-tests/utils/test_cache_manager.py` instead of replacing them with a completely separate test model for the new infra.
 
@@ -110,6 +120,7 @@ Add integration coverage for:
 - future artifact-family support, for example persisted portfolio prediction outputs
 - automatic stale-marking and managed refresh after OHLCV updates
 - research-scope cleanup that does not affect vault-backed live artifacts
+- portfolio research and walkforward evaluation using the new cache/portfolio API
 
 ## Documentation Cutover
 
@@ -163,4 +174,5 @@ The refactor is not done until:
 - training uses cache-backed artifacts as the primary path
 - verification covers miss semantics, coverage, and parity
 - permanent design, usage, and API docs exist under `docs/library` and `docs/api/`
+- research folders and portfolio evaluation paths use the new API
 - docs no longer present the old candle-frame APIs as the primary architecture

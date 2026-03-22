@@ -4,6 +4,10 @@
 
 Define the central cache as the system of record for candles and cache-backed derived artifacts, with explicit coverage, invalidation semantics, and an extensible artifact model.
 
+The design goal is a single simple public cache facade, even if the implementation is decomposed across multiple internal modules.
+
+The implementation goal is to consolidate cache ownership into a small, easy-to-find part of the codebase rather than leaving core behavior scattered across unrelated modules.
+
 ## Primary Files Impacted
 
 - `utils/cache/bias_node_cache.py`
@@ -35,6 +39,18 @@ Likely deliverables:
 - immutable request models for keys and ranges
 - artifact descriptors that are not hard-coded only to candles and bias nodes
 - artifact lifecycle states such as `fresh`, `stale`, `rebuilding`, and `failed`
+
+Public API principle:
+
+- callers should primarily interact with one cache service/facade
+- specialized internal modules may exist behind that facade
+- legacy direct use of `BiasNodeCache`, `CacheManager`, and `CrossTickerDataStore` should be treated as migration debt, not the target interface
+
+Implementation ownership principle:
+
+- central cache behavior should be implemented in a small number of closely related modules
+- legacy cache behavior left in distant modules should be reduced to adapters or deleted
+- a maintainer should be able to find read/write/invalidation/refresh behavior without searching the whole repo
 
 ### 2. Key model and namespaces
 
@@ -169,6 +185,7 @@ Required capabilities:
 - evolve `CacheManager` from batch-population helper into cache population orchestrator
 - reuse existing cache-population behavior from `utils/cache/cache_manager.py` rather than introducing a second orchestration path with overlapping responsibilities
 - add researcher-facing cleanup/prune operations for disposable research artifacts
+- collapse scattered cache logic into the central cache area once adapters are in place
 
 ## DRY Reuse Guidance
 
@@ -205,6 +222,8 @@ Add new tests for:
 ## Exit Criteria
 
 - one public cache contract exists for candles and derived artifacts
+- callers no longer need to select among multiple low-level cache/storage classes directly
+- cache implementation ownership is consolidated enough that maintainers do not need to hunt across unrelated modules to fix cache behavior
 - the contract is not specialized to only candle and bias-node artifacts
 - partial coverage cannot slip through silently
 - cross-ticker reads no longer return raw `None` for operational misses

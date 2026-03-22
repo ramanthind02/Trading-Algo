@@ -10,7 +10,21 @@ Replace candle-frame-driven portfolio and ensemble entrypoints with cache-native
 - `ensemble/portfolio.py`
 - `ensemble/portfolio_manager.py`
 - `ensemble/portfolio_tester.py`
-- direct callers in tests and deployment
+- `utils/evaluation/walkforward/portfolio_evaluator.py`
+- direct callers in tests, research flows, and deployment
+
+## Caller Migration Surface
+
+The cutover is not limited to portfolio classes themselves. Any place that builds, fits, predicts, or evaluates portfolios must move to the new API.
+
+Known migration surfaces include:
+
+- `ensemble/portfolio_manager.py`
+- `ensemble/portfolio_tester.py`
+- `utils/evaluation/walkforward/portfolio_evaluator.py`
+- `tests/portfolio_research/`
+- `tests/feature_research/`
+- deployment callers that currently route candles into portfolio prediction
 
 ## Current Public Contracts
 
@@ -103,13 +117,20 @@ The new portfolio stack should resolve volatility through EWSD cache reads only,
 - become adapters around the new query API, or
 - are deprecated and deleted after caller migration
 
+Research and evaluation callers also need explicit migration:
+
+- walkforward portfolio evaluation should use the new cache/query API
+- portfolio research runners should stop constructing candle-frame portfolio inputs
+- feature-research flows that evaluate portfolio outputs should migrate to the new contract rather than relying on legacy wrappers indirectly
+
 ## Migration Order
 
 1. Introduce central-store-backed ensemble query methods.
 2. Refactor `TFPortfolio` to consume cache-native vectors.
 3. Refactor `GlobalPortfolio` to consume query specs and grids.
-4. Add temporary adapter shims for callers that still pass candles.
-5. Remove candle-frame APIs once tests and deployment move over.
+4. Migrate research and evaluation consumers such as walkforward and portfolio-research runners.
+5. Add temporary adapter shims for remaining callers that still pass candles.
+6. Remove candle-frame APIs once tests, research flows, and deployment move over.
 
 ## Primary Tests To Update
 
@@ -117,6 +138,8 @@ The new portfolio stack should resolve volatility through EWSD cache reads only,
 - `tests/unit-tests/ensemble/test_volatility_input_contract.py`
 - `tests/integration/test_portfolio_integration.py`
 - `tests/portfolio_research/test_run_portfolio_test_multitimeframe.py`
+- `tests/feature_research/validation/engine/test_portfolio_evaluator.py`
+- `tests/feature_research/validation/engine/test_runner.py`
 
 Add tests for:
 
@@ -124,6 +147,7 @@ Add tests for:
 - typed failure on missing feature or EWSD coverage
 - fit/predict parity across the same cached lineage
 - forward-fill and higher-timeframe carry logic still matching current methodology
+- research and walkforward portfolio workflows using the new API instead of candle-frame portfolio calls
 
 ## Critical Risks
 
@@ -137,4 +161,5 @@ Add tests for:
 - `daily_volatility_df` is no longer a required external portfolio input
 - EWSD cache is the only sanctioned volatility source for portfolio and ensemble prediction
 - ensemble and portfolio layers fail explicitly on missing required cache coverage
+- research folders and portfolio consumers have been migrated to the new API
 - candle-routing APIs are either deleted or clearly marked as temporary adapters

@@ -9,6 +9,8 @@ This plan implements the target architecture described in `docs/library/bias_nod
 - explicit coverage semantics
 - typed, recoverable cache misses instead of silent fallback
 - shared ingestion/query behavior between backtest and live
+- one simple public cache/storage API even if the internal implementation remains modular
+- cache-related implementation should be consolidated enough that engineers can find and fix behavior without chasing logic across the codebase
 
 ## Current State
 
@@ -35,7 +37,10 @@ The current system is split across multiple cache and state mechanisms:
 6. Replace permissive fallbacks with explicit, typed failures.
 7. Automatically invalidate and manage refresh of dependent artifacts when source OHLCV changes.
 8. Separate production/live artifacts from disposable research artifacts, with vault-selected bias nodes as the live source of truth.
-9. Preserve deterministic replay and backtest/live parity.
+9. Replace today’s scattered cache entrypoints with one simple public cache API.
+10. Consolidate cache-related ownership so behavior is easy to locate, reason about, and change.
+11. Migrate research code and every portfolio consumer to the new cache/portfolio API.
+12. Preserve deterministic replay and backtest/live parity.
 
 ## Non-Goals
 
@@ -56,6 +61,9 @@ The refactor is complete when all of the following are true:
 - users do not need manual cache-maintenance steps after OHLCV updates
 - vault-selected bias nodes are the retained source of truth for live trading artifacts
 - research-only bias-node artifacts can be isolated and cleaned up without affecting live or deployment state
+- callers interact with one easy-to-use cache facade rather than choosing among multiple storage classes
+- cache logic is no longer scattered across unrelated modules without a clear ownership boundary
+- research workflows and portfolio consumers no longer rely on legacy candle-frame portfolio APIs
 - live and backtest both follow ingest first, then query
 - existing candle-frame entrypoints are either deleted or clearly deprecated and isolated
 
@@ -64,5 +72,31 @@ The refactor is complete when all of the following are true:
 - implicit fallback behavior in `CrossTickerDataStore` and `DiversifiedEnsemble`
 - partial coverage currently treated as acceptable in `BiasNodeCache`
 - automatic rebuild fan-out could become expensive or opaque if refresh policy is too eager
+- internal migration may keep too many legacy entrypoints alive and fail to simplify the public API
+- implementation may remain too scattered internally and stay hard to debug even if the facade improves
 - live runtime currently owns its own state model instead of using a central store
 - test suite pins the old API contracts in many places
+
+## API Principle
+
+The refactor may keep multiple internal modules, files, or helper classes, but it should expose one public cache/storage API to callers.
+
+In practical terms, a caller should not need to choose between:
+
+- `BiasNodeCache`
+- `CacheManager`
+- `CrossTickerDataStore`
+- separate volatility readers
+- separate research vs live storage interfaces
+
+If a caller still has to know which of those components to use directly, the unification is incomplete.
+
+## Ownership Principle
+
+The refactor should improve implementation discoverability, not just caller ergonomics.
+
+That means:
+
+- cache-related logic should live in a small, obvious part of the codebase
+- ownership boundaries should be clear enough that a maintainer knows where to go to change cache behavior
+- legacy scattered implementations should be removed or reduced to thin adapters during migration

@@ -8,6 +8,7 @@ This is not just a cache rewrite. It is a contract rewrite across:
 
 - storage ownership
 - artifact extensibility
+- public API simplification
 - node lookup semantics
 - feature extraction
 - volatility sourcing
@@ -37,3 +38,5 @@ This is not just a cache rewrite. It is a contract rewrite across:
 ## Critical Constraint
 
 Do not start by changing `GlobalPortfolio.fit` / `predict` signatures alone. That would only wrap the existing candle-frame internals and preserve the wrong coupling. The migration has to move from storage contracts upward.
+
+Many internal modules are acceptable. Many public cache APIs are not. The finished system should expose one simple cache facade for callers, even if internal helpers remain modular.
