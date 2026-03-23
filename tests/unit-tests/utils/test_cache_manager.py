@@ -93,11 +93,11 @@ class TestCacheManagerInit:
         expected_cache_dir = tmp_path / ".cache" / "trading_algo" / "central_cache" / "artifacts" / "live"
         expected_candle_dir = tmp_path / "data" / "ohlc_data"
         monkeypatch.setattr(
-            "utils.cache.cache_manager.default_live_artifact_cache_dir",
+            "utils.cache.runtime.cache_manager.default_live_artifact_cache_dir",
             lambda: expected_cache_dir,
         )
         monkeypatch.setattr(
-            "utils.cache.cache_manager.default_source_candle_dir",
+            "utils.cache.runtime.cache_manager.default_source_candle_dir",
             lambda: expected_candle_dir,
         )
 

@@ -47,7 +47,7 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
-.cache
+# .cache/ is not ignored: teams may commit .cache/trading_algo/central_cache for shared snapshots.
 nosetests.xml
 coverage.xml
 *.cover
@@ -235,11 +235,15 @@ tmpclaude*
 # Research reports (generated outputs)
 research/reports/
 
-# Bias node cache (parquet files)
-cache/
-!utils/cache/
-utils/cache/**
-!utils/cache/*.py
+# Bias node cache (parquet files) — repo root only; does not match utils/cache/ package
+/cache/
+
+# Stray runtime cache trees under utils/cache (code is utils/cache/runtime/ + top-level shims only)
+/utils/cache/*/
+!/utils/cache/runtime/
+!/utils/cache/runtime/**
+/utils/cache/**/*.parquet
+
 .worktrees/
 
 # Intraday & Norgate data

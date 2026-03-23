@@ -16,17 +16,22 @@ It does **not** replace the repository source dataset in `data/ohlc_data`. That 
 
 ## Canonical Ownership
 
-All cache-owned logic should live under `utils/cache/`. Older module paths may remain as compatibility shims, but they should not become a second implementation site.
+All cache-owned logic should live under `utils/cache/runtime/` (implementation) with thin `utils/cache/*.py` re-exports so `from utils.cache.<module> import …` stays stable. Older module paths may remain as compatibility shims, but they should not become a second implementation site.
 
 | Area | Canonical location | Responsibility |
 |---|---|---|
-| Cache facade | `utils/cache/central_cache.py` | Public read/write/query service |
-| Request and metadata models | `utils/cache/central_cache_models.py` | Descriptors, scopes, lookup modes, coverage records |
-| Error contracts | `utils/cache/central_cache_errors.py` | Typed miss, coverage, lifecycle, and revision errors |
-| Cross-ticker adapter | `utils/cache/cross_ticker_store.py` | Cache-backed candle lookups for bias nodes and helpers |
-| Feature helpers | `utils/cache/feature_pipeline_support.py` | Shared cache helpers extracted from feature extraction |
-| Cache orchestration | `utils/cache/cache_manager.py` and `utils/cache/bootstrap_source_candles.py` | Explicit bootstrap plus vault artifact preflight |
+| Cache facade | `utils/cache/runtime/central_cache.py` | Public read/write/query service |
+| Request and metadata models | `utils/cache/runtime/central_cache_models.py` | Descriptors, scopes, lookup modes, coverage records |
+| Error contracts | `utils/cache/runtime/central_cache_errors.py` | Typed miss, coverage, lifecycle, and revision errors |
+| Cross-ticker adapter | `utils/cache/runtime/cross_ticker_store.py` | Cache-backed candle lookups for bias nodes and helpers |
+| Feature helpers | `utils/cache/runtime/feature_pipeline_support.py` | Shared cache helpers extracted from feature extraction |
+| Cache orchestration | `utils/cache/runtime/cache_manager.py` and `utils/cache/runtime/bootstrap_source_candles.py` | Explicit bootstrap plus vault artifact preflight |
 | Public exports | `utils/cache/__init__.py` | Stable import surface |
+| Import shims | `utils/cache/<module>.py` (thin) | Re-export matching `utils.cache.<module>` for callers |
+
+## Code vs on-disk cache
+
+The `utils/cache/` tree is **only** Python: `runtime/` holds the real modules; top-level `*.py` files are one-line shims. **Do not** write parquet, bias-node module folders, or other cache data here—those belong under **`.cache/trading_algo/central_cache/`** (see Storage Boundary below). That keeps source separate from mutable runtime state under **`.cache/trading_algo/central_cache/`**; that path may be committed when the team wants a shared cache snapshot (it is not git-ignored by default).
 
 ## Storage Boundary
 
@@ -171,7 +176,7 @@ This keeps cache-native reads aligned with source updates and avoids silent drif
 
 ## Maintenance Rules
 
-- New cache-related runtime logic belongs under `utils/cache/`.
+- New cache-related runtime logic belongs under `utils/cache/runtime/` (add or extend a shim at `utils/cache/<module>.py` if a new submodule needs a stable `utils.cache.<module>` import path).
 - Legacy module paths should stay thin and compatibility-focused.
 - Do not write runtime cache files into `data/`.
 - Prefer `ArtifactDescriptor` plus typed requests/errors over ad hoc path conventions.

@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import utils.cache.central_cache as central_cache_module
+import utils.cache.runtime.central_cache as central_cache_module
 from utils.cache.central_cache import CentralCacheStore
 from utils.cache.central_cache_errors import (
     ArtifactLifecycleError,
@@ -65,6 +65,7 @@ def test_default_layout_reserves_separate_runtime_cache_dirs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    CentralCacheStore.reset()
     central_root = tmp_path / ".cache" / "trading_algo" / "central_cache"
     monkeypatch.setattr(central_cache_module, "default_central_cache_dir", lambda: central_root)
     monkeypatch.setattr(central_cache_module, "default_candle_cache_dir", lambda: central_root / "candles")
@@ -85,6 +86,7 @@ def test_default_layout_reserves_separate_runtime_cache_dirs(
     assert store.candle_cache_dir == central_root / "candles"
     assert store.live_artifact_cache_dir == central_root / "artifacts" / "live"
     assert store.research_artifact_cache_dir == central_root / "artifacts" / "research"
+    CentralCacheStore.reset()
 
 
 def test_candle_missing_and_partial_coverage_errors(central_cache: CentralCacheStore) -> None:

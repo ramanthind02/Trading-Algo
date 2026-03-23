@@ -58,7 +58,7 @@ def test_bootstrap_source_candles_writes_to_central_cache(
     isolated_central_cache: None,
     temp_source_dir: Path,
 ) -> None:
-    bootstrap_module = importlib.import_module("utils.cache.bootstrap_source_candles")
+    bootstrap_module = importlib.import_module("utils.cache.runtime.bootstrap_source_candles")
     from utils.cache.cache_manager import CacheManager
 
     monkeypatch.setattr(
@@ -97,7 +97,7 @@ def test_bootstrap_source_candles_reset_existing_clears_prior_candle_cache(
     isolated_central_cache: None,
     temp_source_dir: Path,
 ) -> None:
-    bootstrap_module = importlib.import_module("utils.cache.bootstrap_source_candles")
+    bootstrap_module = importlib.import_module("utils.cache.runtime.bootstrap_source_candles")
     from utils.cache.cache_manager import CacheManager
 
     monkeypatch.setattr(
@@ -142,7 +142,7 @@ def test_ingest_source_candles_alias_delegates_to_bootstrap_helper(
         captured.update(kwargs)
         return expected
 
-    ingest_module = importlib.import_module("utils.cache.ingest_source_candles")
+    ingest_module = importlib.import_module("utils.cache.runtime.ingest_source_candles")
     monkeypatch.setattr(ingest_module, "bootstrap_source_candles", _bootstrap)
 
     with pytest.deprecated_call(match="deprecated"):

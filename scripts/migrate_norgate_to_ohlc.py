@@ -201,7 +201,7 @@ def main() -> None:
     print(f"Skipped (no Norgate): {skipped}")
     print(f"Kibot-only (untouched): {sorted(KIBOT_ONLY)}")
     print(f"\nBackup at: {BACKUP_DIR}")
-    print("Remember to clear the cache (utils/cache/) after verifying.")
+    print("Remember to clear the runtime cache (.cache/trading_algo/central_cache/) after verifying.")
 
 
 if __name__ == "__main__":
