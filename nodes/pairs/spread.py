@@ -18,11 +18,12 @@ Example
 from __future__ import annotations
 
 from collections import deque
-from typing import List
+from typing import ClassVar, List
 
 import numpy as np
 
 from nodes import BiasNode
+from utils.cache.central_cache_errors import ArtifactMissingError
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.models import Candle
 from utils.data.cross_ticker_store import CrossTickerDataStore
@@ -46,6 +47,7 @@ class SpreadNode(BiasNode):
     lookback : int
         Rolling window for z-score calculation (default ``20``).
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback"})
 
     def __init__(
         self,
@@ -88,17 +90,19 @@ class SpreadNode(BiasNode):
         self._store = CrossTickerDataStore.get_instance()
 
         self.ensure_standardized_columns()
-        self._init_cache_after_params()
 
     # ------------------------------------------------------------------
 
     def _compute_candle(self, candle: Candle) -> List[float]:
         primary_close = candle.close
 
-        secondary = self._store.get_candle(
-            self.cross_ticker, candle.tf, candle.datetime,
-        )
-        if secondary is None:
+        try:
+            secondary = self._store.query_candle(
+                self.cross_ticker,
+                candle.tf,
+                candle.datetime,
+            )
+        except ArtifactMissingError:
             # Secondary data missing for this bar — return neutral
             return [0.0]
 

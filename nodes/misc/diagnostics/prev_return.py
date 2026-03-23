@@ -1,7 +1,7 @@
 from nodes import BiasNode
 from utils.core.models import Candle
 from utils.core.enums import Bias, Ticker, TimeFrame
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 
 try:
@@ -20,6 +20,8 @@ class ReturnNode(BiasNode):
     and the open price of the candle. Uses Cython compute_return_fast when
     available for consistency with other nodes.
     """
+
+    hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]] = ()
     
     def __init__(self, ticker: Ticker, tf: TimeFrame):
         """

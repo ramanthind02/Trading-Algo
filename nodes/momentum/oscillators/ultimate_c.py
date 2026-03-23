@@ -1,10 +1,10 @@
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from numba import njit
 from collections import deque
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
-from nodes import BiasNode
+from nodes import BiasNode, LookbackWindow
 
 try:
     from utils.compute.fast_nodes import (
@@ -225,7 +225,8 @@ class UltimateC(BiasNode):
     - factor: Factor for medium and long periods (default: 2.0)
     - smooth_lookback: Smoothing period for final output (default: 2)
     """
-    
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback", "smoothLookback"})
+
     def __init__(
         self,
         ticker: Ticker,
@@ -283,6 +284,13 @@ class UltimateC(BiasNode):
 
         # Initialize cache after params are set
         self._init_cache_after_params()
+
+    def _extra_lookback_contributions(self) -> tuple[LookbackWindow, ...]:
+        return (
+            LookbackWindow(label="short_window", bars=self.lookback),
+            LookbackWindow(label="medium_window", bars=int(self.lookback * self.factor)),
+            LookbackWindow(label="long_window", bars=int(self.lookback * self.factor * self.factor)),
+        )
 
     def _compute_candle(self, candle: Candle) -> List:
         """

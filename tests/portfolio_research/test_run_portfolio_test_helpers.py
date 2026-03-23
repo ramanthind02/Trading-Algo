@@ -12,13 +12,32 @@ if str(PROJECT_ROOT) not in sys.path:
 from portfolio_research.pipelines.portfolio_test import (
     _build_daily_dates_per_ticker,
     _group_ensembles_by_timeframe,
+    _portfolio_cache_query,
 )
-from utils.core.enums import TimeFrame
+from utils.core.enums import Ticker, TimeFrame
 
 
 class _DummyEnsemble:
     def __init__(self, base_tf):  # noqa: ANN001
         self.base_tf = base_tf
+
+
+class _DummyConfig:
+    def __init__(self) -> None:
+        self.tickers = [Ticker.ES, "NQ"]
+
+
+def test_portfolio_cache_query_builds_ticker_strings_and_timeframe_tuple() -> None:
+    config = _DummyConfig()
+    start = pd.Timestamp("2024-01-01").to_pydatetime()
+    end = pd.Timestamp("2024-01-05").to_pydatetime()
+
+    query = _portfolio_cache_query(config, start, end, (TimeFrame.D, TimeFrame.W))
+
+    assert query.tickers == ("ES", "NQ")
+    assert query.start == start
+    assert query.end == end
+    assert query.timeframes == (TimeFrame.D, TimeFrame.W)
 
 
 def test_group_ensembles_by_timeframe_defaults_none_to_daily() -> None:

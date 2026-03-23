@@ -33,6 +33,48 @@ from utils.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
 logger = get_logger(__name__)
 NY_TZ = ZoneInfo("America/New_York")
 
+
+def _candle_row(candle: Candle, ticker: Ticker, timeframe: TimeFrame) -> dict[str, Any]:
+    return {
+        "datetime": candle.datetime,
+        "open": candle.open,
+        "high": candle.high,
+        "low": candle.low,
+        "close": candle.close,
+        "volume": candle.volume,
+        "ticker": ticker.name,
+        "timeframe": timeframe,
+    }
+
+
+def _candles_to_frame(
+    candles: List[Candle],
+    ticker: Ticker,
+    timeframe: TimeFrame,
+) -> pd.DataFrame:
+    return pd.DataFrame([_candle_row(candle, ticker, timeframe) for candle in candles])
+
+
+def _upsert_candle_frame(
+    frame: pd.DataFrame,
+    candle: Candle,
+    ticker: Ticker,
+    timeframe: TimeFrame,
+) -> pd.DataFrame:
+    base = frame.copy()
+    if "datetime" not in base.columns:
+        base = base.reset_index()
+    if base.empty:
+        return pd.DataFrame([_candle_row(candle, ticker, timeframe)])
+
+    base["datetime"] = pd.to_datetime(base["datetime"])
+    filtered = base.loc[base["datetime"] != pd.Timestamp(candle.datetime)].copy()
+    merged = pd.concat(
+        [filtered, pd.DataFrame([_candle_row(candle, ticker, timeframe)])],
+        ignore_index=True,
+    )
+    return merged.sort_values("datetime").reset_index(drop=True)
+
 class ForecastServer:
     """
     Production forecasting server.
@@ -302,6 +344,17 @@ class ForecastServer:
             self.candle_buffers[key] = []
         
         self.candle_buffers[key].append(candle)
+        try:
+            from utils.cache.central_cache import CentralCacheStore
+
+            cache = CentralCacheStore.get_instance()
+            cache.upsert_candles(
+                ticker,
+                timeframe,
+                _candles_to_frame(self.candle_buffers[key], ticker, timeframe),
+            )
+        except Exception as exc:
+            logger.debug("Central cache candle sync failed for %s %s: %s", ticker.name, timeframe.name, exc)
         
         # Keep only required number of candles
         if len(self.candle_buffers[key]) > self.lookback_candles:
@@ -594,22 +647,15 @@ class ForecastServer:
         cross = self._get_cross_tickers()
         if not cross:
             return
-        import pandas as _pd
-        from utils.data.cross_ticker_store import CrossTickerDataStore
-        ct_store = CrossTickerDataStore.get_instance()
+        from utils.cache.central_cache import CentralCacheStore
+        ct_store = CentralCacheStore.get_instance()
         for ct_ticker, tf in cross:
-            if ct_store.is_loaded(ct_ticker, tf):
-                continue
             try:
                 # If this ticker/timeframe was already loaded into candle buffers as a
                 # traded instrument, reuse it instead of fetching again.
                 buffered = self.candle_buffers.get((ct_ticker, tf), [])
                 if buffered:
-                    rows = [{
-                        'datetime': c.datetime, 'open': c.open, 'high': c.high,
-                        'low': c.low, 'close': c.close, 'volume': c.volume,
-                    } for c in buffered]
-                    ct_store.set_data(ct_ticker, tf, _pd.DataFrame(rows))
+                    ct_store.set_candles(ct_ticker, tf, _candles_to_frame(buffered, ct_ticker, tf))
                     logger.info(f"Loaded cross-ticker {ct_ticker.name} from traded history ({len(buffered)} candles)")
                     continue
 
@@ -618,38 +664,23 @@ class ForecastServer:
                     ct_ticker.value, tf, count=self.lookback_candles
                 )
                 if candles:
-                    rows = [{
-                        'datetime': c.datetime, 'open': c.open, 'high': c.high,
-                        'low': c.low, 'close': c.close, 'volume': c.volume,
-                    } for c in candles]
-                    ct_store.set_data(ct_ticker, tf, _pd.DataFrame(rows))
+                    ct_store.set_candles(ct_ticker, tf, _candles_to_frame(candles, ct_ticker, tf))
                     logger.info(f"Loaded cross-ticker {ct_ticker.name} ({len(candles)} candles)")
             except Exception as e:
                 logger.warning(f"Failed to load cross-ticker {ct_ticker.name}: {e}")
 
     def _upsert_cross_ticker_candle(self, ticker: Ticker, tf: TimeFrame, candle: Candle) -> None:
         """Insert or replace the latest candle for a cross-ticker in the store."""
-        import pandas as _pd
-        from utils.data.cross_ticker_store import CrossTickerDataStore
+        from utils.cache.central_cache import CentralCacheStore
+        from utils.cache.central_cache_errors import ArtifactMissingError
 
-        ct_store = CrossTickerDataStore.get_instance()
-        row_df = _pd.DataFrame([{
-            'datetime': candle.datetime, 'open': candle.open,
-            'high': candle.high, 'low': candle.low,
-            'close': candle.close, 'volume': candle.volume,
-        }])
-        existing = ct_store._get_df(ticker, tf)
-        if existing is not None:
-            row_index = _pd.to_datetime(row_df['datetime'])
-            if row_index.tz is not None:
-                row_index = row_index.tz_localize(None)
-            row_df = row_df.set_index(row_index).drop(columns=['datetime'])
-            merged = _pd.concat([
-                existing[existing.index != row_df.index[0]], row_df
-            ]).sort_index()
-            ct_store.set_data(ticker, tf, merged)
-        else:
-            ct_store.set_data(ticker, tf, row_df)
+        ct_store = CentralCacheStore.get_instance()
+        try:
+            existing_frame = ct_store.query_candles(ticker, tf).reset_index()
+        except ArtifactMissingError:
+            existing_frame = _candles_to_frame(self.candle_buffers.get((ticker, tf), []), ticker, tf)
+        merged_frame = _upsert_candle_frame(existing_frame, candle, ticker, tf)
+        ct_store.upsert_candles(ticker, tf, merged_frame)
 
     def _update_cross_ticker_latest(
         self,

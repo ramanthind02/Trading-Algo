@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 
 import numpy as np
 
@@ -9,6 +9,8 @@ from utils.core.models import Candle
 
 
 class RSILeftTailStreak(BiasNode):
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod"})
+
     def __init__(
         self,
         ticker: Ticker,

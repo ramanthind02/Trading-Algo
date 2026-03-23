@@ -1,7 +1,8 @@
-from nodes import BiasNode
+from typing import ClassVar, List, Optional
+
+from nodes import BiasNode, LookbackWindow
 from utils.core.models import Candle
 from utils.core.enums import Bias, Ticker, TimeFrame
-from typing import List, Optional
 import numpy as np
 from collections import deque
 import math
@@ -25,6 +26,7 @@ class EWMACNode(BiasNode):
     3. Risk-Adjusted Forecast: Raw EWMAC Forecast / sigma_p
     4. Scaled & Capped Output: Max(Min(Risk-Adjusted Forecast * Scalar, 20), -20)
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"spanFast", "spanSlow"})
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, 
                  spanFast: int = 16, spanSlow: int = 64, 
@@ -76,6 +78,9 @@ class EWMACNode(BiasNode):
         self.front_bad = span_ewsd # Use EWSD span as the minimum required period for a meaningful EWSD estimate
         
         self.candle_count = 0
+
+    def _extra_lookback_contributions(self) -> tuple[LookbackWindow, ...]:
+        return (LookbackWindow(label="ewsd_span", bars=self.span_ewsd),)
     
     def _initialize_ewma(self, price: float):
         """Initializes EWMA values with the first available price."""

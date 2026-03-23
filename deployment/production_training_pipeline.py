@@ -22,6 +22,9 @@ from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.ensemble_utils import save_control_file
 from feature_extraction.ml_manager import MLManager
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
+from utils.cache.central_cache import CentralCacheStore
+from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 
 
 logger = get_logger(__name__)
@@ -125,7 +128,7 @@ class ProductionTrainingPipeline:
             
             # Remove any duplicate dates (keep last)
             data = data[~data.index.duplicated(keep='last')]
-            
+
             # Handle timeframe aggregation if needed
             if timeframe == TimeFrame.W:
                 # Aggregate daily data to weekly (Friday close)
@@ -148,6 +151,40 @@ class ProductionTrainingPipeline:
                 }).dropna()
                 logger.info(f"   Aggregated to monthly data")
             # Daily data (TimeFrame.D) needs no aggregation
+
+            cache = CentralCacheStore.get_instance()
+            cache_payload = data.reset_index().rename(columns={"index": "datetime"}).assign(
+                ticker=ticker.name,
+                timeframe=timeframe,
+            )
+            cache.set_candles(
+                ticker=ticker,
+                timeframe=timeframe,
+                candles=cache_payload,
+            )
+            if timeframe == TimeFrame.D:
+                try:
+                    daily_volatility = compute_daily_ewsd_volatility(cache_payload)
+                    cache.write_artifact(
+                        ArtifactDescriptor(
+                            family="bias",
+                            ticker=ticker,
+                            timeframe=TimeFrame.D,
+                            module_name="ewsd",
+                            params={"long_run_window": 2520},
+                            scope=ArtifactScope.LIVE,
+                            artifact_name="ewsd",
+                        ),
+                        daily_volatility.set_index("datetime")[["ewsd_annual_vol"]],
+                        depends_on=((ticker, TimeFrame.D),),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Could not write EWSD cache for %s %s: %s",
+                        ticker.name,
+                        timeframe.name,
+                        exc,
+                    )
             
             logger.info(f"✅ Loaded {len(data)} periods from {data.index.min().date()} to {data.index.max().date()}")
             logger.info(f"   Date range: {len(data)} {timeframe.name} periods")

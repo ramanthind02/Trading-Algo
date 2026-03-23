@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
@@ -34,7 +34,8 @@ class RSIRegime(BiasNode):
     - ma_period: Period for moving average regime filter (default: 200)
     - regime_filter: Regime filter mode as string - "off", "bullish", or "bearish" (default: "off")
     """
-    
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback", "ma_period"})
+
     def __init__(
         self, 
         ticker: Ticker, 

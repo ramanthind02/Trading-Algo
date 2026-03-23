@@ -10,16 +10,13 @@
 Scheduled candle fetch (per TF)
         │
         ▼
-TFPortfolio.predict (with lookback candles)
+CentralCacheStore.upsert_candles(...)
         │
         ▼
-Cache latest forecast per TF
+Rebalance tick builds PortfolioCacheQuery
         │
         ▼
-Rebalance tick (lowest TF cadence)
-        │
-        ▼
-Merge cached forecasts → GlobalPortfolio weights → position fractions
+GlobalPortfolio.predict_from_cache(query)
         │
         ▼
 PositionSizer → broker execution
@@ -38,28 +35,35 @@ Each timeframe has its own fetch trigger. Between triggers, its forecast is **co
 | Daily     | After daily close | 00:00 EST (futures) or 16:00 EST (equities) |
 | Hourly    | Every hour during RTH | On the hour |
 
-On each trigger, fetch `max_lookback + buffer` candles for that TF, run `TFPortfolio.predict_base_model_vectors_from_candles`, and cache the result.
+On each trigger, fetch and upsert the newly available candles for that TF into `CentralCacheStore`. When a dependent bias artifact is refreshed, cache orchestration performs a stateless cold rebuild using that node's machine-readable warmup window and trims the saved artifact back to the requested output range.
 
 ---
 
 ## Lookback Strategy
 
-Bias nodes are stateful rolling-window calculators. Instead of persisting internal state across sessions (fragile), we re-warm from scratch on each prediction call by passing enough historical candles.
+Bias nodes are stateful rolling-window calculators. Instead of persisting internal state across sessions (fragile), cache rebuilds and stateless prediction paths re-warm from scratch by sizing the candle window from the node metadata.
 
 ```python
 # Determine max lookback across all bias nodes in a TFPortfolio
 max_lookback = max(
-    node.front_bad
+    node.max_lookback()
     for ensemble in tf_portfolio.ensembles
     for base_model in ensemble.base_models.values()
     for node in base_model.bias_nodes  # however nodes are accessed
 )
 
-# Fetch with buffer
-n_candles_to_fetch = int(max_lookback * 1.2)
+# Stateless rebuild window used by cache refresh / latest-row prediction
+n_candles_to_fetch = max(
+    node.cold_rebuild_candle_count()
+    for ensemble in tf_portfolio.ensembles
+    for base_model in ensemble.base_models.values()
+    for node in base_model.bias_nodes
+)
 ```
 
-Only the **last** prediction row matters for live trading. The lookback candles exist solely to warm up the bias nodes.
+`front_bad` is still part of the contract, but only as one lookback contribution. Nodes can also declare rolling-window params explicitly via `lookback_param_names` and fixed or derived windows via `hardcoded_lookbacks` / `_extra_lookback_contributions()`.
+
+Only the **last** prediction row matters for live trading. The prepended candles exist solely to warm up the bias nodes before trimming back to the requested output window.
 
 ### Why not save bias node state?
 
@@ -78,9 +82,6 @@ The lookback approach wins on simplicity. Daily-TF processing 300 candles throug
 # On startup: fit or load fitted GlobalPortfolio
 global_portfolio = load_fitted_global_portfolio()
 
-# Cache for per-TF latest forecasts
-cached_forecasts: Dict[TimeFrame, pd.DataFrame] = {}
-
 # Per-TF fetch schedule
 schedule = {
     TimeFrame.M: CronTrigger(day=1, hour=0),   # monthly
@@ -91,30 +92,17 @@ schedule = {
 def on_tf_candle_close(tf: TimeFrame):
     """Triggered when new candles are available for a timeframe."""
     candles = fetch_candles(tf, n_bars=max_lookback_for[tf])
-    vol_df = fetch_daily_volatility()
-
-    vectors = global_portfolio.tf_portfolios[tf].predict_base_model_vectors_from_candles(
-        candles, vol_df
-    )
-    # Keep only the latest prediction row per ticker
-    cached_forecasts[tf] = (
-        vectors.sort_values("datetime").groupby("ticker", as_index=False).last()
-    )
+    central_cache.upsert_candles(ticker, tf, candles)
 
 def on_rebalance_tick():
     """Triggered at rebalance frequency (e.g., daily or hourly)."""
-    if not cached_forecasts:
-        return
-
-    # Combine cached forecasts using fitted WeightLayer weights
-    # This mirrors what GlobalPortfolio.predict does internally,
-    # but avoids re-running all TFPortfolios from scratch.
-    combined = combine_cached_forecasts(
-        cached_forecasts,
-        weight_layer=global_portfolio.weight_layer,
-        instrument_weights=global_portfolio.instrument_weights,
-        global_idm=global_portfolio.global_idm_,
+    query = PortfolioCacheQuery(
+        tickers=live_tickers,
+        start=window_start,
+        end=window_end,
+        timeframes=active_timeframes,
     )
+    combined = global_portfolio.predict_from_cache(query)
     execute_positions(combined)
 ```
 
@@ -123,7 +111,7 @@ def on_rebalance_tick():
 ## Startup Sequence
 
 1. **Load fitted `GlobalPortfolio`** from persisted state (vault control files + fitted weights).
-2. **Warm all TFs** — run `on_tf_candle_close` for every timeframe to populate `cached_forecasts`.
+2. **Warm cache coverage** — bootstrap the runtime cache once, then run `on_tf_candle_close` for every timeframe to keep central-cache candles current.
 3. **Start the scheduler** — register per-TF triggers and the rebalance tick.
 4. **First rebalance** — combine cached forecasts and send orders.
 
@@ -152,8 +140,8 @@ On restart after a crash, the same startup sequence runs. Because prediction is 
 | State | None (pure function of candles) | None (re-warmed from lookback each call) |
 | Rebalance grid | Built from full date range | Clock-driven (cron/scheduler) |
 
-The prediction logic is **identical** in both paths — the only difference is how candles are sourced and when predict is called.
+The prediction logic is **identical** in both paths. The only difference is how candles are sourced and when predict is called.
 
 ---
 
-**See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[bias_nodes/central_cache_architecture]]
+**See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[Cache/architecture]], [[Cache/user_guide]]

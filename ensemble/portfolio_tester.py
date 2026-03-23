@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from ensemble.ensemble_utils import normalize_ticker_key
+from ensemble.portfolio import PortfolioCacheQuery
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
 
 
@@ -385,6 +386,12 @@ class PortfolioTester:
         self.portfolio.fit_from_candles(candles_df, target_returns)
         
         return self
+
+    def fit_from_cache(self, query: PortfolioCacheQuery) -> 'PortfolioTester':
+        """Fit the underlying portfolio using cache-native inputs."""
+        if hasattr(self.portfolio, "fit_from_cache"):
+            self.portfolio.fit_from_cache(query)
+        return self
     
     def predict(
         self,
@@ -432,6 +439,30 @@ class PortfolioTester:
             self.ensemble_predictions = None
             self.base_model_predictions = None
         
+        return result
+
+    def predict_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+        return_ensemble_predictions: bool = False,
+        return_base_model_predictions: bool = False,
+    ) -> Union[pd.DataFrame, Dict[str, Any]]:
+        """Predict using the cache-native portfolio API."""
+        if not hasattr(self.portfolio, "predict_from_cache"):
+            raise AttributeError("Underlying portfolio does not implement predict_from_cache()")
+        result = self.portfolio.predict_from_cache(
+            query,
+            return_ensemble_predictions=return_ensemble_predictions,
+            return_base_model_predictions=return_base_model_predictions,
+        )
+        if isinstance(result, dict):
+            self.positions_df = result.get('portfolio')
+            self.ensemble_predictions = result.get('ensembles')
+            self.base_model_predictions = result.get('base_models')
+        else:
+            self.positions_df = result
+            self.ensemble_predictions = None
+            self.base_model_predictions = None
         return result
     
     def calculate_strategy_returns(

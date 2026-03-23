@@ -7,7 +7,7 @@ dominant cycle from price data, then applies RSI to the cyclical component.
 Output: Continuous 0-100 (RSI of cyclical component)
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -37,6 +37,8 @@ class CyclicalRSI(BiasNode):
     - long_period: Long SMA period for bandpass (default: 20)
     - rsi_period: RSI calculation period (default: 14)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"shortPeriod", "longPeriod", "rsiPeriod"})
 
     def __init__(
         self,

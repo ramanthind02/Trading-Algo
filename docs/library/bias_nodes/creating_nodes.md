@@ -11,27 +11,30 @@ A **bias node** is a stateful, streaming component that processes one candle at 
 | `params` | All constructor params (except ticker/tf) | `{'lookback': 14}` |
 | `front_bad` | Warmup candles before valid output | `14` |
 
-### Max lookback metadata (planned)
+### Max lookback metadata
 
-> [!warning] Not implemented in code yet
-> Orchestrators (feature extraction, [[multi_timeframe|multi-timeframe portfolio]], live lookback windows) need a **machine-readable way** to compute **`max_lookback`** per node instance so they can size candle fetches and warm-up consistently. The introspection API will be added later; **node authors should follow the contract below** when implementing new nodes.
+Bias nodes now expose a machine-readable warmup contract through the base `BiasNode` API:
+
+- `lookback_param_names: ClassVar[frozenset[str]]`
+- `hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]]`
+- `lookback_contributions() -> tuple[LookbackContribution, ...]`
+- `max_lookback() -> int`
+- `cold_rebuild_candle_count() -> int`
 
 **Goals**
 
 - Callers can ask a node (or its class) for **all bar-count windows** that affect output: constructor params that are lookbacks **and** any **hardcoded** buffer lengths.
 - Values feed **`max_lookback`** aggregation across ensembles and timeframes (see [[multi_timeframe]] — *Lookback & Stateful Bias Nodes*).
 
-**Authoring rules (target design)**
+**Authoring rules**
 
-1. **Constructor params that are rolling windows** — Keys in `params` whose values are integer lookbacks (e.g. `lookback`, `window`, `slow_period`) must be discoverable. Planned shapes include:
-   - A **class-level** set of param names, e.g. `lookback_param_names: ClassVar[frozenset[str]]`, **or**
-   - An instance/class method such as `lookback_contributions() -> Iterable[tuple[str, int]]` returning `(param_name_or_label, bars)` for each contributing window.
+1. **Constructor params that are rolling windows** — Keys in `params` whose values are integer lookbacks (e.g. `lookback`, `window`, `slow_period`) must be listed in `lookback_param_names`.
 
-2. **Hardcoded / implicit windows** — Literally sized buffers or fixed secondary series lengths (not passed through `params`) must appear in the same registry, e.g. `hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]]` mapping a **short label** → **bar count** (e.g. `("internal_smoothing", 5)`).
+2. **Hardcoded / implicit windows** — Literally sized buffers or fixed secondary series lengths (not passed through `params`) must be listed in `hardcoded_lookbacks`, or returned dynamically from `_extra_lookback_contributions()` when the value depends on runtime configuration.
 
-3. **Relationship to `front_bad`** — Typically `max_lookback == max(all declared lookbacks, hardcoded lookbacks, front_bad)`, but some nodes may document an exception (e.g. multi-phase warmup). Prefer **`front_bad` ≥ longest effective window** unless there is a deliberate, documented reason.
+3. **Relationship to `front_bad`** — `front_bad` is included automatically in `lookback_contributions()`. In the common case `max_lookback == max(all declared lookbacks, hardcoded lookbacks, front_bad)`, but wrappers may legitimately expose a larger effective warmup than `front_bad` if they need additive state from a wrapped node.
 
-4. **Call sites** — Once implemented, shared tooling will use this to align with cache policy (“always populate on miss”), live fetches, and backtest replication.
+4. **Cold rebuild invariant** — Cache rebuilds are stateless. Cache orchestration now instantiates a fresh node, feeds `cold_rebuild_candle_count()` candles ending at the requested boundary, then trims the artifact back to the requested output window.
 
 ## Naming Convention
 
@@ -83,6 +86,8 @@ from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
 
 class MyNode(BiasNode):
+    lookback_param_names = frozenset({"lookback"})
+
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 14):
         super().__init__(ticker, tf)
         self.lookback = lookback
@@ -90,7 +95,6 @@ class MyNode(BiasNode):
         self.output_features = ['signal']
         self.params = {'lookback': lookback}
         self.front_bad = lookback
-        # Planned: declare lookback_param_names / hardcoded_lookbacks for max_lookback introspection (see above)
         # state
         self.n_prices = 0
         self.buffer = np.zeros(lookback, dtype=np.float64)
@@ -127,7 +131,7 @@ The primary streaming API is still **`add_candle(candle)`** for one `(ticker, ti
 
 ### Multi-ticker nodes (supported today)
 
-Use [utils/data/cross_ticker_store.py](../../../utils/data/cross_ticker_store.py) — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**.
+Use [utils/cache/cross_ticker_store.py](../../../utils/cache/cross_ticker_store.py) — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**. The older `utils/data/cross_ticker_store.py` path remains only as a compatibility shim.
 
 #### Params contract (required)
 
@@ -140,7 +144,7 @@ Use [utils/data/cross_ticker_store.py](../../../utils/data/cross_ticker_store.py
 2. In `_compute_candle`, fetch the secondary ticker candle by **exact** datetime alignment:
 
 ```python
-from utils.data.cross_ticker_store import CrossTickerDataStore
+from utils.cache.cross_ticker_store import CrossTickerDataStore
 
 self._store = CrossTickerDataStore.get_instance()
 other = self._store.get_candle(Ticker.NQ, candle.tf, candle.datetime)
@@ -211,7 +215,7 @@ flowchart LR
 - [ ] Returning a scalar instead of a `List` from `_compute_candle`
 - [ ] Raising an exception in `_compute_candle` instead of returning a default
 - [ ] Importing directly from `cython_nodes` instead of `fast_nodes`
-- [ ] (When max-lookback metadata exists) Missing or incomplete lookback / hardcoded window registration — callers cannot size fetches correctly
+- [ ] Missing or incomplete lookback / hardcoded window registration — callers cannot size cold rebuilds correctly
 - [ ] `front_bad` shorter than the true longest rolling window (silent wrong features)
 - [ ] (Multi-timeframe, when implemented) Using exact timestamp match instead of causal as-of lookup — risks lookahead or spurious nulls
 
@@ -222,4 +226,4 @@ flowchart LR
 - [[eda]] — parameter sensitivity analysis for node params
 - [[multi_timeframe]] — portfolio orchestration and lookback across timeframes
 - [[live_multi_timeframe]] — live fetch schedule and rebalance loop
-- [[bias_nodes/central_cache_architecture]] — planned central candle/bias cache and datetime-driven portfolio API
+- [[Cache/architecture]] — central candle/bias cache design and datetime-driven portfolio API

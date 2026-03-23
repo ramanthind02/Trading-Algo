@@ -26,6 +26,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from nodes import BiasNode
+from utils.cache.central_cache import CentralCacheStore
+from utils.cache.central_cache_errors import ArtifactMissingError
+from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope, LookupMode
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.models import Candle
 from utils.data.cross_ticker_store import (
@@ -135,6 +138,11 @@ class TestCrossTickerDataStore:
         store = CrossTickerDataStore.get_instance()
         assert store.get_candle(Ticker.GC, TimeFrame.D, datetime(2020, 1, 1)) is None
 
+    def test_query_candle_raises_for_unloaded_ticker(self) -> None:
+        store = CrossTickerDataStore.get_instance()
+        with pytest.raises(ArtifactMissingError, match="Candles are not loaded"):
+            store.query_candle(Ticker.GC, TimeFrame.D, datetime(2020, 1, 1))
+
     def test_is_loaded(self) -> None:
         store = CrossTickerDataStore.get_instance()
         assert store.is_loaded(Ticker.NQ, TimeFrame.D) is False
@@ -158,6 +166,39 @@ class TestCrossTickerDataStore:
         assert store.is_loaded(Ticker.NQ, TimeFrame.D) is False
         assert store.loaded_tickers() == []
 
+    def test_clear_does_not_remove_cached_artifacts(self, tmp_path: Path) -> None:
+        CentralCacheStore.reset()
+        CentralCacheStore._instance = CentralCacheStore(cache_dir=tmp_path)  # type: ignore[attr-defined]
+        store = CrossTickerDataStore.get_instance()
+        cache = CentralCacheStore.get_instance()
+        descriptor = ArtifactDescriptor(
+            family="signals",
+            ticker=Ticker.NQ,
+            timeframe=TimeFrame.D,
+            module_name="spread",
+            params={"lookback": 5},
+            scope=ArtifactScope.LIVE,
+            artifact_name="signal",
+        )
+        cache.write_artifact(descriptor, _make_ohlcv_df(n_rows=5))
+        store.set_data(Ticker.NQ, TimeFrame.D, _make_ohlcv_df(n_rows=5))
+
+        store.clear()
+
+        assert store.is_loaded(Ticker.NQ, TimeFrame.D) is False
+        assert cache.describe_artifact(descriptor) is not None
+        CentralCacheStore.reset()
+
+    def test_store_uses_latest_central_cache_instance(self, tmp_path: Path) -> None:
+        store = CrossTickerDataStore.get_instance()
+        CentralCacheStore.reset()
+        CentralCacheStore._instance = CentralCacheStore(cache_dir=tmp_path)  # type: ignore[attr-defined]
+
+        store.set_data(Ticker.ES, TimeFrame.D, _make_ohlcv_df(n_rows=3))
+
+        assert CentralCacheStore.get_instance().is_candle_loaded(Ticker.ES, TimeFrame.D) is True
+        CentralCacheStore.reset()
+
     def test_set_data_without_datetime_index(self) -> None:
         """DataFrame with 'datetime' column (not index) is auto-indexed."""
         store = CrossTickerDataStore.get_instance()
@@ -167,21 +208,24 @@ class TestCrossTickerDataStore:
         assert store.get_candle(Ticker.NQ, TimeFrame.D, datetime(2020, 1, 1)) is not None
 
     def test_put_candle_adds_to_empty_store(self) -> None:
-        """Lazy loading: get_candle auto-loads from parquet when not pre-loaded."""
+        """Compatibility wrapper returns None on unloaded misses."""
         store = CrossTickerDataStore.get_instance()
-        # Don't explicitly load — get_candle should auto-load from parquet
         candle = store.get_candle(Ticker.ES, TimeFrame.D, datetime(2020, 1, 2))
+        assert candle is None
+        assert store.is_loaded(Ticker.ES, TimeFrame.D) is False
+
+    def test_query_candle_as_of_returns_previous_bar(self) -> None:
+        store = CrossTickerDataStore.get_instance()
+        store.set_data(Ticker.NQ, TimeFrame.D, _make_ohlcv_df(n_rows=5))
+        candle = store.query_candle(Ticker.NQ, TimeFrame.D, datetime(2020, 1, 1, 12), lookup_mode=LookupMode.AS_OF)
         assert candle is not None
-        assert candle.ticker == Ticker.ES
-        assert candle.close > 0
+        assert candle.close == 100.0
 
     def test_put_candle_appends_to_existing(self) -> None:
-        """Auto-load marks the ticker as loaded so subsequent calls don't re-load."""
+        """Explicit loads are still available for compatibility callers."""
         store = CrossTickerDataStore.get_instance()
-        # First call triggers auto-load
-        store.get_candle(Ticker.ES, TimeFrame.D, datetime(2020, 1, 2))
+        store.load(Ticker.ES, TimeFrame.D)
         assert store.is_loaded(Ticker.ES, TimeFrame.D)
-        # Second call uses cached data
         candle2 = store.get_candle(Ticker.ES, TimeFrame.D, datetime(2020, 1, 3))
         assert candle2 is not None
 

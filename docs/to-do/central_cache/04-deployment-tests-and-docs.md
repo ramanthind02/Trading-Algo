@@ -32,7 +32,8 @@ Move live and training orchestration to the central cache model, then cut verifi
 
 ### Docs
 
-- `docs/library/bias_nodes/central_cache_architecture.md`
+- `docs/library/Cache/architecture.md`
+- `docs/library/Cache/user_guide.md`
 - `docs/library/Ensemble/portfolio.md`
 - `docs/library/Ensemble/multi_timeframe.md`
 - `docs/library/Deployment/live_multi_timeframe.md`

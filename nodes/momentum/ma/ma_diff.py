@@ -1,7 +1,7 @@
 from nodes import BiasNode
 from utils.core.models import Candle
 from utils.core.enums import Bias, Ticker, TimeFrame
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 import numpy as np
 from collections import deque
 
@@ -23,6 +23,7 @@ class MADiffNode(BiasNode):
     
     This centers the output around 0 with typical range of [-50, 50].
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback", "atr_length"})
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 20, atr_length: int = 252, compression: float = 1.0):
         """
@@ -46,7 +47,7 @@ class MADiffNode(BiasNode):
         # Standardized naming metadata
         self.module_name = 'ma_diff'
         self.output_features = ['signal']
-        self.params = {'lookback': lookback}
+        self.params = {'lookback': lookback, 'atr_length': atr_length}
         
         # Storage for historical data
         self.log_closes = deque(maxlen=lookback)

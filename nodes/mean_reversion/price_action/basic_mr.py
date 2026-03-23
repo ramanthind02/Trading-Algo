@@ -6,7 +6,7 @@ output in [-max_positions, max_positions] (or mode-clamped). No SL/TP/orders
 inside the node.
 """
 
-from typing import List
+from typing import ClassVar, List
 
 from nodes import BiasNode
 from nodes.basic_breakout import BasicBreakout
@@ -21,6 +21,8 @@ class BasicMR(BiasNode):
     output in [-max_positions, max_positions] (or mode-clamped). Supports same
     position mode and max_positions.
     """
+
+    hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]] = (("warmup_bars", 2),)
 
     def __init__(
         self,

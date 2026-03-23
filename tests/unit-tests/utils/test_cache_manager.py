@@ -11,12 +11,14 @@ import os
 import tempfile
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from utils.cache.cache_manager import CacheManager, get_auxiliary_specs_for_timeframe
+from utils.cache.cache_paths import default_source_candle_dir
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -83,6 +85,29 @@ class TestCacheManagerInit:
             if os.path.exists(cache_dir):
                 shutil.rmtree(cache_dir)
 
+    def test_init_uses_runtime_cache_and_read_only_source_defaults(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        expected_cache_dir = tmp_path / ".cache" / "trading_algo" / "central_cache" / "artifacts" / "live"
+        expected_candle_dir = tmp_path / "data" / "ohlc_data"
+        monkeypatch.setattr(
+            "utils.cache.cache_manager.default_live_artifact_cache_dir",
+            lambda: expected_cache_dir,
+        )
+        monkeypatch.setattr(
+            "utils.cache.cache_manager.default_source_candle_dir",
+            lambda: expected_candle_dir,
+        )
+
+        manager = CacheManager()
+
+        assert Path(manager.cache_dir) == expected_cache_dir
+        assert Path(manager.candle_dir) == expected_candle_dir
+        assert Path(manager.cache_dir) != default_source_candle_dir()
+        assert Path(manager.cache_dir).is_relative_to(tmp_path)
+
 
 class TestPopulateSingleCache:
     """Tests for single cache population."""
@@ -121,6 +146,22 @@ class TestPopulateSingleCache:
         assert result['status'] == 'success'
         assert result['row_count'] > 0
 
+    def test_populate_single_cache_ewsd_preserves_requested_descriptor(self, cache_manager):
+        """Auxiliary EWSD nodes should keep a valid module/params descriptor."""
+        result = cache_manager._populate_single_cache(
+            module_name='ewsd',
+            params={'long_run_window': 2520},
+            ticker=Ticker.ES,
+            tf=TimeFrame.D,
+            start_date=datetime(2020, 1, 1),
+            end_date=datetime(2020, 6, 30),
+        )
+
+        assert result['status'] == 'success'
+        assert result['module_name'] == 'ewsd'
+        assert result['params'] == {'long_run_window': 2520}
+        assert result['row_count'] > 0
+
 
 class TestPopulateCache:
     """Tests for bulk cache population."""
@@ -135,8 +176,8 @@ class TestPopulateCache:
     def test_populate_cache_single_spec(self, cache_manager):
         """Test populating cache for single spec.
 
-        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd)
-        for volatility-scaled targets, so 1 user spec + 2 aux = 3 total.
+        Note: populate_cache auto-adds the required EWSD auxiliary spec,
+        so 1 user spec + 1 aux = 2 total.
         """
         specs = [{
             'module_name': 'rsi',
@@ -159,8 +200,8 @@ class TestPopulateCache:
     def test_populate_cache_multiple_tickers(self, cache_manager):
         """Test populating cache for multiple tickers.
 
-        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd).
-        1 user spec + 2 aux = 3 specs, each for 2 tickers = 6 total.
+        Note: populate_cache auto-adds the required EWSD auxiliary spec.
+        1 user spec + 1 aux = 2 specs, each for 2 tickers = 4 total.
         """
         specs = [{
             'module_name': 'momentum',
@@ -182,8 +223,8 @@ class TestPopulateCache:
     def test_populate_cache_multiple_specs(self, cache_manager):
         """Test populating cache for multiple specs.
 
-        Note: populate_cache auto-adds required auxiliary specs (atr, ewsd).
-        2 user specs + 2 aux = 4 specs, each for 1 ticker = 4 total.
+        Note: populate_cache auto-adds the required EWSD auxiliary spec.
+        2 user specs + 1 aux = 3 specs, each for 1 ticker = 3 total.
         """
         specs = [
             {'module_name': 'rsi', 'params': {'lookback': 14}, 'timeframes': [TimeFrame.D]},
@@ -261,6 +302,44 @@ class TestPopulateCache:
         )
 
         assert result['skipped'] == 2
+
+    def test_populate_cache_refreshes_stale_artifacts_even_without_overwrite(self, cache_manager):
+        """Stale central-cache artifacts must be rebuilt instead of skipped."""
+        specs = [{
+            'module_name': 'rsi',
+            'params': {'lookback': 14},
+            'timeframes': [TimeFrame.D]
+        }]
+
+        cache_manager.populate_cache(
+            bias_node_specs=specs,
+            tickers=[Ticker.ES],
+            start_date=datetime(2020, 1, 1),
+            end_date=datetime(2020, 12, 31),
+            overwrite_existing=True,
+            show_progress=False,
+        )
+
+        store = cache_manager._central_cache_store()
+        candles_df = cache_manager.load_source_candles(
+            Ticker.ES,
+            TimeFrame.D,
+            start_date=datetime(2020, 1, 1),
+            end_date=datetime(2020, 12, 31),
+        )
+        store.set_candles(Ticker.ES, TimeFrame.D, candles_df)
+
+        result = cache_manager.populate_cache(
+            bias_node_specs=specs,
+            tickers=[Ticker.ES],
+            start_date=datetime(2020, 1, 1),
+            end_date=datetime(2020, 12, 31),
+            overwrite_existing=False,
+            show_progress=False,
+        )
+
+        assert result['success'] == 2
+        assert result['skipped'] == 0
 
     def test_populate_cache_uses_timeframe_scaled_aux_specs(self, cache_manager, monkeypatch):
         """EWSD auxiliary params are fixed to daily settings regardless timeframe arg."""

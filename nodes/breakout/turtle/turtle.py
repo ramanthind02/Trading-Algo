@@ -1,5 +1,5 @@
 import collections
-from typing import List
+from typing import ClassVar, List
 
 from nodes import BiasNode
 from utils.core.enums import TimeFrame, Ticker
@@ -20,6 +20,8 @@ class TurtleTrading(BiasNode):
 
     Classic rules: entry on breakout, exit on stop channel. Re-entry allowed on any new breakout.
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"entry_lookback", "stop_lookback"})
     def __init__(
         self,
         ticker: Ticker,

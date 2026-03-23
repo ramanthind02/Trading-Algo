@@ -39,11 +39,12 @@ def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path)
     ]
 
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.populate_cache_if_needed", lambda _cfg: None
+        "feature_research.pipelines._shared.populate_cache_if_needed",
+        lambda _cfg, **_kwargs: None,
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.get_tickers_with_coverage_for_config",
-        lambda _cfg: _cfg.tickers,
+        lambda _cfg, **_kwargs: _cfg.tickers,
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.resolve_walkforward_output_dir",
@@ -152,15 +153,15 @@ def test_oos_pipeline_uses_available_data_when_no_full_coverage(
 
     monkeypatch.setattr(
         "feature_research.pipelines._shared.populate_cache_if_needed",
-        lambda _cfg: None,
+        lambda _cfg, **_kwargs: None,
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.get_tickers_with_coverage_for_config",
-        lambda _cfg: [],
+        lambda _cfg, **_kwargs: [],
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.get_effective_range_and_tickers",
-        lambda _cfg: (narrowed_start, narrowed_end, [Ticker.TLT]),
+        lambda _cfg, **_kwargs: (narrowed_start, narrowed_end, [Ticker.TLT]),
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.resolve_walkforward_output_dir",

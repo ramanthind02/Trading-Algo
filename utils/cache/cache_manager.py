@@ -28,14 +28,19 @@ Date: 2025-01-07
 
 import argparse
 import logging
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
 from utils.cache.bias_node_cache import BiasNodeCache
+from utils.cache.cache_paths import (
+    default_live_artifact_cache_dir,
+    default_source_candle_dir,
+)
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.models import Candle
 
@@ -75,10 +80,11 @@ class CacheManager:
     Parameters
     ----------
     cache_dir : str, optional
-        Root cache directory. Defaults to 'cache' in project root.
+        Root cache directory. Defaults to the runtime cache tree under
+        ``.cache/trading_algo/central_cache/artifacts/live``.
     candle_dir : str, optional
-        Directory containing candle parquet files.
-        Defaults to 'candles' in project root.
+        Directory containing source candle parquet files.
+        Defaults to repository-backed ``data/ohlc_data``.
 
     Examples
     --------
@@ -100,19 +106,77 @@ class CacheManager:
         cache_dir: Optional[str] = None,
         candle_dir: Optional[str] = None
     ):
-        # Set default directories
-        project_root = Path(__file__).parent.parent
-
         if cache_dir is None:
-            cache_dir = str(project_root / 'cache')
+            cache_dir = str(default_live_artifact_cache_dir())
         if candle_dir is None:
-            candle_dir = str(project_root / 'candles')
+            candle_dir = str(default_source_candle_dir())
 
         self.cache_dir = cache_dir
         self.candle_dir = candle_dir
 
         # Ensure directories exist
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+
+    def _central_cache_root(self) -> Path:
+        cache_path = Path(self.cache_dir)
+        if cache_path.name == "live" and cache_path.parent.name == "artifacts":
+            return cache_path.parents[1]
+        return cache_path
+
+    def _central_cache_store(self) -> "CentralCacheStore":
+        from utils.cache.central_cache import CentralCacheStore
+
+        root = self._central_cache_root()
+        store = CentralCacheStore._instance  # type: ignore[attr-defined]
+        if store is None or store.cache_dir != root:
+            store = CentralCacheStore(cache_dir=str(root))
+            CentralCacheStore._instance = store  # type: ignore[attr-defined]
+        live_artifact_dir = Path(self.cache_dir)
+        if store.live_artifact_cache_dir != live_artifact_dir:
+            store.live_artifact_cache_dir = live_artifact_dir
+            store.live_artifact_cache_dir.mkdir(parents=True, exist_ok=True)
+        return store
+
+    def find_source_candle_path(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+    ) -> Optional[Path]:
+        """Return the discovered repository-backed candle file for a ticker/timeframe."""
+        return self._find_candle_path(ticker, tf)
+
+    def load_source_candles(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> pd.DataFrame:
+        """Public wrapper around source-candle loading for cache ingest paths."""
+        return self._load_candles(ticker, tf, start_date=start_date, end_date=end_date)
+
+    def _candidate_candle_paths(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+    ) -> tuple[Path, ...]:
+        ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
+        tf_str = tf.name if hasattr(tf, "name") else str(tf)
+        candle_root = Path(self.candle_dir)
+        return (
+            candle_root / f"{ticker_str}_{tf_str}.parquet",
+            candle_root / tf_str / f"{ticker_str}.parquet",
+            candle_root / ticker_str / f"{tf_str}.parquet",
+            candle_root / f"{ticker_str}.parquet",
+            candle_root / ticker_str / f"{tf_str}_{ticker_str}.parquet",
+        )
+
+    def _find_candle_path(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+    ) -> Optional[Path]:
+        return next((path for path in self._candidate_candle_paths(ticker, tf) if path.exists()), None)
 
     def _load_candles(
         self,
@@ -147,22 +211,8 @@ class CacheManager:
         """
         ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
         tf_str = tf.name if hasattr(tf, 'name') else str(tf)
-
-        # Try different file naming conventions
-        possible_paths = [
-            Path(self.candle_dir) / f"{ticker_str}_{tf_str}.parquet",
-            Path(self.candle_dir) / tf_str / f"{ticker_str}.parquet",
-            Path(self.candle_dir) / ticker_str / f"{tf_str}.parquet",
-            Path(self.candle_dir) / f"{ticker_str}.parquet",
-            # Also check data/ohlc_data format: {ticker}/{tf}_{ticker}.parquet
-            Path(self.candle_dir) / ticker_str / f"{tf_str}_{ticker_str}.parquet",
-        ]
-
-        candle_path = None
-        for path in possible_paths:
-            if path.exists():
-                candle_path = path
-                break
+        possible_paths = self._candidate_candle_paths(ticker, tf)
+        candle_path = self._find_candle_path(ticker, tf)
 
         if candle_path is None:
             raise FileNotFoundError(
@@ -216,16 +266,7 @@ class CacheManager:
         all_maxes: List[datetime] = []
         for ticker in tickers:
             for tf in timeframes:
-                ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
-                tf_str = tf.name if hasattr(tf, "name") else str(tf)
-                possible_paths = [
-                    Path(self.candle_dir) / f"{ticker_str}_{tf_str}.parquet",
-                    Path(self.candle_dir) / tf_str / f"{ticker_str}.parquet",
-                    Path(self.candle_dir) / ticker_str / f"{tf_str}.parquet",
-                    Path(self.candle_dir) / f"{ticker_str}.parquet",
-                    Path(self.candle_dir) / ticker_str / f"{tf_str}_{ticker_str}.parquet",
-                ]
-                candle_path = next((p for p in possible_paths if p.exists()), None)
+                candle_path = self._find_candle_path(ticker, tf)
                 if candle_path is None:
                     continue
                 try:
@@ -261,16 +302,7 @@ class CacheManager:
             ticker_mins: List[datetime] = []
             ticker_maxes: List[datetime] = []
             for tf in timeframes:
-                ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
-                tf_str = tf.name if hasattr(tf, "name") else str(tf)
-                possible_paths = [
-                    Path(self.candle_dir) / f"{ticker_str}_{tf_str}.parquet",
-                    Path(self.candle_dir) / tf_str / f"{ticker_str}.parquet",
-                    Path(self.candle_dir) / ticker_str / f"{tf_str}.parquet",
-                    Path(self.candle_dir) / f"{ticker_str}.parquet",
-                    Path(self.candle_dir) / ticker_str / f"{tf_str}_{ticker_str}.parquet",
-                ]
-                candle_path = next((p for p in possible_paths if p.exists()), None)
+                candle_path = self._find_candle_path(ticker, tf)
                 if candle_path is None:
                     continue
                 try:
@@ -290,6 +322,69 @@ class CacheManager:
             if ticker_mins and ticker_maxes:
                 result[ticker] = (min(ticker_mins), max(ticker_maxes))
         return result
+
+    def bootstrap_source_candles(
+        self,
+        tickers: Sequence[Ticker] | None = None,
+        timeframes: Sequence[TimeFrame] | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        reset_existing: bool = False,
+    ) -> dict[str, Any]:
+        """Load repository-backed candles into the runtime cache explicitly."""
+        requested_tickers = list(tickers) if tickers is not None else list(Ticker)
+        requested_timeframes = (
+            list(timeframes)
+            if timeframes is not None
+            else [TimeFrame.D, TimeFrame.W, TimeFrame.M]
+        )
+
+        store = self._central_cache_store()
+        if reset_existing:
+            store.clear_candles(purge_persisted=True)
+
+        details: list[dict[str, Any]] = []
+        success = 0
+        failed = 0
+
+        for ticker in requested_tickers:
+            for timeframe in requested_timeframes:
+                try:
+                    candles_df = self.load_source_candles(
+                        ticker,
+                        timeframe,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    if candles_df.empty:
+                        raise ValueError("No source candles found in requested range")
+                    store.set_candles(ticker, timeframe, candles_df)
+                    details.append(
+                        {
+                            "ticker": ticker.name,
+                            "tf": timeframe.name,
+                            "status": "success",
+                            "rows": len(candles_df),
+                        }
+                    )
+                    success += 1
+                except Exception as exc:
+                    details.append(
+                        {
+                            "ticker": ticker.name,
+                            "tf": timeframe.name,
+                            "status": "failed",
+                            "message": str(exc),
+                        }
+                    )
+                    failed += 1
+
+        return {
+            "total": len(details),
+            "success": success,
+            "failed": failed,
+            "details": details,
+        }
 
     def _compute_bias_node_output(
         self,
@@ -320,10 +415,10 @@ class CacheManager:
         pd.DataFrame
             DataFrame with datetime index and output columns
         """
-        from utils.core.helpers import create_bias_node
+        from utils.core.helpers import create_fresh_bias_node
 
         # Create bias node instance
-        bias_node = create_bias_node(module_name, ticker, tf, params)
+        bias_node = create_fresh_bias_node(module_name, ticker, tf, params)
 
         # Stream candles and collect output
         datetimes = []
@@ -454,7 +549,9 @@ class CacheManager:
         Dict[str, Any]
             Result dict with status and details
         """
-        from utils.core.helpers import create_bias_node
+        from utils.cache.central_cache import CentralCacheStore
+        from utils.cache.central_cache_models import ArtifactLifecycleState
+        from utils.core.helpers import create_fresh_bias_node
 
         ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
         tf_str = tf.name if hasattr(tf, 'name') else str(tf)
@@ -472,9 +569,13 @@ class CacheManager:
         try:
             # Create bias node to get its actual module_name and params
             # (bias nodes may normalize/rename these)
-            bias_node = create_bias_node(module_name, ticker, tf, params)
-            actual_module_name = getattr(bias_node, 'module_name', module_name)
-            actual_params = getattr(bias_node, 'params', params)
+            bias_node = create_fresh_bias_node(module_name, ticker, tf, params)
+            actual_module_name = getattr(bias_node, 'module_name', None) or module_name
+            normalized_params = getattr(bias_node, 'params', None)
+            actual_params = dict(normalized_params) if normalized_params else dict(params)
+            if module_name == "ewsd":
+                actual_module_name = "ewsd"
+                actual_params = dict(params)
 
             cache = BiasNodeCache(
                 module_name=actual_module_name,
@@ -488,30 +589,69 @@ class CacheManager:
             result['module_name'] = actual_module_name
             result['params'] = actual_params
             result['cache_path'] = cache.cache_path
+            cold_rebuild_candle_count = self._cold_rebuild_candle_count_for_spec(
+                actual_module_name,
+                actual_params,
+                ticker,
+                tf,
+            )
 
-            # Check if cache exists and skip if not overwriting
-            if cache.exists() and not overwrite:
+            descriptor = self._artifact_descriptor(actual_module_name, actual_params, ticker, tf)
+            store = self._central_cache_store()
+            record = store.describe_artifact(descriptor)
+
+            # Skip only fresh, in-range artifacts. Stale or partial artifacts
+            # must be rebuilt even when overwrite=False.
+            if (
+                cache.exists()
+                and not overwrite
+                and record is not None
+                and record.lifecycle_state is ArtifactLifecycleState.FRESH
+                and self._coverage_spans_window(
+                    record.coverage.start,
+                    record.coverage.end,
+                    start_date,
+                    end_date,
+                )
+            ):
                 result['status'] = 'skipped'
-                result['message'] = 'Cache exists and overwrite=False'
+                result['message'] = 'Cache exists, artifact is fresh, and overwrite=False'
                 return result
 
             # Load candles
-            candles_df = self._load_candles(ticker, tf, start_date, end_date)
+            candles_df = self._load_candles(ticker, tf, None, end_date)
 
             if candles_df.empty:
                 result['status'] = 'failed'
                 result['message'] = 'No candles found for date range'
                 return result
 
-            result['candle_count'] = len(candles_df)
+            candles_df = candles_df.set_index("datetime").sort_index()
+            rebuild_df = self._select_cold_rebuild_candles(
+                candles_df,
+                requested_start=start_date,
+                cold_rebuild_candle_count=cold_rebuild_candle_count,
+            ).reset_index()
+
+            result['candle_count'] = len(rebuild_df)
 
             # Compute bias node output (reuse the bias node we created)
             output_df = self._compute_bias_node_output_from_node(
-                bias_node, candles_df
+                bias_node, rebuild_df
             )
+            output_df = output_df.loc[
+                (output_df.index >= pd.Timestamp(start_date))
+                & (output_df.index <= pd.Timestamp(end_date))
+            ].copy()
 
-            # Save to cache
-            cache.save(output_df)
+            # Save through the central cache so parquet payload and metadata stay in sync.
+            depends_on = self._depends_on_for_spec(ticker, tf, actual_params)
+            store.write_artifact(
+                descriptor,
+                output_df,
+                depends_on=depends_on,
+                source_revision=self._resolved_source_revision(descriptor, depends_on),
+            )
 
             result['status'] = 'success'
             result['row_count'] = len(output_df)
@@ -813,6 +953,618 @@ class CacheManager:
             overwrite_existing=overwrite_existing,
             show_progress=show_progress
         )
+
+    def _artifact_descriptor(
+        self,
+        module_name: str,
+        params: Dict[str, Any],
+        ticker: Ticker,
+        tf: TimeFrame,
+    ) -> "ArtifactDescriptor":
+        from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
+        from utils.core.helpers import create_bias_node
+
+        resolved_module_name = module_name
+        resolved_params = dict(params)
+        if module_name and module_name != "ewsd":
+            bias_node = create_bias_node(module_name, ticker, tf, params)
+            resolved_module_name = getattr(bias_node, "module_name", None) or module_name
+            normalized_params = getattr(bias_node, "params", None)
+            resolved_params = dict(normalized_params) if normalized_params else dict(params)
+
+        return ArtifactDescriptor(
+            family="bias",
+            ticker=ticker,
+            timeframe=tf,
+            module_name=resolved_module_name,
+            params=resolved_params,
+            scope=ArtifactScope.LIVE,
+            artifact_name=resolved_module_name,
+        )
+
+    def _coverage_spans_window(
+        self,
+        coverage_start: Optional[datetime],
+        coverage_end: Optional[datetime],
+        start_date: datetime,
+        end_date: datetime,
+    ) -> bool:
+        if coverage_start is None or coverage_end is None:
+            return False
+        start_ts = pd.Timestamp(start_date)
+        end_ts = pd.Timestamp(end_date)
+        return pd.Timestamp(coverage_start) <= start_ts and pd.Timestamp(coverage_end) >= end_ts
+
+    def _refresh_status_for_descriptor(
+        self,
+        descriptor: "ArtifactDescriptor",
+        start_date: datetime,
+        end_date: datetime,
+    ) -> tuple[bool, str]:
+        from utils.cache.central_cache import CentralCacheStore
+        from utils.cache.central_cache_models import ArtifactLifecycleState
+
+        store = self._central_cache_store()
+        record = store.describe_artifact(descriptor)
+        if record is None:
+            return True, "missing"
+        if record.lifecycle_state is not ArtifactLifecycleState.FRESH:
+            return True, record.lifecycle_state.value.lower()
+        if not self._coverage_spans_window(
+            record.coverage.start,
+            record.coverage.end,
+            start_date,
+            end_date,
+        ):
+            return True, "out_of_range"
+        return False, "fresh"
+
+    def _boundary_gap_tolerance(self, timeframe: TimeFrame) -> pd.Timedelta:
+        """Allow small boundary gaps caused by market calendars and coarse bar closes."""
+        if timeframe in {TimeFrame.H1, TimeFrame.H4}:
+            return pd.Timedelta(days=1)
+        if timeframe is TimeFrame.D:
+            return pd.Timedelta(days=3)
+        if timeframe is TimeFrame.W:
+            return pd.Timedelta(days=8)
+        if timeframe is TimeFrame.M:
+            return pd.Timedelta(days=31)
+        return pd.Timedelta(0)
+
+    def _coverage_supports_requested_boundary(
+        self,
+        timeframe: TimeFrame,
+        requested_at: datetime,
+        coverage_at: datetime,
+        *,
+        boundary: str,
+    ) -> bool:
+        """Return whether a coverage edge can satisfy a requested boundary."""
+        requested_ts = pd.Timestamp(requested_at)
+        coverage_ts = pd.Timestamp(coverage_at)
+        tolerance = self._boundary_gap_tolerance(timeframe)
+
+        if boundary == "start":
+            if coverage_ts <= requested_ts:
+                return True
+            return coverage_ts - requested_ts <= tolerance
+        if boundary == "end":
+            if coverage_ts >= requested_ts:
+                return True
+            return requested_ts - coverage_ts <= tolerance
+        raise ValueError(f"Unknown boundary '{boundary}'")
+
+    def _require_exact_window_for_dependencies(
+        self,
+        depends_on: Sequence[tuple[Ticker, TimeFrame]],
+        start_date: datetime,
+        end_date: datetime,
+    ) -> tuple[datetime, datetime]:
+        from utils.cache.central_cache import CentralCacheStore
+        from utils.cache.central_cache_errors import ArtifactMissingError, CacheCoverageError
+
+        store = self._central_cache_store()
+        if not depends_on:
+            return start_date, end_date
+
+        anchor_ticker, anchor_tf = depends_on[0]
+        anchor_record = store.describe_candle(anchor_ticker, anchor_tf)
+        if (
+            anchor_record is None
+            or anchor_record.coverage.start is None
+            or anchor_record.coverage.end is None
+        ):
+            raise ArtifactMissingError(
+                module_name="candles",
+                ticker=anchor_ticker,
+                timeframe=anchor_tf,
+                reason="Dependency candles are not loaded",
+            )
+
+        if not self._coverage_supports_requested_boundary(
+            anchor_tf,
+            start_date,
+            anchor_record.coverage.start,
+            boundary="start",
+        ) or not self._coverage_supports_requested_boundary(
+            anchor_tf,
+            end_date,
+            anchor_record.coverage.end,
+            boundary="end",
+        ):
+            raise CacheCoverageError(
+                module_name="candles",
+                ticker=anchor_ticker,
+                timeframe=anchor_tf,
+                start=start_date,
+                end=end_date,
+                coverage_start=anchor_record.coverage.start,
+                coverage_end=anchor_record.coverage.end,
+            )
+
+        effective_start = max(pd.Timestamp(start_date), pd.Timestamp(anchor_record.coverage.start))
+        effective_end = min(pd.Timestamp(end_date), pd.Timestamp(anchor_record.coverage.end))
+
+        for dep_ticker, dep_tf in depends_on:
+            record = store.describe_candle(dep_ticker, dep_tf)
+            if record is None or record.coverage.start is None or record.coverage.end is None:
+                raise ArtifactMissingError(
+                    module_name="candles",
+                    ticker=dep_ticker,
+                    timeframe=dep_tf,
+                    reason="Dependency candles are not loaded",
+                )
+            coverage_start = pd.Timestamp(record.coverage.start)
+            coverage_end = pd.Timestamp(record.coverage.end)
+            if coverage_start > effective_start or coverage_end < effective_end:
+                raise CacheCoverageError(
+                    module_name="candles",
+                    ticker=dep_ticker,
+                    timeframe=dep_tf,
+                    start=effective_start.to_pydatetime(),
+                    end=effective_end.to_pydatetime(),
+                    coverage_start=record.coverage.start,
+                    coverage_end=record.coverage.end,
+                )
+
+        return effective_start.to_pydatetime(), effective_end.to_pydatetime()
+
+    def _compute_artifact_from_central_cache(
+        self,
+        module_name: str,
+        params: Dict[str, Any],
+        ticker: Ticker,
+        tf: TimeFrame,
+        start_date: datetime,
+        end_date: datetime,
+        cold_rebuild_candle_count: int,
+    ) -> pd.DataFrame:
+        from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
+        from utils.core.helpers import create_fresh_bias_node
+
+        store = self._central_cache_store()
+        candles_frame = store.query_candles(
+            ticker,
+            tf,
+            end=end_date,
+        )
+        start_ts = pd.Timestamp(start_date)
+        candles_df = self._select_cold_rebuild_candles(
+            candles_frame,
+            requested_start=start_date,
+            cold_rebuild_candle_count=cold_rebuild_candle_count,
+        ).reset_index()
+
+        if module_name == "ewsd":
+            volatility_df = compute_daily_ewsd_volatility(candles_df)
+            output_df = volatility_df.set_index("datetime")[["ewsd_annual_vol"]]
+            return output_df.loc[
+                (output_df.index >= start_ts) & (output_df.index <= pd.Timestamp(end_date))
+            ].copy()
+
+        bias_node = create_fresh_bias_node(module_name, ticker, tf, params)
+        output_df = self._compute_bias_node_output_from_node(bias_node, candles_df)
+        return output_df.loc[
+            (output_df.index >= start_ts) & (output_df.index <= pd.Timestamp(end_date))
+        ].copy()
+
+    def _cold_rebuild_candle_count_for_spec(
+        self,
+        module_name: str,
+        params: Dict[str, Any],
+        ticker: Ticker,
+        tf: TimeFrame,
+    ) -> int:
+        from utils.core.helpers import create_fresh_bias_node
+
+        if module_name == "ewsd":
+            long_run_window = int(params.get("long_run_window", 2520))
+            if long_run_window <= 0:
+                return 1
+            buffer_bars = max(1, math.ceil(long_run_window * 0.2))
+            return long_run_window + buffer_bars
+
+        bias_node = create_fresh_bias_node(module_name, ticker, tf, params)
+        return bias_node.cold_rebuild_candle_count()
+
+    def _select_cold_rebuild_candles(
+        self,
+        candles_frame: pd.DataFrame,
+        *,
+        requested_start: datetime,
+        cold_rebuild_candle_count: int,
+    ) -> pd.DataFrame:
+        if candles_frame.empty:
+            return candles_frame.copy()
+
+        start_position = candles_frame.index.searchsorted(
+            pd.Timestamp(requested_start),
+            side="left",
+        )
+        warmup_position = max(
+            0,
+            start_position - max(cold_rebuild_candle_count - 1, 0),
+        )
+        return candles_frame.iloc[warmup_position:].copy()
+
+    def _resolve_cold_rebuild_start(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        requested_start: datetime,
+        requested_end: datetime,
+        cold_rebuild_candle_count: int,
+    ) -> datetime:
+        store = self._central_cache_store()
+        candles_frame = store.query_candles(
+            ticker,
+            tf,
+            end=requested_end,
+        )
+        if candles_frame.empty:
+            return requested_start
+
+        rebuild_frame = self._select_cold_rebuild_candles(
+            candles_frame,
+            requested_start=requested_start,
+            cold_rebuild_candle_count=cold_rebuild_candle_count,
+        )
+        return pd.Timestamp(rebuild_frame.index[0]).to_pydatetime()
+
+    def _depends_on_for_spec(
+        self,
+        ticker: Ticker,
+        tf: TimeFrame,
+        params: Dict[str, Any],
+    ) -> tuple[tuple[Ticker, TimeFrame], ...]:
+        from utils.cache.cross_ticker_store import extract_cross_ticker_names
+
+        dependencies: list[tuple[Ticker, TimeFrame]] = [(ticker, tf)]
+        for cross_name in sorted(extract_cross_ticker_names(params)):
+            if cross_name not in Ticker.__members__:
+                logger.warning("Unknown cross ticker in cache refresh params: %s", cross_name)
+                continue
+            dependency = (Ticker[cross_name], tf)
+            if dependency not in dependencies:
+                dependencies.append(dependency)
+        return tuple(dependencies)
+
+    def _resolved_source_revision(
+        self,
+        descriptor: "ArtifactDescriptor",
+        depends_on: Sequence[tuple[Ticker, TimeFrame]],
+    ) -> int:
+        """Return a monotonic source revision for artifact rebuilds.
+
+        Candle revision counters are local cache metadata, not source-of-truth market
+        data versions. After cache reinitialization it is possible for dependency candle
+        revisions to be lower than an already-persisted artifact revision even when the
+        underlying candle payload is unchanged. In that case we preserve the higher
+        persisted artifact source revision so stale artifacts can still be rebuilt.
+        """
+        store = self._central_cache_store()
+        current_dependency_revision = max(
+            (
+                record.revision
+                for ticker, timeframe in depends_on
+                if (record := store.describe_candle(ticker, timeframe)) is not None
+            ),
+            default=0,
+        )
+        existing_record = store.describe_artifact(descriptor)
+        existing_source_revision = 0 if existing_record is None else existing_record.source_revision
+        return max(current_dependency_revision, existing_source_revision)
+
+    def ensure_bias_cache_coverage(
+        self,
+        bias_node_specs: Sequence[Dict[str, Any]],
+        tickers: Sequence[Ticker],
+        start_date: datetime,
+        end_date: datetime,
+        refresh_mode: str = "missing_stale_only",
+        include_daily_ewsd: bool = True,
+    ) -> Dict[str, Any]:
+        """Ensure central-cache coverage for explicit bias-node specs and tickers."""
+        allowed_refresh_modes = {"missing_stale_only", "always_rebuild", "validate_only"}
+        if refresh_mode not in allowed_refresh_modes:
+            raise ValueError(
+                f"refresh_mode must be one of {sorted(allowed_refresh_modes)}, "
+                f"got '{refresh_mode}'"
+            )
+
+        requested_tickers = sorted(set(tickers), key=lambda item: item.name)
+        dependency_tickers: set[Ticker] = set()
+        source_timeframes: set[TimeFrame] = {TimeFrame.D} if include_daily_ewsd else set()
+        artifact_tasks: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+
+        for spec in bias_node_specs:
+            module_name = str(spec["module_name"])
+            params = dict(spec.get("params", {}))
+            timeframes = tuple(
+                TimeFrame[tf] if isinstance(tf, str) else tf
+                for tf in spec.get("timeframes", [TimeFrame.D])
+            )
+            source_timeframes.update(timeframes)
+            for ticker in requested_tickers:
+                for tf in timeframes:
+                    depends_on = self._depends_on_for_spec(ticker, tf, params)
+                    dependency_tickers.update(dep_ticker for dep_ticker, _ in depends_on)
+                    task_key = (
+                        module_name,
+                        ticker.name,
+                        tf.name,
+                        repr(sorted(params.items(), key=lambda item: item[0])),
+                    )
+                    existing_task = artifact_tasks.get(task_key)
+                    task_payload = {
+                        "module_name": module_name,
+                        "params": params,
+                        "ticker": ticker,
+                        "tf": tf,
+                        "depends_on": depends_on,
+                        "cold_rebuild_candle_count": self._cold_rebuild_candle_count_for_spec(
+                            module_name,
+                            params,
+                            ticker,
+                            tf,
+                        ),
+                        "descriptor": self._artifact_descriptor(
+                            module_name,
+                            params,
+                            ticker,
+                            tf,
+                        ),
+                    }
+                    if existing_task is None:
+                        artifact_tasks[task_key] = task_payload
+                        continue
+                    existing_task["depends_on"] = tuple(
+                        dict.fromkeys(existing_task["depends_on"] + depends_on)
+                    )
+
+        if include_daily_ewsd:
+            for ticker in requested_tickers:
+                artifact_tasks[("ewsd", ticker.name, TimeFrame.D.name, "long_run_window=2520")] = {
+                    "module_name": "ewsd",
+                    "params": {"long_run_window": 2520},
+                    "ticker": ticker,
+                    "tf": TimeFrame.D,
+                    "depends_on": ((ticker, TimeFrame.D),),
+                    "cold_rebuild_candle_count": self._cold_rebuild_candle_count_for_spec(
+                        "ewsd",
+                        {"long_run_window": 2520},
+                        ticker,
+                        TimeFrame.D,
+                    ),
+                    "descriptor": self._artifact_descriptor(
+                        "ewsd",
+                        {"long_run_window": 2520},
+                        ticker,
+                        TimeFrame.D,
+                    ),
+                }
+
+        source_tickers = sorted(
+            set(requested_tickers).union(dependency_tickers),
+            key=lambda item: item.name,
+        )
+        compatibility_bootstrap_summary = {
+            "total": 0,
+            "success": 0,
+            "failed": 0,
+            "details": [],
+            "status": "not_requested",
+        }
+
+        store = self._central_cache_store()
+        details: list[dict[str, Any]] = []
+        rebuilt = 0
+        validated = 0
+        failed = 0
+
+        for task in artifact_tasks.values():
+            descriptor = task["descriptor"]
+            try:
+                effective_start, effective_end = self._require_exact_window_for_dependencies(
+                    task["depends_on"],
+                    start_date,
+                    end_date,
+                )
+                cold_rebuild_start = self._resolve_cold_rebuild_start(
+                    task["ticker"],
+                    task["tf"],
+                    effective_start,
+                    effective_end,
+                    task["cold_rebuild_candle_count"],
+                )
+                self._require_exact_window_for_dependencies(
+                    task["depends_on"],
+                    cold_rebuild_start,
+                    effective_end,
+                )
+                needs_refresh, reason = self._refresh_status_for_descriptor(
+                    descriptor,
+                    effective_start,
+                    effective_end,
+                )
+                if refresh_mode == "always_rebuild":
+                    needs_refresh = True
+                    reason = "forced_rebuild"
+            except Exception as exc:
+                details.append(
+                    {
+                        "module_name": task["module_name"],
+                        "ticker": task["ticker"].name,
+                        "tf": task["tf"].name,
+                        "status": "failed",
+                        "reason": "coverage_unavailable",
+                        "message": str(exc),
+                    }
+                )
+                failed += 1
+                continue
+
+            if not needs_refresh:
+                details.append(
+                    {
+                        "module_name": task["module_name"],
+                        "ticker": task["ticker"].name,
+                        "tf": task["tf"].name,
+                        "status": "fresh",
+                        "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                        "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                        "effective_start": effective_start.isoformat(),
+                        "effective_end": effective_end.isoformat(),
+                    }
+                )
+                validated += 1
+                continue
+
+            if refresh_mode == "validate_only":
+                details.append(
+                    {
+                        "module_name": task["module_name"],
+                        "ticker": task["ticker"].name,
+                        "tf": task["tf"].name,
+                        "status": "missing",
+                        "reason": reason,
+                        "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                        "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                        "effective_start": effective_start.isoformat(),
+                        "effective_end": effective_end.isoformat(),
+                    }
+                )
+                failed += 1
+                continue
+
+            try:
+                artifact_df = self._compute_artifact_from_central_cache(
+                    task["module_name"],
+                    task["params"],
+                    task["ticker"],
+                    task["tf"],
+                    effective_start,
+                    effective_end,
+                    task["cold_rebuild_candle_count"],
+                )
+                store.write_artifact(
+                    descriptor,
+                    artifact_df,
+                    depends_on=task["depends_on"],
+                    source_revision=self._resolved_source_revision(
+                        descriptor,
+                        task["depends_on"],
+                    ),
+                )
+                details.append(
+                    {
+                        "module_name": task["module_name"],
+                        "ticker": task["ticker"].name,
+                        "tf": task["tf"].name,
+                        "status": "rebuilt",
+                        "reason": reason,
+                        "rows": len(artifact_df),
+                        "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                        "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                        "effective_start": effective_start.isoformat(),
+                        "effective_end": effective_end.isoformat(),
+                    }
+                )
+                rebuilt += 1
+            except Exception as exc:
+                logger.error(
+                    "Failed to refresh artifact %s/%s/%s: %s",
+                    task["module_name"],
+                    task["ticker"].name,
+                    task["tf"].name,
+                    exc,
+                    exc_info=True,
+                )
+                details.append(
+                    {
+                        "module_name": task["module_name"],
+                        "ticker": task["ticker"].name,
+                        "tf": task["tf"].name,
+                        "status": "failed",
+                        "reason": reason,
+                        "message": str(exc),
+                        "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                        "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                        "effective_start": effective_start.isoformat(),
+                        "effective_end": effective_end.isoformat(),
+                    }
+                )
+                failed += 1
+
+        return {
+            "refresh_mode": refresh_mode,
+            "bootstrap": compatibility_bootstrap_summary,
+            "ingested": compatibility_bootstrap_summary,
+            "total_tasks": len(artifact_tasks),
+            "rebuilt": rebuilt,
+            "validated": validated,
+            "failed": failed,
+            "requested_tickers": [ticker.name for ticker in requested_tickers],
+            "dependency_tickers": [ticker.name for ticker in sorted(dependency_tickers)],
+            "timeframes": [tf.name for tf in sorted(source_timeframes)],
+            "details": details,
+        }
+
+    def ensure_vault_cache_coverage(
+        self,
+        vault_ensemble_dirs: Sequence[str],
+        start_date: datetime,
+        end_date: datetime,
+        refresh_mode: str = "missing_stale_only",
+    ) -> Dict[str, Any]:
+        """
+        Ensure central-cache coverage for all artifacts required by vault ensembles.
+
+        The current vault layout is feature-file based, so this method reads
+        specs from ``features/*.json`` rather than the older control-file path.
+        It validates and refreshes only the required artifacts for the requested
+        date window using candles already present in the central cache.
+        """
+        from ensemble.vault_manager import get_bias_node_specs, get_ensemble_tickers
+
+        portfolio_tickers: set[Ticker] = set()
+        bias_node_specs: list[dict[str, Any]] = []
+
+        for ensemble_dir in vault_ensemble_dirs:
+            ensemble_tickers = get_ensemble_tickers(ensemble_dir)
+            portfolio_tickers.update(ensemble_tickers)
+            bias_node_specs.extend(get_bias_node_specs(ensemble_dir))
+
+        summary = self.ensure_bias_cache_coverage(
+            bias_node_specs=bias_node_specs,
+            tickers=sorted(portfolio_tickers),
+            start_date=start_date,
+            end_date=end_date,
+            refresh_mode=refresh_mode,
+            include_daily_ewsd=True,
+        )
+        summary["portfolio_tickers"] = [ticker.name for ticker in sorted(portfolio_tickers)]
+        return summary
 
     def list_caches(
         self,

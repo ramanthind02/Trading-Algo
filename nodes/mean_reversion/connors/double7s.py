@@ -7,7 +7,7 @@ when price is at 7-day lows and above the 200-day moving average.
 Output: Rule-based 0 or 1
 """
 
-from typing import List
+from typing import ClassVar, List
 from collections import deque
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
@@ -34,6 +34,8 @@ class Double7s(BiasNode):
     - short_period: Period for high/low lookback (default: 7)
     - ma_period: Period for trend filter MA (default: 200)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"shortPeriod", "maPeriod"})
 
     def __init__(
         self,

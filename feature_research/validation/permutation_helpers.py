@@ -50,9 +50,15 @@ def load_research_data(config: object) -> tuple[
 ]:
     """Build candles, target, param_grid, evaluator, research_config, combo features, portfolio candles."""
     original_tickers = list(config.tickers)
-    covered_tickers = get_tickers_with_coverage_for_config(config)
+    covered_tickers = get_tickers_with_coverage_for_config(
+        config,
+        bias_spec=config.eval_bias_spec,
+    )
     if not covered_tickers:
-        effective = get_effective_range_and_tickers(config)
+        effective = get_effective_range_and_tickers(
+            config,
+            bias_spec=config.eval_bias_spec,
+        )
         if effective is not None:
             effective_start, effective_end, effective_tickers = effective
             config = replace(
@@ -63,7 +69,9 @@ def load_research_data(config: object) -> tuple[
             )
         else:
             ranges = get_available_date_ranges_for_tickers(
-                replace(config, tickers=original_tickers), original_tickers
+                replace(config, tickers=original_tickers),
+                original_tickers,
+                bias_spec=config.eval_bias_spec,
             )
             hint = (
                 " Available ranges: "
@@ -79,7 +87,7 @@ def load_research_data(config: object) -> tuple[
                 + hint
             )
 
-    populate_cache_if_needed(config)
+    populate_cache_if_needed(config, bias_spec=config.eval_bias_spec)
     expanded = expand_bias_specs(config.eval_bias_spec)
     feature_type = getattr(config, "feature_type", FeatureType.CONTINUOUS)
 

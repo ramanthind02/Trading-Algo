@@ -2,7 +2,7 @@
 
 ## Scope
 
-This plan implements the target architecture described in `docs/library/bias_nodes/central_cache_architecture.md`:
+This plan implements the target architecture described in `docs/library/Cache/architecture.md`:
 
 - one canonical store for OHLCV and bias-derived artifacts
 - datetime- or range-driven reads instead of `candles_per_tf` call chains
@@ -20,12 +20,17 @@ The current system is split across multiple cache and state mechanisms:
 | ------------------------| ----------------------------------------------| ----------------------------------------------------------------------------| -------------------------------------------------------------|
 | Bias outputs           | `utils/cache/bias_node_cache.py`             | Per-node parquet files keyed by `(module, ticker, tf, params)`             | Not a candle SSOT, weak coverage enforcement                |
 | Cache population       | `utils/cache/cache_manager.py`               | Offline batch population by streaming candles through nodes                | Not a runtime orchestrator, no unified lineage              |
-| Cross-ticker candles   | `utils/data/cross_ticker_store.py`           | In-memory singleton with preload, `set_data()`, and lazy auto-load         | Returns `None` on miss/load failure instead of typed errors |
+| Cross-ticker candles   | `utils/cache/cross_ticker_store.py`          | Centralized cache-owned singleton; legacy `utils/data/` path is now a shim | Compatibility `None` fallback still exists on `get_candle` |
 | Node runtime           | `nodes/__init__.py`                          | Streamed candle execution plus optional per-node persistent cache          | Cache bootstrap is optional and per-node                    |
-| Feature extraction     | `feature_extraction/feature_extractor.py`    | Split `use_cache=True/False` paths                                         | Candles remain the primary driver even when reading cache   |
+| Feature extraction     | `feature_extraction/feature_extractor.py` + `utils/cache/feature_pipeline_support.py` | Entry points remain in feature extraction, but cache/cross-ticker helpers are centralized under `utils/cache` | Candles remain the primary driver even when reading cache   |
 | Portfolio APIs         | `ensemble/portfolio.py`                      | `GlobalPortfolio.fit/predict(candles_per_tf, daily_volatility_df, ...)`    | Not datetime/range driven                                   |
 | Live orchestration     | `deployment/forecast_server.py`              | Candle buffers + `MLManager` + `CrossTickerDataStore` + separate vol state | Multiple parallel stores, not one SSOT                      |
 | Training orchestration | `deployment/production_training_pipeline.py` | Reads parquet directly and computes features locally                       | Does not treat the cache as the primary training contract   |
+
+Implementation note:
+
+- cache-specific support code should live under `utils/cache`
+- legacy locations such as `utils/data/cross_ticker_store.py` and `feature_extraction/backtest.py` should be compatibility facades only
 
 ## Goals For The Refactor
 

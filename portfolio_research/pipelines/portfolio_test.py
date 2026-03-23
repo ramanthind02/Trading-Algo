@@ -9,26 +9,54 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
-from ensemble.portfolio import GlobalPortfolio, Portfolio, TFPortfolio
+from ensemble.portfolio import (
+    GlobalPortfolio,
+    Portfolio,
+    PortfolioCacheQuery,
+    TFPortfolio,
+)
 from ensemble.portfolio_tester import (
     PortfolioTester,
     aggregate_intraday_returns_to_daily,
     calculate_baseline_returns,
     calculate_strategy_returns_from_positions,
-    resample_positions_to_daily,
 )
-from ensemble.vault_manager import load_ensemble_from_vault
+from ensemble.vault_manager import (
+    get_bias_node_specs,
+    get_ensemble_tickers,
+    load_ensemble_from_vault,
+)
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
 from portfolio_research.weight_layer_report import export_global_weight_layer_report
-from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
-from utils.core.enums import TimeFrame
+from utils.cache import (
+    CentralCacheStore,
+    bootstrap_source_candles,
+    extract_cross_ticker_names,
+)
+from utils.core.enums import Ticker, TimeFrame
 from utils.evaluation.walkforward.runner import _sanitize_tearsheet_name
+
+try:
+    from ensemble.vault_manager import (  # type: ignore[attr-defined]
+        ensure_vault_cache_coverage,
+        migrate_legacy_feature_members_schema,
+    )
+except ImportError:  # pragma: no cover - fallback for branches that still add these helpers
+    def migrate_legacy_feature_members_schema(*_args: object, **_kwargs: object) -> None:
+        raise ImportError(
+            "ensemble.vault_manager.migrate_legacy_feature_members_schema is not available"
+        )
+
+    def ensure_vault_cache_coverage(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        raise ImportError(
+            "ensemble.vault_manager.ensure_vault_cache_coverage is not available"
+        )
 
 # Tearsheet output mode (HTML is currently the only supported format)
 _TEARSHEET_MODE = "html"
@@ -55,30 +83,76 @@ class PhaseResult:
     combined_baseline_returns: pd.Series
 
 
+def _portfolio_cache_query(
+    config: Any,
+    start: datetime,
+    end: datetime,
+    timeframes: tuple[TimeFrame, ...],
+) -> PortfolioCacheQuery:
+    """Build a cache-native portfolio query from the research config."""
+    return PortfolioCacheQuery(
+        tickers=tuple(
+            ticker.name if hasattr(ticker, "name") else str(ticker)
+            for ticker in config.tickers
+        ),
+        start=start,
+        end=end,
+        timeframes=timeframes,
+    )
+
+
+def _coerce_ticker(ticker: object) -> Ticker:
+    """Normalize ticker-like inputs to the project ticker enum."""
+    if isinstance(ticker, TimeFrame):  # pragma: no cover - defensive guard
+        raise TypeError("timeframe passed where ticker was expected")
+    if hasattr(ticker, "name") and not isinstance(ticker, str):
+        return ticker  # type: ignore[return-value]
+    return Ticker[str(ticker)]
+
+
 def _load_candles(
     config: Any,
     timeframe: TimeFrame,
     start: pd.Timestamp | None = None,
     end: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """Load OHLC candles for config tickers/timeframe over [start, end]. Normalize datetime."""
-    from datetime import datetime as dt
-    from utils.core.helpers import load_data_multi_ticker
+    """Load candles for the requested window from the central cache."""
+    store = CentralCacheStore.get_instance()
+    s = pd.Timestamp(start if start is not None else config.start).to_pydatetime()
+    e = pd.Timestamp(end if end is not None else config.end).to_pydatetime()
 
-    s = start if start is not None else pd.Timestamp(config.start)
-    e = end if end is not None else pd.Timestamp(config.end)
-    df = load_data_multi_ticker(
-        tickers=config.tickers,
-        timeframe=timeframe,
-        start=dt(s.year, s.month, s.day),
-        end=dt(e.year, e.month, e.day),
-    )
-    if df.empty:
-        return df
-    if "datetime" not in df.columns:
-        raise ValueError("Candles DataFrame must include 'datetime' column.")
-    df = df.sort_values(["ticker", "datetime"])
-    return df
+    frames = []
+    for ticker in config.tickers:
+        ticker_enum = _coerce_ticker(ticker)
+        record = store.describe_candle(ticker_enum, timeframe)
+        if record is None or record.coverage.start is None or record.coverage.end is None:
+            raise ValueError(
+                f"No cached candles available for {ticker_enum.name}/{timeframe.name}"
+            )
+        effective_start = max(pd.Timestamp(s), pd.Timestamp(record.coverage.start))
+        effective_end = min(pd.Timestamp(e), pd.Timestamp(record.coverage.end))
+        if effective_start > effective_end:
+            raise ValueError(
+                f"Requested window has no candle overlap for {ticker_enum.name}/{timeframe.name}: "
+                f"{s.date()} -> {e.date()} vs coverage "
+                f"{pd.Timestamp(record.coverage.start).date()} -> {pd.Timestamp(record.coverage.end).date()}"
+            )
+        frame = store.query_candles(
+            ticker_enum,
+            timeframe,
+            start=effective_start.to_pydatetime(),
+            end=effective_end.to_pydatetime(),
+        ).reset_index()
+        if "ticker" not in frame.columns:
+            frame["ticker"] = ticker_enum.name
+        if "timeframe" not in frame.columns:
+            frame["timeframe"] = timeframe
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(frames, ignore_index=True).sort_values(["ticker", "datetime"]).reset_index(drop=True)
 
 
 def _slice_candles_by_date(
@@ -127,6 +201,8 @@ def _build_daily_dates_per_ticker(
 def _enable_cache(ensemble: Any, use_cache: bool) -> Any:
     """Enable/disable cache on ensemble and base models."""
     ensemble.use_cache = use_cache
+    if use_cache and hasattr(ensemble, "retry_on_cache_miss"):
+        ensemble.retry_on_cache_miss = False
     for model in getattr(ensemble, "base_models", {}).values():
         setattr(model, "use_cache", use_cache)
     return ensemble
@@ -150,6 +226,103 @@ def _build_instrument_returns(daily_candles: pd.DataFrame) -> pd.DataFrame:
     return log_returns.dropna(how="all")
 
 
+def _coerce_timeframe(timeframe: object) -> TimeFrame:
+    """Normalize timeframe-like values to the project timeframe enum."""
+    if isinstance(timeframe, TimeFrame):
+        return timeframe
+    if hasattr(timeframe, "name") and not isinstance(timeframe, str):
+        return TimeFrame[getattr(timeframe, "name")]
+    return TimeFrame[str(timeframe)]
+
+
+def _collect_preflight_bootstrap_inputs(
+    ensemble_dirs: Sequence[str],
+    portfolio_tickers: Sequence[Ticker],
+) -> tuple[tuple[Ticker, ...], tuple[TimeFrame, ...]]:
+    """Collect the exact candle inputs required for portfolio cache preflight."""
+    ordered_tickers: list[Ticker] = []
+    seen_tickers: set[Ticker] = set()
+
+    def add_ticker(ticker_like: object) -> None:
+        ticker = _coerce_ticker(ticker_like)
+        if ticker in seen_tickers:
+            return
+        seen_tickers.add(ticker)
+        ordered_tickers.append(ticker)
+
+    ordered_timeframes: list[TimeFrame] = []
+    seen_timeframes: set[TimeFrame] = set()
+
+    def add_timeframe(timeframe_like: object) -> None:
+        timeframe = _coerce_timeframe(timeframe_like)
+        if timeframe in seen_timeframes:
+            return
+        seen_timeframes.add(timeframe)
+        ordered_timeframes.append(timeframe)
+
+    for ticker in portfolio_tickers:
+        add_ticker(ticker)
+    add_timeframe(TimeFrame.D)
+
+    for ensemble_dir in ensemble_dirs:
+        for ticker in get_ensemble_tickers(ensemble_dir):
+            add_ticker(ticker)
+
+        for spec in get_bias_node_specs(ensemble_dir):
+            timeframes = spec.get("timeframes") or [TimeFrame.D]
+            for timeframe in timeframes:
+                add_timeframe(timeframe)
+
+            params = spec.get("params", {})
+            if isinstance(params, Mapping):
+                for cross_ticker_name in extract_cross_ticker_names(params):
+                    add_ticker(Ticker[cross_ticker_name])
+
+    return tuple(ordered_tickers), tuple(ordered_timeframes)
+
+
+def _preflight_vault_cache(
+    ensemble_dirs: dict[str, str],
+    portfolio_tickers: Sequence[Ticker],
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    """Normalize vault feature schemas and ensure cache coverage before portfolio runs."""
+    unique_dirs = tuple(dict.fromkeys(ensemble_dirs.values()))
+    for ensemble_dir in unique_dirs:
+        migrate_legacy_feature_members_schema(ensemble_dir)
+
+    bootstrap_tickers, bootstrap_timeframes = _collect_preflight_bootstrap_inputs(
+        unique_dirs,
+        portfolio_tickers,
+    )
+    bootstrap_summary = bootstrap_source_candles(
+        tickers=bootstrap_tickers,
+        timeframes=bootstrap_timeframes,
+        start_date=start,
+        end_date=end,
+    )
+
+    refresh_summary = ensure_vault_cache_coverage(
+        vault_ensemble_dirs=unique_dirs,
+        start_date=start,
+        end_date=end,
+    )
+    return {
+        **refresh_summary,
+        "bootstrap": bootstrap_summary,
+    }
+
+
+def _preflight_ready_counts(summary: dict[str, Any]) -> tuple[int, int]:
+    """Normalize cache-preflight summaries across old/new result contracts."""
+    if "total_tasks" in summary:
+        return int(summary.get("rebuilt", 0)) + int(summary.get("validated", 0)), int(
+            summary.get("total_tasks", 0)
+        )
+    return int(summary.get("success", 0)), int(summary.get("total", 0))
+
+
 def _build_tester_for_timeframe(
     timeframe: TimeFrame,
     config: Any,
@@ -161,7 +334,7 @@ def _build_tester_for_timeframe(
         "trading_timeframe": timeframe,
         "target_volatility": config.target_volatility,
         "max_position_pct": config.max_position_pct,
-        "use_cache": config.use_cache,
+        "use_cache": True,
     }
     portfolio = Portfolio(**portfolio_kw)
     return PortfolioTester(portfolio, baseline_mode=config.baseline_mode)
@@ -238,8 +411,8 @@ def _generate_composite_tearsheet(
 def _evaluate_phase(
     phase_title: str,
     output_dir_name: str,
-    train_start: pd.Timestamp,
-    train_end: pd.Timestamp,
+    fit_start: pd.Timestamp,
+    fit_end: pd.Timestamp,
     test_start: pd.Timestamp,
     test_end: pd.Timestamp,
     config: Any,
@@ -257,21 +430,27 @@ def _evaluate_phase(
     portfolio_dir = phase_out / "portfolio"
     portfolio_dir.mkdir(parents=True, exist_ok=True)
 
+    fit_query = _portfolio_cache_query(
+        config,
+        fit_start.to_pydatetime(),
+        fit_end.to_pydatetime(),
+        tuple(unique_timeframes),
+    )
+    predict_query = _portfolio_cache_query(
+        config,
+        test_start.to_pydatetime(),
+        test_end.to_pydatetime(),
+        tuple(unique_timeframes),
+    )
+
+    candle_timeframes = sorted({TimeFrame.D, *unique_timeframes})
     candles_by_timeframe: dict[TimeFrame, pd.DataFrame] = {
-        TimeFrame.D: _load_candles(config, TimeFrame.D, start=train_start, end=test_end)
+        timeframe: _load_candles(config, timeframe, start=fit_start, end=test_end)
+        for timeframe in candle_timeframes
     }
-    for timeframe in unique_timeframes:
-        if timeframe == TimeFrame.D:
-            continue
-        candles_by_timeframe[timeframe] = _load_candles(
-            config,
-            timeframe,
-            start=train_start,
-            end=test_end,
-        )
 
     train_candles_by_timeframe = {
-        timeframe: _slice_candles_by_date(candles, train_start, train_end)
+        timeframe: _slice_candles_by_date(candles, fit_start, fit_end)
         for timeframe, candles in candles_by_timeframe.items()
     }
     test_candles_by_timeframe = {
@@ -283,7 +462,7 @@ def _evaluate_phase(
     daily_test_candles = test_candles_by_timeframe[TimeFrame.D]
     if daily_train_candles.empty:
         raise ValueError(
-            f"No daily candles in {phase_title} train window {train_start.date()} -> {train_end.date()}."
+            f"No daily candles in {phase_title} train window {fit_start.date()} -> {fit_end.date()}."
         )
     if daily_test_candles.empty:
         raise ValueError(
@@ -306,27 +485,21 @@ def _evaluate_phase(
     print(f"{phase_title} daily train: {len(daily_train_candles)} candles")
     print(f"{phase_title} daily test : {len(daily_test_candles)} candles")
 
-    # Daily EWSD volatility is computed once and aligned downstream to each TF.
-    daily_volatility_all = compute_daily_ewsd_volatility(candles_by_timeframe[TimeFrame.D])
-
-    daily_dates_per_ticker = _build_daily_dates_per_ticker(daily_test_candles)
     testers_by_timeframe: dict[TimeFrame, PortfolioTester] = {}
     per_tf_strategy_returns: dict[TimeFrame, pd.Series] = {}
     per_tf_baseline_returns: dict[TimeFrame, pd.Series] = {}
 
     for timeframe in unique_timeframes:
-        tf_train_candles = train_candles_by_timeframe[timeframe]
         tf_test_candles = test_candles_by_timeframe[timeframe]
         tf_label = _timeframe_label(timeframe)
 
         print(f"  Fitting {tf_label} portfolio...")
         tester = _build_tester_for_timeframe(timeframe, config, grouped_ensembles)
-        tester.fit(tf_train_candles)
+        tester.fit_from_cache(fit_query.for_timeframe(timeframe))
 
         print(f"  Predicting {tf_label} portfolio...")
-        tester.predict(
-            tf_test_candles,
-            daily_volatility_df=daily_volatility_all,
+        tester.predict_from_cache(
+            predict_query.for_timeframe(timeframe),
             return_ensemble_predictions=True,
             return_base_model_predictions=True,
         )
@@ -338,13 +511,6 @@ def _evaluate_phase(
         ].copy()
         native_positions["datetime"] = pd.to_datetime(native_positions["datetime"]).dt.floor("s")
 
-        if timeframe == TimeFrame.D:
-            daily_positions = native_positions
-        else:
-            daily_positions = resample_positions_to_daily(
-                native_positions,
-                daily_dates_per_ticker,
-            )
         testers_by_timeframe[timeframe] = tester
 
         strategy_returns = tester.calculate_strategy_returns(
@@ -367,20 +533,16 @@ def _evaluate_phase(
         max_position_pct=config.max_position_pct,
     )
     instrument_returns = _build_instrument_returns(daily_train_candles)
-    global_portfolio.fit(
-        train_candles_by_timeframe,
+    global_portfolio.fit_from_cache(
+        fit_query,
         instrument_returns,
-        daily_volatility_df=daily_volatility_all,
     )
     export_global_weight_layer_report(
         global_portfolio,
         phase_name=output_dir_name,
         output_dir=phase_out / "global_weight_layer",
     )
-    global_positions_raw = global_portfolio.predict(
-        test_candles_by_timeframe,
-        daily_volatility_df=daily_volatility_all,
-    )
+    global_positions_raw = global_portfolio.predict_from_cache(predict_query)
     global_positions_raw["datetime"] = pd.to_datetime(
         global_positions_raw["datetime"]
     ).dt.floor("s")
@@ -467,6 +629,38 @@ def run_portfolio_test_pipeline(config: Any) -> None:
     print(f"Output root : {config.output_root}")
     print("=" * 64 + "\n")
 
+    cache_preflight = _preflight_vault_cache(
+        config.ensemble_dirs,
+        config.tickers,
+        train_start_ts.to_pydatetime(),
+        test_end_ts.to_pydatetime(),
+    )
+    bootstrap_summary = cache_preflight.get("bootstrap", {})
+    if isinstance(bootstrap_summary, dict) and bootstrap_summary:
+        print(
+            "Source candle bootstrap complete: "
+            f"{int(bootstrap_summary.get('success', 0))}/"
+            f"{int(bootstrap_summary.get('total', 0))} datasets loaded"
+        )
+    ready_count, total_count = _preflight_ready_counts(cache_preflight)
+    print(
+        "Vault cache preflight complete: "
+        f"{ready_count}/{total_count} artifacts ready"
+    )
+    bootstrap_summary = cache_preflight.get("bootstrap", cache_preflight.get("ingested", {}))
+    bootstrap_failures = (
+        int(bootstrap_summary.get("failed", 0))
+        if isinstance(bootstrap_summary, dict)
+        else 0
+    )
+    artifact_failures = int(cache_preflight.get("failed", 0))
+    if bootstrap_failures or artifact_failures:
+        raise RuntimeError(
+            "Vault cache preflight failed: "
+            f"{artifact_failures} artifact refresh errors, "
+            f"{bootstrap_failures} candle bootstrap errors."
+        )
+
     named_ensembles = [
         (
             name,
@@ -476,7 +670,7 @@ def run_portfolio_test_pipeline(config: Any) -> None:
                     refit=True,
                     target_volatility=config.target_volatility,
                 ),
-                config.use_cache,
+                True,
             ),
         )
         for name, path in config.ensemble_dirs.items()
@@ -492,8 +686,8 @@ def run_portfolio_test_pipeline(config: Any) -> None:
     train_result = _evaluate_phase(
         phase_title="Train",
         output_dir_name="train",
-        train_start=train_start_ts,
-        train_end=train_end_ts,
+        fit_start=train_start_ts,
+        fit_end=train_end_ts,
         test_start=train_start_ts,
         test_end=train_end_ts,
         config=config,
@@ -505,8 +699,8 @@ def run_portfolio_test_pipeline(config: Any) -> None:
     validation_result = _evaluate_phase(
         phase_title="Validation",
         output_dir_name="validation",
-        train_start=train_start_ts,
-        train_end=train_end_ts,
+        fit_start=train_start_ts,
+        fit_end=train_end_ts,
         test_start=val_start_ts,
         test_end=val_end_ts,
         config=config,
@@ -518,8 +712,8 @@ def run_portfolio_test_pipeline(config: Any) -> None:
     test_result = _evaluate_phase(
         phase_title="Test",
         output_dir_name="test",
-        train_start=train_start_ts,
-        train_end=val_end_ts,
+        fit_start=train_start_ts,
+        fit_end=val_end_ts,
         test_start=test_start_ts,
         test_end=test_end_ts,
         config=config,
@@ -533,22 +727,6 @@ def run_portfolio_test_pipeline(config: Any) -> None:
     combined_portfolio_dir = combined_dir / "portfolio"
     combined_portfolio_dir.mkdir(parents=True, exist_ok=True)
 
-    val_test_strategy = (
-        pd.concat(
-            [
-                validation_result.combined_strategy_returns,
-                test_result.combined_strategy_returns,
-            ]
-        ).sort_index()
-    )
-    val_test_baseline = (
-        pd.concat(
-            [
-                validation_result.combined_baseline_returns,
-                test_result.combined_baseline_returns,
-            ]
-        ).sort_index()
-    )
     _generate_composite_tearsheet(
         [validation_result, test_result],
         "Validation_and_Test_windows",

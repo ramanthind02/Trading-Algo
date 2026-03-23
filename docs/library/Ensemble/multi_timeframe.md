@@ -26,10 +26,17 @@ Higher-TF forecasts are **constant** between their candle closes. Forward-fillin
 During fit, all forecast streams are resampled to a **daily grid** to ensure equal scaling across timeframes. Intraday signals lose some granularity, but this guarantees the `WeightLayer` sees comparable signal distributions.
 
 ```python
-GlobalPortfolio.fit(
-    candles_per_tf={TimeFrame.D: daily_candles, TimeFrame.W: weekly_candles},
+from ensemble.portfolio import PortfolioCacheQuery
+
+query = PortfolioCacheQuery(
+    tickers=("ES", "NQ"),
+    start=train_start,
+    end=train_end,
+    timeframes=(TimeFrame.D, TimeFrame.W),
+)
+GlobalPortfolio.fit_from_cache(
+    query=query,
     instrument_returns=returns_df,
-    daily_volatility_df=vol_df,
 )
 ```
 
@@ -45,10 +52,7 @@ Internally:
 Predict follows the same pattern — process each TF independently, align to the rebalance grid, combine with fitted weights.
 
 ```python
-positions = global_portfolio.predict(
-    candles_per_tf={TimeFrame.D: daily_candles, TimeFrame.W: weekly_candles},
-    daily_volatility_df=vol_df,
-)
+positions = global_portfolio.predict_from_cache(query)
 ```
 
 ---
@@ -58,17 +62,13 @@ positions = global_portfolio.predict(
 Backtesting is straightforward because all candle history is available upfront.
 
 ```python
-forecasts_by_tf: Dict[TimeFrame, pd.DataFrame] = {}
-
-# Process each timeframe independently — no interleaving
-for tf in [TimeFrame.M, TimeFrame.W, TimeFrame.D]:
-    tf_candles = all_candles[all_candles['timeframe'] == tf]
-    forecasts_by_tf[tf] = tf_portfolio[tf].predict_base_model_vectors_from_candles(
-        tf_candles, daily_volatility_df
-    )
-
-# GlobalPortfolio handles alignment and combination internally
-positions = global_portfolio.predict(candles_per_tf, daily_volatility_df)
+query = PortfolioCacheQuery(
+    tickers=("ES", "NQ", "YM", "RTY"),
+    start=backtest_start,
+    end=backtest_end,
+    timeframes=(TimeFrame.M, TimeFrame.W, TimeFrame.D),
+)
+positions = global_portfolio.predict_from_cache(query)
 ```
 
 Each `TFPortfolio` receives its **full** candle history, processes it vectorized, and returns a complete forecast series. `GlobalPortfolio.predict` merges them.
@@ -102,30 +102,38 @@ Higher-TF forecasts simply repeat (via forward-fill) across the finer grid until
 
 ## Lookback & Stateful Bias Nodes
 
-Bias nodes are stateful — they use rolling `deque` buffers that require warm-up candles before producing valid outputs. Each node has a `front_bad` period (typically equal to its `lookback` parameter) during which it outputs neutral values.
+Bias nodes are stateful, but their warmup contract is now machine-readable. Each node exposes `lookback_contributions()`, `max_lookback()`, and `cold_rebuild_candle_count()` through the base `BiasNode` API.
 
 ### Design choice: stateless prediction via lookback window
 
 Rather than serializing/deserializing bias node state (fragile across restarts, hard to test), the caller provides enough historical candles to warm up all nodes from scratch.
 
 ```
-max_lookback = max(node.front_bad for all bias nodes in all ensembles for this TF)
+max_lookback = max(node.max_lookback() for all bias nodes in all ensembles for this TF)
 ```
 
-The prediction path processes all `max_lookback` candles through the bias nodes, but only the **tail** of the resulting forecast series is used. This is:
+The prediction path processes a stateless cold-rebuild window through the bias nodes, then uses only the **tail** of the resulting forecast series. In practice:
+
+```
+cold_rebuild_candles = max(node.cold_rebuild_candle_count() for all bias nodes in all ensembles for this TF)
+```
+
+`front_bad` still matters, but only as one contribution inside `max_lookback()`. Wrapper nodes may legitimately require more warmup than `front_bad` alone because they add their own rolling windows on top of a wrapped node.
+
+This approach is:
 
 - **Pure/deterministic** — same candles always produce the same output.
 - **Trivially testable** — no hidden state to manage.
 - **Fast enough** — processing 252 daily candles through 50+ bias nodes takes milliseconds.
 
-| Timeframe | Typical max lookback | Candles to fetch |
-|-----------|---------------------|-----------------|
-| Monthly   | ~24 bars (2 years)  | ~30 bars        |
-| Weekly    | ~52 bars (1 year)   | ~60 bars        |
-| Daily     | ~252 bars (1 year)  | ~300 bars       |
-| Hourly    | ~252 × 6.5 ≈ 1638  | ~1700 bars      |
+| Timeframe | Typical max lookback | Typical cold rebuild window |
+|-----------|---------------------|-----------------------------|
+| Monthly   | ~24 bars (2 years)  | ~30 bars                    |
+| Weekly    | ~52 bars (1 year)   | ~63 bars                    |
+| Daily     | ~252 bars (1 year)  | ~303 bars                   |
+| Hourly    | ~252 × 6.5 ≈ 1638  | ~1966 bars                  |
 
-Add ~20% buffer above max lookback to be safe.
+The current default is `max_lookback + ceil(max_lookback * 0.2)`.
 
 ---
 
@@ -134,9 +142,9 @@ Add ~20% buffer above max lookback to be safe.
 1. **No timeframe interleaving** — each TF is processed as a complete, independent series.
 2. **Forward-fill bridges TFs** — higher-TF forecasts are carried forward on the rebalance grid.
 3. **Fit on daily, predict on any grid** — weights are learned on a daily grid; at predict time the grid can be finer.
-4. **Stateless predict** — pass enough lookback candles; no serialized bias node state.
+4. **Stateless predict** — size the warmup window from `max_lookback()` / `cold_rebuild_candle_count()`; no serialized bias node state.
 5. **Forecast scores are additive** — the weighted sum across TFs (with FDM) produces the combined forecast.
 
 ---
 
-**See also:** [[portfolio]], [[weight_layer]], [[live_multi_timeframe]], [[bias_nodes/central_cache_architecture]]
+**See also:** [[portfolio]], [[weight_layer]], [[live_multi_timeframe]], [[Cache/architecture]]

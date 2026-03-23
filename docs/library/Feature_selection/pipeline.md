@@ -3,6 +3,9 @@
 > [!note] Status: Library reference — master pipeline overview
 > Last updated: 2026-02-22
 
+> [!note] Cache-backed execution
+> Feature extraction now supports central-cache artifact reads (`use_cache=True`) with explicit materialization on miss (`populate_on_miss=True`). Cross-ticker dependencies and EWSD volatility reads are routed through the same cache contract.
+
 ## Data Splits
 
 - **In-Sample (IS):** 2000–2023 — all screening, permutation testing, and walkforward validation
@@ -117,3 +120,4 @@ Both types follow the same Phases 1, 3–8. Only Phase 2 (Binning Analysis) is t
 **Shared:**
 - [[base_feature]] — Shared target definition and Sharpe formula
 - [[vault]] — Feature persistence after graduation
+- [[Cache/user_guide]] — Cache-backed feature reads, artifact queries, and runtime storage rules

@@ -7,7 +7,7 @@ price position relative to Bollinger Bands.
 Output: Rule-based 0 or 1 (long signal when oversold, flat otherwise)
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -39,6 +39,8 @@ class PercentB(BiasNode):
     - std_dev: Number of standard deviations for bands (default: 2.0)
     - lower_threshold: %B threshold for oversold (default: 0.0)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"period"})
 
     def __init__(
         self,

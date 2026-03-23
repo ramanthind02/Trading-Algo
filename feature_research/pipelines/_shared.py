@@ -123,9 +123,15 @@ def _run_evaluation_pipeline(
     data_end = max(config.end, window.test_end)
     config_phase = replace(config, start=data_start, end=data_end)
 
-    covered_tickers = get_tickers_with_coverage_for_config(config_phase)
+    covered_tickers = get_tickers_with_coverage_for_config(
+        config_phase,
+        bias_spec=config.eval_bias_spec,
+    )
     if not covered_tickers:
-        effective = get_effective_range_and_tickers(config_phase)
+        effective = get_effective_range_and_tickers(
+            config_phase,
+            bias_spec=config.eval_bias_spec,
+        )
         if effective is None:
             raise ValueError(
                 "No OHLC data found for the requested range. "
@@ -170,7 +176,7 @@ def _run_evaluation_pipeline(
         output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
-    populate_cache_if_needed(config_phase)
+    populate_cache_if_needed(config_phase, bias_spec=config.eval_bias_spec)
     expanded = expand_bias_specs(config.eval_bias_spec)
     feature_type_label = config.feature_type.value.upper()
     window_label = "Val" if phase == "validation" else "Test"

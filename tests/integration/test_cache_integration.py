@@ -534,8 +534,8 @@ class TestCacheManagerIntegration:
             show_progress=False
         )
 
-        # 1 user spec + 2 auxiliary (atr, ewsd) = 3 total
-        assert result['success'] == 3
+        # 1 user spec + 1 auxiliary (ewsd) = 2 total
+        assert result['success'] == 2
 
         # Verify cache can be loaded
         cache = BiasNodeCache(

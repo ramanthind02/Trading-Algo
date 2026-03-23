@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional
+from typing import ClassVar, List, Tuple, Optional
 from utils.core.enums import TimeFrame, Ticker
 from nodes import BiasNode
 from utils.core.models import Candle
@@ -24,6 +24,8 @@ class DonchianChannel(BiasNode):
     2. Uses a single lookback period for both entry and exit
     3. Does not filter trades based on previous results
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback"})
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int):
         """
         Initializes the DonchianChannel bias node.

@@ -7,7 +7,7 @@ smoothing of price momentum.
 Output: Continuous -100 to +100
 """
 
-from typing import List
+from typing import ClassVar, List
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
@@ -39,6 +39,7 @@ class TSI(BiasNode):
     - long_period: Long EMA period (default: 25)
     - short_period: Short EMA period (default: 13)
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"longPeriod", "shortPeriod"})
 
     def __init__(
         self,

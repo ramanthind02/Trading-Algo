@@ -1,5 +1,0 @@
-phase,timeframe,weight,fdm,mean_cross_tf_correlation
-test,buy_hold_signal_M,0.666485,1.6,
-test,seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7,0.1,1.6,
-test,seasonalindiceseof_signal_D_smaPeriod_200,0.067029,1.6,
-test,turnaroundtuesday_signal_D_mode_tue_wed,0.166485,1.6,

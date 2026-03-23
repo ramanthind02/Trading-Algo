@@ -21,7 +21,7 @@ from feature_research.config import FeatureType, RAW_TARGET_COLS
 from utils.cache.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
-from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS
+from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS, extract_cross_ticker_names
 
 
 def _resolve_project_root() -> Path | None:
@@ -57,6 +57,70 @@ def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for combo in combos
     ]
+
+
+def _normalize_timeframes(
+    bias_spec: dict[str, Any],
+    *,
+    include_daily_ewsd: bool = True,
+) -> list[TimeFrame]:
+    """Return normalized cache timeframes for a bias spec."""
+    raw_timeframes = bias_spec.get("timeframes", [TimeFrame.D])
+    requested_timeframes = (
+        raw_timeframes if isinstance(raw_timeframes, list) else [raw_timeframes]
+    )
+    normalized: list[TimeFrame] = []
+    seen: set[TimeFrame] = set()
+
+    def add_timeframe(timeframe_like: Any) -> None:
+        timeframe = (
+            TimeFrame[timeframe_like]
+            if isinstance(timeframe_like, str)
+            else timeframe_like
+        )
+        if timeframe in seen:
+            return
+        seen.add(timeframe)
+        normalized.append(timeframe)
+
+    for timeframe_like in requested_timeframes:
+        add_timeframe(timeframe_like)
+    if include_daily_ewsd:
+        add_timeframe(TimeFrame.D)
+    return normalized
+
+
+def _cache_requirements_for_bias_spec(
+    config: "ResearchConfig",
+    bias_spec: dict[str, Any] | None = None,
+    *,
+    include_daily_ewsd: bool = True,
+) -> tuple[list[Ticker], list[Ticker], list[Ticker], list[TimeFrame]]:
+    """Return primary tickers, dependency tickers, bootstrap tickers, and timeframes."""
+    selected_bias_spec = config.bias_spec if bias_spec is None else bias_spec
+    primary_tickers = list(config.tickers)
+    dependency_tickers: list[Ticker] = []
+    seen_dependency_tickers: set[Ticker] = set(primary_tickers)
+
+    for expanded_spec in expand_bias_specs(selected_bias_spec):
+        params = expanded_spec.get("params", {})
+        if not isinstance(params, dict):
+            continue
+        for ticker_name in sorted(extract_cross_ticker_names(params)):
+            if ticker_name not in Ticker.__members__:
+                continue
+            ticker = Ticker[ticker_name]
+            if ticker in seen_dependency_tickers:
+                continue
+            seen_dependency_tickers.add(ticker)
+            dependency_tickers.append(ticker)
+
+    bootstrap_tickers = [*primary_tickers, *dependency_tickers]
+    timeframes = _normalize_timeframes(
+        selected_bias_spec,
+        include_daily_ewsd=include_daily_ewsd,
+    )
+    return primary_tickers, dependency_tickers, bootstrap_tickers, timeframes
 
 
 def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
@@ -123,15 +187,20 @@ def param_combo_label(combo: dict[str, Any]) -> str:
     return "__".join(parts)
 
 
-def populate_cache_if_needed(config: "ResearchConfig") -> None:
-    """Populate the feature cache if config.populate_cache is True.
+def populate_cache_if_needed(
+    config: "ResearchConfig",
+    *,
+    bias_spec: dict[str, Any] | None = None,
+) -> None:
+    """Ensure feature-research cache coverage if config.populate_cache is True.
 
-    Invariant: cache population always uses all possible data (full date range
-    discovered from OHLC parquet files), not config.start/end. This avoids
-    partial cache when config is later extended.
+    The helper bootstraps the required source candles into the runtime cache,
+    then refreshes bias artifacts from that cache. Candle bootstrap uses the
+    full common available source range across the requested tickers,
+    cross-ticker dependencies, and required timeframes.
 
-    Safe to call even if cache already exists — ``overwrite_existing=False``
-    means only missing entries are computed.
+    Safe to call even if cache already exists. Missing, stale, and out-of-range
+    artifacts are refreshed; fresh artifacts are left untouched.
 
     Parameters
     ----------
@@ -154,40 +223,62 @@ def populate_cache_if_needed(config: "ResearchConfig") -> None:
         return
 
     manager = CacheManager(candle_dir=str(candle_dir))
-    expanded = expand_bias_specs(config.bias_spec)
+    selected_bias_spec = config.bias_spec if bias_spec is None else bias_spec
+    expanded = expand_bias_specs(selected_bias_spec)
+    (
+        primary_tickers,
+        _dependency_tickers,
+        bootstrap_tickers,
+        timeframes,
+    ) = _cache_requirements_for_bias_spec(config, selected_bias_spec)
 
-    # Invariant: use full available data range from OHLC, not config dates
-    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
-    timeframes = [
-        TimeFrame[t] if isinstance(t, str) else t
-        for t in (timeframes_raw if isinstance(timeframes_raw, list) else [timeframes_raw])
-    ]
-    date_range = manager.get_available_date_range(tickers=config.tickers, timeframes=timeframes)
-    if date_range is not None:
-        start_date, end_date = date_range
+    # Use the full common available source range across all required inputs.
+    ranges = manager.get_available_date_range_per_ticker(
+        tickers=bootstrap_tickers,
+        timeframes=timeframes,
+    )
+    if all(ticker in ranges for ticker in bootstrap_tickers):
+        start_date = max(ranges[ticker][0] for ticker in bootstrap_tickers)
+        end_date = min(ranges[ticker][1] for ticker in bootstrap_tickers)
         print(
-            f"[data_loader] Populating cache with full OHLC range: {start_date.date()} -> {end_date.date()}"
+            "[data_loader] Populating cache with full common OHLC range: "
+            f"{start_date.date()} -> {end_date.date()}"
         )
     else:
         start_date = config.start
         end_date = config.end
         print(
-            f"[data_loader] Could not discover OHLC date range; using config: {start_date.date()} -> {end_date.date()}"
+            "[data_loader] Could not discover common OHLC date range; "
+            f"using config: {start_date.date()} -> {end_date.date()}"
         )
 
-    summary = manager.populate_cache(
-        bias_node_specs=expanded,
-        tickers=config.tickers,
+    bootstrap_summary = manager.bootstrap_source_candles(
+        tickers=bootstrap_tickers,
+        timeframes=timeframes,
         start_date=start_date,
         end_date=end_date,
-        timeframe=timeframes[0],
-        show_progress=True,
-        overwrite_existing=False,
     )
-    print(f"[data_loader] Cache populated: {summary}")
+    if bootstrap_summary["failed"] > 0:
+        raise ValueError(f"Failed to bootstrap candle cache coverage: {bootstrap_summary}")
+
+    summary = manager.ensure_bias_cache_coverage(
+        bias_node_specs=expanded,
+        tickers=primary_tickers,
+        start_date=start_date,
+        end_date=end_date,
+        refresh_mode="missing_stale_only",
+        include_daily_ewsd=True,
+    )
+    if summary["failed"] > 0:
+        raise ValueError(f"Failed to ensure feature cache coverage: {summary}")
+    print(f"[data_loader] Cache coverage ensured: {summary}")
 
 
-def get_tickers_with_coverage_for_config(config: "ResearchConfig") -> list[Ticker]:
+def get_tickers_with_coverage_for_config(
+    config: "ResearchConfig",
+    *,
+    bias_spec: dict[str, Any] | None = None,
+) -> list[Ticker]:
     """Return tickers that have OHLC data covering [config.start, config.end].
 
     Tickers whose data starts after config.start or ends before config.end are
@@ -207,24 +298,29 @@ def get_tickers_with_coverage_for_config(config: "ResearchConfig") -> list[Ticke
     if not candle_dir.exists():
         return list(config.tickers)
     manager = CacheManager(candle_dir=str(candle_dir))
-    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
-    timeframes = [
-        TimeFrame[t] if isinstance(t, str) else t
-        for t in (
-            timeframes_raw
-            if isinstance(timeframes_raw, list)
-            else [timeframes_raw]
-        )
-    ]
+    (
+        primary_tickers,
+        dependency_tickers,
+        bootstrap_tickers,
+        timeframes,
+    ) = _cache_requirements_for_bias_spec(config, bias_spec)
     ranges = manager.get_available_date_range_per_ticker(
-        tickers=config.tickers,
+        tickers=bootstrap_tickers,
         timeframes=timeframes,
     )
     start_ts = pd.Timestamp(config.start)
     end_ts = pd.Timestamp(config.end)
+    dependencies_have_full_coverage = all(
+        dep_ticker in ranges
+        and ranges[dep_ticker][0] <= start_ts.to_pydatetime()
+        and ranges[dep_ticker][1] >= end_ts.to_pydatetime()
+        for dep_ticker in dependency_tickers
+    )
+    if not dependencies_have_full_coverage:
+        return []
     covered = [
         t
-        for t in config.tickers
+        for t in primary_tickers
         if t in ranges
         and ranges[t][0] <= start_ts.to_pydatetime()
         and ranges[t][1] >= end_ts.to_pydatetime()
@@ -233,7 +329,10 @@ def get_tickers_with_coverage_for_config(config: "ResearchConfig") -> list[Ticke
 
 
 def get_available_date_ranges_for_tickers(
-    config: "ResearchConfig", tickers: list[Ticker]
+    config: "ResearchConfig",
+    tickers: list[Ticker],
+    *,
+    bias_spec: dict[str, Any] | None = None,
 ) -> dict[Ticker, tuple[pd.Timestamp, pd.Timestamp]]:
     """Return per-ticker (min_date, max_date) from OHLC data for error messages.
 
@@ -244,28 +343,30 @@ def get_available_date_ranges_for_tickers(
     if project_root is None or not (project_root / "data" / "ohlc_data").exists():
         return {}
     manager = CacheManager(candle_dir=str(project_root / "data" / "ohlc_data"))
-    timeframes_raw = config.bias_spec.get("timeframes", [TimeFrame.D])
-    timeframes = [
-        TimeFrame[t] if isinstance(t, str) else t
-        for t in (
-            timeframes_raw
-            if isinstance(timeframes_raw, list)
-            else [timeframes_raw]
-        )
-    ]
+    (
+        _primary_tickers,
+        dependency_tickers,
+        _bootstrap_tickers,
+        timeframes,
+    ) = _cache_requirements_for_bias_spec(config, bias_spec)
+    requested_tickers = list(
+        dict.fromkeys([*tickers, *dependency_tickers])
+    )
     ranges = manager.get_available_date_range_per_ticker(
-        tickers=tickers,
+        tickers=requested_tickers,
         timeframes=timeframes,
     )
     return {
         t: (pd.Timestamp(ranges[t][0]), pd.Timestamp(ranges[t][1]))
-        for t in tickers
+        for t in requested_tickers
         if t in ranges
     }
 
 
 def get_effective_range_and_tickers(
     config: "ResearchConfig",
+    *,
+    bias_spec: dict[str, Any] | None = None,
 ) -> tuple[pd.Timestamp, pd.Timestamp, list[Ticker]] | None:
     """Return effective date range and tickers when no ticker has full coverage.
 
@@ -278,7 +379,14 @@ def get_effective_range_and_tickers(
     tuple of (effective_start, effective_end, tickers) or None
         None if no OHLC data exists (e.g. no data/ohlc_data or empty ranges).
     """
-    ranges = get_available_date_ranges_for_tickers(config, list(config.tickers))
+    primary_tickers, dependency_tickers, _bootstrap_tickers, _timeframes = (
+        _cache_requirements_for_bias_spec(config, bias_spec)
+    )
+    ranges = get_available_date_ranges_for_tickers(
+        config,
+        primary_tickers,
+        bias_spec=bias_spec,
+    )
     if not ranges:
         return None
     start_ts = pd.Timestamp(config.start)
@@ -298,20 +406,35 @@ def get_effective_range_and_tickers(
             return (effective_start, effective_end, covering)
     # Fallback: single ticker with largest overlap with [config.start, config.end]
     def overlap_seconds(ticker: Ticker) -> float:
-        r0, r1 = ranges[ticker][0], ranges[ticker][1]
-        low = max(start_ts.to_pydatetime(), r0)
-        high = min(end_ts.to_pydatetime(), r1)
+        if ticker not in ranges:
+            return 0.0
+        interval_starts = [ranges[ticker][0]]
+        interval_ends = [ranges[ticker][1]]
+        for dependency_ticker in dependency_tickers:
+            if dependency_ticker not in ranges:
+                return 0.0
+            interval_starts.append(ranges[dependency_ticker][0])
+            interval_ends.append(ranges[dependency_ticker][1])
+        low = max(start_ts, *interval_starts)
+        high = min(end_ts, *interval_ends)
         return (pd.Timestamp(high) - pd.Timestamp(low)).total_seconds()
 
     best = max(
-        (t for t in ranges),
+        (t for t in primary_tickers),
         key=overlap_seconds,
+        default=None,
     )
-    if overlap_seconds(best) <= 0:
+    if best is None or overlap_seconds(best) <= 0:
         return None
-    r0, r1 = ranges[best][0], ranges[best][1]
-    eff_start = max(start_ts, pd.Timestamp(r0))
-    eff_end = min(end_ts, pd.Timestamp(r1))
+    interval_starts = [ranges[best][0]]
+    interval_ends = [ranges[best][1]]
+    for dependency_ticker in dependency_tickers:
+        if dependency_ticker not in ranges:
+            return None
+        interval_starts.append(ranges[dependency_ticker][0])
+        interval_ends.append(ranges[dependency_ticker][1])
+    eff_start = max(start_ts, *interval_starts)
+    eff_end = min(end_ts, *interval_ends)
     return (eff_start, eff_end, [best])
 
 

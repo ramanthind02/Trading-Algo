@@ -8,7 +8,7 @@ uses a longer lookback period for smoother signals.
 Output: Continuous 0-100 (same as standard RSI)
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -40,6 +40,8 @@ class AdaptiveRSI(BiasNode):
     - max_period: Maximum RSI lookback period (default: 14)
     - volatility_period: Period for ATR calculation (default: 20)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"minPeriod", "maxPeriod", "volatilityPeriod"})
 
     def __init__(
         self,

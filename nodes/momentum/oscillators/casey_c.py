@@ -7,7 +7,7 @@ against historical percent changes over a lookback period.
 Output: Continuous 0-100 (percentile rank)
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -38,6 +38,7 @@ class CaseyC(BiasNode):
     - change_period: Period for calculating percent change (default: 10)
     - ranking_period: Lookback period for percentile ranking (default: 100)
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"changePeriod", "rankingPeriod"})
 
     def __init__(
         self,

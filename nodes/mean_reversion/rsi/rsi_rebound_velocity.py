@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 
 import numpy as np
 
@@ -9,6 +9,8 @@ from utils.core.models import Candle
 
 
 class RSIReboundVelocity(BiasNode):
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod"})
+
     def __init__(
         self,
         ticker: Ticker,

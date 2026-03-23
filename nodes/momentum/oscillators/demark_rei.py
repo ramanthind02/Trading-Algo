@@ -7,7 +7,7 @@ today's highs/lows and the highs/lows from two days ago.
 Output: Continuous -100 to +100
 """
 
-from typing import List
+from typing import ClassVar, List
 from collections import deque
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
@@ -45,6 +45,7 @@ class DemarkREI(BiasNode):
     Parameters:
     - period: Lookback period for REI calculation (default: 5)
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"period"})
 
     def __init__(
         self,

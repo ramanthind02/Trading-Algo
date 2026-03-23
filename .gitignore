@@ -237,6 +237,9 @@ research/reports/
 
 # Bias node cache (parquet files)
 cache/
+!utils/cache/
+utils/cache/**
+!utils/cache/*.py
 .worktrees/
 
 # Intraday & Norgate data

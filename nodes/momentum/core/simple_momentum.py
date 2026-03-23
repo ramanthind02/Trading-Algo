@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
@@ -24,7 +24,8 @@ class SimpleMomentum(BiasNode):
     Parameters:
     - lookback: Number of periods to look back for comparison (default: 1)
     """
-    
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback"})
+
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 1):
         """
         Initialize Simple Momentum node

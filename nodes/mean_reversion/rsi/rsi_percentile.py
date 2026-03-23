@@ -7,7 +7,7 @@ the current RSI reading is historically high or low.
 Output: Continuous 0-100 (percentile rank of RSI)
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -38,6 +38,8 @@ class RSIPercentile(BiasNode):
     - rsi_period: RSI calculation period (default: 14)
     - percentile_period: Lookback period for percentile ranking (default: 252)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod", "percentilePeriod"})
 
     def __init__(
         self,

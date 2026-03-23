@@ -44,137 +44,34 @@ Examples:
 from __future__ import annotations
 
 from datetime import datetime
-from itertools import product
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 import utils.core.helpers as helpers
+from utils.cache.central_cache import CentralCacheStore
+from utils.cache.central_cache_errors import ArtifactMissingError, CacheCoverageError
+from utils.cache.central_cache_models import (
+    ArtifactDescriptor,
+    ArtifactScope,
+    CacheRequest,
+)
+from utils.cache.feature_pipeline_support import (
+    assign_cached_feature_values as _assign_cached_feature_values,
+    build_bias_node_descriptor as _build_bias_node_descriptor,
+    ensure_utc_datetime_index as _ensure_utc_datetime_index,
+    expand_param_grid as _expand_param_grid,
+    normalize_ticker_series as _normalize_ticker_series,
+    normalize_ticker_str as _normalize_ticker_str,
+    prepare_candles_override as _prepare_candles_override,
+    preload_cross_ticker_data as _preload_cross_ticker_data,
+    preload_cross_ticker_override_data as _preload_cross_ticker_override_data,
+    read_aligned_feature_artifact as _read_aligned_feature_artifact,
+    write_feature_artifact as _write_feature_artifact,
+)
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.models import Candle
-from utils.data.cross_ticker_store import extract_cross_ticker_names, SCALAR_LIST_PARAM_KEYS
-
-
-def _is_grid_axis(key: str, value: object) -> bool:
-    """Return True if *value* should be expanded as a grid dimension."""
-    return isinstance(value, list) and key not in SCALAR_LIST_PARAM_KEYS
-
-
-def _expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Expand parameter grid to list of parameter dicts.
-
-    List-valued params registered in ``SCALAR_LIST_PARAM_KEYS`` (e.g.
-    ``cross_tickers``) are treated as atomic scalars, not grid dimensions.
-    """
-    if not isinstance(params, dict):
-        return [{}]
-
-    has_grid = any(_is_grid_axis(k, v) for k, v in params.items())
-
-    if not has_grid:
-        return [params]
-
-    # Grid search: expand all combinations (scalar-list keys kept as-is)
-    keys = list(params.keys())
-    values = [
-        v if _is_grid_axis(k, v) else [v]
-        for k, v in params.items()
-    ]
-
-    return [dict(zip(keys, combo)) for combo in product(*values)]
-
-
-def _normalize_ticker_str(ticker: object) -> str:
-    """
-    Normalize ticker objects (enums, strings, etc.) to a string representation.
-
-    This keeps ticker handling consistent across single- and multi-ticker
-    feature/target pipelines without changing external behavior.
-    """
-    if hasattr(ticker, "name"):
-        return str(getattr(ticker, "name"))
-    if isinstance(ticker, str):
-        return ticker
-    return str(ticker)
-
-
-def _normalize_ticker_series(series: pd.Series) -> pd.Series:
-    """
-    Normalize a ticker column to strings without per-row apply().
-
-    One type check then a single pass; avoids the apply/map_array overhead
-    that dominated Stage 2 profile (millions of callbacks).
-    """
-    if series.empty:
-        return series
-    first = series.iloc[0]
-    if hasattr(first, "name"):
-        return pd.Series(
-            [x.name for x in series],
-            index=series.index,
-            dtype=str,
-        )
-    if isinstance(first, str):
-        return series
-    return series.astype(str)
-
-
-def _ensure_utc_datetime_index(values: object) -> pd.DatetimeIndex:
-    """
-    Convert arbitrary datetime-like values to a UTC-normalized DatetimeIndex.
-
-    Mirrors the existing pattern:
-    - Use pd.to_datetime to construct a DatetimeIndex
-    - Localize to UTC when tz-naive
-    - Convert to UTC when timezone-aware
-    """
-    datetime_values = pd.to_datetime(values)
-    if isinstance(datetime_values, pd.Series):
-        datetime_index = pd.DatetimeIndex(datetime_values.to_numpy())
-    else:
-        datetime_index = pd.DatetimeIndex(datetime_values)
-    if datetime_index.tz is None:
-        return datetime_index.tz_localize("UTC")
-    return datetime_index.tz_convert("UTC")
-
-
-def _prepare_candles_override(
-    candles_override: pd.DataFrame,
-    tickers: List[Ticker],
-    use_millisecond_offset: bool,
-) -> pd.DataFrame:
-    """Validate and normalize override candles for forward-return computation.
-
-    Primary key is (datetime, ticker). use_millisecond_offset is ignored (no offset).
-    Extra tickers are allowed (for cross-ticker nodes) as long as requested
-    tickers are present.
-    """
-    required_columns = {"datetime", "open", "high", "low", "close", "ticker"}
-    missing_columns = sorted(required_columns.difference(candles_override.columns))
-    if missing_columns:
-        raise ValueError(
-            "candles_override missing required columns: "
-            f"{missing_columns}. Expected columns include {sorted(required_columns)}"
-        )
-
-    normalized = candles_override.copy()
-    normalized["datetime"] = _ensure_utc_datetime_index(normalized["datetime"])
-    normalized["ticker"] = _normalize_ticker_series(normalized["ticker"])
-
-    requested_tickers = [_normalize_ticker_str(ticker) for ticker in tickers]
-    requested_set = set(requested_tickers)
-    override_ticker_set = set(normalized["ticker"].unique())
-
-    missing_tickers = sorted(requested_set.difference(override_ticker_set))
-    if missing_tickers:
-        raise ValueError(
-            "candles_override missing ticker data for requested tickers: "
-            f"{missing_tickers}. Available tickers: {sorted(override_ticker_set)}"
-        )
-
-    # Primary key is (datetime, ticker); no millisecond offset applied
-    return normalized
 
 
 def _safe_log_return(close: pd.Series, open_: pd.Series) -> pd.Series:
@@ -382,63 +279,6 @@ def compute_forward_returns(
     
     return targets_df
 
-
-def _preload_cross_ticker_data(
-    param_combos: List[Dict[str, Any]],
-    timeframes: List['TimeFrame'],
-    start: datetime,
-    end: datetime,
-) -> None:
-    """Scan param combos for ``cross_tickers`` and pre-load referenced tickers."""
-    from utils.core.enums import Ticker as _Ticker
-
-    cross_names: set[str] = set()
-    for combo in param_combos:
-        cross_names.update(extract_cross_ticker_names(combo))
-
-    if not cross_names:
-        return
-
-    from utils.data.cross_ticker_store import CrossTickerDataStore
-    store = CrossTickerDataStore.get_instance()
-    for name in cross_names:
-        try:
-            ct = _Ticker[name]
-        except KeyError:
-            continue
-        for tf in timeframes:
-            if not store.is_loaded(ct, tf):
-                store.load(ct, tf, start=start, end=end)
-
-
-def _preload_cross_ticker_override_data(
-    candles_override: pd.DataFrame,
-    timeframes: List[TimeFrame],
-) -> None:
-    """Load override candles into CrossTickerDataStore via set_data()."""
-    if candles_override.empty or "ticker" not in candles_override.columns:
-        return
-
-    from utils.data.cross_ticker_store import CrossTickerDataStore
-
-    normalized = candles_override.copy()
-    normalized["ticker"] = _normalize_ticker_series(normalized["ticker"])
-
-    store = CrossTickerDataStore.get_instance()
-    for ticker_name, ticker_df in normalized.groupby("ticker"):
-        try:
-            ticker_enum = Ticker[ticker_name]
-        except KeyError:
-            continue
-
-        payload = ticker_df.drop(
-            columns=["ticker", "timeframe", "timestamp"],
-            errors="ignore",
-        )
-        for tf in timeframes:
-            store.set_data(ticker_enum, tf, payload)
-
-
 def _extract_features_single_ticker(
     module_name: str,
     params: Dict[str, Any],
@@ -447,6 +287,8 @@ def _extract_features_single_ticker(
     end: datetime,
     timeframes: List[TimeFrame],
     use_cache: bool = False,
+    populate_on_miss: bool = False,
+    cache_scope: ArtifactScope = ArtifactScope.LIVE,
     price_df_override: pd.DataFrame | None = None,
     filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -457,6 +299,11 @@ def _extract_features_single_ticker(
     ----------
     use_cache : bool, default=False
         If True, load features from BiasNodeCache instead of streaming candles.
+    populate_on_miss : bool, default=False
+        If True, missing cache entries are materialized by streaming and then
+        written back through the central cache facade.
+    cache_scope : ArtifactScope, default=ArtifactScope.LIVE
+        Storage namespace used for central-cache reads and writes.
     price_df_override : pd.DataFrame | None, default=None
         When provided, use this as price data instead of load_data and do not use
         cache (used for permutation so features are computed from shuffled candles).
@@ -466,6 +313,7 @@ def _extract_features_single_ticker(
         if price_df.index.name != 'datetime' and 'datetime' in price_df.columns:
             price_df = price_df.set_index('datetime')
         use_cache = False  # Must stream from override so features reflect shuffled data
+        populate_on_miss = False
     else:
         price_df = helpers.load_data(ticker, timeframes[0], start=start, end=end)
         price_df.set_index('datetime', inplace=True)
@@ -518,68 +366,68 @@ def _extract_features_single_ticker(
         node_to_cols[bias_node] = (col_idx, col_idx + n_node_cols)
         col_idx += n_node_cols
 
-    # CACHED PATH: Load from BiasNodeCache (fast)
+    cache_store = CentralCacheStore.get_instance()
+
+    streaming_required = not use_cache
     if use_cache:
-        from utils.cache.bias_node_cache import BiasNodeCache, CacheMissError
-
+        cache_requests: list[tuple[Any, ArtifactDescriptor, CacheRequest]] = []
         for bias_node, orig_params, orig_tf in bias_node_info:
-            # Get params from bias node, falling back to original params if node doesn't have them
-            # This ensures compatibility with nodes that don't set module_name/params attributes
-            node_module = getattr(bias_node, 'module_name', module_name)
-            node_params = getattr(bias_node, 'params', orig_params)
-            node_tf = getattr(bias_node, 'tf', orig_tf)
-
-            # Create cache instance
-            cache = BiasNodeCache(
+            node_module = getattr(bias_node, "module_name", module_name)
+            node_params = getattr(bias_node, "params", orig_params)
+            node_tf = getattr(bias_node, "tf", orig_tf)
+            descriptor = _build_bias_node_descriptor(
                 module_name=node_module,
                 params=node_params,
                 ticker=ticker,
-                tf=node_tf
+                tf=node_tf,
+                scope=cache_scope,
+            )
+            cache_requests.append(
+                (
+                    bias_node,
+                    descriptor,
+                    CacheRequest(start=start, end=end),
+                )
             )
 
-            if not cache.exists():
-                raise CacheMissError(
-                    module_name=node_module,
-                    params=node_params,
-                    ticker=ticker,
-                    tf=node_tf,
-                    date_range=(start, end),
-                    cache_path=cache.cache_path,
-                    reason="Cache file does not exist. Run CacheManager.populate_cache() first."
+        missing_requests: list[tuple[Any, ArtifactDescriptor, CacheRequest]] = []
+        for bias_node, descriptor, request in cache_requests:
+            try:
+                cached_aligned = _read_aligned_feature_artifact(
+                    cache_store,
+                    descriptor,
+                    request,
+                    price_df.index,
                 )
+                start_col, end_col = node_to_cols[bias_node]
+                _assign_cached_feature_values(
+                    feature_data,
+                    cached_aligned,
+                    start_col,
+                    end_col,
+                )
+            except (ArtifactMissingError, CacheCoverageError):
+                if not populate_on_miss:
+                    raise
+                missing_requests.append((bias_node, descriptor, request))
 
-            # Load cached values
-            cached_df = cache.get_dataframe(start=start, end=end, require_cache=True)
-
-            # Align cached data to price_df index
-            # Remove timezone from cached index if needed for alignment
-            if cached_df.index.tz is not None:
-                cached_aligned = cached_df.reindex(price_df.index.tz_convert(cached_df.index.tz))
-            else:
-                cached_aligned = cached_df.reindex(price_df.index.tz_localize(None))
-
-            # If alignment failed, try without timezone
-            if cached_aligned.isna().all().all():
-                price_index_naive = price_df.index.tz_localize(None) if price_df.index.tz else price_df.index
-                cached_index_naive = cached_df.index.tz_localize(None) if cached_df.index.tz else cached_df.index
-                cached_df_naive = cached_df.copy()
-                cached_df_naive.index = cached_index_naive
-                cached_aligned = cached_df_naive.reindex(price_index_naive)
-
-            # Fill feature_data from cache
-            start_col, end_col = node_to_cols[bias_node]
-
-            if 'value' in cached_aligned.columns:
-                feature_data[:, start_col] = cached_aligned['value'].values
-            else:
-                # Multi-column cache
-                for i, col in enumerate(cached_aligned.columns):
-                    if start_col + i < end_col:
-                        feature_data[:, start_col + i] = cached_aligned[col].values
+        if missing_requests:
+            if not populate_on_miss:
+                raise ArtifactMissingError(
+                    module_name=module_name,
+                    ticker=ticker,
+                    timeframe=timeframes[0] if timeframes else None,
+                    requested_at=start,
+                    reason="Feature cache miss and populate_on_miss is disabled.",
+                )
+            streaming_required = True
+        else:
+            streaming_required = False
 
     # STREAMING PATH: Iterate over candles (slow)
-    else:
+    if streaming_required:
         active_timeframe = timeframes[0]
+        source_dependencies = [(ticker, active_timeframe)]
         for idx, (dt, row) in enumerate(price_df.iterrows()):
             candle = Candle(
                 datetime=dt,
@@ -601,6 +449,31 @@ def _extract_features_single_ticker(
                     if hasattr(val, 'value'):
                         val = val.value
                     feature_data[idx, start_col + i] = float(val) if val is not None else np.nan
+
+        if populate_on_miss:
+            for bias_node, orig_params, orig_tf in bias_node_info:
+                node_module = getattr(bias_node, "module_name", module_name)
+                node_params = getattr(bias_node, "params", orig_params)
+                node_tf = getattr(bias_node, "tf", orig_tf)
+                descriptor = _build_bias_node_descriptor(
+                    module_name=node_module,
+                    params=node_params,
+                    ticker=ticker,
+                    tf=node_tf,
+                    scope=cache_scope,
+                )
+                start_col, end_col = node_to_cols[bias_node]
+                cached_slice = pd.DataFrame(
+                    feature_data[:, start_col:end_col],
+                    index=price_df.index,
+                    columns=column_names[start_col:end_col],
+                )
+                _write_feature_artifact(
+                    cache_store,
+                    descriptor,
+                    cached_slice,
+                    source_dependencies,
+                )
 
     # Create features DataFrame
     features_df = pd.DataFrame(feature_data, index=price_df.index, columns=column_names)
@@ -672,6 +545,8 @@ def extract_features(
     timeframes: List[TimeFrame] = None,
     use_millisecond_offset: bool = True,
     use_cache: bool = False,
+    populate_on_miss: bool = False,
+    cache_scope: ArtifactScope = ArtifactScope.LIVE,
     candles_override: pd.DataFrame | None = None,
     filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -698,6 +573,10 @@ def extract_features(
         Timeframes to use. Defaults to [TimeFrame.D]
     use_millisecond_offset : bool, default=True
         Deprecated. Ignored. Primary key is (datetime, ticker).
+    populate_on_miss : bool, default=False
+        If True, missing cache entries are materialized by streaming and saved.
+    cache_scope : ArtifactScope, default=ArtifactScope.LIVE
+        Artifact scope for cache reads and writes.
         
     Returns
     -------
@@ -775,6 +654,8 @@ def extract_features(
             end=end,
             timeframes=timeframes,
             use_cache=use_cache if not override_by_ticker else False,
+            populate_on_miss=populate_on_miss,
+            cache_scope=cache_scope,
             price_df_override=override_by_ticker.get(tickers[0]),
             filter_specs=filter_specs,
         )
@@ -798,6 +679,8 @@ def extract_features(
             end=end,
             timeframes=timeframes,
             use_cache=use_cache if single_ticker not in override_by_ticker else False,
+            populate_on_miss=populate_on_miss,
+            cache_scope=cache_scope,
             price_df_override=override_by_ticker.get(single_ticker),
             filter_specs=filter_specs,
         )
@@ -828,6 +711,8 @@ def extract_features_with_forward_returns(
     use_millisecond_offset: bool = True,
     target_col: str = 'log_return',
     use_cache: bool = False,
+    populate_on_miss: bool = False,
+    cache_scope: ArtifactScope = ArtifactScope.LIVE,
     candles_override: pd.DataFrame | None = None,
     filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -872,6 +757,10 @@ def extract_features_with_forward_returns(
         - 'raw_return': (close[t+1]/open[t+1]) - 1, shifted forward by 1 period
         - 'log_return': log(close[t+1]/open[t+1]), shifted forward by 1 period
         - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
+    populate_on_miss : bool, default=False
+        If True, materialize missing cache entries by streaming and store them.
+    cache_scope : ArtifactScope, default=ArtifactScope.LIVE
+        Artifact scope for cache reads and writes.
     candles_override : pd.DataFrame | None, default=None
         Optional candle dataframe override. When provided, this dataframe is used
         for forward-return computation instead of loading candles internally.
@@ -945,6 +834,8 @@ def extract_features_with_forward_returns(
         "timeframes": timeframes,
         "use_millisecond_offset": use_millisecond_offset,
         "use_cache": use_cache and not have_candles_override,
+        "populate_on_miss": populate_on_miss,
+        "cache_scope": cache_scope,
         "candles_override": candles_df if have_candles_override else None,
     }
 
@@ -1290,6 +1181,8 @@ def extract_features_for_bias_node(
     use_millisecond_offset: bool = True,
     target_col: str = 'log_return',
     use_cache: bool = False,
+    populate_on_miss: bool = False,
+    cache_scope: ArtifactScope = ArtifactScope.LIVE,
     candles_override: pd.DataFrame | None = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -1326,6 +1219,10 @@ def extract_features_for_bias_node(
         - 'raw_return': (close[t+1]/open[t+1]) - 1, shifted forward by 1 period
         - 'log_return': log(close[t+1]/open[t+1]), shifted forward by 1 period
         - 'log_return_ewsd': log_return normalized by EWSD (recommended for multi-ticker)
+    populate_on_miss : bool, default=False
+        If True, materialize missing cache entries by streaming and store them.
+    cache_scope : ArtifactScope, default=ArtifactScope.LIVE
+        Artifact scope for cache reads and writes.
     candles_override : pd.DataFrame | None, default=None
         Optional candle dataframe override used by
         ``extract_features_with_forward_returns``.
@@ -1384,6 +1281,8 @@ def extract_features_for_bias_node(
         use_millisecond_offset=use_millisecond_offset,
         target_col=target_col,
         use_cache=use_cache,
+        populate_on_miss=populate_on_miss,
+        cache_scope=cache_scope,
         candles_override=candles_override,
         filter_specs=filter_specs,
     )

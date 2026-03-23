@@ -7,7 +7,7 @@ bias nodes (211k Python function calls per backtest), we can compute
 outputs once and cache them as parquet files for instant retrieval.
 
 Cache path structure:
-    cache/{module_name}/{ticker}_{tf}_{params_hash}.parquet
+    .cache/trading_algo/central_cache/artifacts/live/{module_name}/{ticker}_{tf}_{params_hash}.parquet
 
 Author: Trading Research Team
 Date: 2025-01-07
@@ -22,6 +22,7 @@ from typing import Any, Dict, Optional, Union
 
 import pandas as pd
 
+from utils.cache.cache_paths import default_live_artifact_cache_dir
 from utils.core.enums import Ticker, TimeFrame
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class BiasNodeCache:
     - params: Hyperparameters (hashed for filename)
 
     Cache path format:
-        cache/{module_name}/{ticker}_{tf}_{params_hash}.parquet
+        .cache/trading_algo/central_cache/artifacts/live/{module_name}/{ticker}_{tf}_{params_hash}.parquet
 
     Parquet schema:
         - datetime (index): Candle timestamps
@@ -105,7 +106,8 @@ class BiasNodeCache:
     tf : TimeFrame
         Timeframe for the data
     cache_dir : str, optional
-        Root cache directory. Defaults to 'cache' in project root.
+        Root cache directory. Defaults to the dedicated runtime artifact cache
+        under ``.cache/trading_algo/central_cache/artifacts/live``.
 
     Examples
     --------
@@ -135,11 +137,9 @@ class BiasNodeCache:
         self.ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
         self.tf_str = tf.name if hasattr(tf, 'name') else str(tf)
 
-        # Set cache directory (default to 'cache' in project root)
+        # Keep writable cache state out of repository code and source data.
         if cache_dir is None:
-            # Get project root (parent of utils directory)
-            project_root = Path(__file__).parent.parent
-            cache_dir = str(project_root / 'cache')
+            cache_dir = str(default_live_artifact_cache_dir())
         self.cache_dir = cache_dir
 
         # Build cache path

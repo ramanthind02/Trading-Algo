@@ -20,7 +20,7 @@ Date: 2025-10-23
 from nodes import BiasNode
 from utils.core.models import Candle
 from utils.core.enums import Bias, Ticker, TimeFrame
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 import numpy as np
 from collections import deque
 
@@ -52,6 +52,7 @@ class EWSDNode(BiasNode):
     Cython: When built, uses compute_stddev_sample_fast from fast_nodes for
     the long-run standard deviation (sample ddof=1); EWMA variance remains O(1).
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"long_run_window"})
     
     def __init__(
         self, 
@@ -89,6 +90,7 @@ class EWSDNode(BiasNode):
         self.long_run_window = long_run_window
         self.blend_short_weight = blend_short_weight
         self.blend_long_weight = blend_long_weight
+        self.params = {"long_run_window": long_run_window}
         
         # State variables
         self.prev_close: Optional[float] = None

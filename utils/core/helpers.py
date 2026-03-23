@@ -275,70 +275,14 @@ def _resolve_bias_node_import_path(base_module_name: str) -> str:
 
 
 
-def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Dict) -> Any:
-    """
-    Creates a bias node by directly specifying the module name
-
-    Parameters:
-    - module_name (str): Name of the module file (without .py extension) containing the bias node class
-    - ticker (Ticker): Ticker symbol
-    - tf (TimeFrame): Timeframe
-    - params (Dict): Hyperparameters for the bias node
-
-    Returns:
-    - BiasNode: The appropriate bias node instance
-    """
+def _resolve_bias_node_class(module_name: str) -> type[Any]:
+    """Resolve the concrete bias-node class for *module_name*."""
     import importlib
     import inspect
-    
-    # Special handling for TimeSeriesFeatureNode
-    if module_name == 'ts_feature' or module_name == 'tsFeature':
-        from nodes.ts_feature import TimeSeriesFeatureNode
-        from types import FunctionType
-        
-        # Extract wrapped node parameters
-        wrapped_module = params.get('wrapped_module')
-        wrapped_params = params.get('wrapped_params', {})
-        lookback = params.get('lookback')
-        transformation = params.get('transformation')  # Can be function or string name
-        transformation_args = params.get('transformation_args', {})
-        
-        if not wrapped_module or not lookback or not transformation:
-            raise ValueError("TimeSeriesFeatureNode requires 'wrapped_module', 'lookback', and 'transformation' in params")
-        
-        # Create wrapped node
-        wrapped_node = create_bias_node(wrapped_module, ticker, tf, wrapped_params)
-        
-        # Get transformation function and name
-        if isinstance(transformation, (FunctionType, type(lambda: None))):
-            # Transformation is already a function
-            transformation_func = transformation
-            transformation_name = getattr(transformation, '__name__', 'transformation')
-        elif isinstance(transformation, str):
-            # Transformation is a string name - look it up
-            transformation_func = _get_functime_function(transformation)
-            transformation_name = transformation
-        else:
-            raise ValueError(f"transformation must be a function or string name, got {type(transformation)}")
-        
-        # Create TimeSeriesFeatureNode
-        if hasattr(TimeSeriesFeatureNode, 'get_instance'):
-            return TimeSeriesFeatureNode.get_instance(
-                ticker, tf, wrapped_node, lookback, transformation_func, 
-                transformation_name, transformation_args
-            )
-        else:
-            return TimeSeriesFeatureNode(
-                ticker, tf, wrapped_node, lookback, transformation_func,
-                transformation_name, transformation_args
-            )
-    
+
     base_module_name = _normalize_module_base_name(module_name)
     full_module_name = _resolve_bias_node_import_path(base_module_name)
-    
-    # Store the original module name for later use
-    original_module_name = module_name
-    
+
     # Import the resolved module path
     try:
         module = importlib.import_module(full_module_name)
@@ -361,16 +305,101 @@ def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Di
     
     if main_class is None:
         raise ValueError(f"Could not find a suitable class in module {module_name}")
-    
-    # Create and return an instance of the bias node
-    try:
-        if hasattr(main_class, 'get_instance') and callable(getattr(main_class, 'get_instance')):
-            return main_class.get_instance(ticker, tf, **params)
+
+    return main_class
+
+
+def _instantiate_bias_node(
+    module_name: str,
+    ticker: Ticker,
+    tf: TimeFrame,
+    params: Dict,
+    *,
+    use_singleton: bool,
+) -> Any:
+    """Instantiate a bias node, optionally bypassing class singletons."""
+    # Special handling for TimeSeriesFeatureNode
+    if module_name == 'ts_feature' or module_name == 'tsFeature':
+        from nodes.ts_feature import TimeSeriesFeatureNode
+        from types import FunctionType
+
+        wrapped_module = params.get('wrapped_module')
+        wrapped_params = params.get('wrapped_params', {})
+        lookback = params.get('lookback')
+        transformation = params.get('transformation')
+        transformation_args = params.get('transformation_args', {})
+
+        if not wrapped_module or not lookback or not transformation:
+            raise ValueError("TimeSeriesFeatureNode requires 'wrapped_module', 'lookback', and 'transformation' in params")
+
+        wrapped_node = _instantiate_bias_node(
+            wrapped_module,
+            ticker,
+            tf,
+            wrapped_params,
+            use_singleton=use_singleton,
+        )
+
+        if isinstance(transformation, (FunctionType, type(lambda: None))):
+            transformation_func = transformation
+            transformation_name = getattr(transformation, '__name__', 'transformation')
+        elif isinstance(transformation, str):
+            transformation_func = _get_functime_function(transformation)
+            transformation_name = transformation
         else:
-            # Fall back to direct instantiation if get_instance is not available
-            return main_class(ticker, tf, **params)
+            raise ValueError(f"transformation must be a function or string name, got {type(transformation)}")
+
+        if use_singleton and hasattr(TimeSeriesFeatureNode, 'get_instance'):
+            return TimeSeriesFeatureNode.get_instance(
+                ticker, tf, wrapped_node, lookback, transformation_func,
+                transformation_name, transformation_args
+            )
+        return TimeSeriesFeatureNode(
+            ticker, tf, wrapped_node, lookback, transformation_func,
+            transformation_name, transformation_args
+        )
+
+    main_class = _resolve_bias_node_class(module_name)
+
+    try:
+        if use_singleton and hasattr(main_class, 'get_instance') and callable(getattr(main_class, 'get_instance')):
+            return main_class.get_instance(ticker, tf, **params)
+        return main_class(ticker, tf, **params)
     except Exception as e:
         raise RuntimeError(f"Error instantiating class from {module_name}: {e}")
+
+
+def create_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Dict) -> Any:
+    """
+    Creates a bias node by directly specifying the module name
+
+    Parameters:
+    - module_name (str): Name of the module file (without .py extension) containing the bias node class
+    - ticker (Ticker): Ticker symbol
+    - tf (TimeFrame): Timeframe
+    - params (Dict): Hyperparameters for the bias node
+
+    Returns:
+    - BiasNode: The appropriate bias node instance
+    """
+    return _instantiate_bias_node(
+        module_name,
+        ticker,
+        tf,
+        params,
+        use_singleton=True,
+    )
+
+
+def create_fresh_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, params: Dict) -> Any:
+    """Create a fresh bias-node instance that bypasses singleton reuse."""
+    return _instantiate_bias_node(
+        module_name,
+        ticker,
+        tf,
+        params,
+        use_singleton=False,
+    )
 
 
 def create_filtered_bias_node(

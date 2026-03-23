@@ -33,8 +33,7 @@
       },
       "requires_fit": false,
       "is_fitted": false,
-      "fitted_params": null,
-      "members": []
+      "fitted_params": null
     }
   ]
 }

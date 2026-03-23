@@ -7,7 +7,7 @@ the current RSI is relative to its historical distribution.
 Output: Continuous ~-3 to +3 (z-score)
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -39,6 +39,8 @@ class ZScoreRSI(BiasNode):
     - rsi_period: RSI calculation period (default: 14)
     - zscore_period: Lookback period for z-score calculation (default: 100)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod", "zscorePeriod"})
 
     def __init__(
         self,

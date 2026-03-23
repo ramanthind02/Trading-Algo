@@ -8,7 +8,7 @@ fixed-exit rules.
 Output: Rule-based -1, 0, or 1
 """
 
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 import numpy as np
 from utils.core.models import Candle
 from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
@@ -36,6 +36,8 @@ class RSISignal(BiasNode):
     - exit_policy: "threshold" or "threshold_or_bars" (default: "threshold_or_bars")
     - exit_bars: bars in position before fixed exit (default: 5)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod"})
 
     def __init__(
         self,

@@ -1,9 +1,9 @@
-from typing import List, Callable, Any, Optional, Dict
+from typing import ClassVar, List, Callable, Any, Optional, Dict
 from collections import deque
 import polars as pl
 import numpy as np
 from datetime import datetime
-from nodes import BiasNode
+from nodes import BiasNode, LookbackContribution
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
 import utils.core.helpers as _helpers
@@ -70,6 +70,8 @@ class TimeSeriesFeatureNode(BiasNode):
             }
         }
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback"})
     
     def __init__(
         self,
@@ -351,3 +353,12 @@ class TimeSeriesFeatureNode(BiasNode):
             logger = logging.getLogger(__name__)
             logger.debug(f"Error computing transformation {self.transformation_name}: {e}")
             return np.nan
+
+    def _extra_lookback_contributions(self) -> tuple[LookbackContribution, ...]:
+        """Encode the additive warmup needed for a fully warmed transformed output."""
+        return (
+            LookbackContribution(
+                label="wrapped_plus_window",
+                bars=self.wrapped_node.max_lookback() + self.lookback,
+            ),
+        )

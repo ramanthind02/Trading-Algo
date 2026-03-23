@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
@@ -21,6 +21,7 @@ class SeasonalIndicesWeekday(BiasNode):
     Parameters:
     - None (no parameters needed)
     """
+    hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]] = (("weekday_gate", 1),)
 
     def __init__(self, ticker: Ticker, tf: TimeFrame) -> None:
         """
