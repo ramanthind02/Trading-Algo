@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 
 from nodes import BiasNode
+from utils.cache.central_cache_errors import ArtifactMissingError
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.models import Candle
 from utils.data.cross_ticker_store import CrossTickerDataStore
@@ -90,7 +91,6 @@ class RebalancingNode(BiasNode):
         self._carry_over_signal: int = 0
 
         self.ensure_standardized_columns()
-        self._init_cache_after_params()
 
     # ------------------------------------------------------------------
 
@@ -110,8 +110,9 @@ class RebalancingNode(BiasNode):
         self._trading_day_count += 1
 
         # Fetch cross-ticker candle
-        cross_candle = self._store.get_candle(self.cross_ticker, candle.tf, dt)
-        if cross_candle is None:
+        try:
+            cross_candle = self._store.query_candle(self.cross_ticker, candle.tf, dt)
+        except ArtifactMissingError:
             return [0.0]
 
         # Record first close of month for both tickers

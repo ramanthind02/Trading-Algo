@@ -2,6 +2,9 @@
 
 > **Scope:** Full pipeline from BaseModels to tradeable contracts (Robert Carver methodology).
 
+> [!note] Cache-native orchestration
+> `TFPortfolio` and `GlobalPortfolio` now provide cache-native adapters (`fit_from_cache`, `predict_from_cache`) driven by `PortfolioCacheQuery`. Legacy candle-frame entrypoints remain as temporary compatibility shims.
+
 ---
 
 ## Pipeline
@@ -149,6 +152,7 @@ contracts = sizer.calculate_positions(positions)
 
 ```python
 from ensemble import TFPortfolio, GlobalPortfolio, WeightLayer
+from ensemble.portfolio import PortfolioCacheQuery
 from utils.enums import TimeFrame
 
 # 1. Build one TFPortfolio per timeframe
@@ -161,16 +165,17 @@ global_p = GlobalPortfolio(
     weight_layer=WeightLayer(weight_method="hrp_classic", fdm_max=2.0),
 )
 
-# 3. Fit: supply candles and instrument returns per timeframe
-global_p.fit(
-    candles_per_tf={TimeFrame.D: daily_candles, TimeFrame.W: weekly_candles},
-    instrument_returns=returns_df,
+# 3. Fit from central cache query
+query = PortfolioCacheQuery(
+    tickers=("ES", "NQ"),
+    start=train_start,
+    end=train_end,
+    timeframes=(TimeFrame.D, TimeFrame.W),
 )
+global_p.fit_from_cache(query, instrument_returns=returns_df)
 
-# 4. Predict: returns the standard output schema
-positions = global_p.predict(
-    candles_per_tf={TimeFrame.D: daily_candles, TimeFrame.W: weekly_candles}
-)
+# 4. Predict from central cache query
+positions = global_p.predict_from_cache(query)
 # → DataFrame["ticker", "datetime", "forecast_score", "position_fraction"]
 ```
 
@@ -185,4 +190,4 @@ positions = global_p.predict(
 
 ---
 
-**See also:** [[weight_layer]], [[base_model]], [[vault]]
+**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]]

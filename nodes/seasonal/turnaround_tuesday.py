@@ -12,7 +12,7 @@ Designed for daily bars (e.g. NQ).
 """
 
 from enum import Enum
-from typing import List, Tuple
+from typing import ClassVar, List, Tuple
 
 from nodes import BiasNode
 from utils.core.enums import Ticker, TimeFrame
@@ -47,6 +47,7 @@ class TurnaroundTuesday(BiasNode):
 
     **Type**: Rule-based (outputs 0 or 1).
     """
+    hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]] = (("pattern_window", 3),)
 
     def __init__(
         self,

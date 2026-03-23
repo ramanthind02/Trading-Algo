@@ -98,6 +98,7 @@ class DiversifiedEnsemble:
         self.instrument_weights = instrument_weights
         self.save_path = save_path
         self.use_cache = use_cache
+        self.retry_on_cache_miss = True
         
         # Base model ownership
         self.base_models: Dict[str, Any] = {}  # Dict[str, BaseModel]
@@ -909,7 +910,11 @@ class DiversifiedEnsemble:
                     base_model.fit(filtered_candles, aggregated_returns, start_date, end_date)
                 except Exception as exc:
                     cache_miss = "Cache miss" in str(exc)
-                    if getattr(base_model, "use_cache", False) and cache_miss:
+                    if (
+                        self.retry_on_cache_miss
+                        and getattr(base_model, "use_cache", False)
+                        and cache_miss
+                    ):
                         logger.warning(
                             "Cache miss while fitting model '%s'; retrying with use_cache=False",
                             model_name,
@@ -1232,7 +1237,11 @@ class DiversifiedEnsemble:
                             )
                         except Exception as exc:
                             cache_miss = "No cached features available" in str(exc) or "Cache miss" in str(exc)
-                            if getattr(base_model, "use_cache", False) and cache_miss:
+                            if (
+                                self.retry_on_cache_miss
+                                and getattr(base_model, "use_cache", False)
+                                and cache_miss
+                            ):
                                 logger.warning(
                                     "Cache miss while predicting model '%s' for ticker '%s'; retrying with use_cache=False",
                                     model_name,

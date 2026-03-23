@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import json
 from pathlib import Path
 import tempfile
@@ -10,17 +11,22 @@ import pandas as pd
 
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.portfolio import Portfolio
+from ensemble.portfolio import PortfolioCacheQuery
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from feature_research.config import FeatureType
 from feature_research.core_helpers import combo_key
-from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.base_models.rule_based import RuleBasedModel
 from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
 from utils.core.helpers import build_feature_column_name
-from utils.data.cross_ticker_store import CrossTickerDataStore, extract_cross_ticker_names
+from utils.cache.central_cache import CentralCacheStore
+from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
+from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
+from utils.data.cross_ticker_store import extract_cross_ticker_names
+
+logger = logging.getLogger(__name__)
 
 # RuleBasedModel has exactly 3 bins (-1, 0, 1 -> indices 0, 1, 2).
 RULE_BASED_BIN_COUNT: int = 3
@@ -30,7 +36,7 @@ def _ensure_cross_ticker_data(
     param_combos: list[dict[str, Any]],
     timeframes: list[TimeFrame],
 ) -> None:
-    """Ensure cross-ticker data is loaded in the CrossTickerDataStore for the given params."""
+    """Ensure cross-ticker candles are available in the central cache."""
     cross_names: set[str] = set()
     for combo in param_combos:
         cross_names.update(extract_cross_ticker_names(combo))
@@ -38,15 +44,92 @@ def _ensure_cross_ticker_data(
     if not cross_names:
         return
 
-    store = CrossTickerDataStore.get_instance()
+    store = CentralCacheStore.get_instance()
     for name in cross_names:
         try:
             ct = Ticker[name]
         except KeyError:
             continue
         for tf in timeframes:
-            if not store.is_loaded(ct, tf):
-                store.load(ct, tf)
+            try:
+                store.query_candles(ct, tf)
+                continue
+            except Exception:
+                pass
+            try:
+                from utils.core import helpers
+
+                candles = helpers.load_data(ticker=ct, timeframe=tf)
+                store.set_candles(ct, tf, candles)
+            except Exception:
+                continue
+
+
+def _fit_portfolio_with_cache_compat(
+    portfolio: Any,
+    query: PortfolioCacheQuery,
+    candles_df: pd.DataFrame,
+    target_data: pd.Series | None,
+) -> Any:
+    """Prefer cache-native fit, but keep the legacy candle adapter as a shim."""
+    fit_from_cache = getattr(portfolio, "fit_from_cache", None)
+    if callable(fit_from_cache):
+        return fit_from_cache(query, target_data=target_data)
+
+    logger.warning(
+        "Portfolio.fit_from_cache is unavailable; falling back to legacy fit_from_candles()."
+    )
+    fit_from_candles = getattr(portfolio, "fit_from_candles", None)
+    if not callable(fit_from_candles):
+        raise AttributeError("Portfolio object does not expose fit_from_cache or fit_from_candles")
+    return fit_from_candles(candles_df, target_data=target_data)
+
+
+def _predict_portfolio_with_cache_compat(
+    portfolio: Any,
+    query: PortfolioCacheQuery,
+    candles_df: pd.DataFrame,
+    daily_volatility_df: pd.DataFrame,
+    *,
+    return_ensemble_predictions: bool = False,
+    return_base_model_predictions: bool = False,
+) -> Any:
+    """Prefer cache-native predict, but keep the legacy candle adapter as a shim."""
+    predict_from_cache = getattr(portfolio, "predict_from_cache", None)
+    if callable(predict_from_cache):
+        return predict_from_cache(
+            query,
+            return_ensemble_predictions=return_ensemble_predictions,
+            return_base_model_predictions=return_base_model_predictions,
+        )
+
+    logger.warning(
+        "Portfolio.predict_from_cache is unavailable; falling back to legacy predict_from_candles()."
+    )
+    predict_from_candles = getattr(portfolio, "predict_from_candles", None)
+    if not callable(predict_from_candles):
+        raise AttributeError(
+            "Portfolio object does not expose predict_from_cache or predict_from_candles"
+        )
+
+    legacy_kwargs: dict[str, Any] = {
+        "daily_volatility_df": daily_volatility_df,
+    }
+    if return_ensemble_predictions:
+        legacy_kwargs["return_ensemble_predictions"] = return_ensemble_predictions
+    if return_base_model_predictions:
+        legacy_kwargs["return_base_model_predictions"] = return_base_model_predictions
+
+    try:
+        return predict_from_candles(candles_df, **legacy_kwargs)
+    except TypeError as exc:
+        if "unexpected keyword" not in str(exc):
+            raise
+        logger.warning(
+            "Legacy predict_from_candles() rejected cache-adapter kwargs; retrying with the "
+            "minimal candle-based signature."
+        )
+        return predict_from_candles(candles_df, daily_volatility_df=daily_volatility_df)
 
 
 # Param keys that belong to the binning model only; never pass to the bias node (e.g. RSI).
@@ -503,9 +586,36 @@ def evaluate_fold_portfolio(
     test_ready = ensure_portfolio_candle_columns(test_candles, timeframe)
     if train_ready.empty or test_ready.empty:
         raise ValueError("train_candles and test_candles must contain rows")
-    daily_volatility_df = compute_daily_ewsd_volatility(
-        pd.concat([train_ready, test_ready], ignore_index=True)
-    )
+    cache = CentralCacheStore.get_instance()
+    combined_candles = pd.concat([train_ready, test_ready], ignore_index=True)
+    for ticker_name, ticker_candles in combined_candles.groupby("ticker", sort=False):
+        try:
+            cache.set_candles(Ticker[_normalize_ticker_label(ticker_name)], timeframe, ticker_candles)
+        except Exception:
+            continue
+    daily_volatility_df = compute_daily_ewsd_volatility(combined_candles)
+    ewsd_rows = daily_volatility_df.rename(columns={"ewsd_annual_vol": "close"}).copy()
+    if not ewsd_rows.empty:
+        ewsd_rows["open"] = ewsd_rows["high"] = ewsd_rows["low"] = ewsd_rows["close"]
+        ewsd_rows["volume"] = 0.0
+        ewsd_rows["timeframe"] = TimeFrame.D
+        for ticker_name, ticker_vol in ewsd_rows.groupby("ticker", sort=False):
+            try:
+                cache.write_artifact(
+                    ArtifactDescriptor(
+                        family="bias",
+                        ticker=Ticker[_normalize_ticker_label(ticker_name)],
+                        timeframe=TimeFrame.D,
+                        module_name="ewsd",
+                        params={"long_run_window": 2520},
+                        scope=ArtifactScope.LIVE,
+                        artifact_name="ewsd",
+                    ),
+                    ticker_vol.set_index("datetime")[["ewsd_annual_vol"]],
+                    depends_on=((Ticker[_normalize_ticker_label(ticker_name)], TimeFrame.D),),
+                )
+            except Exception:
+                continue
 
     train_dt = pd.to_datetime(train_ready["datetime"], utc=False)
     test_dt = pd.to_datetime(test_ready["datetime"], utc=False)
@@ -557,11 +667,25 @@ def evaluate_fold_portfolio(
             target_volatility=target_volatility,
             weight_layer=weight_layer,
         )
-        portfolio.fit_from_candles(train_ready, target_data=train_target)
+        train_query = PortfolioCacheQuery(
+            tickers=tuple(sorted({_normalize_ticker_label(ticker) for ticker in tickers})),
+            start=pd.to_datetime(train_ready["datetime"]).min().to_pydatetime(),
+            end=pd.to_datetime(train_ready["datetime"]).max().to_pydatetime(),
+            timeframes=(timeframe,),
+        )
+        test_query = PortfolioCacheQuery(
+            tickers=tuple(sorted({_normalize_ticker_label(ticker) for ticker in tickers})),
+            start=pd.to_datetime(test_ready["datetime"]).min().to_pydatetime(),
+            end=pd.to_datetime(test_ready["datetime"]).max().to_pydatetime(),
+            timeframes=(timeframe,),
+        )
+        _fit_portfolio_with_cache_compat(portfolio, train_query, train_ready, train_target)
         ensemble._member_feature_data = {model_name: test_features_df}
-        predictions = portfolio.predict_from_candles(
+        predictions = _predict_portfolio_with_cache_compat(
+            portfolio,
+            test_query,
             test_ready,
-            daily_volatility_df=daily_volatility_df,
+            daily_volatility_df,
             return_base_model_predictions=True,
         )
         portfolio_predictions = (
@@ -618,10 +742,24 @@ def evaluate_fold_portfolio(
         member_prediction_mode=member_prediction_mode,
         feature_type=feature_type,
     )
-    portfolio.fit_from_candles(train_ready, target_data=train_target)
-    predictions = portfolio.predict_from_candles(
+    train_query = PortfolioCacheQuery(
+        tickers=tuple(sorted({_normalize_ticker_label(ticker) for ticker in tickers})),
+        start=pd.to_datetime(train_ready["datetime"]).min().to_pydatetime(),
+        end=pd.to_datetime(train_ready["datetime"]).max().to_pydatetime(),
+        timeframes=(timeframe,),
+    )
+    test_query = PortfolioCacheQuery(
+        tickers=tuple(sorted({_normalize_ticker_label(ticker) for ticker in tickers})),
+        start=pd.to_datetime(test_ready["datetime"]).min().to_pydatetime(),
+        end=pd.to_datetime(test_ready["datetime"]).max().to_pydatetime(),
+        timeframes=(timeframe,),
+    )
+    _fit_portfolio_with_cache_compat(portfolio, train_query, train_ready, train_target)
+    predictions = _predict_portfolio_with_cache_compat(
+        portfolio,
+        test_query,
         test_ready,
-        daily_volatility_df=daily_volatility_df,
+        daily_volatility_df,
     )
     portfolio_predictions = (
         predictions["portfolio"] if isinstance(predictions, dict) else predictions

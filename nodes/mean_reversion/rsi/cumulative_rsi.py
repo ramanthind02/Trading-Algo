@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
@@ -58,6 +58,8 @@ class CumulativeRSI(BiasNode):
     - lookback: Period for individual RSI calculation (default: 14)
     - avg_period: Number of RSI values to average (default: 5)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback", "avg_period"})
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 14, avg_period: int = 5):
         """

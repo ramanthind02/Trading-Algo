@@ -12,12 +12,14 @@ import os
 import tempfile
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from utils.cache.bias_node_cache import BiasNodeCache, CacheMissError
+from utils.cache.cache_paths import default_live_artifact_cache_dir
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -59,6 +61,16 @@ class TestBiasNodeCache:
         assert sample_cache.params == {'lookback': 14}
         assert sample_cache.ticker == Ticker.ES
         assert sample_cache.tf == TimeFrame.D
+
+    def test_default_cache_dir_uses_runtime_cache_tree(self) -> None:
+        cache = BiasNodeCache(
+            module_name='rsi',
+            params={'lookback': 14},
+            ticker=Ticker.ES,
+            tf=TimeFrame.D,
+        )
+
+        assert Path(cache.cache_path).parent.parent == default_live_artifact_cache_dir()
 
     def test_cache_path_generation(self, sample_cache):
         """Test that cache path is generated correctly."""

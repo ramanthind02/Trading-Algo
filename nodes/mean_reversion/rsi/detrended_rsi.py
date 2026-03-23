@@ -7,7 +7,7 @@ average to remove the trend component, then applies RSI to the detrended prices.
 Output: Continuous 0-100
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -35,6 +35,8 @@ class DetrendedRSI(BiasNode):
     - rsi_period: RSI calculation period (default: 14)
     - detrend_period: Period for trend removal SMA (default: 50)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod", "detrendPeriod"})
 
     def __init__(
         self,

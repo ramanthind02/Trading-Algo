@@ -1,5 +1,5 @@
 import math
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
@@ -37,6 +37,7 @@ class CloseMaMinusMA(BiasNode):
     - lookback: Period for moving average calculation (default: 20)
     - atr_length: Period for ATR calculation (default: 14)
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback", "atr_length"})
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 20, atr_length: int = 252):
         """
@@ -55,6 +56,7 @@ class CloseMaMinusMA(BiasNode):
         
         # Number of candles needed before we can compute valid output
         self.front_bad = max(lookback, atr_length)
+        self.params = {"lookback": lookback, "atr_length": atr_length}
         
         # Price history for computation
         self.open_prices = []

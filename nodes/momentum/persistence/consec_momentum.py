@@ -1,7 +1,7 @@
-from typing import List
+from typing import ClassVar, List
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
-from nodes import BiasNode
+from nodes import BiasNode, LookbackWindow
 from nodes.momentum import Momentum
 
 
@@ -25,7 +25,8 @@ class ConsecMomentum(BiasNode):
     - consecutive_bars: Number of consecutive bars needed (default: 3)
     - is_buy: Direction flag (default: True)
     """
-    
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback", "consecutive_bars"})
+
     def __init__(
         self,
         ticker: Ticker,
@@ -76,6 +77,9 @@ class ConsecMomentum(BiasNode):
 
         # Initialize cache after params are set
         self._init_cache_after_params()
+
+    def _extra_lookback_contributions(self) -> tuple[LookbackWindow, ...]:
+        return (LookbackWindow(label="stateful_warmup", bars=self.front_bad),)
 
     def _compute_candle(self, candle: Candle) -> List:
         """
@@ -175,4 +179,3 @@ class ConsecMomentum(BiasNode):
         
         self.output.append(float(self.current_state))
         return [float(self.current_state)]
-

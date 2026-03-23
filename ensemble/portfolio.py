@@ -19,12 +19,17 @@ from __future__ import annotations
 import logging
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
-from utils.core.enums import TimeFrame
+from utils.cache.central_cache import CentralCacheStore
+from utils.cache.central_cache_errors import ArtifactMissingError, CacheCoverageError
+from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
+from utils.core.enums import TimeFrame, Ticker
 from .ensemble_utils import normalize_candles_datetime_column, normalize_ticker_key
 from .weight_layer import BaseWeightLayer, WeightLayer
 
@@ -42,6 +47,167 @@ def _forecast_to_activity_signal(forecast: pd.Series) -> pd.Series:
     Any non-zero forecast means the model is active (long or short).
     """
     return forecast.ne(0.0).astype(int)
+
+
+def _coerce_ticker(value: str | Ticker) -> Ticker:
+    if isinstance(value, Ticker):
+        return value
+    return Ticker[str(value)]
+
+
+def _clamp_range_to_coverage(
+    *,
+    coverage_start: datetime | None,
+    coverage_end: datetime | None,
+    start: datetime,
+    end: datetime,
+    module_name: str,
+    ticker: Ticker | None,
+    timeframe: TimeFrame | None,
+) -> tuple[datetime, datetime]:
+    effective_start = max(pd.Timestamp(start), pd.Timestamp(coverage_start or start))
+    effective_end = min(pd.Timestamp(end), pd.Timestamp(coverage_end or end))
+    if effective_start > effective_end:
+        raise CacheCoverageError(
+            module_name=module_name,
+            ticker=ticker,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            coverage_start=coverage_start,
+            coverage_end=coverage_end,
+        )
+    return effective_start.to_pydatetime(), effective_end.to_pydatetime()
+
+
+@dataclass(frozen=True)
+class PortfolioCacheQuery:
+    """Cache-native request for portfolio fit/predict operations."""
+
+    tickers: tuple[str, ...]
+    start: datetime
+    end: datetime
+    timeframes: tuple[TimeFrame, ...]
+    volatility_timeframe: TimeFrame = TimeFrame.D
+    scope: ArtifactScope = ArtifactScope.LIVE
+    grid: tuple[datetime, ...] = ()
+
+    def for_timeframe(self, timeframe: TimeFrame) -> "PortfolioCacheQuery":
+        return PortfolioCacheQuery(
+            tickers=self.tickers,
+            start=self.start,
+            end=self.end,
+            timeframes=(timeframe,),
+            volatility_timeframe=self.volatility_timeframe,
+            scope=self.scope,
+            grid=self.grid,
+        )
+
+
+def _query_candles_from_cache(
+    query: PortfolioCacheQuery,
+    timeframe: TimeFrame,
+) -> pd.DataFrame:
+    store = CentralCacheStore.get_instance()
+    frames = []
+    for ticker in query.tickers:
+        ticker_enum = _coerce_ticker(ticker)
+        record = store.describe_candle(ticker_enum, timeframe)
+        if record is None:
+            raise ArtifactMissingError(
+                module_name="candles",
+                ticker=ticker_enum,
+                timeframe=timeframe,
+                requested_at=query.end,
+                reason="Candles are not loaded",
+            )
+        effective_start, effective_end = _clamp_range_to_coverage(
+            coverage_start=record.coverage.start,
+            coverage_end=record.coverage.end,
+            start=query.start,
+            end=query.end,
+            module_name="candles",
+            ticker=ticker_enum,
+            timeframe=timeframe,
+        )
+        frame = store.query_candles(
+            ticker_enum,
+            timeframe,
+            start=effective_start,
+            end=effective_end,
+        ).reset_index()
+        if "ticker" not in frame.columns:
+            frame["ticker"] = ticker_enum.name
+        if "timeframe" not in frame.columns:
+            frame["timeframe"] = timeframe
+        frames.append(frame)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True).sort_values(["ticker", "datetime"]).reset_index(drop=True)
+
+
+def _query_volatility_from_cache(query: PortfolioCacheQuery) -> pd.DataFrame:
+    store = CentralCacheStore.get_instance()
+    frames: list[pd.DataFrame] = []
+    for ticker in query.tickers:
+        ticker_enum = _coerce_ticker(ticker)
+        descriptor = ArtifactDescriptor(
+            family="bias",
+            ticker=ticker_enum,
+            timeframe=query.volatility_timeframe,
+            module_name="ewsd",
+            params={"long_run_window": 2520},
+            scope=query.scope,
+            artifact_name="ewsd",
+        )
+        try:
+            record = store.describe_artifact(descriptor)
+            if record is None:
+                raise ArtifactMissingError(
+                    module_name="ewsd",
+                    ticker=ticker_enum,
+                    timeframe=query.volatility_timeframe,
+                    requested_at=query.end,
+                    reason="EWSD volatility is missing from the central cache",
+                )
+            effective_start, effective_end = _clamp_range_to_coverage(
+                coverage_start=record.coverage.start,
+                coverage_end=record.coverage.end,
+                start=query.start,
+                end=query.end,
+                module_name="ewsd",
+                ticker=ticker_enum,
+                timeframe=query.volatility_timeframe,
+            )
+            frame = store.read_artifact(
+                descriptor,
+                request=CacheRequest(start=effective_start, end=effective_end),
+            )
+        except ArtifactMissingError as exc:
+            raise ArtifactMissingError(
+                module_name="ewsd",
+                ticker=ticker_enum,
+                timeframe=query.volatility_timeframe,
+                requested_at=query.end,
+                reason="EWSD volatility is missing from the central cache",
+            ) from exc
+        frames.append(
+            frame.reset_index().rename(columns={"index": "datetime"}).assign(
+                ticker=ticker_enum.name
+            )
+        )
+    if not frames:
+        raise ArtifactMissingError(
+            module_name="ewsd",
+            ticker=None,
+            timeframe=query.volatility_timeframe,
+            requested_at=query.end,
+            reason="EWSD volatility is missing from the central cache",
+        )
+    volatility_df = pd.concat(frames, ignore_index=True)
+    if "ewsd_annual_vol" not in volatility_df.columns and "close" in volatility_df.columns:
+        volatility_df = volatility_df.rename(columns={"close": "ewsd_annual_vol"})
+    return volatility_df
 
 
 def _build_global_model_name(
@@ -946,6 +1112,70 @@ class TFPortfolio:
             df['position_fraction'] = df['position_idm']
 
         return df[['ticker', 'forecast_score', 'position_fraction']]
+
+    def fit_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+        target_data: Optional[pd.Series] = None,
+    ) -> "TFPortfolio":
+        """Fit from the central cache using a range/grid query."""
+        candles_df = _query_candles_from_cache(query, self.trading_timeframe)
+        return self.fit_from_candles(
+            candles_df,
+            target_data=target_data,
+            start_date=query.start,
+            end_date=query.end,
+        )
+
+    def predict_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+        return_ensemble_predictions: bool = False,
+        return_base_model_predictions: bool = False,
+    ) -> Union[pd.DataFrame, Dict[str, Any]]:
+        """Predict from the central cache without requiring daily_volatility_df."""
+        candles_df = _query_candles_from_cache(query, self.trading_timeframe)
+        volatility_df = _query_volatility_from_cache(query)
+        if volatility_df.empty:
+            raise ArtifactMissingError(
+                module_name="ewsd",
+                ticker=None,
+                timeframe=query.volatility_timeframe,
+                requested_at=query.end,
+                reason="EWSD volatility is missing from the central cache",
+            )
+        return self.predict_from_candles(
+            candles_df,
+            daily_volatility_df=volatility_df,
+            return_ensemble_predictions=return_ensemble_predictions,
+            return_base_model_predictions=return_base_model_predictions,
+            start_date=query.start,
+            end_date=query.end,
+        )
+
+    def predict_base_model_vectors_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> pd.DataFrame:
+        """Emit base-model vectors using cache-native inputs."""
+        candles_df = _query_candles_from_cache(query, self.trading_timeframe)
+        volatility_df = _query_volatility_from_cache(query)
+        if volatility_df.empty:
+            raise ArtifactMissingError(
+                module_name="ewsd",
+                ticker=None,
+                timeframe=query.volatility_timeframe,
+                requested_at=query.end,
+                reason="EWSD volatility is missing from the central cache",
+            )
+        return self.predict_base_model_vectors_from_candles(
+            candles_df,
+            daily_volatility_df=volatility_df,
+            start_date=start_date or query.start,
+            end_date=end_date or query.end,
+        )
     
     def fit_from_candles(
         self,
@@ -1931,6 +2161,18 @@ class GlobalPortfolio:
         self.global_eligibility_diagnostics_: Dict[str, Any] = {}
         self.is_fitted_: bool = False
 
+    def _load_candles_per_timeframe_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+    ) -> Dict[TimeFrame, pd.DataFrame]:
+        candles_per_tf: Dict[TimeFrame, pd.DataFrame] = {}
+        for timeframe in query.timeframes:
+            candles_df = _query_candles_from_cache(query, timeframe)
+            if candles_df.empty:
+                continue
+            candles_per_tf[timeframe] = candles_df
+        return candles_per_tf
+
     @staticmethod
     def _build_global_signals_df(
         forecast_vectors: List[pd.DataFrame],
@@ -2528,6 +2770,22 @@ class GlobalPortfolio:
         self.is_fitted_ = True
         return self
 
+    def fit_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+        instrument_returns: pd.DataFrame,
+    ) -> "GlobalPortfolio":
+        """Fit using central-cache-backed candle and volatility reads."""
+        candles_per_tf = self._load_candles_per_timeframe_from_cache(query)
+        if not candles_per_tf:
+            raise ValueError("No candles available in the central cache for the requested query")
+        self.fit(
+            candles_per_tf=candles_per_tf,
+            instrument_returns=instrument_returns,
+            daily_volatility_df=_query_volatility_from_cache(query),
+        )
+        return self
+
     # ------------------------------------------------------------------
     # predict
     # ------------------------------------------------------------------
@@ -2639,6 +2897,29 @@ class GlobalPortfolio:
         return result[['ticker', 'datetime', 'forecast_score', 'position_fraction']].reset_index(
             drop=True
         )
+
+    def predict_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+        return_ensemble_predictions: bool = False,
+        return_base_model_predictions: bool = False,
+    ) -> Union[pd.DataFrame, Dict[str, Any]]:
+        """Predict using central cache reads for candles and volatility."""
+        candles_per_tf = self._load_candles_per_timeframe_from_cache(query)
+        if not candles_per_tf:
+            raise ValueError("No candles available in the central cache for the requested query")
+        result = self.predict(
+            candles_per_tf=candles_per_tf,
+            daily_volatility_df=_query_volatility_from_cache(query),
+        )
+        if return_ensemble_predictions or return_base_model_predictions:
+            payload: Dict[str, Any] = {"portfolio": result if isinstance(result, pd.DataFrame) else pd.DataFrame(result)}
+            if return_ensemble_predictions:
+                payload["ensembles"] = {}
+            if return_base_model_predictions:
+                payload["base_models"] = {}
+            return payload
+        return result
 
     # ------------------------------------------------------------------
     # diagnostics

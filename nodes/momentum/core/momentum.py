@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
@@ -26,6 +26,7 @@ class Momentum(BiasNode):
     Parameters:
     - lookback: Period for Momentum calculation (default: 10)
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback"})
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 10):
         """
@@ -95,4 +96,3 @@ class Momentum(BiasNode):
         
         self.output.append(momentum)
         return [momentum]
-

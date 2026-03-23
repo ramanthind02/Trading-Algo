@@ -1,7 +1,7 @@
-from typing import List, Optional, Dict, Any
+from typing import Any, ClassVar, Dict, List, Optional
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
-from nodes import BiasNode
+from nodes import BiasNode, LookbackWindow
 from nodes.ewsd import EWSDNode
 from collections import deque
 from utils.compute.fast_nodes import compute_roc_fast
@@ -32,7 +32,8 @@ class ROC(BiasNode):
     - normalize_by_ewsd: Whether to normalize ROC by EWSD (default: False)
     - ewsd_params: Optional parameters for EWSD node (default: None, uses defaults)
     """
-    
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback"})
+
     def __init__(
         self,
         ticker: Ticker,
@@ -100,6 +101,11 @@ class ROC(BiasNode):
         # Initialize cache after params are set
         self._init_cache_after_params()
 
+    def _extra_lookback_contributions(self) -> tuple[LookbackWindow, ...]:
+        if self.normalize_by_ewsd and self.ewsd_node is not None:
+            return (LookbackWindow(label="ewsd_long_run_window", bars=self.ewsd_node.max_lookback()),)
+        return ()
+
     def _compute_candle(self, candle: Candle) -> List:
         """
         Compute ROC for the given candle.
@@ -159,4 +165,3 @@ class ROC(BiasNode):
         
         self.output.append(roc)
         return [roc]
-

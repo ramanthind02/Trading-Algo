@@ -1,0 +1,32 @@
+{
+  "coverage": {
+    "end": "2025-09-18T00:00:00",
+    "start": "2006-01-03T00:00:00"
+  },
+  "depends_on": [
+    [
+      "YM",
+      "D"
+    ],
+    [
+      "TLT",
+      "D"
+    ]
+  ],
+  "descriptor": {
+    "artifact_name": "rebalancing",
+    "family": "bias",
+    "module_name": "rebalancing",
+    "params": {
+      "cross_tickers": [
+        "TLT"
+      ]
+    },
+    "scope": "live",
+    "ticker": "YM",
+    "timeframe": "D"
+  },
+  "lifecycle_state": "fresh",
+  "revision": 4,
+  "source_revision": 2
+}

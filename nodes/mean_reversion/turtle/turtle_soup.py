@@ -9,9 +9,9 @@ Reuses TurtleTrading and negates its positions so that:
 Same parameters as Turtle (entry_lookback, stop_lookback, direction); no duplicated logic.
 """
 
-from typing import List
+from typing import ClassVar, List
 
-from nodes import BiasNode
+from nodes import BiasNode, LookbackContribution
 from nodes.turtle import TurtleTrading
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.models import Candle
@@ -24,6 +24,8 @@ class TurtleSoup(BiasNode):
     Outputs signed position: 1 (long), -1 (short), 0 (flat) = -(Turtle output).
     Uses the same entry/stop lookbacks and direction as Turtle; only the sign is flipped.
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"entry_lookback", "stop_lookback"})
 
     def __init__(
         self,
@@ -65,3 +67,7 @@ class TurtleSoup(BiasNode):
         signal = negated[0]
         self.output.append(signal)
         return negated
+
+    def _extra_lookback_contributions(self) -> tuple[LookbackContribution, ...]:
+        """Expose the wrapped Turtle warmup for cold cache rebuilds."""
+        return self._turtle.lookback_contributions()

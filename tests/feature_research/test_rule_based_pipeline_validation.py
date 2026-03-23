@@ -104,7 +104,7 @@ def test_run_rule_based_validation_pipeline_returns_report_and_writes_artifacts(
 
     monkeypatch.setattr(
         "feature_research.pipelines._shared.populate_cache_if_needed",
-        lambda _config: None,
+        lambda _config, **_kwargs: None,
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.expand_bias_specs",

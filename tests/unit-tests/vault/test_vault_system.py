@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -13,10 +14,12 @@ from ensemble.vault_manager import (
     add_feature_to_ensemble,
     create_ensemble_directory,
     generate_model_id,
+    ensure_vault_cache_coverage,
     get_all_base_model_names,
     get_bias_node_specs,
     list_features,
     load_feature_base_models,
+    migrate_legacy_feature_members_schema,
     update_base_model_fitted_params,
     validate_ensemble_directory,
 )
@@ -218,6 +221,118 @@ def test_validate_rejects_legacy_members_schema(tmp_path) -> None:
 
     with pytest.raises(ValueError, match="legacy members schema"):
         validate_ensemble_directory(ensemble_dir)
+
+
+def test_migrate_legacy_members_strips_empty_keys_and_updates_timestamp(tmp_path) -> None:
+    ensemble_dir = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="migrate_members",
+        direction=Direction.LONG,
+        vault_root=str(tmp_path / "vault"),
+    )
+    model = _make_base_model(lookback=2)
+    add_feature_to_ensemble(
+        feature_name="rsi_signal_D",
+        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
+        bias_node_params={"lookback": 2},
+        base_model=model,
+        ensemble_dir=ensemble_dir,
+        tickers=[Ticker.ES],
+    )
+    feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
+    with open(feature_file, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    original_updated_at = payload["updated_at"]
+    payload["base_models"][0]["members"] = []
+    with open(feature_file, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+    updated_files = migrate_legacy_feature_members_schema(ensemble_dir)
+    assert str(feature_file) in updated_files
+
+    with open(feature_file, "r", encoding="utf-8") as handle:
+        migrated = json.load(handle)
+    assert "members" not in migrated["base_models"][0]
+    assert migrated["updated_at"] != original_updated_at
+
+    validate_ensemble_directory(ensemble_dir)
+
+
+def test_migrate_legacy_members_rejects_non_empty_payload(tmp_path) -> None:
+    ensemble_dir = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="reject_non_empty_members",
+        direction=Direction.LONG,
+        vault_root=str(tmp_path / "vault"),
+    )
+    model = _make_base_model(lookback=2)
+    add_feature_to_ensemble(
+        feature_name="rsi_signal_D",
+        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
+        bias_node_params={"lookback": 2},
+        base_model=model,
+        ensemble_dir=ensemble_dir,
+        tickers=[Ticker.ES],
+    )
+    feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
+    with open(feature_file, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    payload["base_models"][0]["members"] = [
+        {"member_name": "legacy_member", "params": {"lookback": 2}}
+    ]
+    with open(feature_file, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+    with pytest.raises(ValueError, match="legacy members schema"):
+        migrate_legacy_feature_members_schema(ensemble_dir)
+
+
+def test_ensure_vault_cache_coverage_dedupes_specs_and_tickers(tmp_path, monkeypatch) -> None:
+    ensemble_dir = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="cache_preflight",
+        direction=Direction.LONG,
+        vault_root=str(tmp_path / "vault"),
+    )
+    model = _make_base_model(lookback=2)
+    add_feature_to_ensemble(
+        feature_name="rsi_signal_D",
+        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
+        bias_node_params={"lookback": 2},
+        base_model=model,
+        ensemble_dir=ensemble_dir,
+        tickers=[Ticker.ES],
+    )
+    feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
+    with open(feature_file, "r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    payload["base_models"][0]["members"] = []
+    with open(feature_file, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+    calls: dict[str, object] = {}
+
+    class _DummyCacheManager:
+        def __init__(self) -> None:
+            calls["initialized_at"] = datetime.now(timezone.utc)
+
+        def ensure_vault_cache_coverage(self, **kwargs):  # noqa: ANN003
+            calls["ensure_vault_cache_coverage"] = kwargs
+            return {"total_tasks": 1, "rebuilt": 1, "validated": 0, "failed": 0}
+
+    monkeypatch.setattr("utils.cache.cache_manager.CacheManager", _DummyCacheManager)
+
+    summary = ensure_vault_cache_coverage(
+        [ensemble_dir, ensemble_dir],
+        start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        end_date=datetime(2024, 12, 31, tzinfo=timezone.utc),
+    )
+
+    assert summary["rebuilt"] == 1
+    refresh_kwargs = calls["ensure_vault_cache_coverage"]
+    assert refresh_kwargs["refresh_mode"] == "missing_stale_only"
+    assert refresh_kwargs["vault_ensemble_dirs"] == [ensemble_dir]
+    assert "members" not in json.loads(feature_file.read_text(encoding="utf-8"))["base_models"][0]
 
 
 def test_validate_rejects_multiple_base_models_in_feature_file(tmp_path) -> None:

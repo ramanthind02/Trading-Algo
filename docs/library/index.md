@@ -12,6 +12,10 @@
 
 ## Pipeline Components
 
+### Cache
+- [[Cache/architecture]] — Central-cache design, ownership, coverage, lifecycle, and invalidation rules
+- [[Cache/user_guide]] — Quick-start usage for candles, artifacts, cross-ticker reads, and portfolio queries
+
 ### Bias Nodes
 - [[bias_nodes/creating_nodes]] — How to implement a new technical indicator node
 - [[bias_nodes/norgate]] — Norgate data integration and OHLCV sourcing

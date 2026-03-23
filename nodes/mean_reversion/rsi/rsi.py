@@ -1,4 +1,4 @@
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
@@ -27,6 +27,8 @@ class RSI(BiasNode):
     Parameters:
     - lookback: Period for RSI calculation (default: 14)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback"})
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 14):
         """

@@ -20,8 +20,8 @@ from typing import Dict, Optional
 import pandas as pd
 
 from execution.position_sizer import PositionSizer
+from ensemble.portfolio import Portfolio, PortfolioCacheQuery
 from utils.core.enums import TimeFrame
-from .portfolio import Portfolio
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +161,43 @@ class PortfolioManager:
                     )
         
         logger.info("PortfolioManager fit completed")
+
+    def fit_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+        target_data: Optional[pd.Series] = None,
+    ) -> None:
+        """Fit portfolios from cache-native query inputs."""
+        for tf, portfolio in self.portfolios.items():
+            if hasattr(portfolio, "fit_from_cache"):
+                portfolio.fit_from_cache(query.for_timeframe(tf), target_data=target_data)
+
+    def predict_from_cache(self, query: PortfolioCacheQuery) -> pd.DataFrame:
+        """Predict from cache-native query inputs."""
+        all_positions = []
+        for tf, portfolio in self.portfolios.items():
+            if not hasattr(portfolio, "predict_from_cache"):
+                continue
+            positions_df = portfolio.predict_from_cache(query.for_timeframe(tf))
+            if isinstance(positions_df, pd.DataFrame) and not positions_df.empty:
+                positions_df = positions_df.copy()
+                positions_df["timeframe"] = tf
+                all_positions.append(positions_df)
+        if not all_positions:
+            return pd.DataFrame(columns=[
+                "ticker",
+                "datetime",
+                "timeframe",
+                "forecast_score",
+                "position_fraction",
+            ])
+        combined_df = pd.concat(all_positions, ignore_index=True)
+        if self.position_sizer:
+            try:
+                return self.position_sizer.calculate_positions(combined_df)
+            except Exception as e:
+                logger.error("PositionSizer failed: %s. Returning fractions only.", e, exc_info=True)
+        return combined_df
     
     def predict(
         self,

@@ -5,7 +5,7 @@ Rule-based: long from 25th until 1st, with 200-period SMA filter for entry
 and exit. Outputs 1 (long), 0 (flat). Exits when price dips below SMA200.
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from utils.core.models import Candle
 from utils.core.enums import Ticker, TimeFrame
@@ -32,6 +32,7 @@ class SeasonalIndicesEof(BiasNode):
     - Enter long: day of month >= 25 and close > SMA(close, 200).
     - Exit long: day of month <= 1 (flat by 2nd) or close < SMA(close, 200).
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"sma_period"})
 
     def __init__(self, ticker: Ticker, tf: TimeFrame, sma_period: int = 200) -> None:
         super().__init__(ticker, tf)

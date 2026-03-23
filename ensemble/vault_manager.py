@@ -17,7 +17,7 @@ import re
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -343,6 +343,84 @@ def _extract_bias_node_params_for_model(
 
     parsed = helpers.parse_feature_column_name(feature_name)
     return _normalize_bias_node_params(parsed.get("params", {}))
+
+
+def _feature_members_are_legacy(payload: Any) -> bool:
+    """Return True when a legacy members payload contains real model members."""
+    if payload is None:
+        return False
+    if isinstance(payload, list):
+        return len(payload) > 0
+    return bool(payload)
+
+
+def _canonical_bias_spec_key(spec: Dict[str, Any]) -> tuple[str, tuple[str, ...], str]:
+    """Build a stable key for deduplicating bias-node specs."""
+    module_name = str(spec.get("module_name", ""))
+    timeframes = tuple(
+        sorted(
+            tf.name if hasattr(tf, "name") else str(tf)
+            for tf in spec.get("timeframes", [])
+        )
+    )
+    params = json.dumps(spec.get("params", {}), sort_keys=True, default=str)
+    return module_name, timeframes, params
+
+
+def _strip_empty_members_from_feature_file(feature_file: Path) -> bool:
+    """Remove empty legacy members keys from a single feature file.
+
+    Returns
+    -------
+    bool
+        True when the file was rewritten.
+    """
+    with open(feature_file, "r", encoding="utf-8") as handle:
+        feature_config = json.load(handle)
+
+    feature_models = feature_config.get("base_models", [])
+    if not isinstance(feature_models, list):
+        raise ValueError(f"Feature file {feature_file} has invalid base_models payload")
+
+    updated = False
+    for model_entry in feature_models:
+        if "members" not in model_entry:
+            continue
+        if _feature_members_are_legacy(model_entry.get("members")):
+            feature_name = _extract_feature_name(feature_config, feature_file.stem)
+            raise ValueError(
+                f"Feature '{feature_name}' in {feature_file} uses legacy members schema, which is unsupported"
+            )
+        model_entry.pop("members", None)
+        updated = True
+
+    if not updated:
+        return False
+
+    feature_config["updated_at"] = datetime.now(timezone.utc).isoformat()
+    with open(feature_file, "w", encoding="utf-8") as handle:
+        json.dump(feature_config, handle, indent=2)
+        handle.write("\n")
+    return True
+
+
+def migrate_legacy_feature_members_schema(ensemble_dir: str) -> List[str]:
+    """Strip empty legacy ``members`` keys from feature files in an ensemble.
+
+    Any non-empty legacy members payload raises immediately. Empty payloads are
+    removed in-place and ``updated_at`` is refreshed.
+    """
+    ensemble_path = _resolve_ensemble_path(ensemble_dir)
+    features_dir = ensemble_path / "features"
+    if not features_dir.exists():
+        return []
+
+    updated_files = [
+        str(feature_file)
+        for feature_file in sorted(features_dir.glob("*.json"))
+        if _strip_empty_members_from_feature_file(feature_file)
+    ]
+    return updated_files
 
 
 # ============================================================================
@@ -1629,6 +1707,44 @@ def get_all_base_model_names(ensemble_dir: Optional[str] = None) -> List[str]:
     return model_names
 
 
+def ensure_vault_cache_coverage(
+    vault_ensemble_dirs: Sequence[str],
+    start_date: datetime,
+    end_date: datetime,
+    refresh_mode: str = "missing_stale_only",
+) -> Dict[str, Any]:
+    """Ensure vault ensemble bias-node caches cover the requested window.
+
+    This wrapper stays intentionally thin: it resolves ensemble paths, migrates
+    legacy feature files, and delegates the refresh to ``CacheManager``.
+    """
+    from utils.cache.cache_manager import CacheManager
+
+    resolved_dirs = list(
+        dict.fromkeys(
+            str(_resolve_ensemble_path(ensemble_dir))
+            for ensemble_dir in vault_ensemble_dirs
+        )
+    )
+    if not resolved_dirs:
+        raise ValueError("vault_ensemble_dirs must be non-empty")
+
+    for ensemble_dir in resolved_dirs:
+        migrate_legacy_feature_members_schema(ensemble_dir)
+
+    manager = CacheManager()
+    summary = manager.ensure_vault_cache_coverage(
+        vault_ensemble_dirs=resolved_dirs,
+        start_date=start_date,
+        end_date=end_date,
+        refresh_mode=refresh_mode,
+    )
+    return {
+        **summary,
+        "vault_ensemble_dirs": resolved_dirs,
+    }
+
+
 # ============================================================================
 # Vault-Level Operations
 # ============================================================================
@@ -1888,7 +2004,9 @@ def load_ensemble_from_vault(
     features_dir = ensemble_path / 'features'
     if not features_dir.exists():
         raise ValueError(f"Features directory does not exist: {features_dir}")
-    
+
+    migrate_legacy_feature_members_schema(str(ensemble_path))
+
     feature_files = list(features_dir.glob('*.json'))
     if not feature_files:
         raise ValueError(f"No feature files found in {features_dir}")

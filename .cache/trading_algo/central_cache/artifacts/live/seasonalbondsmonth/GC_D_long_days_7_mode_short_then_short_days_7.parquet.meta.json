@@ -1,0 +1,28 @@
+{
+  "coverage": {
+    "end": "2025-09-18T00:00:00",
+    "start": "2006-01-03T00:00:00"
+  },
+  "depends_on": [
+    [
+      "GC",
+      "D"
+    ]
+  ],
+  "descriptor": {
+    "artifact_name": "seasonalbondsmonth",
+    "family": "bias",
+    "module_name": "seasonalbondsmonth",
+    "params": {
+      "long_days": 7,
+      "mode": "short_then_long",
+      "short_days": 7
+    },
+    "scope": "live",
+    "ticker": "GC",
+    "timeframe": "D"
+  },
+  "lifecycle_state": "fresh",
+  "revision": 4,
+  "source_revision": 2
+}

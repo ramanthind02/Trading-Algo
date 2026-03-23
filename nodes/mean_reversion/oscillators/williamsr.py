@@ -1,7 +1,7 @@
 from nodes import BiasNode
 from utils.core.models import Candle
 from utils.core.enums import Bias, Ticker, TimeFrame
-from typing import List, Optional
+from typing import ClassVar, List, Optional
 import numpy as np
 from collections import deque
 from scipy.stats import norm
@@ -39,6 +39,8 @@ class WilliamsRNode(BiasNode):
     - Positive values: Overbought conditions (price near top of range)
     - Near 0: Neutral (price in middle of range)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"lookback", "atr_length"})
     
     def __init__(self, ticker: Ticker, tf: TimeFrame, lookback: int = 14, 
                  atr_length: int = 14, compression: float = 1.0):

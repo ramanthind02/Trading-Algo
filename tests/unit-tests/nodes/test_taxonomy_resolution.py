@@ -10,6 +10,7 @@ from utils.core.helpers import (
     _normalize_module_base_name,
     _resolve_bias_node_import_path,
     create_bias_node,
+    create_fresh_bias_node,
 )
 
 
@@ -58,6 +59,14 @@ def test_create_bias_node_instantiates_flat_name_modules() -> None:
     assert isinstance(rsi_node, RSI)
     assert isinstance(momentum_node, Momentum)
     assert _normalize_module_base_name("momentum_10_D") == "momentum"
+
+
+def test_create_fresh_bias_node_bypasses_singleton_reuse() -> None:
+    shared = create_bias_node("rsi", Ticker.ES, TimeFrame.D, {"lookback": 14})
+    fresh = create_fresh_bias_node("rsi", Ticker.ES, TimeFrame.D, {"lookback": 14})
+
+    assert isinstance(fresh, RSI)
+    assert fresh is not shared
 
 
 def test_package_name_collisions_keep_legacy_imports() -> None:

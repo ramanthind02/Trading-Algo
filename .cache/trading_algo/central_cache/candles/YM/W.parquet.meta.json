@@ -1,0 +1,19 @@
+{
+  "coverage": {
+    "end": "2025-09-14T00:00:00",
+    "start": "2006-01-01T00:00:00"
+  },
+  "depends_on": [],
+  "descriptor": {
+    "artifact_name": null,
+    "family": "candles",
+    "module_name": null,
+    "params": {},
+    "scope": "live",
+    "ticker": "YM",
+    "timeframe": "W"
+  },
+  "lifecycle_state": "fresh",
+  "revision": 1,
+  "source_revision": 0
+}

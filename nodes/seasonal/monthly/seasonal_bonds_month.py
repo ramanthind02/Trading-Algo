@@ -11,7 +11,7 @@ Modes:
 
 import calendar
 from enum import Enum
-from typing import List
+from typing import ClassVar, List
 
 from nodes import BiasNode
 from utils.core.enums import Ticker, TimeFrame
@@ -46,6 +46,7 @@ class SeasonalBondsMonth(BiasNode):
     - long_days: Number of days at end of month to long; used only when mode is SHORT_FLAT_LONG (default: 7).
     - mode: SeasonalBondsMonthMode or string 'short_then_long' | 'short_flat_long' (default: SHORT_THEN_LONG).
     """
+    hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]] = (("calendar_gate", 1),)
 
     def __init__(
         self,

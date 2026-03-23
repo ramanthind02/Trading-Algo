@@ -16,9 +16,9 @@ Usage
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, ClassVar
 
-from nodes import BiasNode
+from nodes import BiasNode, LookbackContribution
 from filters import SignalFilter
 from utils.core.models import Candle
 
@@ -42,6 +42,8 @@ class FilteredBiasNode(BiasNode):
         symmetric distributions).  Set to ``float('nan')`` for explicit
         exclusion semantics if desired.
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset()
 
     def __init__(
         self,
@@ -87,6 +89,15 @@ class FilteredBiasNode(BiasNode):
     def _neutral_for(self, result: List) -> List:
         """Return a list of *neutral_value* matching the length of *result*."""
         return [self.neutral_value] * len(result)
+
+    def _extra_lookback_contributions(self) -> tuple[LookbackContribution, ...]:
+        """Include wrapped-node and filter warmups in the outer node warmup."""
+        filter_windows = tuple(
+            LookbackContribution(label=f"filter_{index}", bars=int(f.warmup))
+            for index, f in enumerate(self.filters)
+            if getattr(f, "warmup", 0) > 0
+        )
+        return (*self.wrapped.lookback_contributions(), *filter_windows)
 
     # ---- BiasNode interface ------------------------------------------------
 

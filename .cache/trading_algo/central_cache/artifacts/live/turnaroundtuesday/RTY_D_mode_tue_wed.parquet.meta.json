@@ -1,0 +1,26 @@
+{
+  "coverage": {
+    "end": "2025-09-18T00:00:00",
+    "start": "2006-01-03T00:00:00"
+  },
+  "depends_on": [
+    [
+      "RTY",
+      "D"
+    ]
+  ],
+  "descriptor": {
+    "artifact_name": "turnaroundtuesday",
+    "family": "bias",
+    "module_name": "turnaroundtuesday",
+    "params": {
+      "mode": "tue_wed"
+    },
+    "scope": "live",
+    "ticker": "RTY",
+    "timeframe": "D"
+  },
+  "lifecycle_state": "fresh",
+  "revision": 4,
+  "source_revision": 2
+}

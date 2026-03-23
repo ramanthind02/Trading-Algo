@@ -8,7 +8,7 @@ No SL/TP/limit/stop inside the node; bias output is the position directive for
 downstream systems.
 """
 
-from typing import List
+from typing import ClassVar, List
 
 from nodes import BiasNode
 from utils.core.enums import PositionMode, Ticker, TimeFrame
@@ -22,6 +22,8 @@ class BasicBreakout(BiasNode):
     Output: integer in [-max_positions, max_positions]; 0 for warmup or mode clamp.
     Position mode: LONG_SHORT (default), LONG_ONLY, or SHORT_ONLY.
     """
+
+    hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]] = (("warmup_bars", 2),)
 
     def __init__(
         self,

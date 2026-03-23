@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import sys
+import importlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-import sys
-import importlib
 from types import SimpleNamespace
 
 import pandas as pd
@@ -38,30 +38,31 @@ class _DummyGlobalPortfolio:
     ):
         self.tf_portfolios = tf_portfolios
         self.max_position_pct = max_position_pct
+        self.fit_queries: list[object] = []
+        self.predict_queries: list[object] = []
+        self.is_fitted = False
         _DummyGlobalPortfolio.created.append(self)
 
-    def fit(self, candles_per_tf, instrument_returns):  # noqa: ANN001
+    def fit_from_cache(self, query, instrument_returns):  # noqa: ANN001
+        self.fit_queries.append((query, instrument_returns.copy()))
+        self.is_fitted = True
         return self
 
-    def predict(self, candles_per_tf):  # noqa: ANN001
-        # Return a synthetic capped positions DataFrame.
-        daily_candles = candles_per_tf.get(TimeFrame.D, pd.DataFrame())
-        if daily_candles.empty:
-            # Fall back to first available TF.
-            daily_candles = next(iter(candles_per_tf.values()), pd.DataFrame())
-        if daily_candles.empty:
+    def predict_from_cache(self, query):  # noqa: ANN001
+        self.predict_queries.append(query)
+        datetimes = pd.date_range(query.start, query.end, freq="D")
+        if len(datetimes) == 0:
             return pd.DataFrame(
                 columns=["ticker", "datetime", "forecast_score", "position_fraction"]
             )
-        ticker = daily_candles["ticker"].iloc[0]
-        datetimes = pd.to_datetime(daily_candles["datetime"]).sort_values().drop_duplicates()
+        ticker = query.tickers[0] if query.tickers else "ES"
         n = len(datetimes)
         return pd.DataFrame(
             {
                 "ticker": [ticker] * n,
                 "datetime": datetimes.tolist(),
                 "forecast_score": [1.0] * n,
-                "position_fraction": [self.max_position_pct] * n,
+                "position_fraction": [self.max_position_pct * 2.0] * n,
             }
         )
 
@@ -139,7 +140,45 @@ class _DummyPortfolio:
         self.target_volatility = target_volatility
         self.max_position_pct = max_position_pct
         self.use_cache = use_cache
+        self.fit_queries: list[object] = []
+        self.predict_queries: list[object] = []
         _DummyPortfolio.created_timeframes.append(trading_timeframe)
+
+    def fit_from_cache(self, query):  # noqa: ANN001
+        self.fit_queries.append(query)
+        return self
+
+    def predict_from_cache(
+        self,
+        query,  # noqa: ANN001
+        return_ensemble_predictions: bool = False,
+        return_base_model_predictions: bool = False,
+    ):
+        self.predict_queries.append(query)
+        datetimes = pd.date_range(query.start, query.end, freq="D")
+        ticker = query.tickers[0] if query.tickers else "ES"
+        positions = pd.DataFrame(
+            {
+                "ticker": [ticker] * len(datetimes),
+                "datetime": datetimes.tolist(),
+                "position_fraction": [self.max_position_pct] * len(datetimes),
+                "forecast_score": [self.max_position_pct] * len(datetimes),
+            }
+        )
+        if return_ensemble_predictions or return_base_model_predictions:
+            result = {"portfolio": positions}
+            if return_ensemble_predictions:
+                result["ensembles"] = {
+                    "ensemble_0": positions[["ticker", "datetime", "position_fraction"]].copy()
+                }
+            if return_base_model_predictions:
+                result["base_models"] = {
+                    "ensemble_0::model_a": positions[
+                        ["ticker", "datetime", "position_fraction"]
+                    ].copy()
+                }
+            return result
+        return positions
 
 
 class _DummyTester:
@@ -151,6 +190,10 @@ class _DummyTester:
         self.base_model_predictions: dict[str, pd.DataFrame] | None = None
 
     def fit(self, candles_df: pd.DataFrame):
+        return self
+
+    def fit_from_cache(self, query):
+        self.portfolio.fit_from_cache(query)
         return self
 
     def predict(
@@ -191,6 +234,27 @@ class _DummyTester:
             return result
         return positions
 
+    def predict_from_cache(
+        self,
+        query,
+        return_ensemble_predictions: bool = False,
+        return_base_model_predictions: bool = False,
+    ):
+        result = self.portfolio.predict_from_cache(
+            query,
+            return_ensemble_predictions=return_ensemble_predictions,
+            return_base_model_predictions=return_base_model_predictions,
+        )
+        if isinstance(result, dict):
+            self.positions_df = result.get("portfolio")
+            self.ensemble_predictions = result.get("ensembles")
+            self.base_model_predictions = result.get("base_models")
+        else:
+            self.positions_df = result
+            self.ensemble_predictions = None
+            self.base_model_predictions = None
+        return result
+
     def calculate_strategy_returns(
         self,
         candles_df: pd.DataFrame,
@@ -228,6 +292,9 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
 ) -> None:
     _DummyPortfolio.created_timeframes = []
     _DummyGlobalPortfolio.created = []
+    migrate_calls: list[str] = []
+    bootstrap_calls: list[dict[str, object]] = []
+    preflight_calls: list[tuple[tuple[str, ...], datetime, datetime, str]] = []
 
     config = _DummyConfig(
         tickers=[Ticker.ES],
@@ -300,8 +367,48 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     ) -> None:
         generated_output_files.append(output_file)
 
+    def _mock_migrate_legacy_feature_members_schema(ensemble_dir: str) -> None:
+        migrate_calls.append(ensemble_dir)
+
+    def _mock_get_ensemble_tickers(ensemble_dir: str) -> list[Ticker]:
+        if ensemble_dir == "vault/W/weekly_strategy":
+            return [Ticker.ES, Ticker.NQ]
+        return [Ticker.ES]
+
+    def _mock_get_bias_node_specs(ensemble_dir: str) -> list[dict[str, object]]:
+        if ensemble_dir == "vault/W/weekly_strategy":
+            return [{"timeframes": [TimeFrame.W], "params": {"cross_tickers": ["GC"]}}]
+        return [{"timeframes": [TimeFrame.D], "params": {}}]
+
+    def _mock_bootstrap_source_candles(**kwargs: object) -> dict[str, object]:
+        bootstrap_calls.append(kwargs)
+        return {"success": 3, "failed": 0, "total": 3}
+
+    def _mock_ensure_vault_cache_coverage(
+        *,
+        vault_ensemble_dirs: tuple[str, ...],
+        start_date: datetime,
+        end_date: datetime,
+        refresh_mode: str = "missing_stale_only",
+    ) -> dict[str, int | bool]:
+        preflight_calls.append((vault_ensemble_dirs, start_date, end_date, refresh_mode))
+        return {"success": 2, "total": 2}
+
     monkeypatch.setattr(pipeline, "_load_candles", _mock_load_candles)
     monkeypatch.setattr(pipeline, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
+    monkeypatch.setattr(
+        pipeline,
+        "migrate_legacy_feature_members_schema",
+        _mock_migrate_legacy_feature_members_schema,
+    )
+    monkeypatch.setattr(pipeline, "get_ensemble_tickers", _mock_get_ensemble_tickers)
+    monkeypatch.setattr(pipeline, "get_bias_node_specs", _mock_get_bias_node_specs)
+    monkeypatch.setattr(pipeline, "bootstrap_source_candles", _mock_bootstrap_source_candles)
+    monkeypatch.setattr(
+        pipeline,
+        "ensure_vault_cache_coverage",
+        _mock_ensure_vault_cache_coverage,
+    )
     monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
     monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
     monkeypatch.setattr(pipeline, "GlobalPortfolio", _DummyGlobalPortfolio)
@@ -318,6 +425,23 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     # Three phases (Train, Validation, Test), each with D and W portfolios.
     assert _DummyPortfolio.created_timeframes.count(TimeFrame.D) == 3
     assert _DummyPortfolio.created_timeframes.count(TimeFrame.W) == 3
+    assert migrate_calls == ["vault/D/daily_strategy", "vault/W/weekly_strategy"]
+    assert bootstrap_calls == [
+        {
+            "tickers": (Ticker.ES, Ticker.NQ, Ticker.GC),
+            "timeframes": (TimeFrame.D, TimeFrame.W),
+            "start_date": datetime(2024, 1, 1),
+            "end_date": datetime(2024, 1, 5),
+        }
+    ]
+    assert preflight_calls == [
+        (
+            ("vault/D/daily_strategy", "vault/W/weekly_strategy"),
+            datetime(2024, 1, 1),
+            datetime(2024, 1, 5),
+            "missing_stale_only",
+        )
+    ]
 
     # Multi-TF path: GlobalPortfolio created once per phase (3 phases).
     assert len(_DummyGlobalPortfolio.created) == 3, (
@@ -357,6 +481,9 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
 ) -> None:
     _DummyPortfolio.created_timeframes = []
     _DummyGlobalPortfolio.created = []
+    migrate_calls: list[str] = []
+    bootstrap_calls: list[dict[str, object]] = []
+    preflight_calls: list[tuple[tuple[str, ...], datetime, datetime, str]] = []
 
     config = _DummyConfig(
         tickers=[Ticker.ES],
@@ -408,8 +535,44 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
     ) -> None:
         export_calls.append((phase_name, output_dir))
 
+    def _mock_migrate_legacy_feature_members_schema(ensemble_dir: str) -> None:
+        migrate_calls.append(ensemble_dir)
+
+    def _mock_get_ensemble_tickers(_ensemble_dir: str) -> list[Ticker]:
+        return [Ticker.ES]
+
+    def _mock_get_bias_node_specs(_ensemble_dir: str) -> list[dict[str, object]]:
+        return [{"timeframes": [TimeFrame.D], "params": {}}]
+
+    def _mock_bootstrap_source_candles(**kwargs: object) -> dict[str, object]:
+        bootstrap_calls.append(kwargs)
+        return {"success": 1, "failed": 0, "total": 1}
+
+    def _mock_ensure_vault_cache_coverage(
+        *,
+        vault_ensemble_dirs: tuple[str, ...],
+        start_date: datetime,
+        end_date: datetime,
+        refresh_mode: str = "missing_stale_only",
+    ) -> dict[str, int | bool]:
+        preflight_calls.append((vault_ensemble_dirs, start_date, end_date, refresh_mode))
+        return {"success": 1, "total": 1}
+
     monkeypatch.setattr(pipeline, "_load_candles", _mock_load_candles)
     monkeypatch.setattr(pipeline, "load_ensemble_from_vault", _mock_load_ensemble_from_vault)
+    monkeypatch.setattr(
+        pipeline,
+        "migrate_legacy_feature_members_schema",
+        _mock_migrate_legacy_feature_members_schema,
+    )
+    monkeypatch.setattr(pipeline, "get_ensemble_tickers", _mock_get_ensemble_tickers)
+    monkeypatch.setattr(pipeline, "get_bias_node_specs", _mock_get_bias_node_specs)
+    monkeypatch.setattr(pipeline, "bootstrap_source_candles", _mock_bootstrap_source_candles)
+    monkeypatch.setattr(
+        pipeline,
+        "ensure_vault_cache_coverage",
+        _mock_ensure_vault_cache_coverage,
+    )
     monkeypatch.setattr(pipeline, "WeightLayer", _DummyWeightLayer)
     monkeypatch.setattr(pipeline, "Portfolio", _DummyPortfolio)
     monkeypatch.setattr(pipeline, "GlobalPortfolio", _DummyGlobalPortfolio)
@@ -426,3 +589,20 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
     assert len(_DummyGlobalPortfolio.created) == 3
     assert [phase for phase, _ in export_calls] == ["train", "validation", "test"]
     assert all(output_dir.name == "global_weight_layer" for _, output_dir in export_calls)
+    assert migrate_calls == ["vault/D/daily_strategy"]
+    assert bootstrap_calls == [
+        {
+            "tickers": (Ticker.ES,),
+            "timeframes": (TimeFrame.D,),
+            "start_date": datetime(2024, 1, 1),
+            "end_date": datetime(2024, 1, 5),
+        }
+    ]
+    assert preflight_calls == [
+        (
+            ("vault/D/daily_strategy",),
+            datetime(2024, 1, 1),
+            datetime(2024, 1, 5),
+            "missing_stale_only",
+        )
+    ]

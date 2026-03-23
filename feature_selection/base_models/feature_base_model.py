@@ -25,6 +25,16 @@ from feature_selection.base_models.base_model import BinningModelBase
 logger = logging.getLogger(__name__)
 
 
+def _normalize_ticker_key(ticker_val: object) -> str:
+    """Normalize enum/string ticker representations to stable symbol keys."""
+    if hasattr(ticker_val, "name"):
+        return str(getattr(ticker_val, "name"))
+    text = str(ticker_val)
+    if text.startswith("Ticker."):
+        return text.split(".", 1)[1]
+    return text
+
+
 def _align_feature_and_target(
     feature_data: pd.Series,
     target_data: pd.Series,
@@ -981,12 +991,15 @@ class BaseModel:
 
         # Determine which tickers are actually in the input candles
         if 'ticker' in candles_df.columns:
-            # Get unique tickers from input candles - only predict for these tickers
-            candles_tickers = candles_df['ticker'].unique()
-            # Convert to set for fast lookup
-            candles_ticker_set = set(candles_tickers)
-            # Filter self.tickers to only those present in candles_df
-            tickers_to_predict = [t for t in self.tickers if t in candles_ticker_set or (hasattr(t, 'value') and t.value in candles_ticker_set) or str(t) in [str(ct) for ct in candles_tickers]]
+            candles_ticker_set = {
+                _normalize_ticker_key(ticker_val)
+                for ticker_val in candles_df['ticker'].unique()
+            }
+            tickers_to_predict = [
+                ticker
+                for ticker in self.tickers
+                if _normalize_ticker_key(ticker) in candles_ticker_set
+            ]
         else:
             # No ticker column - use all tickers (single-ticker mode)
             tickers_to_predict = self.tickers

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pytest
 
 import feature_extraction.feature_extractor as feature_extractor
+from utils.cache.central_cache import CentralCacheStore
+from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -185,3 +189,83 @@ def test_compute_forward_returns_accepts_non_252_ewsd_column() -> None:
 
     assert "log_return_ewsd" in targets_df.columns
     assert not targets_df.empty
+
+
+def test_extract_features_single_ticker_populate_on_miss_writes_cache(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    CentralCacheStore.reset()
+    store = CentralCacheStore(cache_dir=str(tmp_path))
+    CentralCacheStore._instance = store  # type: ignore[attr-defined]
+
+    captured: dict[str, Any] = {"calls": 0}
+    idx = pd.date_range("2024-01-01", periods=4, freq="D", tz="UTC")
+
+    class _DummyNode:
+        def __init__(self, tf: TimeFrame) -> None:
+            self.tf = tf
+            self.module_name = "dummy"
+            self.params = {"lookback": 2}
+
+        def get_column_names(self) -> list[str]:
+            return [f"dummy_{self.tf.name}"]
+
+        def add_candle(self, candle: Any) -> list[float]:
+            captured["calls"] += 1
+            return [1.0]
+
+    def _fake_load_data(
+        ticker: Ticker,
+        timeframe: TimeFrame,
+        start: datetime,
+        end: datetime,
+    ) -> pd.DataFrame:
+        _ = ticker
+        _ = timeframe
+        _ = start
+        _ = end
+        return _sample_price_df()
+
+    def _fake_create_filtered_bias_node(
+        module_name: str,
+        ticker: Ticker,
+        tf: TimeFrame,
+        params: dict[str, Any],
+        filter_specs: list[Any] | None = None,
+    ) -> _DummyNode:
+        _ = module_name
+        _ = ticker
+        _ = params
+        _ = filter_specs
+        return _DummyNode(tf)
+
+    monkeypatch.setattr(feature_extractor.helpers, "load_data", _fake_load_data)
+    monkeypatch.setattr(feature_extractor.helpers, "create_filtered_bias_node", _fake_create_filtered_bias_node)
+
+    features_df, targets_df = feature_extractor._extract_features_single_ticker(
+        module_name="dummy",
+        params={"lookback": 2},
+        ticker=Ticker.ES,
+        start=datetime(2024, 1, 1),
+        end=datetime(2024, 1, 5),
+        timeframes=[TimeFrame.D],
+        use_cache=True,
+        populate_on_miss=True,
+    )
+
+    descriptor = ArtifactDescriptor(
+        family="bias",
+        module_name="dummy",
+        ticker=Ticker.ES,
+        timeframe=TimeFrame.D,
+        params={"lookback": 2},
+        scope=ArtifactScope.LIVE,
+    )
+
+    assert captured["calls"] == len(_sample_price_df())
+    assert not features_df.empty
+    assert not targets_df.empty
+    assert store.describe_artifact(descriptor) is not None
+    assert store.read_artifact(descriptor).iloc[0]["value"] == pytest.approx(1.0)
+    CentralCacheStore.reset()

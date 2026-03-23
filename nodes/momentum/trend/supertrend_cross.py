@@ -7,7 +7,7 @@ the crossing of two SuperTrend indicators with different parameters.
 Output: Rule-based 0 or 1
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -44,6 +44,7 @@ class SuperTrendCross(BiasNode):
     - fast_multiplier: Multiplier for fast SuperTrend (default: 2.0)
     - slow_multiplier: Multiplier for slow SuperTrend (default: 3.0)
     """
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"atrPeriod"})
 
     def __init__(
         self,

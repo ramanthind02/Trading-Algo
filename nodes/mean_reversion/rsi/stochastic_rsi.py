@@ -7,7 +7,7 @@ Combines RSI with Stochastic oscillator logic.
 Output: Continuous 0-100
 """
 
-from typing import List
+from typing import ClassVar, List
 import numpy as np
 from collections import deque
 from utils.core.models import Candle
@@ -38,6 +38,8 @@ class StochasticRSI(BiasNode):
     - stoch_period: Stochastic lookback period (default: 14)
     - smooth_k: Smoothing for %K line (default: 3)
     """
+
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod", "stochPeriod", "smoothK"})
 
     def __init__(
         self,

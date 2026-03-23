@@ -1,20 +1,37 @@
-from utils.core.models import Candle
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Dict, Type, TypeVar, Optional, TYPE_CHECKING
-from utils.core.enums import Bias, Ticker, TimeFrame
-from typing import Any, Dict
+import math
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Type, TypeVar
+
+import pandas as pd
+
 import utils.core.helpers as _helpers
+from utils.core.enums import Bias, Ticker, TimeFrame
+from utils.core.models import Candle
 
 if TYPE_CHECKING:
-    import pandas as pd
     from utils.cache.bias_node_cache import BiasNodeCache
 
 
 T = TypeVar('T', bound='BiasNode')
 
 
+@dataclass(frozen=True)
+class LookbackContribution:
+    """Machine-readable bar-count contribution used for cold cache rebuilds."""
+
+    label: str
+    bars: int
+
+
+LookbackWindow = LookbackContribution
+
+
 class BiasNode(ABC):
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset()
+    hardcoded_lookbacks: ClassVar[tuple[tuple[str, int], ...]] = ()
+    cold_rebuild_buffer_ratio: ClassVar[float] = 0.2
 
     _instances: Dict[tuple, 'BiasNode'] = {}
 
@@ -128,6 +145,75 @@ class BiasNode(ABC):
         pass
 
     # ----------------------------------------------------------------------
+    # Lookback metadata API
+    # ----------------------------------------------------------------------
+    def _coerce_lookback_bars(self, label: str, value: object) -> int:
+        if isinstance(value, bool):
+            raise TypeError(
+                f"Lookback contribution '{label}' on {self.__class__.__name__} "
+                "must be int-like, not bool."
+            )
+        if isinstance(value, int):
+            bars = value
+        elif isinstance(value, float) and value.is_integer():
+            bars = int(value)
+        else:
+            raise TypeError(
+                f"Lookback contribution '{label}' on {self.__class__.__name__} "
+                f"must be int-like, got {type(value).__name__}."
+            )
+        if bars < 0:
+            raise ValueError(
+                f"Lookback contribution '{label}' on {self.__class__.__name__} "
+                f"must be non-negative, got {bars}."
+            )
+        return bars
+
+    def _extra_lookback_contributions(self) -> tuple[LookbackContribution, ...]:
+        """Allow subclasses to add dynamic or wrapped lookback windows."""
+        return ()
+
+    def lookback_contributions(self) -> tuple[LookbackContribution, ...]:
+        """Return all declared lookback windows for this node instance."""
+        contributions: list[LookbackContribution] = []
+        params = self.params if isinstance(self.params, dict) else {}
+
+        for label in sorted(self.lookback_param_names):
+            if label not in params:
+                continue
+            bars = self._coerce_lookback_bars(label, params[label])
+            contributions.append(LookbackContribution(label=label, bars=bars))
+
+        for label, raw_bars in self.hardcoded_lookbacks:
+            bars = self._coerce_lookback_bars(label, raw_bars)
+            contributions.append(LookbackContribution(label=label, bars=bars))
+
+        contributions.extend(self._extra_lookback_contributions())
+
+        front_bad = getattr(self, "front_bad", None)
+        if front_bad is not None:
+            contributions.append(
+                LookbackContribution(
+                    label="front_bad",
+                    bars=self._coerce_lookback_bars("front_bad", front_bad),
+                )
+            )
+
+        return tuple(contributions)
+
+    def max_lookback(self) -> int:
+        """Return the maximum bar-count needed to warm this node from scratch."""
+        return max((item.bars for item in self.lookback_contributions()), default=0)
+
+    def cold_rebuild_candle_count(self) -> int:
+        """Return total candles to stream for a stateless cold rebuild."""
+        max_lookback = self.max_lookback()
+        if max_lookback <= 0:
+            return 1
+        buffer_bars = max(1, math.ceil(max_lookback * self.cold_rebuild_buffer_ratio))
+        return max_lookback + buffer_bars
+
+    # ----------------------------------------------------------------------
     # Standardized column naming API
     # ----------------------------------------------------------------------
     def get_column_names(self) -> List[str]:
@@ -214,6 +300,88 @@ class BiasNode(ABC):
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to initialize cache for {self.module_name}: {e}")
 
+    def _central_cache_descriptor(self):
+        from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
+
+        return ArtifactDescriptor(
+            family="bias",
+            ticker=self.ticker,
+            timeframe=self.tf,
+            module_name=self.module_name or None,
+            params=self.params,
+            scope=ArtifactScope.LIVE,
+            artifact_name=self.module_name or None,
+        )
+
+    def _raise_cache_miss(
+        self,
+        *,
+        start: Optional[datetime],
+        end: Optional[datetime],
+        reason: str,
+    ) -> None:
+        from utils.cache.bias_node_cache import CacheMissError
+
+        raise CacheMissError(
+            module_name=self.module_name,
+            params=self.params,
+            ticker=self.ticker,
+            tf=self.tf,
+            date_range=(start, end),
+            cache_path=self.get_cache_path(),
+            reason=reason,
+        )
+
+    def _read_cached_artifact(
+        self,
+        *,
+        start: Optional[datetime],
+        end: Optional[datetime],
+    ) -> "pd.DataFrame":
+        from utils.cache.central_cache import CentralCacheStore
+        from utils.cache.central_cache_errors import CacheCoverageError
+        from utils.cache.central_cache_models import CacheRequest
+
+        store = CentralCacheStore.get_instance()
+        descriptor = self._central_cache_descriptor()
+        clamped_request = CacheRequest(start=start, end=end)
+
+        if start is not None or end is not None:
+            record = store.describe_artifact(descriptor)
+            if record is not None:
+                effective_start = start
+                effective_end = end
+                if start is not None and record.coverage.start is not None:
+                    effective_start = max(
+                        pd.Timestamp(start),
+                        pd.Timestamp(record.coverage.start),
+                    ).to_pydatetime()
+                if end is not None and record.coverage.end is not None:
+                    effective_end = min(
+                        pd.Timestamp(end),
+                        pd.Timestamp(record.coverage.end),
+                    ).to_pydatetime()
+                if (
+                    effective_start is not None
+                    and effective_end is not None
+                    and pd.Timestamp(effective_start) > pd.Timestamp(effective_end)
+                ):
+                    raise CacheCoverageError(
+                        module_name=self.module_name,
+                        ticker=self.ticker,
+                        timeframe=self.tf,
+                        start=start,
+                        end=end,
+                        coverage_start=record.coverage.start,
+                        coverage_end=record.coverage.end,
+                    )
+                clamped_request = CacheRequest(start=effective_start, end=effective_end)
+
+        return store.read_artifact(
+            descriptor,
+            request=clamped_request,
+        )
+
     def get_cached_values(
         self,
         start: Optional[datetime] = None,
@@ -259,28 +427,43 @@ class BiasNode(ABC):
 
         # Check if cache is initialized
         if self._bias_node_cache is None:
+            if self.module_name:
+                self._init_cache_after_params()
+        
+        if self._bias_node_cache is None:
             if require_cache:
-                from utils.cache.bias_node_cache import CacheMissError
                 logger.warning(
                     f"Cache not initialized for {self.module_name} ({self.ticker}, {self.tf}). "
                     f"Call _init_cache_after_params() in subclass __init__."
                 )
-                raise CacheMissError(
-                    module_name=self.module_name,
-                    params=self.params,
-                    ticker=self.ticker,
-                    tf=self.tf,
-                    date_range=(start, end),
-                    reason="Cache not initialized. Subclass must call _init_cache_after_params()."
+                self._raise_cache_miss(
+                    start=start,
+                    end=end,
+                    reason="Cache not initialized. Subclass must call _init_cache_after_params().",
                 )
             return None
 
-        # Delegate to BiasNodeCache
-        return self._bias_node_cache.get_values(
-            start=start,
-            end=end,
-            require_cache=require_cache
+        from utils.cache.central_cache_errors import (
+            ArtifactLifecycleError,
+            ArtifactMissingError,
+            CacheCoverageError,
         )
+
+        try:
+            cached_df = self._read_cached_artifact(start=start, end=end)
+        except (ArtifactLifecycleError, ArtifactMissingError, CacheCoverageError) as exc:
+            if not require_cache:
+                return None
+            self._raise_cache_miss(start=start, end=end, reason=str(exc))
+
+        self._cached_data = cached_df
+        self._cache_loaded = True
+
+        if 'value' in cached_df.columns:
+            return cached_df['value']
+        if len(cached_df.columns) == 1:
+            return cached_df.iloc[:, 0]
+        return cached_df.iloc[:, 0]
 
     def get_cached_dataframe(
         self,
@@ -309,23 +492,30 @@ class BiasNode(ABC):
             All cached columns for the date range.
         """
         if self._bias_node_cache is None:
+            if self.module_name:
+                self._init_cache_after_params()
+
+        if self._bias_node_cache is None:
             if require_cache:
-                from utils.cache.bias_node_cache import CacheMissError
-                raise CacheMissError(
-                    module_name=self.module_name,
-                    params=self.params,
-                    ticker=self.ticker,
-                    tf=self.tf,
-                    date_range=(start, end),
-                    reason="Cache not initialized"
-                )
+                self._raise_cache_miss(start=start, end=end, reason="Cache not initialized")
             return None
 
-        return self._bias_node_cache.get_dataframe(
-            start=start,
-            end=end,
-            require_cache=require_cache
+        from utils.cache.central_cache_errors import (
+            ArtifactLifecycleError,
+            ArtifactMissingError,
+            CacheCoverageError,
         )
+
+        try:
+            cached_df = self._read_cached_artifact(start=start, end=end)
+        except (ArtifactLifecycleError, ArtifactMissingError, CacheCoverageError) as exc:
+            if not require_cache:
+                return None
+            self._raise_cache_miss(start=start, end=end, reason=str(exc))
+
+        self._cached_data = cached_df
+        self._cache_loaded = True
+        return cached_df
 
     def is_cache_loaded(self) -> bool:
         """

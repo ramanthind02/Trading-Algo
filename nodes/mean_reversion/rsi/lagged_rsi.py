@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Deque, List
+from typing import ClassVar, Deque, List
 
 import numpy as np
 
@@ -10,6 +10,8 @@ from utils.core.models import Candle
 
 
 class LaggedRSI(BiasNode):
+    lookback_param_names: ClassVar[frozenset[str]] = frozenset({"rsiPeriod", "lagPeriod"})
+
     def __init__(
         self,
         ticker: Ticker,
