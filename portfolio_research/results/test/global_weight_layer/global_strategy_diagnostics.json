@@ -1,0 +1,142 @@
+{
+  "is_fitted": true,
+  "tickers": {
+    "__GLOBAL__": {
+      "fdm": 2.0,
+      "weights": {
+        "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": 0.09090909090909091,
+        "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_1": 0.09090909090909091,
+        "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3": 0.09090909090909091,
+        "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.09090909090909091,
+        "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.09090909090909091,
+        "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3": 0.09090909090909091,
+        "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.09090909090909091,
+        "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.09090909090909091,
+        "TLT::D::rebalancing_cross_signal_D_crossTickers_ES::rule_based_3_cross_tickers_es__D::ensemble_0": 0.09090909090909091,
+        "TLT::D::seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_4": 0.09090909090909091,
+        "TLT::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.09090909090909091
+      },
+      "models": [
+        "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2",
+        "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_1",
+        "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3",
+        "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+        "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+        "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3",
+        "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+        "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+        "TLT::D::rebalancing_cross_signal_D_crossTickers_ES::rule_based_3_cross_tickers_es__D::ensemble_0",
+        "TLT::D::seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_4",
+        "TLT::M::buy_hold_signal_M::rule_based_3__M::ensemble_0"
+      ],
+      "n_models": 11,
+      "cluster_assignments": {
+        "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": "cluster_1",
+        "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_1": "cluster_2",
+        "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3": "cluster_3",
+        "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_4",
+        "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_5",
+        "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3": "cluster_6",
+        "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_7",
+        "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_8",
+        "TLT::D::rebalancing_cross_signal_D_crossTickers_ES::rule_based_3_cross_tickers_es__D::ensemble_0": "cluster_9",
+        "TLT::D::seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_4": "cluster_10",
+        "TLT::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_11"
+      },
+      "cluster_weights": {
+        "cluster_1": 0.09090909090909091,
+        "cluster_2": 0.09090909090909091,
+        "cluster_3": 0.09090909090909091,
+        "cluster_4": 0.09090909090909091,
+        "cluster_5": 0.09090909090909091,
+        "cluster_6": 0.09090909090909091,
+        "cluster_7": 0.09090909090909091,
+        "cluster_8": 0.09090909090909091,
+        "cluster_9": 0.09090909090909091,
+        "cluster_10": 0.09090909090909091,
+        "cluster_11": 0.09090909090909091
+      },
+      "cluster_metrics": {
+        "cluster_1": {
+          "avg_positive_corr": 0.0613676750066993,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_2": {
+          "avg_positive_corr": 0.09112382091881828,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_3": {
+          "avg_positive_corr": 0.08072951374870237,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_4": {
+          "avg_positive_corr": 0.23041570160503194,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_5": {
+          "avg_positive_corr": 0.09395093862515964,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_6": {
+          "avg_positive_corr": 0.06028555595485078,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_7": {
+          "avg_positive_corr": 0.18891023104311638,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_8": {
+          "avg_positive_corr": 0.19935382487905118,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_9": {
+          "avg_positive_corr": 0.06014005370176974,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_10": {
+          "avg_positive_corr": 0.06413343878061144,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        },
+        "cluster_11": {
+          "avg_positive_corr": 0.1357129205366127,
+          "ulcer_index": null,
+          "score": null,
+          "member_count": 1
+        }
+      },
+      "mean_signal_correlation": 0.11510215225458398,
+      "mean_cluster_correlation": 0.11510215225458398
+    }
+  },
+  "summary": {
+    "n_tickers": 1,
+    "mean_fdm": 2.0,
+    "min_fdm": 2.0,
+    "max_fdm": 2.0,
+    "mean_models_per_ticker": 11.0,
+    "mean_clusters_per_ticker": 11.0,
+    "total_models": 11
+  },
+  "weight_method": "equal_signal",
+  "fdm_max": 2.0
+}

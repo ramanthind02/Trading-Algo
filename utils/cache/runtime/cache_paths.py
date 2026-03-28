@@ -35,5 +35,17 @@ def default_research_artifact_cache_dir() -> Path:
     return default_central_cache_dir() / "artifacts" / "research"
 
 
+def default_materialized_cache_dir() -> Path:
+    return default_central_cache_dir() / "materialized"
+
+
+def default_live_materialized_cache_dir() -> Path:
+    return default_materialized_cache_dir() / "live"
+
+
+def default_research_materialized_cache_dir() -> Path:
+    return default_materialized_cache_dir() / "research"
+
+
 def default_source_candle_dir() -> Path:
     return project_root() / "data" / "ohlc_data"

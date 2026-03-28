@@ -2,7 +2,12 @@
 
 > [!summary] What Is the Vault?
 > Centralized, validated storage for fitted [[base_model|base models]] and feature control files.
-> Organized by **timeframe → ensemble → feature**. Each feature has one canonical JSON control file holding all model variants.
+> Organized by **timeframe → ensemble → feature**. In the current working-vault implementation, each feature file effectively stores one saved base-model variant plus its fitted state.
+
+Start here:
+
+- [[Vault/architecture]] — in-depth explanation of vault ownership, working-vault invariants, and portfolio snapshots
+- [[Vault/user_guide]] — shorter task-oriented usage guide
 
 ---
 
@@ -24,7 +29,7 @@ vault/
 
 - Timeframe nesting: `D`, `W`, `M`
 - Ensemble naming: `{strategy_name}_{direction}` (e.g. `commodity_breakout_long`)
-- One JSON per feature — all model variants (fitted + unfitted) coexist in that file
+- One JSON per feature — current working-vault code effectively enforces one saved base-model variant per file
 
 ---
 
@@ -116,7 +121,7 @@ Each feature JSON contains:
 - `feature_name` — canonical feature key (for example `rsi_signal_D`)
 - `bias_node_spec` — top-level shared spec (`module_name`, `timeframes`) with no params
 - `tickers` — training ticker universe for the ensemble feature
-- `base_models` — list with exactly one base model entry
+- `base_models` — list shape retained by schema, with exactly one base-model entry in the current working-vault implementation
 - `created_at`, `updated_at` — metadata timestamps
 
 Each base model entry contains:
@@ -136,10 +141,27 @@ metadata = {
 }
 ```
 
+## Portfolio snapshots
+
+`GlobalPortfolio.save_to_vault(fit_start, fit_end, vault_root="vault")` writes a frozen portfolio snapshot under `vault/portfolio_snapshots/<portfolio_id>/`.
+
+The snapshot contains:
+
+- `snapshot.json` with the portfolio's semantic state and fit window
+- frozen copies of the referenced vault ensemble files under `ensembles/<TF>/<ensemble_name>/`
+
+`load_global_portfolio_snapshot(portfolio_id, vault_root="vault")` reloads the portfolio from those frozen copies instead of reading the mutable working vault.
+
+See [[Vault/portfolio_snapshots_and_predictions]] for the snapshot and materialization layout.
+
 ---
 
 ## See Also
 
+- [[Vault/architecture]] — in-depth vault architecture and lifecycle
+- [[Vault/user_guide]] — practical vault usage guide
+- [[Cache/architecture]] — runtime cache design and invalidation behavior
+- [[Cache/user_guide]] — practical cache usage guide
 - [[base_model]] — BaseModel composition and binning strategy
 - [[portfolio]] — how vault ensembles are loaded into Portfolio
 - [[monitoring]] — strategy decay monitoring store (signal/target vectors, CUSUM, rolling Sharpe)

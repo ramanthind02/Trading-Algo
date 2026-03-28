@@ -1,0 +1,12 @@
+ticker,cluster_id,timeframe,model_name,stream_id,model_weight,cluster_weight,avg_positive_corr,ulcer_index,score,phase
+ES,cluster_4,M,buy_hold_signal_M::rule_based_3__M::ensemble_0,ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0,0.09090909090909091,0.09090909090909091,0.23041570160503194,,,test
+ES,cluster_1,D,rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2,ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2,0.09090909090909091,0.09090909090909091,0.0613676750066993,,,test
+ES,cluster_2,D,seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_1,ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_1,0.09090909090909091,0.09090909090909091,0.09112382091881828,,,test
+ES,cluster_3,D,turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3,ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3,0.09090909090909091,0.09090909090909091,0.08072951374870237,,,test
+GC,cluster_5,M,buy_hold_signal_M::rule_based_3__M::ensemble_0,GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0,0.09090909090909091,0.09090909090909091,0.09395093862515964,,,test
+NQ,cluster_7,M,buy_hold_signal_M::rule_based_3__M::ensemble_0,NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0,0.09090909090909091,0.09090909090909091,0.18891023104311638,,,test
+NQ,cluster_6,D,turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3,NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_3,0.09090909090909091,0.09090909090909091,0.06028555595485078,,,test
+RTY,cluster_8,M,buy_hold_signal_M::rule_based_3__M::ensemble_0,RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0,0.09090909090909091,0.09090909090909091,0.19935382487905118,,,test
+TLT,cluster_11,M,buy_hold_signal_M::rule_based_3__M::ensemble_0,TLT::M::buy_hold_signal_M::rule_based_3__M::ensemble_0,0.09090909090909091,0.09090909090909091,0.1357129205366127,,,test
+TLT,cluster_9,D,rebalancing_cross_signal_D_crossTickers_ES::rule_based_3_cross_tickers_es__D::ensemble_0,TLT::D::rebalancing_cross_signal_D_crossTickers_ES::rule_based_3_cross_tickers_es__D::ensemble_0,0.09090909090909091,0.09090909090909091,0.06014005370176974,,,test
+TLT,cluster_10,D,seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_4,TLT::D::seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7::rule_based_3__D::ensemble_4,0.09090909090909091,0.09090909090909091,0.06413343878061144,,,test

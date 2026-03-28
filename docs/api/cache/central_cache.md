@@ -9,6 +9,7 @@
 - [`utils/cache/cross_ticker_store.py`](../../../utils/cache/cross_ticker_store.py)
 - [`utils/cache/cache_manager.py`](../../../utils/cache/cache_manager.py)
 - [`utils/cache/ingest_source_candles.py`](../../../utils/cache/ingest_source_candles.py)
+- [`utils/cache/live_cache_refresh.py`](../../../utils/cache/live_cache_refresh.py)
 
 ## Public Surface
 
@@ -24,6 +25,11 @@
 - `CrossTickerDataStore`
 - `CacheManager`
 - `ingest_source_candles`
+- `ActiveLivePortfolioConfig`
+- `LiveCacheRefreshManifest`
+- `LiveCacheRefreshRunSummary`
+- `load_live_cache_refresh_manifest`
+- `run_live_cache_refresh_now`
 - `ArtifactMissingError`
 - `CacheCoverageError`
 - `ArtifactLifecycleError`
@@ -70,6 +76,7 @@ Behavior notes:
 - `clear_candles(purge_persisted=True)` also deletes persisted runtime candle cache files
 - `read_artifact(...)` raises `ArtifactLifecycleError` if the descriptor exists but is not `FRESH`
 - `query_candles(...)` and range artifact reads raise `CacheCoverageError` when requested coverage exceeds stored coverage
+- when `deployment/config/live_cache_refresh.json` is enabled, `set_candles(...)` and `upsert_candles(...)` with `ArtifactScope.LIVE` also notify the async live-refresh orchestrator after the candle write succeeds
 
 ## Request And Metadata Types
 
@@ -183,7 +190,8 @@ Primary cache-orchestration helpers:
 Notes:
 
 - `ensure_vault_cache_coverage(...)` is the cache-first preflight path used by portfolio research
-- it reads vault feature files, ingests required candles into the central cache, ensures daily EWSD coverage, and rebuilds only missing/stale/out-of-range live `family="bias"` artifacts
+- it reads vault feature files, assumes required candle coverage already exists in the central cache, ensures daily EWSD coverage, and rebuilds only missing/stale/out-of-range live `family="bias"` artifacts
+- candle bootstrap is a separate explicit step via `bootstrap_source_candles(...)`
 - bias-artifact rebuilds are stateless cold rebuilds: `CacheManager` instantiates a fresh node, prepends the node's machine-readable warmup window, and trims the saved artifact back to the requested coverage range
 
 ### `ingest_source_candles`
@@ -198,8 +206,29 @@ CLI:
 
 - `python -m utils.cache.ingest_source_candles`
 
+### Live refresh helpers
+
+Manifest types:
+
+- `ActiveLivePortfolioConfig`
+- `LiveCacheRefreshManifest`
+- `LiveCacheRefreshRunSummary`
+
+Primary helpers:
+
+- `load_live_cache_refresh_manifest(manifest_path=None) -> LiveCacheRefreshManifest | None`
+- `run_live_cache_refresh_now(manifest_path=None, dirty_keys=None) -> LiveCacheRefreshRunSummary`
+
+Notes:
+
+- the manifest file lives at `deployment/config/live_cache_refresh.json`
+- automatic live refresh is inference only: stale bias rebuild + live materialization
+- it does not refit models and it does not create new portfolio snapshots
+- run summaries are written to `.cache/trading_algo/central_cache/live_refresh/last_run.json`
+
 ## Related
 
 - [Portfolio Cache Query API](../ensemble/portfolio_cache_query.md) — cache-native portfolio query API
 - [Central Cache Architecture](../../library/Cache/architecture.md) — design and ownership
 - [Central Cache User Guide](../../library/Cache/user_guide.md) — task-oriented examples
+- [Live Cache Refresh](../../library/Deployment/live_cache_refresh.md) — deployment manifest and recovery flow
