@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from dataclasses import dataclass as _dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -764,9 +765,128 @@ def WeightLayer(
     return ClusteredWeightLayer(config=config)
 
 
+def serialize_weight_layer_state(weight_layer: BaseWeightLayer) -> Dict[str, Any]:
+    """Serialize a fitted or unfitted weight layer to JSON-safe payload."""
+    if not isinstance(weight_layer, ClusteredWeightLayer):
+        raise TypeError(
+            "Only ClusteredWeightLayer serialization is currently supported; "
+            f"got {weight_layer.__class__.__name__}"
+        )
+
+    return {
+        "class_name": weight_layer.__class__.__name__,
+        "config": asdict(weight_layer._wl_config),
+        "state": {
+            "fdm": {str(k): float(v) for k, v in weight_layer.fdm_.items()},
+            "weights": {
+                str(ticker): {
+                    str(model_name): float(weight)
+                    for model_name, weight in series.to_dict().items()
+                }
+                for ticker, series in weight_layer.weights_.items()
+            },
+            "model_names": {
+                str(ticker): [str(model_name) for model_name in model_names]
+                for ticker, model_names in weight_layer.model_names_.items()
+            },
+            "mean_signal_correlation": {
+                str(k): float(v) for k, v in weight_layer.mean_signal_correlation_.items()
+            },
+            "mean_cluster_correlation": {
+                str(k): float(v) for k, v in weight_layer.mean_cluster_correlation_.items()
+            },
+            "cluster_assignments": {
+                str(ticker): {str(model_name): str(cluster) for model_name, cluster in payload.items()}
+                for ticker, payload in weight_layer.cluster_assignments_.items()
+            },
+            "cluster_weights": {
+                str(ticker): {str(cluster): float(weight) for cluster, weight in payload.items()}
+                for ticker, payload in weight_layer.cluster_weights_.items()
+            },
+            "cluster_metrics": {
+                str(ticker): {
+                    str(cluster): {
+                        str(metric_name): (
+                            None
+                            if metric_value is None
+                            else int(metric_value)
+                            if isinstance(metric_value, (int, np.integer)) and not isinstance(metric_value, bool)
+                            else float(metric_value)
+                            if isinstance(metric_value, (float, np.floating))
+                            else metric_value
+                        )
+                        for metric_name, metric_value in metrics.items()
+                    }
+                    for cluster, metrics in payload.items()
+                }
+                for ticker, payload in weight_layer.cluster_metrics_.items()
+            },
+            "is_fitted": bool(weight_layer.is_fitted_),
+        },
+    }
+
+
+def deserialize_weight_layer_state(payload: Dict[str, Any]) -> BaseWeightLayer:
+    """Restore a weight layer from ``serialize_weight_layer_state`` payload."""
+    config_payload = dict(payload.get("config", {}))
+    config = WeightLayerConfig(**config_payload)
+    restored = WeightLayer(config=config)
+    if not isinstance(restored, ClusteredWeightLayer):
+        raise TypeError(
+            "WeightLayer(config=...) did not return ClusteredWeightLayer during restore"
+        )
+
+    state = payload.get("state", {})
+    restored.fdm_ = {
+        str(ticker): float(value)
+        for ticker, value in dict(state.get("fdm", {})).items()
+    }
+    restored.weights_ = {
+        str(ticker): pd.Series(
+            {str(model_name): float(weight) for model_name, weight in dict(weights).items()},
+            dtype=float,
+        )
+        for ticker, weights in dict(state.get("weights", {})).items()
+    }
+    restored.model_names_ = {
+        str(ticker): [str(model_name) for model_name in model_names]
+        for ticker, model_names in dict(state.get("model_names", {})).items()
+    }
+    restored.mean_signal_correlation_ = {
+        str(ticker): float(value)
+        for ticker, value in dict(state.get("mean_signal_correlation", {})).items()
+    }
+    restored.mean_cluster_correlation_ = {
+        str(ticker): float(value)
+        for ticker, value in dict(state.get("mean_cluster_correlation", {})).items()
+    }
+    restored.cluster_assignments_ = {
+        str(ticker): {str(model_name): str(cluster) for model_name, cluster in dict(assignments).items()}
+        for ticker, assignments in dict(state.get("cluster_assignments", {})).items()
+    }
+    restored.cluster_weights_ = {
+        str(ticker): {str(cluster): float(weight) for cluster, weight in dict(weights).items()}
+        for ticker, weights in dict(state.get("cluster_weights", {})).items()
+    }
+    restored.cluster_metrics_ = {
+        str(ticker): {
+            str(cluster): {
+                str(metric_name): metric_value
+                for metric_name, metric_value in dict(metrics).items()
+            }
+            for cluster, metrics in dict(payload_by_cluster).items()
+        }
+        for ticker, payload_by_cluster in dict(state.get("cluster_metrics", {})).items()
+    }
+    restored.is_fitted_ = bool(state.get("is_fitted", False))
+    return restored
+
+
 __all__ = [
     "WeightLayerConfig",
     "WeightLayer",
     "BaseWeightLayer",
     "ClusteredWeightLayer",
+    "deserialize_weight_layer_state",
+    "serialize_weight_layer_state",
 ]

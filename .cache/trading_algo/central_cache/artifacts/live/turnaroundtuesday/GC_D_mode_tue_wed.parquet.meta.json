@@ -1,6 +1,6 @@
 {
   "coverage": {
-    "end": "2025-09-18T00:00:00",
+    "end": "2026-02-20T00:00:00",
     "start": "2006-01-03T00:00:00"
   },
   "depends_on": [
@@ -20,7 +20,7 @@
     "ticker": "GC",
     "timeframe": "D"
   },
-  "lifecycle_state": "fresh",
-  "revision": 4,
+  "lifecycle_state": "stale",
+  "revision": 5,
   "source_revision": 2
 }

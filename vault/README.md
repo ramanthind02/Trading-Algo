@@ -1,6 +1,6 @@
-# Vault - Base Model Feature Storage
+# Vault - Working Model Storage
 
-This vault stores validated trading features and their associated base models.
+This vault stores validated trading features, their saved base-model state, and immutable portfolio snapshots.
 
 ## Directory Structure
 
@@ -18,12 +18,22 @@ vault/
 
 Each feature has its own control file (`features/{feature_column}.json`) containing:
 - Bias node specification (for feature reconstruction)
-- All base model variants for that feature
-- Fitted and unfitted model configurations
+- A `base_models` list shape that currently holds one saved base-model variant in the working-vault implementation
+- Fitted or unfitted model configuration for that saved variant
+
+Portfolio snapshots live separately under:
+
+```text
+vault/portfolio_snapshots/<portfolio_id>/
+```
 
 ## Usage
 
-See `docs/to-do/vault_specs.md` for complete documentation.
+See:
+
+- `docs/library/Vault/architecture.md`
+- `docs/library/Vault/user_guide.md`
+- `docs/library/Vault/portfolio_snapshots_and_predictions.md`
 
 ### Saving from feature research
 

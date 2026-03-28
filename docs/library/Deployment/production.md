@@ -62,6 +62,20 @@ python scripts/run_manual_forecast.py --output results.json
 2. Verify forecasts for all 8 ticker/timeframe combinations (`count` = 4 per timeframe)
 3. Confirm `errors` list is empty
 4. Confirm predictions are reasonable values (not NaN, not all zeros)
+5. Save the deployed `GlobalPortfolio` snapshot and record its `portfolio_id`
+6. Update `deployment/config/live_cache_refresh.json` with the active working-vault ensemble dirs and deployed `portfolio_id`
+7. Confirm the central LIVE candle cache is being updated for the tracked ticker/timeframe set
+
+## Live Cache Refresh Ops
+
+For cache-native live deployment, the operational contract is:
+
+1. Keep `CentralCacheStore` LIVE candles current.
+2. Let the runtime refresh stale live bias artifacts automatically.
+3. Let the runtime rematerialize live base-model and portfolio outputs automatically.
+4. Inspect `.cache/trading_algo/central_cache/live_refresh/last_run.json` if forecasts stop updating.
+
+This path is inference only. It does not refit models and it does not create new portfolio snapshots during live operation.
 
 ---
 
@@ -72,6 +86,7 @@ python scripts/run_manual_forecast.py --output results.json
 | `No historical data for EU D` | MT5 terminal not running | Start MT5 and log in |
 | `forecasts['D']['count'] == 0` | Buffers not loaded | Check `len(server.candle_buffers)` == 8, `len(server.ml_managers)` == 8 |
 | `RSI requires 14 candles, only 5 available` | Lookback too short | Set `server.lookback_candles = 150` then `server.load_historical_data()` |
+| Live materialized forecasts stopped updating | Live refresh cycle failed after candle ingest | Inspect `.cache/trading_algo/central_cache/live_refresh/last_run.json`, fix the underlying issue, then run `run_live_cache_refresh_now(...)` |
 
 ---
 
@@ -87,3 +102,4 @@ python scripts/run_manual_forecast.py --output results.json
 
 - [[portfolio]] — ensemble and position logic called by ForecastServer
 - [[vault]] — how models are loaded at startup
+- [[Deployment/live_cache_refresh]] — manifest contract and automatic refresh behavior after LIVE candle writes

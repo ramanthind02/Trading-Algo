@@ -26,6 +26,20 @@ from .runtime.cross_ticker_store import (
     extract_cross_ticker_names,
 )
 from .runtime.ingest_source_candles import ingest_source_candles
+from .runtime.live_cache_refresh import (
+    ActiveLivePortfolioConfig,
+    LiveCacheRefreshManifest,
+    LiveCacheRefreshRunSummary,
+    load_live_cache_refresh_manifest,
+    run_live_cache_refresh_now,
+)
+from .runtime.portfolio_materialization import (
+    BaseModelMaterializationIdentity,
+    CleanupSummary,
+    MaterializationSummary,
+    materialize_global_portfolio_predictions,
+    prune_inactive_base_model_materializations,
+)
 
 __all__ = [
     "ArtifactDescriptor",
@@ -35,9 +49,12 @@ __all__ = [
     "ArtifactRecord",
     "ArtifactScope",
     "Backtest",
+    "ActiveLivePortfolioConfig",
+    "BaseModelMaterializationIdentity",
     "bootstrap_source_candles",
     "CacheCoverageError",
     "CacheRequest",
+    "CleanupSummary",
     "CentralCache",
     "CentralCacheError",
     "CentralCacheStore",
@@ -45,8 +62,15 @@ __all__ = [
     "CoverageWindow",
     "CrossTickerDataStore",
     "ingest_source_candles",
+    "LiveCacheRefreshManifest",
+    "LiveCacheRefreshRunSummary",
     "LookupMode",
+    "MaterializationSummary",
     "SCALAR_LIST_PARAM_KEYS",
     "SourceRevisionConflictError",
     "extract_cross_ticker_names",
+    "load_live_cache_refresh_manifest",
+    "materialize_global_portfolio_predictions",
+    "prune_inactive_base_model_materializations",
+    "run_live_cache_refresh_now",
 ]

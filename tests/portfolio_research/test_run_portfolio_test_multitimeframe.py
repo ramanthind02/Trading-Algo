@@ -48,6 +48,9 @@ class _DummyGlobalPortfolio:
         self.is_fitted = True
         return self
 
+    def save_to_vault(self, fit_start, fit_end, vault_root: str = "vault"):  # noqa: ANN001
+        return f"dummy::{fit_start:%Y%m%d}::{fit_end:%Y%m%d}"
+
     def predict_from_cache(self, query):  # noqa: ANN001
         self.predict_queries.append(query)
         datetimes = pd.date_range(query.start, query.end, freq="D")
@@ -418,6 +421,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", _mock_aggregate_intraday_returns_to_daily)
     monkeypatch.setattr(pipeline, "generate_tearsheet", _mock_generate_tearsheet)
     monkeypatch.setattr(pipeline, "export_global_weight_layer_report", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pipeline, "materialize_global_portfolio_predictions", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
 
     rpt.run_portfolio_test(config)
@@ -582,6 +586,7 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
     monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", lambda returns: returns)
     monkeypatch.setattr(pipeline, "generate_tearsheet", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "export_global_weight_layer_report", _mock_export_global_weight_layer_report)
+    monkeypatch.setattr(pipeline, "materialize_global_portfolio_predictions", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
 
     rpt.run_portfolio_test(config)
