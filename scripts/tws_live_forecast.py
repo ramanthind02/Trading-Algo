@@ -793,7 +793,7 @@ def format_telegram_message(
         total_dollars += dollars
 
         # Show direction
-        direction = "+" if dollars >= 0 else ""
+        direction = "+" if dollars >= 0 else "-"
         lines.append(f"{etf:<5} ${price:>7.2f} {direction}${abs(dollars):>7.0f} {shares:>8.2f}")
 
     lines.append("-" * 32)
