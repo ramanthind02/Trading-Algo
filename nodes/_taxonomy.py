@@ -46,4 +46,8 @@ CANONICAL_MODULE_IMPORTS = {
     "rebalancing": "nodes.pairs.rebalancing",
     "rebalancing_cross": "nodes.pairs.rebalancing_cross",
     "spread": "nodes.pairs.spread",
+    # Aliases for concatenated module_name attributes reported by bias nodes
+    "turnaroundtuesday": "nodes.seasonal.turnaround_tuesday",
+    "seasonalbondsmonth": "nodes.seasonal.monthly.seasonal_bonds_month",
+    "seasonalindiceseof": "nodes.seasonal.monthly.seasonal_indices_eof",
 }

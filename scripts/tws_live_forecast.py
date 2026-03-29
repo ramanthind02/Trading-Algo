@@ -3,8 +3,9 @@
 TWS Live Forecast Pipeline
 ===========================
 
-Connects to TWS API, fetches historical data for equity index futures,
-generates forecasts using the Portfolio class, and converts to ETF positions.
+Connects to TWS API, fetches historical data, generates multi-timeframe
+forecasts using GlobalPortfolio (auto-loaded from vault), and converts
+to ETF positions with optional Telegram notification.
 
 Usage:
     # Paper trading (default)
@@ -28,7 +29,8 @@ import time
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List, Set
+
 import pandas as pd
 
 # Configure logging - suppress IB API verbose logging
@@ -49,10 +51,9 @@ from ibapi.contract import Contract
 # Project imports
 from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
 from ensemble.vault_manager import load_ensemble_from_vault
-from ensemble.portfolio import Portfolio
+from ensemble.portfolio import TFPortfolio, GlobalPortfolio
 from deployment.telegram_notifier import TelegramNotifier
-from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
-from utils.core.enums import TimeFrame
+from utils.core.enums import TimeFrame, Ticker
 
 
 # ==============================================================================
@@ -60,14 +61,6 @@ from utils.core.enums import TimeFrame
 # ==============================================================================
 
 DEFAULT_CONFIG_PATH = "configs/live_forecast_config.json"
-
-# Mapping from our ticker symbols to TWS CONTFUT symbols
-TICKER_TO_TWS = {
-    "ES": ("ES", "CME"),
-    "NQ": ("NQ", "CME"),
-    "YM": ("YM", "CBOT"),
-    "RTY": ("RTY", "CME"),
-}
 
 
 # ==============================================================================
@@ -94,20 +87,33 @@ def create_etf_contract(symbol: str) -> Contract:
     return contract
 
 
+def _create_contract_from_config(ticker: str, instrument_info: Dict) -> Contract:
+    """Create an IB contract based on instrument config sec_type."""
+    sec_type = instrument_info.get("sec_type", "CONTFUT")
+    if sec_type == "STK":
+        return create_etf_contract(ticker)
+    else:
+        exchange = instrument_info.get("exchange", "CME")
+        return create_futures_contract(ticker, exchange)
+
+
 def fetch_historical_candles(
     client: IBDataClient,
     ticker: str,
-    lookback_days: int = 60
+    instrument_info: Dict,
+    lookback_days: int = 365,
 ) -> pd.DataFrame:
     """
-    Fetch CONTFUT bars and convert to candles DataFrame format.
+    Fetch historical bars and convert to candles DataFrame format.
 
     Parameters
     ----------
     client : IBDataClient
         Connected IB client
     ticker : str
-        Ticker symbol (ES, NQ, YM, RTY)
+        Ticker symbol (ES, NQ, YM, RTY, GC, TLT, etc.)
+    instrument_info : dict
+        Instrument config with keys: sec_type, exchange, etf
     lookback_days : int
         Number of days of history to fetch
 
@@ -116,11 +122,7 @@ def fetch_historical_candles(
     pd.DataFrame
         Candles with columns: datetime, open, high, low, close, volume, ticker, timeframe
     """
-    if ticker not in TICKER_TO_TWS:
-        raise ValueError(f"Unknown ticker: {ticker}. Valid tickers: {list(TICKER_TO_TWS.keys())}")
-
-    tws_symbol, exchange = TICKER_TO_TWS[ticker]
-    contract = create_futures_contract(tws_symbol, exchange)
+    contract = _create_contract_from_config(ticker, instrument_info)
 
     # Request historical data
     req_id = client.request_historical_data(
@@ -145,10 +147,9 @@ def fetch_historical_candles(
             print(f"  Warning: No bars received for {ticker}")
         return pd.DataFrame()
 
-    # Convert bars to DataFrame - we have data regardless of wait result
+    # Convert bars to DataFrame
     rows = []
     for bar in client.historical_bars:
-        # Parse date - IB returns format like "20260124"
         dt = pd.to_datetime(bar.date)
         rows.append({
             "datetime": dt,
@@ -169,6 +170,25 @@ def fetch_historical_candles(
     return df
 
 
+def resample_daily_to_monthly(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """Resample daily candles to monthly OHLCV candles, per ticker."""
+    results = []
+    for ticker, group in daily_df.groupby("ticker"):
+        g = group.set_index("datetime").sort_index()
+        monthly = g.resample("ME").agg({
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }).dropna(subset=["close"])
+        monthly["ticker"] = ticker
+        monthly["timeframe"] = TimeFrame.M
+        monthly = monthly.reset_index()
+        results.append(monthly)
+    return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+
+
 def fetch_current_prices(
     client: IBDataClient,
     etf_symbols: List[str]
@@ -181,7 +201,7 @@ def fetch_current_prices(
     client : IBDataClient
         Connected IB client
     etf_symbols : List[str]
-        List of ETF symbols (SPY, QQQ, DIA, IWM)
+        List of ETF symbols (SPY, QQQ, DIA, IWM, GLD, TLT)
 
     Returns
     -------
@@ -193,7 +213,6 @@ def fetch_current_prices(
     for symbol in etf_symbols:
         contract = create_etf_contract(symbol)
 
-        # Request snapshot market data
         req_id = client.request_historical_data(
             contract,
             end_date_time="",
@@ -205,10 +224,8 @@ def fetch_current_prices(
             keep_up_to_date=False
         )
 
-        # Wait for data
         if client.wait_for_historical_data(req_id, timeout=15.0):
             if client.historical_bars:
-                # Use the last bar's close as the current price
                 prices[symbol] = client.historical_bars[-1].close
                 print(f"  {symbol}: ${prices[symbol]:.2f}")
             else:
@@ -223,45 +240,349 @@ def fetch_current_prices(
 # PORTFOLIO LOADING
 # ==============================================================================
 
-def load_portfolio(vault_paths: List[str], target_vol: float = 0.10) -> Portfolio:
+def _load_ensembles_for_tf(vault_root: str, tf: TimeFrame) -> list:
+    """Load all ensembles from vault/{tf.name}/ for a single timeframe."""
+    tf_dir = Path(vault_root) / tf.name
+    if not tf_dir.exists():
+        return []
+    ensembles = []
+    for ens_dir in sorted(tf_dir.iterdir()):
+        if not ens_dir.is_dir():
+            continue
+        try:
+            ens = load_ensemble_from_vault(str(ens_dir))
+            ensembles.append(ens)
+            print(f"    Loaded: {ens_dir.name}")
+        except Exception as e:
+            print(f"    Warning: Skipping {ens_dir.name}: {e}")
+    return ensembles
+
+
+def build_portfolio(config: Dict) -> GlobalPortfolio:
     """
-    Load pre-fitted ensembles and create Portfolio.
+    Build a GlobalPortfolio with auto-loaded TFPortfolio instances from vault.
 
     Parameters
     ----------
-    vault_paths : List[str]
-        List of paths to vault ensemble directories
-    target_vol : float
-        Target volatility for the portfolio
+    config : dict
+        Loaded config with portfolio.vault_root, target_volatility, etc.
 
     Returns
     -------
-    Portfolio
-        Configured portfolio with loaded ensembles
+    GlobalPortfolio
+        Multi-timeframe portfolio with all vault ensembles
     """
-    ensembles = []
+    vault_root = config["portfolio"]["vault_root"]
+    target_vol = config["portfolio"]["target_volatility"]
+    max_pos = config["portfolio"]["max_position_pct"]
+    idm_max = config["portfolio"]["idm_max"]
 
-    for vault_path in vault_paths:
-        print(f"  Loading ensemble from: {vault_path}")
-        ensemble = load_ensemble_from_vault(
-            ensemble_dir=vault_path,
-            refit=False,  # Use pre-fitted params
-            target_volatility=target_vol
+    tf_portfolios = []
+    for tf in [TimeFrame.D, TimeFrame.M]:
+        print(f"  Loading {tf.name} ensembles...")
+        ensembles = _load_ensembles_for_tf(vault_root, tf)
+        if not ensembles:
+            print(f"    No ensembles found for {tf.name}, skipping")
+            continue
+
+        tf_p = TFPortfolio(
+            ensembles=ensembles,
+            trading_timeframe=tf,
+            target_volatility=target_vol,
+            max_position_pct=max_pos,
+            idm_max=idm_max,
         )
-        ensembles.append(ensemble)
-        print(f"    -> Loaded: {ensemble}")
+        tf_portfolios.append(tf_p)
+        print(f"    {tf.name}: {len(ensembles)} ensemble(s) loaded")
 
-    # Create portfolio with all ensembles
-    portfolio = Portfolio(
-        ensembles=ensembles,
-        trading_timeframe=TimeFrame.D,
-        target_volatility=target_vol,
-        max_position_pct=2.5,  # Allow up to 250% for diversification
-        idm_max=2.5
+    if not tf_portfolios:
+        raise ValueError(f"No ensembles found in vault root: {vault_root}")
+
+    portfolio = GlobalPortfolio(
+        tf_portfolios=tf_portfolios,
+        max_position_pct=max_pos,
+        idm_max=idm_max,
+    )
+    total_ensembles = sum(len(tp.ensembles) for tp in tf_portfolios)
+    print(f"  GlobalPortfolio created: {len(tf_portfolios)} timeframe(s), {total_ensembles} total ensemble(s)")
+    return portfolio
+
+
+def discover_required_tickers(portfolio: GlobalPortfolio) -> Set[str]:
+    """Discover all tickers needed by the portfolio (primary + cross-tickers)."""
+    from utils.data.cross_ticker_store import extract_cross_ticker_names
+
+    required: Set[str] = set()
+    for tf_p in portfolio.tf_portfolios:
+        for ens in tf_p.ensembles:
+            # Primary tickers from fitted ensemble state
+            if ens.unique_tickers_:
+                for t in ens.unique_tickers_:
+                    required.add(t if isinstance(t, str) else str(t))
+            # Cross-tickers from bias node specs
+            for spec in ens.get_required_bias_nodes():
+                required.update(extract_cross_ticker_names(spec.get('params', {})))
+
+    return required
+
+
+def ensure_cache_ready(required_tickers: Set[str]) -> Dict[str, Any]:
+    """Bootstrap central cache from repo parquets if not already populated.
+
+    Returns dict with 'bootstrapped' bool and coverage info per ticker.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+    from utils.cache.cache_manager import CacheManager
+
+    store = CentralCacheStore.get_instance()
+    manager = CacheManager()
+    coverage_info = {}
+    needs_bootstrap = []
+
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record is None:
+            needs_bootstrap.append(ticker_enum)
+        else:
+            coverage_info[ticker_str] = {
+                "start": record.coverage.start,
+                "end": record.coverage.end,
+                "revision": record.revision,
+            }
+
+    bootstrapped = False
+    if needs_bootstrap:
+        print(f"  Bootstrapping {len(needs_bootstrap)} ticker(s) from repo parquets...")
+        result = manager.bootstrap_source_candles(
+            tickers=[Ticker[t] for t in sorted(required_tickers)],
+            timeframes=[TimeFrame.D, TimeFrame.M],
+        )
+        bootstrapped = True
+        print(f"  Bootstrap: {result['success']} success, {result['failed']} failed")
+        for ticker_str in sorted(required_tickers):
+            try:
+                ticker_enum = Ticker[ticker_str]
+            except KeyError:
+                continue
+            record = store.describe_candle(ticker_enum, TimeFrame.D)
+            if record:
+                coverage_info[ticker_str] = {
+                    "start": record.coverage.start,
+                    "end": record.coverage.end,
+                    "revision": record.revision,
+                }
+
+    return {"bootstrapped": bootstrapped, "coverage": coverage_info}
+
+
+def upsert_tws_candles(
+    daily_candles: pd.DataFrame,
+    required_tickers: Set[str],
+) -> None:
+    """Upsert fetched TWS daily bars into central cache and resample to monthly.
+
+    Parameters
+    ----------
+    daily_candles : pd.DataFrame
+        All fetched daily candles with 'ticker' column.
+    required_tickers : Set[str]
+        Ticker names to upsert.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+
+    store = CentralCacheStore.get_instance()
+
+    for ticker_str in sorted(required_tickers):
+        ticker_mask = daily_candles["ticker"].astype(str) == ticker_str
+        ticker_candles = daily_candles.loc[ticker_mask].copy()
+        if ticker_candles.empty:
+            continue
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        store.upsert_candles(ticker_enum, TimeFrame.D, ticker_candles)
+        print(f"    {ticker_str} D: upserted {len(ticker_candles)} bars")
+
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record is None:
+            continue
+        full_daily = store.query_candles(
+            ticker_enum, TimeFrame.D,
+            start=record.coverage.start,
+            end=record.coverage.end,
+        ).reset_index()
+        if full_daily.empty:
+            continue
+        full_daily["ticker"] = ticker_str
+        monthly = resample_daily_to_monthly(full_daily)
+        if not monthly.empty:
+            store.upsert_candles(ticker_enum, TimeFrame.M, monthly)
+
+
+def refresh_bias_caches(
+    vault_root: str,
+    required_tickers: Set[str],
+) -> Dict[str, Any]:
+    """Refresh stale bias node artifacts for all vault ensembles.
+
+    Returns the summary dict from ensure_vault_cache_coverage.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+    from utils.cache.cache_manager import CacheManager
+
+    store = CentralCacheStore.get_instance()
+    manager = CacheManager()
+
+    earliest_start = None
+    latest_end = None
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record is None:
+            continue
+        if record.coverage.start and (earliest_start is None or record.coverage.start < earliest_start):
+            earliest_start = record.coverage.start
+        if record.coverage.end and (latest_end is None or record.coverage.end > latest_end):
+            latest_end = record.coverage.end
+
+    if earliest_start is None or latest_end is None:
+        raise ValueError("No candle coverage found in cache. Run bootstrap first.")
+
+    vault_dirs = []
+    for tf_name in ["D", "M"]:
+        tf_dir = Path(vault_root) / tf_name
+        if not tf_dir.exists():
+            continue
+        for ens_dir in sorted(tf_dir.iterdir()):
+            if ens_dir.is_dir():
+                vault_dirs.append(str(ens_dir))
+
+    if not vault_dirs:
+        raise ValueError(f"No vault ensembles found in {vault_root}")
+
+    print(f"  Refreshing bias caches for {len(vault_dirs)} ensembles...")
+    print(f"  Coverage window: {earliest_start.date()} to {latest_end.date()}")
+
+    summary = manager.ensure_vault_cache_coverage(
+        vault_ensemble_dirs=vault_dirs,
+        start_date=earliest_start,
+        end_date=latest_end,
+        refresh_mode="missing_stale_only",
     )
 
-    print(f"  Portfolio created with {len(ensembles)} ensemble(s)")
-    return portfolio
+    rebuilt = summary.get("rebuilt", 0)
+    failed = summary.get("failed", 0)
+    validated = summary.get("validated", 0)
+    print(f"  Result: {rebuilt} rebuilt, {validated} already fresh, {failed} failed")
+
+    if failed > 0:
+        for d in summary.get("details", []):
+            if d.get("status") == "failed":
+                print(f"    FAILED: {d.get('module_name')}/{d.get('ticker')}: {d.get('message','')}")
+
+    return summary
+
+
+def build_cache_query(
+    required_tickers: Set[str],
+) -> tuple:
+    """Build PortfolioCacheQuery and instrument_returns from cached candles.
+
+    Returns (query, instrument_returns) tuple.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+    from utils.cache.central_cache_models import ArtifactScope
+    from ensemble.portfolio import PortfolioCacheQuery
+
+    store = CentralCacheStore.get_instance()
+
+    starts = []
+    ends = []
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record and record.coverage.start and record.coverage.end:
+            starts.append(record.coverage.start)
+            ends.append(record.coverage.end)
+
+    if not starts:
+        raise ValueError("No candle coverage in cache")
+
+    query_start = max(starts)
+    query_end = min(ends)
+
+    query = PortfolioCacheQuery(
+        tickers=tuple(sorted(required_tickers)),
+        start=query_start,
+        end=query_end,
+        timeframes=(TimeFrame.D, TimeFrame.M),
+        scope=ArtifactScope.LIVE,
+    )
+
+    frames = []
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        candles = store.query_candles(
+            ticker_enum, TimeFrame.D,
+            start=query_start, end=query_end,
+        ).reset_index()
+        if not candles.empty:
+            candles = candles.set_index("datetime")["close"].rename(ticker_str)
+            frames.append(candles)
+
+    if not frames:
+        raise ValueError("No daily candle data in cache for returns computation")
+
+    prices = pd.concat(frames, axis=1).sort_index()
+    instrument_returns = prices.pct_change(fill_method=None).dropna(how="all")
+
+    return query, instrument_returns
+
+
+def compute_fetch_lookback(
+    ticker_str: str,
+    max_lookback: int = 365,
+    min_lookback: int = 10,
+    buffer_days: int = 5,
+) -> int:
+    """Determine how many days to fetch from TWS based on cache gap.
+
+    If cache has recent data, only fetch the gap. If cache is empty or stale,
+    fetch max_lookback.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+
+    store = CentralCacheStore.get_instance()
+    try:
+        ticker_enum = Ticker[ticker_str]
+    except KeyError:
+        return max_lookback
+
+    record = store.describe_candle(ticker_enum, TimeFrame.D)
+    if record is None or record.coverage.end is None:
+        return max_lookback
+
+    gap_days = (datetime.now() - record.coverage.end).days + buffer_days
+    return max(min(gap_days, max_lookback), min_lookback)
 
 
 # ==============================================================================
@@ -350,7 +671,7 @@ def format_console_output(
     """Format results for console display."""
     lines = []
     lines.append("=" * 70)
-    lines.append(f"TWS LIVE FORECAST - {datetime.now().strftime('%Y-%m-%d %H:%M PST')}")
+    lines.append(f"ENIGMA ALGOS FORECAST - {datetime.now().strftime('%Y-%m-%d %H:%M PST')}")
     lines.append("=" * 70)
     lines.append("")
     lines.append(f"Account Capital: ${capital:,.2f} USD")
@@ -420,7 +741,7 @@ def format_telegram_message(
 ) -> str:
     """Format results for Telegram notification."""
     lines = []
-    lines.append("*TWS LIVE FORECAST*")
+    lines.append("*ENIGMA ALGOS FORECAST*")
     lines.append(f"_{datetime.now().strftime('%Y-%m-%d %H:%M PST')}_")
     lines.append("")
     lines.append(f"Capital: ${capital:,.2f}")
@@ -450,8 +771,7 @@ def format_telegram_message(
         else:
             strength = "Strong Bear"
 
-        sign = "+" if forecast >= 0 else ""
-        lines.append(f"{ticker:<6} {sign}{forecast:>7.2f} {strength:<12}")
+        lines.append(f"{ticker:<6} {forecast:>+8.2f} {strength:<12}")
 
     lines.append("```")
     lines.append("")
@@ -459,8 +779,8 @@ def format_telegram_message(
     # Position sizing
     lines.append("*POSITIONS* (fractional shares)")
     lines.append("```")
-    lines.append(f"{'ETF':<5} {'Price':>8} {'Dollars':>9} {'Shares':>8}")
-    lines.append("-" * 32)
+    lines.append(f"{'ETF':<5} {'Price':>9} {'Dollars':>8} {'Shares':>7}")
+    lines.append("-" * 33)
 
     total_dollars = 0
 
@@ -471,13 +791,14 @@ def format_telegram_message(
         shares = row["shares_fractional"]
         total_dollars += dollars
 
-        # Show direction
-        direction = "+" if dollars >= 0 else ""
-        lines.append(f"{etf:<5} ${price:>7.2f} {direction}${abs(dollars):>7.0f} {shares:>8.2f}")
+        price_str = f"${price:.2f}"
+        dollars_str = f"${abs(dollars):.0f}" if dollars >= 0 else f"-${abs(dollars):.0f}"
+        lines.append(f"{etf:<5} {price_str:>9} {dollars_str:>8} {shares:>7.2f}")
 
-    lines.append("-" * 32)
+    lines.append("-" * 33)
     total_pct = (total_dollars / capital * 100) if capital > 0 else 0
-    lines.append(f"{'TOTAL':<5} {'':<8} ${total_dollars:>8.0f} ({total_pct:.0f}%)")
+    total_str = f"${total_dollars:.0f}"
+    lines.append(f"{'TOTAL':<5} {'':>9} {total_str:>8} ({total_pct:.0f}%)")
     lines.append("```")
 
     return "\n".join(lines)
@@ -500,7 +821,6 @@ def main():
     # Load configuration
     config_path = Path(args.config)
     if not config_path.is_absolute():
-        # Try relative to project root
         project_root = Path(__file__).parent.parent
         config_path = project_root / args.config
 
@@ -516,12 +836,33 @@ def main():
     port = args.port or config["connection"]["port"]
 
     print("=" * 60)
-    print("TWS Live Forecast Pipeline")
+    print("TWS Live Forecast Pipeline (Multi-TF)")
     print("=" * 60)
     print(f"Config: {config_path}")
     print(f"Capital: ${capital:,.2f}")
     print(f"Port: {port} ({'Paper' if port == 7497 else 'Live' if port == 7496 else 'Custom'})")
     print(f"Dry Run: {args.dry_run}")
+
+    # Step 1: Build portfolio from vault (before data fetching so we know what tickers to fetch)
+    print("\n1. Building portfolio from vault...")
+    portfolio = build_portfolio(config)
+
+    # Step 2: Discover all tickers needed
+    required_tickers = discover_required_tickers(portfolio)
+    print(f"\n   Required tickers: {sorted(required_tickers)}")
+
+    # Validate that all required tickers are in the config
+    missing_tickers = required_tickers - set(config["instruments"].keys())
+    if missing_tickers:
+        print(f"   Warning: Tickers not in config (will be skipped): {sorted(missing_tickers)}")
+
+    # Step 3: Ensure central cache has baseline data (bootstrap if empty)
+    print("\n2. Ensuring cache is ready...")
+    cache_status = ensure_cache_ready(required_tickers)
+    if cache_status["bootstrapped"]:
+        print("  Cache bootstrapped from repo parquets.")
+    for tk, cov in cache_status.get("coverage", {}).items():
+        print(f"  {tk}: {cov['start'].date()} to {cov['end'].date()}")
 
     # Create IB client
     ib_config = IBConfig(
@@ -533,7 +874,7 @@ def main():
 
     try:
         # Connect to TWS
-        print("\n1. Connecting to TWS...")
+        print("\n3. Connecting to TWS...")
         client.connect_to_ib()
 
         # Wait for connection (nextValidId callback sets connected=True)
@@ -556,15 +897,24 @@ def main():
         # Brief pause to ensure API is fully ready
         time.sleep(1)
 
-        # Fetch historical data for all instruments
-        print("\n2. Fetching historical data...")
+        # Step 4: Fetch historical data with smart lookback per ticker
+        print("\n4. Fetching historical data...")
         all_candles = []
+        instruments = config["instruments"]
+        data_cfg = config["data"]
+        min_lb = data_cfg.get("min_lookback_days", 10)
+        max_lb = data_cfg.get("max_lookback_days", 365)
 
-        for ticker in config["instruments"].keys():
+        for ticker in sorted(required_tickers):
+            if ticker not in instruments:
+                continue
+            lookback = compute_fetch_lookback(ticker, max_lookback=max_lb, min_lookback=min_lb)
+            print(f"  {ticker}: fetching {lookback} days")
             candles = fetch_historical_candles(
                 client,
                 ticker,
-                lookback_days=config["data"]["lookback_days"]
+                instruments[ticker],
+                lookback_days=lookback,
             )
             if not candles.empty:
                 all_candles.append(candles)
@@ -573,81 +923,58 @@ def main():
             print("ERROR: No historical data fetched for any instrument.")
             sys.exit(1)
 
-        candles_df = pd.concat(all_candles, ignore_index=True)
-        print(f"Total candles: {len(candles_df)} across {candles_df['ticker'].nunique()} instruments")
+        daily_candles = pd.concat(all_candles, ignore_index=True)
+        print(f"Total daily candles: {len(daily_candles)} across {daily_candles['ticker'].nunique()} instruments")
 
-        # Load portfolio
-        print("\n3. Loading portfolio...")
-        portfolio = load_portfolio(
-            config["portfolio"]["vault_paths"],
-            config["portfolio"]["target_volatility"]
-        )
+        # Step 5: Upsert fetched candles into central cache (+ auto monthly resample)
+        print("\n5. Upserting TWS candles into cache...")
+        upsert_tws_candles(daily_candles, required_tickers)
 
-        # Discover cross-tickers from ensemble bias node specs and load into store.
+        # Populate cross-ticker store with ALL fetched tickers.
+        # Ensembles with cross-ticker bias nodes (e.g., rebalancing) look up
+        # data from the cross-ticker store at predict time. We pre-load every
+        # fetched ticker so lookups succeed regardless of camelCase/snake_case
+        # param key differences.
+        print("\n   Populating cross-ticker data store...")
         from utils.data.cross_ticker_store import CrossTickerDataStore
-        from utils.core.enums import Ticker as _Ticker, TimeFrame as _TF
-        from utils.data.cross_ticker_store import extract_cross_ticker_names
 
         ct_store = CrossTickerDataStore.get_instance()
-        cross_tickers_needed: set[str] = set()
-        for ensemble in portfolio.ensembles:
-            for spec in ensemble.get_required_bias_nodes():
-                cross_tickers_needed.update(extract_cross_ticker_names(spec.get('params', {})))
-
-        available_tickers = candles_df['ticker'].astype(str)
-        for ct_name in sorted(cross_tickers_needed):
+        for ticker_name in sorted(daily_candles['ticker'].unique()):
+            ticker_str = str(ticker_name)
             try:
-                ct_ticker = _Ticker[ct_name]
+                ct_ticker = Ticker[ticker_str]
             except KeyError:
-                print(f"  Warning: Unknown cross ticker in ensemble config: {ct_name}")
                 continue
-
-            if ct_store.is_loaded(ct_ticker, _TF.D):
+            if ct_store.is_loaded(ct_ticker, TimeFrame.D):
                 continue
+            ticker_mask = daily_candles['ticker'] == ticker_name
+            ct_store.set_data(ct_ticker, TimeFrame.D, daily_candles.loc[ticker_mask].copy())
+            print(f"   Cross-ticker {ticker_str}: loaded from fetched data")
 
-            existing_mask = available_tickers == ct_name
-            if existing_mask.any():
-                ct_store.set_data(ct_ticker, _TF.D, candles_df.loc[existing_mask].copy())
-                continue
+        # Step 6: Refresh stale bias node caches
+        print("\n6. Refreshing bias caches...")
+        refresh_bias_caches(config["portfolio"]["vault_root"], required_tickers)
 
-            if ct_name in TICKER_TO_TWS:
-                print(f"  Fetching cross-ticker data for {ct_name}...")
-                ct_candles = fetch_historical_candles(
-                    client, ct_name, lookback_days=config["data"]["lookback_days"]
-                )
-                if not ct_candles.empty:
-                    ct_store.set_data(ct_ticker, _TF.D, ct_candles)
-
-        # Fit portfolio with historical data
-        print("Fitting portfolio with historical data...")
-        try:
-            portfolio.fit_from_candles(candles_df, target_data=candles_df.groupby('ticker')['close'].pct_change())
-            fit_success = True
-        except Exception as e:
-            print(f"  Warning: Portfolio fitting failed ({e}), using default weights")
-            fit_success = False
+        # Step 7: Build cache query and fit portfolio
+        print("\n7. Fitting portfolio from cache...")
+        query, instrument_returns = build_cache_query(required_tickers)
+        portfolio.fit_from_cache(query, instrument_returns)
 
         # Log portfolio parameters
         print("\n" + "=" * 60)
-        print("PORTFOLIO PARAMETERS" + (" (after fitting):" if fit_success else " (using defaults):"))
-        print(f"  Target Volatility: {portfolio.target_volatility}")
-        print(f"  IDM (Instrument Diversification Multiplier): {portfolio.idm_ if portfolio.idm_ else 'N/A (will use default)'}")
-        print(f"  IDM Max Cap: {portfolio.idm_max}")
+        print("PORTFOLIO PARAMETERS (after fitting):")
+        for tf_p in portfolio.tf_portfolios:
+            print(f"  {tf_p.trading_timeframe.name}:")
+            print(f"    Ensembles: {len(tf_p.ensembles)}")
+            print(f"    IDM: {tf_p.idm_ if tf_p.idm_ else 'N/A'}")
+            print(f"    Instruments: {tf_p.instruments_ if tf_p.instruments_ else 'N/A'}")
+        print(f"  Global IDM: {portfolio.global_idm_ if portfolio.global_idm_ else 'N/A'}")
         print(f"  Max Position %: {portfolio.max_position_pct}")
-        print(f"  Instruments: {portfolio.instruments_ if portfolio.instruments_ else 'N/A'}")
-        print(f"  Ensembles: {len(portfolio.ensembles)}")
         print("=" * 60)
 
-        # Generate forecasts
-        print("\n4. Generating forecasts...")
-        daily_candles = candles_df[candles_df["timeframe"] == TimeFrame.D]
-        if daily_candles.empty:
-            raise ValueError("Daily candles are required to compute EWSD volatility for predictions.")
-        daily_volatility_df = compute_daily_ewsd_volatility(daily_candles)
-        positions_df = portfolio.predict_from_candles(
-            candles_df,
-            daily_volatility_df=daily_volatility_df,
-        )
+        # Step 8: Generate forecasts from cache
+        print("\n8. Generating forecasts from cache...")
+        positions_df = portfolio.predict_from_cache(query)
 
         if positions_df.empty:
             print("ERROR: No forecasts generated.")
@@ -665,22 +992,34 @@ def main():
             print(f"  {ticker_str}: forecast_score={forecast:.4f}, position_fraction={position_frac:.4f}")
         print("=" * 60)
 
-        # Fetch current ETF prices
-        print("\n5. Fetching current ETF prices...")
-        etf_symbols = [config["instruments"][t]["etf"] for t in config["instruments"]]
+        # Step 9: Fetch current ETF prices
+        print("\n9. Fetching current ETF prices...")
+        # Only fetch ETF prices for tickers that appear in positions
+        position_tickers = set()
+        for _, row in latest.iterrows():
+            ticker = row["ticker"]
+            ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
+            if ticker_str in instruments:
+                position_tickers.add(ticker_str)
+
+        etf_symbols = list({
+            instruments[t]["etf"]
+            for t in position_tickers
+            if t in instruments
+        })
         prices = fetch_current_prices(client, etf_symbols)
 
         if not prices:
             print("ERROR: No ETF prices fetched.")
             sys.exit(1)
 
-        # Calculate ETF shares
-        print("\n6. Calculating ETF positions...")
+        # Step 10: Calculate ETF shares
+        print("\n10. Calculating ETF positions...")
         shares_df = calculate_etf_shares(
             positions_df,
             prices,
             capital,
-            config["instruments"]
+            instruments
         )
 
         # Log position sizing calculation
@@ -702,7 +1041,7 @@ def main():
 
         # Send Telegram notification
         if not args.dry_run:
-            print("\n7. Sending Telegram notification...")
+            print("\n11. Sending Telegram notification...")
             notifier = TelegramNotifier()
             message = format_telegram_message(shares_df, capital)
             if notifier.send_message(message):
@@ -710,7 +1049,7 @@ def main():
             else:
                 print("Warning: Failed to send Telegram notification")
         else:
-            print("\n7. Skipping Telegram (dry-run mode)")
+            print("\n11. Skipping Telegram (dry-run mode)")
             print("\nTelegram message would be:")
             print("-" * 40)
             print(format_telegram_message(shares_df, capital))
