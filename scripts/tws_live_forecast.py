@@ -779,8 +779,8 @@ def format_telegram_message(
     # Position sizing
     lines.append("*POSITIONS* (fractional shares)")
     lines.append("```")
-    lines.append(f"{'ETF':<5} {'Price':>8} {'Dollars':>9} {'Shares':>8}")
-    lines.append("-" * 32)
+    lines.append(f"{'ETF':<5} {'Price':>9} {'Dollars':>8} {'Shares':>7}")
+    lines.append("-" * 33)
 
     total_dollars = 0
 
@@ -791,13 +791,14 @@ def format_telegram_message(
         shares = row["shares_fractional"]
         total_dollars += dollars
 
-        # Show direction
-        direction = "+" if dollars >= 0 else "-"
-        lines.append(f"{etf:<5} ${price:>7.2f} {direction}${abs(dollars):>7.0f} {shares:>8.2f}")
+        price_str = f"${price:.2f}"
+        dollars_str = f"${abs(dollars):.0f}" if dollars >= 0 else f"-${abs(dollars):.0f}"
+        lines.append(f"{etf:<5} {price_str:>9} {dollars_str:>8} {shares:>7.2f}")
 
-    lines.append("-" * 32)
+    lines.append("-" * 33)
     total_pct = (total_dollars / capital * 100) if capital > 0 else 0
-    lines.append(f"{'TOTAL':<5} {'':<8} ${total_dollars:>8.0f} ({total_pct:.0f}%)")
+    total_str = f"${total_dollars:.0f}"
+    lines.append(f"{'TOTAL':<5} {'':>9} {total_str:>8} ({total_pct:.0f}%)")
     lines.append("```")
 
     return "\n".join(lines)
