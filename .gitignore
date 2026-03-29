@@ -245,6 +245,9 @@ research/reports/
 /utils/cache/runtime/__pycache__/
 /utils/cache/**/*.parquet
 
+# Deploy runtime logs
+deploy/forecast.log
+
 .worktrees/
 
 # Intraday & Norgate data
