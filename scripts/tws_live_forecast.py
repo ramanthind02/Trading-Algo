@@ -671,7 +671,7 @@ def format_console_output(
     """Format results for console display."""
     lines = []
     lines.append("=" * 70)
-    lines.append(f"TWS LIVE FORECAST (Multi-TF) - {datetime.now().strftime('%Y-%m-%d %H:%M PST')}")
+    lines.append(f"ENIGMA ALGOS FORECAST - {datetime.now().strftime('%Y-%m-%d %H:%M PST')}")
     lines.append("=" * 70)
     lines.append("")
     lines.append(f"Account Capital: ${capital:,.2f} USD")
@@ -741,7 +741,7 @@ def format_telegram_message(
 ) -> str:
     """Format results for Telegram notification."""
     lines = []
-    lines.append("*TWS LIVE FORECAST (Multi-TF)*")
+    lines.append("*ENIGMA ALGOS FORECAST*")
     lines.append(f"_{datetime.now().strftime('%Y-%m-%d %H:%M PST')}_")
     lines.append("")
     lines.append(f"Capital: ${capital:,.2f}")
@@ -771,8 +771,7 @@ def format_telegram_message(
         else:
             strength = "Strong Bear"
 
-        sign = "+" if forecast >= 0 else ""
-        lines.append(f"{ticker:<6} {sign}{forecast:>7.2f} {strength:<12}")
+        lines.append(f"{ticker:<6} {forecast:>+8.2f} {strength:<12}")
 
     lines.append("```")
     lines.append("")
