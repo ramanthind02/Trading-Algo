@@ -155,3 +155,44 @@
                                                            ↓
                                                 position sizing → Telegram
 ```
+
+---
+
+## Daily Automation
+
+The script is meant to run once per day after market close. Futures settle at 5:00 PM ET, so **5:30 PM ET** is a good time -- daily bars are final and TWS is still connected.
+
+**Prerequisite:** TWS or IB Gateway must be running at the scheduled time. The script cannot start TWS itself.
+
+### Windows (Task Scheduler)
+
+1. Run `deploy/setup_scheduled_task.bat` as Administrator (one-time setup)
+2. This creates a scheduled task `TradingAlgo\DailyForecast` that runs `deploy/run_daily_forecast.bat` at 5:30 PM daily
+3. Output is logged to `deploy/forecast.log`
+
+```bat
+REM Verify the task exists
+schtasks /query /tn "TradingAlgo\DailyForecast"
+
+REM Trigger a manual run
+schtasks /run /tn "TradingAlgo\DailyForecast"
+
+REM Remove the task
+schtasks /delete /tn "TradingAlgo\DailyForecast" /f
+```
+
+### Linux (cron)
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add this line (5:30 PM ET = 21:30 UTC during EST, 22:30 UTC during EDT)
+# Adjust for your timezone. This example assumes the server is set to US/Eastern.
+30 17 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/tws_live_forecast.py --port 7497 >> deploy/forecast.log 2>&1
+```
+
+Notes for Linux:
+- `1-5` means Monday through Friday only (skip weekends)
+- TWS/IB Gateway must be running -- you can use `tmux` or `screen` to keep it alive, or run IB Gateway in headless mode
+- The shared venv is at `/home/raman/repos/Trading-Algo/venv/` per CLAUDE.md
