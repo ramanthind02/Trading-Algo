@@ -29,7 +29,7 @@ import time
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Any, Dict, List, Set
 
 import pandas as pd
 
@@ -325,6 +325,265 @@ def discover_required_tickers(portfolio: GlobalPortfolio) -> Set[str]:
                 required.update(extract_cross_ticker_names(spec.get('params', {})))
 
     return required
+
+
+def ensure_cache_ready(required_tickers: Set[str]) -> Dict[str, Any]:
+    """Bootstrap central cache from repo parquets if not already populated.
+
+    Returns dict with 'bootstrapped' bool and coverage info per ticker.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+    from utils.cache.cache_manager import CacheManager
+
+    store = CentralCacheStore.get_instance()
+    manager = CacheManager()
+    coverage_info = {}
+    needs_bootstrap = []
+
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record is None:
+            needs_bootstrap.append(ticker_enum)
+        else:
+            coverage_info[ticker_str] = {
+                "start": record.coverage.start,
+                "end": record.coverage.end,
+                "revision": record.revision,
+            }
+
+    bootstrapped = False
+    if needs_bootstrap:
+        print(f"  Bootstrapping {len(needs_bootstrap)} ticker(s) from repo parquets...")
+        result = manager.bootstrap_source_candles(
+            tickers=[Ticker[t] for t in sorted(required_tickers)],
+            timeframes=[TimeFrame.D, TimeFrame.M],
+        )
+        bootstrapped = True
+        print(f"  Bootstrap: {result['success']} success, {result['failed']} failed")
+        for ticker_str in sorted(required_tickers):
+            try:
+                ticker_enum = Ticker[ticker_str]
+            except KeyError:
+                continue
+            record = store.describe_candle(ticker_enum, TimeFrame.D)
+            if record:
+                coverage_info[ticker_str] = {
+                    "start": record.coverage.start,
+                    "end": record.coverage.end,
+                    "revision": record.revision,
+                }
+
+    return {"bootstrapped": bootstrapped, "coverage": coverage_info}
+
+
+def upsert_tws_candles(
+    daily_candles: pd.DataFrame,
+    required_tickers: Set[str],
+) -> None:
+    """Upsert fetched TWS daily bars into central cache and resample to monthly.
+
+    Parameters
+    ----------
+    daily_candles : pd.DataFrame
+        All fetched daily candles with 'ticker' column.
+    required_tickers : Set[str]
+        Ticker names to upsert.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+
+    store = CentralCacheStore.get_instance()
+
+    for ticker_str in sorted(required_tickers):
+        ticker_mask = daily_candles["ticker"].astype(str) == ticker_str
+        ticker_candles = daily_candles.loc[ticker_mask].copy()
+        if ticker_candles.empty:
+            continue
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        store.upsert_candles(ticker_enum, TimeFrame.D, ticker_candles)
+        print(f"    {ticker_str} D: upserted {len(ticker_candles)} bars")
+
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record is None:
+            continue
+        full_daily = store.query_candles(
+            ticker_enum, TimeFrame.D,
+            start=record.coverage.start,
+            end=record.coverage.end,
+        ).reset_index()
+        if full_daily.empty:
+            continue
+        full_daily["ticker"] = ticker_str
+        monthly = resample_daily_to_monthly(full_daily)
+        if not monthly.empty:
+            store.upsert_candles(ticker_enum, TimeFrame.M, monthly)
+
+
+def refresh_bias_caches(
+    vault_root: str,
+    required_tickers: Set[str],
+) -> Dict[str, Any]:
+    """Refresh stale bias node artifacts for all vault ensembles.
+
+    Returns the summary dict from ensure_vault_cache_coverage.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+    from utils.cache.cache_manager import CacheManager
+
+    store = CentralCacheStore.get_instance()
+    manager = CacheManager()
+
+    earliest_start = None
+    latest_end = None
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record is None:
+            continue
+        if record.coverage.start and (earliest_start is None or record.coverage.start < earliest_start):
+            earliest_start = record.coverage.start
+        if record.coverage.end and (latest_end is None or record.coverage.end > latest_end):
+            latest_end = record.coverage.end
+
+    if earliest_start is None or latest_end is None:
+        raise ValueError("No candle coverage found in cache. Run bootstrap first.")
+
+    vault_dirs = []
+    for tf_name in ["D", "M"]:
+        tf_dir = Path(vault_root) / tf_name
+        if not tf_dir.exists():
+            continue
+        for ens_dir in sorted(tf_dir.iterdir()):
+            if ens_dir.is_dir():
+                vault_dirs.append(str(ens_dir))
+
+    if not vault_dirs:
+        raise ValueError(f"No vault ensembles found in {vault_root}")
+
+    print(f"  Refreshing bias caches for {len(vault_dirs)} ensembles...")
+    print(f"  Coverage window: {earliest_start.date()} to {latest_end.date()}")
+
+    summary = manager.ensure_vault_cache_coverage(
+        vault_ensemble_dirs=vault_dirs,
+        start_date=earliest_start,
+        end_date=latest_end,
+        refresh_mode="missing_stale_only",
+    )
+
+    rebuilt = summary.get("rebuilt", 0)
+    failed = summary.get("failed", 0)
+    validated = summary.get("validated", 0)
+    print(f"  Result: {rebuilt} rebuilt, {validated} already fresh, {failed} failed")
+
+    if failed > 0:
+        for d in summary.get("details", []):
+            if d.get("status") == "failed":
+                print(f"    FAILED: {d.get('module_name')}/{d.get('ticker')}: {d.get('message','')}")
+
+    return summary
+
+
+def build_cache_query(
+    required_tickers: Set[str],
+) -> tuple:
+    """Build PortfolioCacheQuery and instrument_returns from cached candles.
+
+    Returns (query, instrument_returns) tuple.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+    from utils.cache.central_cache_models import ArtifactScope
+    from ensemble.portfolio import PortfolioCacheQuery
+
+    store = CentralCacheStore.get_instance()
+
+    starts = []
+    ends = []
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        record = store.describe_candle(ticker_enum, TimeFrame.D)
+        if record and record.coverage.start and record.coverage.end:
+            starts.append(record.coverage.start)
+            ends.append(record.coverage.end)
+
+    if not starts:
+        raise ValueError("No candle coverage in cache")
+
+    query_start = max(starts)
+    query_end = min(ends)
+
+    query = PortfolioCacheQuery(
+        tickers=tuple(sorted(required_tickers)),
+        start=query_start,
+        end=query_end,
+        timeframes=(TimeFrame.D, TimeFrame.M),
+        scope=ArtifactScope.LIVE,
+    )
+
+    frames = []
+    for ticker_str in sorted(required_tickers):
+        try:
+            ticker_enum = Ticker[ticker_str]
+        except KeyError:
+            continue
+        candles = store.query_candles(
+            ticker_enum, TimeFrame.D,
+            start=query_start, end=query_end,
+        ).reset_index()
+        if not candles.empty:
+            candles = candles.set_index("datetime")["close"].rename(ticker_str)
+            frames.append(candles)
+
+    if not frames:
+        raise ValueError("No daily candle data in cache for returns computation")
+
+    prices = pd.concat(frames, axis=1).sort_index()
+    instrument_returns = prices.pct_change(fill_method=None).dropna(how="all")
+
+    return query, instrument_returns
+
+
+def compute_fetch_lookback(
+    ticker_str: str,
+    max_lookback: int = 365,
+    min_lookback: int = 10,
+    buffer_days: int = 5,
+) -> int:
+    """Determine how many days to fetch from TWS based on cache gap.
+
+    If cache has recent data, only fetch the gap. If cache is empty or stale,
+    fetch max_lookback.
+    """
+    from utils.cache.runtime.central_cache import CentralCacheStore
+
+    store = CentralCacheStore.get_instance()
+    try:
+        ticker_enum = Ticker[ticker_str]
+    except KeyError:
+        return max_lookback
+
+    record = store.describe_candle(ticker_enum, TimeFrame.D)
+    if record is None or record.coverage.end is None:
+        return max_lookback
+
+    gap_days = (datetime.now() - record.coverage.end).days + buffer_days
+    return max(min(gap_days, max_lookback), min_lookback)
 
 
 # ==============================================================================
