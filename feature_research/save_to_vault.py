@@ -1,15 +1,17 @@
-"""Save the research model from feature_research config to the vault.
+"""Save a frozen domain-discrete research handoff to the vault.
 
-Run after satisfying research results. Configure vault_save in
-feature_research.config.load_config() then run:
+Run after freezing the discrete contract in research. Configure ``vault_save``
+in ``feature_research.config.load_config()`` then run:
 
     python -m feature_research.save_to_vault
 """
 from __future__ import annotations
 
+import json
 import sys
-from typing import Any
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 _repo_hint = Path(__file__).resolve().parents[1]
 if str(_repo_hint) not in sys.path:
@@ -19,12 +21,17 @@ from feature_research.bootstrap import ensure_repo_root_on_syspath
 
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
-from feature_research.config import BinningAnalysisConfig, FeatureType, load_config
+from feature_research.config import load_config
 from feature_research.in_sample.config import load_config as load_in_sample_config
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     load_features_for_combo,
     populate_cache_if_needed,
+)
+from feature_selection.domain_discrete import (
+    DomainDiscreteSpec,
+    build_domain_discrete_bias_node_spec,
+    load_domain_discrete_spec,
 )
 from utils.core.enums import coerce_direction
 
@@ -33,7 +40,7 @@ def _resolve_param_combos(
     bias_spec: dict[str, Any],
     params_to_save: dict[str, Any] | list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Resolve one or more param combos for vault save."""
+    """Resolve one or more frozen domain-discrete specs for vault save."""
     expanded = expand_bias_specs(bias_spec)
     if not expanded:
         raise ValueError(
@@ -41,25 +48,15 @@ def _resolve_param_combos(
             "Set vault_save.params_to_save in feature_research.config.load_config()."
         )
 
-    def _normalize_combo(params: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "module_name": bias_spec["module_name"],
-            "timeframes": bias_spec.get("timeframes", []),
-            "params": params,
-        }
-
     if params_to_save is None or params_to_save == {}:
-        return [
-            {
-                "module_name": combo["module_name"],
-                "timeframes": combo.get("timeframes", []),
-                "params": combo.get("params", {}),
-            }
-            for combo in expanded
-        ]
+        raise ValueError(
+            "vault_save.params_to_save must now provide frozen domain-discrete specs. "
+            "Pass one dict or a list of dicts with source_bias_node_spec, ticker_scope, "
+            "edges, n_bins, long_bins, short_bins, direction, and spec_version."
+        )
 
     if isinstance(params_to_save, dict):
-        return [_normalize_combo(params_to_save)]
+        return [params_to_save]
 
     if not isinstance(params_to_save, list):
         raise ValueError(
@@ -70,20 +67,76 @@ def _resolve_param_combos(
     if not all(isinstance(combo, dict) for combo in params_to_save):
         raise ValueError("vault_save.params_to_save list entries must be dicts")
 
-    return [_normalize_combo(combo) for combo in params_to_save]
+    return list(params_to_save)
 
 
-def _binning_params_to_constructor_params(
-    binning_params: BinningAnalysisConfig,
-) -> dict[str, Any]:
-    """Map BinningAnalysisConfig to ContinuousBinningModel constructor params."""
-    return {
-        "n_bins": binning_params.bin_counts[0] if binning_params.bin_counts else 10,
-        "bin_counts": list(binning_params.bin_counts),
-        "strategy": binning_params.strategy.value,
-        "bin_index_min": binning_params.bin_index_min,
-        "bin_index_max": binning_params.bin_index_max,
+def _validate_frozen_spec_payload(payload: dict[str, Any]) -> DomainDiscreteSpec:
+    missing = [
+        key
+        for key in (
+            "source_bias_node_spec",
+            "ticker_scope",
+            "edges",
+            "n_bins",
+            "long_bins",
+            "short_bins",
+            "direction",
+            "spec_version",
+        )
+        if key not in payload
+    ]
+    if missing:
+        raise ValueError(
+            "Frozen domain-discrete specs require keys: "
+            f"{missing}. "
+            "Legacy raw param combos are no longer accepted by save_to_vault."
+        )
+    return load_domain_discrete_spec(payload)
+
+
+def _build_feature_name(spec: DomainDiscreteSpec) -> str:
+    source = spec.source_bias_node_spec
+    tf = source.timeframes[0]
+    tf_name = tf.name if hasattr(tf, "name") else str(tf)
+    return f"{source.module_name}_domain_discrete_{tf_name}_{spec.spec_version}"
+
+
+def _write_feature_manifest(
+    feature_file: Path,
+    spec: DomainDiscreteSpec,
+    feature_name: str,
+    source_feature_column: str,
+    tickers: list[str],
+) -> None:
+    payload = {
+        "feature_name": feature_name,
+        "source_feature_column": source_feature_column,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {
+            "model_type": "domain_discrete",
+            "is_fit": False,
+            "spec_version": spec.spec_version,
+        },
+        "tickers": tickers,
+        "bias_node_spec": build_domain_discrete_bias_node_spec(spec),
+        "base_models": [
+            {
+                "model_id": feature_name,
+                "model_name": feature_name,
+                "model_type": "domain_discrete",
+                "strategy": spec.direction.value,
+                "bias_node_spec": build_domain_discrete_bias_node_spec(spec),
+                "bias_node_params": spec.to_mapping(),
+                "is_fitted": False,
+                "fitted_params": None,
+            }
+        ],
     }
+    feature_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(feature_file, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
 
 
 def _run() -> None:
@@ -95,86 +148,52 @@ def _run() -> None:
         )
         sys.exit(1)
 
-    from feature_selection.base_models import BaseModel, ContinuousBinningModel, RuleBasedModel
-    from ensemble.vault_manager import add_feature_to_ensemble, create_ensemble_directory
+    from ensemble.vault_manager import create_ensemble_directory
 
     research_config = load_in_sample_config()
     phase_defaults = base.in_sample_defaults.for_feature_type(base.feature_type)
     bias_spec = phase_defaults.bias_spec
 
-    bias_specs_for_save = _resolve_param_combos(bias_spec, base.vault_save.params_to_save)
+    frozen_specs = _resolve_param_combos(bias_spec, base.vault_save.params_to_save)
     populate_cache_if_needed(research_config)
 
-    strategy = coerce_direction(research_config.strategy, field_name="research_config.strategy")
     vault_direction = coerce_direction(base.vault_save.direction, field_name="vault_save.direction")
-
     ensemble_dir = create_ensemble_directory(
         base.timeframe,
         base.vault_save.ensemble_name,
         vault_direction,
         research_config.tickers,
     )
+
     success_count = 0
     failed: list[str] = []
-    for bias_spec_for_combo in bias_specs_for_save:
-        combo_label = str(bias_spec_for_combo.get("params", {}))
+    for frozen_payload in frozen_specs:
         try:
-            result = load_features_for_combo(bias_spec_for_combo, research_config)
+            frozen_spec = _validate_frozen_spec_payload(frozen_payload)
+            result = load_features_for_combo(frozen_spec.source_bias_node_spec.to_mapping(), research_config)
             if result is None:
-                failed.append(combo_label)
+                failed.append(str(frozen_spec.spec_version))
                 continue
-            feature_series, target_series, feature_col = result
 
-            timeframes_raw = bias_spec_for_combo.get("timeframes", [base.timeframe])
-            tf_list = timeframes_raw[0:1] if isinstance(timeframes_raw, list) else [timeframes_raw]
-            tf = tf_list[0] if tf_list else base.timeframe
-            tf_name = tf.name if hasattr(tf, "name") else str(tf)
-            bias_node_spec = {
-                "module_name": bias_spec_for_combo["module_name"],
-                "timeframes": [tf_name],
-                "params": bias_spec_for_combo["params"],
-            }
+            _feature_series, _target_series, feature_col = result
+            feature_name = _build_feature_name(frozen_spec)
+            feature_file = Path(ensemble_dir) / "features" / f"{feature_name}.json"
 
-            if base.feature_type == FeatureType.CONTINUOUS:
-                constructor_params = _binning_params_to_constructor_params(research_config.binning_params)
-                binning_model = ContinuousBinningModel(**constructor_params)
-                binning_model.fit(feature_series, target_series)
-            else:
-                rule_params = {
-                    "strategy": strategy,
-                    "selection_metric": "t_stat",
-                }
-                binning_model = RuleBasedModel(**rule_params)
-
-            feature_config = {
-                "bias_node_spec": bias_node_spec,
-                "model_type": "continuous_binning" if base.feature_type == FeatureType.CONTINUOUS else "rule_based",
-                "constructor_params": binning_model.get_params(),
-                "strategy": strategy.value,
-            }
-            base_model = BaseModel(
-                feature_config=feature_config,
-                tickers=research_config.tickers,
-                binning_model=binning_model,
-                use_cache=research_config.use_cache,
-            )
-            base_model.feature_column = feature_col
-
-            add_feature_to_ensemble(
-                feature_name=feature_col,
-                bias_node_spec=bias_node_spec,
-                base_model=base_model,
-                ensemble_dir=ensemble_dir,
-                tickers=research_config.tickers,
+            _write_feature_manifest(
+                feature_file=feature_file,
+                spec=frozen_spec,
+                feature_name=feature_name,
+                source_feature_column=feature_col,
+                tickers=[ticker.name for ticker in research_config.tickers],
             )
             success_count += 1
-            print(f"Saved feature '{feature_col}' to vault: {ensemble_dir}")
+            print(f"Saved frozen domain-discrete spec '{feature_name}' to vault: {ensemble_dir}")
         except Exception as exc:
-            failed.append(f"{combo_label}: {exc}")
+            failed.append(f"{frozen_payload}: {exc}")
 
     if failed:
         print(
-            f"Failed to save {len(failed)} combo(s): {failed}",
+            f"Failed to save {len(failed)} spec(s): {failed}",
             file=sys.stderr,
         )
     if success_count == 0 or failed:

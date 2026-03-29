@@ -14,7 +14,6 @@ Date: 2025-01-07
 import json
 import os
 import re
-import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
@@ -23,18 +22,8 @@ import numpy as np
 import pandas as pd
 
 import utils.core.helpers as helpers
-from feature_selection.base_models import ContinuousBinningModel, RuleBasedModel
 from feature_selection.base_models.feature_base_model import BaseModel
-
-try:
-    from feature_selection.base_models import DecisionTreeBinningModel
-except ImportError:
-    DecisionTreeBinningModel = None
-
-try:
-    from feature_selection.base_models import TwoBinBinningModel
-except ImportError:
-    TwoBinBinningModel = None
+from feature_selection.domain_discrete import build_domain_discrete_bias_node_spec, load_domain_discrete_spec, raise_legacy_feature_artifact
 
 from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
 from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS
@@ -194,37 +183,6 @@ def _resolve_ensemble_path(ensemble_dir: str) -> Path:
 # Internal Helpers
 # ============================================================================
 
-_LEGACY_MODEL_TYPE_ALIASES: Dict[str, str] = {
-    "QuantileBinningModel": "continuous_binning",
-    "ContinuousBinningModel": "continuous_binning",
-    "continuous_binning": "continuous_binning",
-    "RuleBasedBinningModel": "rule_based",
-    "RuleBasedModel": "rule_based",
-    "rule_based": "rule_based",
-    "DecisionTreeBinningModel": "decision_tree_binning",
-    "decision_tree_binning": "decision_tree_binning",
-    "TwoBinBinningModel": "two_bin_binning",
-    "two_bin_binning": "two_bin_binning",
-}
-
-
-def _normalize_model_type(model_type: str) -> str:
-    """Normalize old/new model type identifiers to canonical snake_case values."""
-    if model_type in _LEGACY_MODEL_TYPE_ALIASES:
-        return _LEGACY_MODEL_TYPE_ALIASES[model_type]
-    if "_" in model_type:
-        return model_type
-    # Fallback CamelCase -> snake_case normalization
-    name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", model_type)
-    name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name).lower()
-    return name.replace("_model", "")
-
-
-def _requires_fit(model_type: str) -> bool:
-    """Rule-based models are treated as pre-defined and do not require refit."""
-    return _normalize_model_type(model_type) != "rule_based"
-
-
 def _normalize_bias_node_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Normalize per-model bias params; unwrap singleton lists from legacy payloads.
 
@@ -258,6 +216,91 @@ def _extract_feature_name(feature_config: Dict[str, Any], fallback_stem: str) ->
         or feature_config.get("feature_column")
         or fallback_stem
     )
+
+
+def _validate_domain_discrete_bias_node_spec(
+    bias_node_spec: Dict[str, Any],
+    *,
+    prefix: str,
+) -> None:
+    if not isinstance(bias_node_spec, dict):
+        raise ValueError(f"{prefix}bias_node_spec must be a dictionary")
+    if bias_node_spec.get("module_name") != "domain_discrete":
+        raise_legacy_feature_artifact(
+            f"{prefix}bias_node_spec.module_name must be 'domain_discrete'."
+        )
+    params = bias_node_spec.get("params")
+    if not isinstance(params, dict):
+        raise ValueError(f"{prefix}bias_node_spec.params must be a dictionary")
+    domain_spec = load_domain_discrete_spec(params)
+    raw_timeframes = bias_node_spec.get("timeframes", [])
+    if raw_timeframes:
+        stored_timeframes = [
+            tf if isinstance(tf, TimeFrame) else TimeFrame[str(tf)]
+            for tf in raw_timeframes
+        ]
+        if stored_timeframes != list(domain_spec.source_bias_node_spec.timeframes):
+            raise ValueError(
+                f"{prefix}bias_node_spec.timeframes must match source_bias_node_spec.timeframes"
+            )
+
+
+def _validate_domain_discrete_feature_config(
+    feature_config: Dict[str, Any],
+    *,
+    feature_file: Path,
+) -> None:
+    required_keys = ["feature_name", "bias_node_spec", "base_models"]
+    missing_keys = [key for key in required_keys if key not in feature_config]
+    if missing_keys:
+        raise ValueError(f"Feature file {feature_file} missing required keys: {missing_keys}")
+    if not isinstance(feature_config["base_models"], list):
+        raise ValueError(f"Feature file {feature_file} base_models must be a list")
+    if len(feature_config["base_models"]) != 1:
+        raise ValueError(
+            f"Feature file {feature_file} must contain exactly one base model; "
+            f"found {len(feature_config['base_models'])}"
+        )
+    if "feature_column" in feature_config:
+        raise_legacy_feature_artifact(
+            f"Feature file {feature_file} still stores legacy top-level feature_column."
+        )
+
+    _validate_domain_discrete_bias_node_spec(
+        feature_config["bias_node_spec"],
+        prefix=f"{feature_file}: ",
+    )
+
+    model_entry = feature_config["base_models"][0]
+    legacy_keys = {
+        key
+        for key in (
+            "binning_model_type",
+            "binning_model_params",
+            "requires_fit",
+            "is_fitted",
+            "fitted_params",
+        )
+        if key in model_entry
+    }
+    if legacy_keys:
+        raise_legacy_feature_artifact(
+            f"Feature file {feature_file} contains legacy model keys: {sorted(legacy_keys)}"
+        )
+
+    expected_feature_name = _extract_feature_name(feature_config, feature_file.stem)
+    if model_entry.get("feature_column") not in {expected_feature_name, feature_file.stem}:
+        raise ValueError(
+            f"Feature file {feature_file} base model feature_column must match feature name"
+        )
+    if model_entry.get("model_type") != "domain_discrete":
+        raise_legacy_feature_artifact(
+            f"Feature file {feature_file} base model model_type must be 'domain_discrete'."
+        )
+    if model_entry.get("bias_node_spec") != feature_config["bias_node_spec"]:
+        raise ValueError(
+            f"Feature file {feature_file} base model bias_node_spec must match top-level bias_node_spec"
+        )
 
 
 def _candidate_feature_names(raw_name: str) -> List[str]:
@@ -345,15 +388,6 @@ def _extract_bias_node_params_for_model(
     return _normalize_bias_node_params(parsed.get("params", {}))
 
 
-def _feature_members_are_legacy(payload: Any) -> bool:
-    """Return True when a legacy members payload contains real model members."""
-    if payload is None:
-        return False
-    if isinstance(payload, list):
-        return len(payload) > 0
-    return bool(payload)
-
-
 def _canonical_bias_spec_key(spec: Dict[str, Any]) -> tuple[str, tuple[str, ...], str]:
     """Build a stable key for deduplicating bias-node specs."""
     module_name = str(spec.get("module_name", ""))
@@ -367,62 +401,6 @@ def _canonical_bias_spec_key(spec: Dict[str, Any]) -> tuple[str, tuple[str, ...]
     return module_name, timeframes, params
 
 
-def _strip_empty_members_from_feature_file(feature_file: Path) -> bool:
-    """Remove empty legacy members keys from a single feature file.
-
-    Returns
-    -------
-    bool
-        True when the file was rewritten.
-    """
-    with open(feature_file, "r", encoding="utf-8") as handle:
-        feature_config = json.load(handle)
-
-    feature_models = feature_config.get("base_models", [])
-    if not isinstance(feature_models, list):
-        raise ValueError(f"Feature file {feature_file} has invalid base_models payload")
-
-    updated = False
-    for model_entry in feature_models:
-        if "members" not in model_entry:
-            continue
-        if _feature_members_are_legacy(model_entry.get("members")):
-            feature_name = _extract_feature_name(feature_config, feature_file.stem)
-            raise ValueError(
-                f"Feature '{feature_name}' in {feature_file} uses legacy members schema, which is unsupported"
-            )
-        model_entry.pop("members", None)
-        updated = True
-
-    if not updated:
-        return False
-
-    feature_config["updated_at"] = datetime.now(timezone.utc).isoformat()
-    with open(feature_file, "w", encoding="utf-8") as handle:
-        json.dump(feature_config, handle, indent=2)
-        handle.write("\n")
-    return True
-
-
-def migrate_legacy_feature_members_schema(ensemble_dir: str) -> List[str]:
-    """Strip empty legacy ``members`` keys from feature files in an ensemble.
-
-    Any non-empty legacy members payload raises immediately. Empty payloads are
-    removed in-place and ``updated_at`` is refreshed.
-    """
-    ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / "features"
-    if not features_dir.exists():
-        return []
-
-    updated_files = [
-        str(feature_file)
-        for feature_file in sorted(features_dir.glob("*.json"))
-        if _strip_empty_members_from_feature_file(feature_file)
-    ]
-    return updated_files
-
-
 # ============================================================================
 # Model ID Generation
 # ============================================================================
@@ -433,16 +411,14 @@ def generate_model_id(
     bias_node_params: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
-    Auto-generate model ID from binning model type and hyperparameters.
-    
-    Pattern: {binning_model_type_snake_case}_{key_hyperparam_values}
+    Auto-generate model ID from the frozen domain-discrete spec.
     
     Parameters
     ----------
     binning_model_type : str
-        Binning model class name (e.g., 'continuous_binning')
+        Canonical model type. Must be ``domain_discrete``.
     binning_model_params : Dict[str, Any]
-        Constructor parameters for the binning model
+        Unused for domain-discrete features.
         
     Returns
     -------
@@ -451,27 +427,30 @@ def generate_model_id(
         
     Examples
     --------
-    >>> generate_model_id('continuous_binning', {'n_bins': 3, 'selection_metric': 'sortino'})
-    'continuous_binning_3'
-    >>> generate_model_id('decision_tree_binning', {'n_bins': 5, 'min_samples_leaf_pct': 0.10})
-    'decision_tree_binning_5'
+    >>> generate_model_id('domain_discrete', {}, {'params': {'spec_version': 'v1'}})
+    'domain_discrete_v1'
     """
-    name = _normalize_model_type(binning_model_type)
-    
-    # Append key hyperparameters (n_bins is always included)
-    if 'n_bins' in binning_model_params:
-        name += f"_{binning_model_params['n_bins']}"
-    
-    # Only include other hyperparameters that significantly change behavior
-    # For DecisionTreeBinningModel, min_samples_leaf_pct is usually constant, so we skip it
-    # Add more if needed for other model types
-    
-    # Append per-model bias-node params to avoid collisions between variants
-    normalized_bias_params = _normalize_bias_node_params(bias_node_params)
-    for key in sorted(normalized_bias_params):
-        name += f"_{key}_{_model_id_token(normalized_bias_params[key])}"
+    if binning_model_type != "domain_discrete":
+        _reject_legacy_feature_artifact(
+            f"generate_model_id no longer supports legacy model_type={binning_model_type!r}."
+        )
 
-    return name
+    spec_payload: Dict[str, Any] = {}
+    if bias_node_params:
+        spec_payload = dict(bias_node_params.get("params", bias_node_params))
+    else:
+        spec_payload = dict(binning_model_params)
+
+    domain_spec = load_domain_discrete_spec(spec_payload)
+    scope_name = domain_spec.ticker_scope.scope_name
+    scope_token = scope_name or "_".join(ticker.name for ticker in domain_spec.ticker_scope.tickers)
+    return "_".join([
+        "domain_discrete",
+        _model_id_token(domain_spec.source_bias_node_spec.module_name),
+        _model_id_token(domain_spec.direction.value),
+        _model_id_token(scope_token),
+        _model_id_token(domain_spec.spec_version),
+    ])
 
 
 # ============================================================================
@@ -766,63 +745,29 @@ def add_feature_to_ensemble(
     tickers: Optional[List[Ticker]] = None,
     **legacy_kwargs: Any,
 ) -> str:
-    """
-    Add a base model variant to a feature control file.
-    
-    If the feature control file doesn't exist, creates it.
-    If it exists, adds the new base model variant.
-    Model ID is auto-generated based on binning model type and hyperparameters.
-    
-    Parameters
-    ----------
-    feature_column : str
-        Feature column name (e.g., 'rsi_signal_D_lookback_2')
-    bias_node_spec : Dict[str, Any]
-        Bias node specification for feature reconstruction
-        Format: {'module_name': str, 'timeframes': [TimeFrame], 'params': dict}
-    base_model : BaseModel
-        Fitted or unfitted base model instance (contains binning_model)
-    ensemble_dir : str, optional
-        Path to ensemble directory (e.g., 'vault/D/commodity_breakout_long').
-        If None, uses default ensemble directory set via set_default_ensemble_dir().
-    tickers : List[Ticker], optional
-        List of tickers this ensemble was trained on. If None, infers from base_model.ticker.
-        This is stored in the feature spec so base models can be created separately for each ticker.
-        
-    Returns
-    -------
-    str
-        The auto-generated model_id
-        
-    Raises
-    ------
-    ValueError
-        If model_id already exists for this feature, or if base model strategy
-        doesn't match ensemble direction, or if ensemble_dir is None and no default is set
-    """
-    # Backward compatibility: accept feature_column kwarg
     if feature_name is None and "feature_column" in legacy_kwargs:
         feature_name = legacy_kwargs["feature_column"]
-
-    # Backward compatibility: old positional signature had base_model as 3rd arg.
-    if base_model is None and isinstance(bias_node_params, BaseModel):
-        base_model = bias_node_params
-        bias_node_params = None
-
     if feature_name is None:
         raise ValueError("feature_name must be provided")
-    if bias_node_spec is None:
-        raise ValueError("bias_node_spec must be provided")
     if base_model is None:
         raise ValueError("base_model must be provided")
 
-    # Legacy support: bias params may still be nested in spec.params.
-    if bias_node_params is None:
-        bias_node_params = _normalize_bias_node_params(bias_node_spec.get("params", {}))
-    else:
-        bias_node_params = _normalize_bias_node_params(bias_node_params)
+    domain_spec = getattr(base_model, "domain_discrete_spec", None)
+    if domain_spec is None:
+        _reject_legacy_feature_artifact(
+            "add_feature_to_ensemble requires a domain_discrete BaseModel."
+        )
 
-    # Use default ensemble_dir if not provided
+    if bias_node_spec is not None and bias_node_spec != base_model.bias_node_spec:
+        _reject_legacy_feature_artifact(
+            "Provided bias_node_spec does not match the BaseModel's frozen domain-discrete spec."
+        )
+
+    if bias_node_params is not None:
+        _reject_legacy_feature_artifact(
+            "add_feature_to_ensemble no longer accepts bias_node_params."
+        )
+
     if ensemble_dir is None:
         ensemble_dir = _DEFAULT_ENSEMBLE_DIR
         if ensemble_dir is None:
@@ -830,185 +775,89 @@ def add_feature_to_ensemble(
                 "ensemble_dir must be provided or call create_ensemble_directory() first. "
                 "Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
             )
-    
-    ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / 'features'
-    features_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Load ensemble config to get expected tickers
-    ensemble_config_file = ensemble_path / 'ensemble_config.json'
-    if ensemble_config_file.exists():
-        with open(ensemble_config_file, 'r') as f:
-            ensemble_config = json.load(f)
-        expected_ticker_names = sorted(ensemble_config.get('tickers', []))
-        expected_direction = coerce_direction(
-            ensemble_config.get('direction', Direction.LONG.value),
-            field_name="ensemble_config.direction",
-        )
-    else:
-        # Backward compatibility: infer from directory name
-        ensemble_dir_name = ensemble_path.name
-        if ensemble_dir_name.endswith('_long_short'):
-            expected_direction = Direction.LONG_SHORT
-        elif ensemble_dir_name.endswith('_long'):
-            expected_direction = Direction.LONG
-        elif ensemble_dir_name.endswith('_short'):
-            expected_direction = Direction.SHORT
-        else:
-            raise ValueError(
-                f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}. "
-                f"Expected suffix _long, _short, or _long_short"
-            )
-        expected_ticker_names = None  # No ticker validation for old ensembles
 
-    # Validate ensemble direction matches base model strategy
-    model_strategy = coerce_direction(
-        base_model.binning_model.strategy,
-        field_name="base_model.binning_model.strategy",
-    )
-    if model_strategy != expected_direction:
+    ensemble_path = _resolve_ensemble_path(ensemble_dir)
+    features_dir = ensemble_path / "features"
+    features_dir.mkdir(parents=True, exist_ok=True)
+
+    ensemble_config_file = ensemble_path / "ensemble_config.json"
+    if not ensemble_config_file.exists():
         raise ValueError(
-            f"Base model strategy '{model_strategy.value}' does not match "
+            f"Ensemble config file does not exist: {ensemble_config_file}. "
+            "Legacy directory-name inference is no longer supported."
+        )
+
+    with open(ensemble_config_file, "r") as f:
+        ensemble_config = json.load(f)
+    expected_ticker_names = sorted(ensemble_config.get("tickers", []))
+    expected_direction = coerce_direction(
+        ensemble_config.get("direction", Direction.LONG.value),
+        field_name="ensemble_config.direction",
+    )
+
+    if domain_spec.direction != expected_direction:
+        raise ValueError(
+            f"Base model direction '{domain_spec.direction.value}' does not match "
             f"ensemble direction '{expected_direction.value}'"
         )
-    
-    # Validate tickers match ensemble tickers (if ensemble config exists)
-    if expected_ticker_names is not None:
-        if tickers is None:
-            # Infer from base_model.ticker if available
-            if hasattr(base_model, 'ticker') and base_model.ticker is not None:
-                provided_ticker_names = sorted([base_model.ticker.name])
-            else:
-                provided_ticker_names = ['ES']  # Default
-        else:
-            provided_ticker_names = sorted([ticker.name if isinstance(ticker, Ticker) else ticker for ticker in tickers])
-        
-        if provided_ticker_names != expected_ticker_names:
-            raise ValueError(
-                f"Tickers do not match ensemble tickers. "
-                f"Ensemble tickers: {expected_ticker_names}, Provided: {provided_ticker_names}. "
-                f"All features in an ensemble must use the same tickers."
-            )
-    
-    # Get binning model type and params
-    binning_model = base_model.binning_model
-    binning_model_type = _normalize_model_type(
-        getattr(binning_model, "model_type", binning_model.__class__.__name__)
-    )
-    binning_model_params = dict(binning_model.get_params())
-    binning_model_params.pop("strategy", None)
-    
-    # Generate model ID
-    model_id = generate_model_id(
-        binning_model_type,
-        binning_model_params,
-        bias_node_params=bias_node_params,
-    )
-    
-    # Feature control file path
-    feature_file = features_dir / f"{feature_name}.json"
-    serializable_bias_spec = _serialize_bias_node_spec_for_storage(bias_node_spec)
-    
-    # Determine tickers to store
-    # Priority: 1) Provided tickers, 2) Ensemble config tickers, 3) base_model.ticker, 4) Default
-    if tickers is not None:
-        # Use provided tickers (already validated above if ensemble config exists)
-        pass
-    elif expected_ticker_names is not None:
-        # Use ensemble config tickers (convert strings back to Ticker enums)
-        tickers = [Ticker[ticker_name] for ticker_name in expected_ticker_names]
-    elif hasattr(base_model, 'ticker') and base_model.ticker is not None:
-        # Fallback to base_model.ticker
-        tickers = [base_model.ticker]
-    else:
-        # Default to ES if cannot infer
-        tickers = [Ticker.ES]
-    
-    # Normalize tickers to list
-    if isinstance(tickers, Ticker):
-        tickers = [tickers]
-    
-    # Convert tickers to strings for JSON serialization (sorted for consistency)
-    ticker_names = sorted([ticker.name if isinstance(ticker, Ticker) else ticker for ticker in tickers])
-    
-    # Load existing feature config or create new
-    if feature_file.exists():
-        with open(feature_file, 'r') as f:
-            feature_config = json.load(f)
-        existing_models = feature_config.get("base_models", [])
-        if len(existing_models) > 1:
-            raise ValueError(
-                f"Legacy multi-model feature file is not supported: {feature_file}"
-            )
-        if existing_models and "members" in existing_models[0]:
-            raise ValueError(
-                f"Legacy member schema is not supported: {feature_file}"
-            )
-        
-        # Validate existing tickers match ensemble tickers (if ensemble config exists)
-        existing_ticker_names = sorted(feature_config.get('tickers', []))
-        if expected_ticker_names is not None and existing_ticker_names != expected_ticker_names:
-            raise ValueError(
-                f"Feature '{feature_name}' already exists with tickers {existing_ticker_names} "
-                f"but ensemble expects {expected_ticker_names}. "
-                f"All features in an ensemble must use the same tickers."
-            )
-        
-        # Use ensemble tickers (already validated above)
-        feature_config['tickers'] = ticker_names
-    else:
-        # Create new feature config
-        feature_config = {
-            'feature_name': feature_name,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'updated_at': datetime.now(timezone.utc).isoformat(),
-            'bias_node_spec': serializable_bias_spec,
-            'tickers': ticker_names,
-            'base_models': []
-        }
 
-    # Ensure top-level schema is canonical for new writes
-    feature_config["feature_name"] = feature_name
-    feature_config["bias_node_spec"] = serializable_bias_spec
-    feature_config.pop("feature_column", None)
-    
-    if len(feature_config.get("base_models", [])) > 0:
+    ticker_names = sorted(
+        ticker.name if isinstance(ticker, Ticker) else str(ticker)
+        for ticker in (tickers or list(domain_spec.ticker_scope.tickers))
+    )
+    if expected_ticker_names is not None and ticker_names != expected_ticker_names:
         raise ValueError(
-            f"Feature '{feature_name}' already has a base-model entry. "
-            "Single-feature schema allows exactly one base model per feature file."
+            f"Tickers do not match ensemble tickers. Ensemble tickers: {expected_ticker_names}, "
+            f"Provided: {ticker_names}."
+        )
+    if sorted(ticker.name for ticker in domain_spec.ticker_scope.tickers) != ticker_names:
+        raise ValueError(
+            "Base model tickers must match the frozen domain-discrete ticker_scope."
         )
 
-    # Create base model entry
-    model_entry = {
-        'model_id': model_id,
-        'model_name': f"{feature_name}::{model_id}",
-        'bias_node_params': bias_node_params,
-        'binning_model_type': binning_model_type,
-        'strategy': model_strategy.value,
-        'binning_model_params': binning_model_params,
-        'requires_fit': _requires_fit(binning_model_type),
-        'is_fitted': binning_model.is_fitted_,
-        'fitted_params': None,
+    model_id = generate_model_id("domain_discrete", {}, bias_node_params={"params": domain_spec.to_mapping()})
+    feature_file = features_dir / f"{feature_name}.json"
+    serializable_bias_spec = build_domain_discrete_bias_node_spec(domain_spec)
+
+    existing_config: Optional[Dict[str, Any]] = None
+    if feature_file.exists():
+        with open(feature_file, "r") as f:
+            existing_config = json.load(f)
+        _validate_domain_discrete_feature_config(existing_config, feature_file=feature_file)
+        existing_model_id = existing_config["base_models"][0]["model_id"]
+        if existing_model_id != model_id:
+            raise ValueError(
+                f"Feature '{feature_name}' already exists with model_id '{existing_model_id}' "
+                f"which does not match the frozen spec-derived id '{model_id}'."
+            )
+        if existing_config["bias_node_spec"] != serializable_bias_spec:
+            raise ValueError(
+                f"Feature '{feature_name}' already exists with a different frozen spec."
+            )
+        return model_id
+
+    feature_config = {
+        "feature_name": feature_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "bias_node_spec": serializable_bias_spec,
+        "tickers": ticker_names,
+        "base_models": [
+            {
+                "model_id": model_id,
+                "model_name": f"{feature_name}::{model_id}",
+                "model_type": "domain_discrete",
+                "feature_column": feature_name,
+                "strategy": domain_spec.direction.value,
+                "bias_node_spec": serializable_bias_spec,
+            }
+        ],
     }
-    
-    # Add fitted params if model is fitted
-    if binning_model.is_fitted_:
-        model_entry['fitted_at'] = datetime.now(timezone.utc).isoformat()
-        fitted_payload = binning_model.get_fitted_params()
-        if fitted_payload.get("model_version") == "binning_v2":
-            model_entry['fitted_params'] = fitted_payload
-        else:
-            model_entry['is_fitted'] = False
-            model_entry['fitted_params'] = None
-    
-    # Add model entry
-    feature_config['base_models'].append(model_entry)
-    feature_config['updated_at'] = datetime.now(timezone.utc).isoformat()
-    
-    # Save feature config
-    with open(feature_file, 'w') as f:
+    _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
+
+    with open(feature_file, "w") as f:
         json.dump(feature_config, f, indent=2)
-    
+
     return model_id
 
 
@@ -1020,209 +869,68 @@ def load_feature_base_models(
     **legacy_kwargs: Any,
 ) -> Dict[Tuple[Ticker, str], BaseModel]:
     """
-    Load all base model variants for a feature, creating separate instances for each ticker.
-    
-    Parameters
-    ----------
-    feature_name : str
-        Canonical feature name ({module}_{feature}_{tf}).
-    ensemble_dir : str, optional
-        Path to ensemble directory. If None, uses default ensemble directory set via
-        create_ensemble_directory() or auto-detects by searching for the feature file.
-    fitted_only : bool, default=False
-        If True, only return fitted models
-    tickers : List[Ticker], optional
-        List of tickers to load models for. If None, uses tickers stored in feature spec.
-        If feature spec doesn't have tickers, defaults to [Ticker.ES] for backward compatibility.
-        
-    Returns
-    -------
-    Dict[Tuple[Ticker, str], BaseModel]
-        Dictionary mapping (ticker, model_id) tuple to BaseModel instance.
-        Keys are tuples: (Ticker enum, model_id string)
-        Values are reconstructed BaseModel instances with ticker-specific bias nodes.
-        
-    Raises
-    ------
-    ValueError
-        If ensemble_dir is None, no default is set, and feature file cannot be auto-detected
-        
-    Examples
-    --------
-    >>> # Using explicit ensemble_dir
-    >>> models = load_feature_base_models('rsi_signal_D', ensemble_dir='vault/D/ensemble_long')
-    >>> es_model = models[(Ticker.ES, 'continuous_binning_3')]
-    >>> 
-    >>> # Using default ensemble_dir (set by create_ensemble_directory)
-    >>> create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)
-    >>> models = load_feature_base_models('buy_hold_signal_D')
-    >>> 
-    >>> # Auto-detection (searches vault for feature file)
-    >>> models = load_feature_base_models('buy_hold_signal_D')  # Finds vault/D/buy_hold_long automatically
+    Load canonical domain-discrete base models for a feature.
     """
     from ensemble.ensemble_utils import create_base_model_from_config
 
     global _DEFAULT_ENSEMBLE_DIR
 
-    # Backward compatibility: accept feature_column kwarg.
     if feature_name is None and "feature_column" in legacy_kwargs:
         feature_name = legacy_kwargs["feature_column"]
     if feature_name is None:
         raise ValueError("feature_name must be provided")
 
-    # Backward compatibility for historical positional usage:
-    # load_feature_base_models(ensemble_dir, feature_name, ...)
-    if ensemble_dir is not None and (
-        "/" in str(feature_name) or str(feature_name).startswith("vault")
-    ):
-        if "/" not in str(ensemble_dir):
-            feature_name, ensemble_dir = str(ensemble_dir), str(feature_name)
-
-    # Use default ensemble_dir if not provided
     if ensemble_dir is None:
         ensemble_dir = _DEFAULT_ENSEMBLE_DIR
         if ensemble_dir is None:
-            # Try to auto-detect: look for feature file in common locations
-            cwd = Path.cwd()
-            possible_paths = []
-            
-            # Check current directory and parent for vault
-            for base in [cwd, cwd.parent]:
-                if (base / 'vault').exists():
-                    # Try to find ensemble directories with this feature
-                    vault_path = base / 'vault'
-                    for tf_dir in ['D', 'W', 'M']:
-                        tf_path = vault_path / tf_dir
-                        if tf_path.exists():
-                            for ensemble_dir_path in tf_path.iterdir():
-                                if ensemble_dir_path.is_dir():
-                                    features_dir = ensemble_dir_path / "features"
-                                    if _resolve_feature_file_path(features_dir, feature_name):
-                                        possible_paths.append(str(ensemble_dir_path))
-            
-            # Also check relative to vault_manager.py location
-            vault_manager_dir = Path(__file__).parent.parent
-            if (vault_manager_dir / 'vault').exists():
-                vault_path = vault_manager_dir / 'vault'
-                for tf_dir in ['D', 'W', 'M']:
-                    tf_path = vault_path / tf_dir
-                    if tf_path.exists():
-                        for ensemble_dir_path in tf_path.iterdir():
-                            if ensemble_dir_path.is_dir():
-                                features_dir = ensemble_dir_path / "features"
-                                if _resolve_feature_file_path(features_dir, feature_name):
-                                    possible_paths.append(str(ensemble_dir_path))
-            
-            if possible_paths:
-                # Use first match and set as default for future calls
-                ensemble_dir = possible_paths[0]
-                _DEFAULT_ENSEMBLE_DIR = ensemble_dir
-            else:
-                raise ValueError(
-                    f"ensemble_dir must be provided or call create_ensemble_directory() first. "
-                    f"Could not auto-detect ensemble directory for feature '{feature_name}'. "
-                    f"Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
-                )
-    
+            raise ValueError(
+                "ensemble_dir must be provided or call create_ensemble_directory() first."
+            )
+
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
     features_dir = ensemble_path / "features"
     feature_file = _resolve_feature_file_path(features_dir, feature_name)
-    
     if feature_file is None or not feature_file.exists():
-        cwd = Path.cwd()
         raise FileNotFoundError(
-            f"Feature file not found for feature '{feature_name}'\n"
-            f"  Ensemble dir: {ensemble_dir}\n"
-            f"  Resolved path: {ensemble_path}\n"
-            f"  CWD: {cwd}\n"
-            f"  Searched in: {features_dir}"
+            f"Feature file not found for feature '{feature_name}' in {features_dir}"
         )
-    
-    with open(feature_file, 'r') as f:
+
+    with open(feature_file, "r") as f:
         feature_config = json.load(f)
-    
-    # Shared spec is now module+timeframes only; params live per base model.
-    bias_node_spec = feature_config["bias_node_spec"].copy()
-    if "timeframes" in bias_node_spec:
-        bias_node_spec["timeframes"] = [
-            TimeFrame[tf] if isinstance(tf, str) else tf
-            for tf in bias_node_spec["timeframes"]
+
+    _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
+    resolved_feature_name = _extract_feature_name(feature_config, feature_file.stem)
+    feature_bias_spec = feature_config["bias_node_spec"]
+    domain_spec = load_domain_discrete_spec(feature_bias_spec["params"])
+
+    if tickers is None:
+        tickers = [
+            Ticker[ticker_name] if isinstance(ticker_name, str) else ticker_name
+            for ticker_name in feature_config.get("tickers", [ticker.name for ticker in domain_spec.ticker_scope.tickers])
         ]
 
-    resolved_feature_name = _extract_feature_name(feature_config, feature_file.stem)
-    
-    # Get tickers from feature spec or use provided/default
-    if tickers is None:
-        ticker_names = feature_config.get('tickers', [])
-        if ticker_names:
-            # Convert ticker name strings to Ticker enums
-            tickers = [
-                Ticker[ticker_name] if isinstance(ticker_name, str) else ticker_name
-                for ticker_name in ticker_names
-            ]
-        else:
-            # Backward compatibility: default to ES if no tickers stored
-            tickers = [Ticker.ES]
-    
-    models: Dict[Tuple[Ticker, str], BaseModel] = {}
-    feature_models = feature_config.get("base_models", [])
-    if len(feature_models) != 1:
-        raise ValueError(
-            f"Feature '{resolved_feature_name}' must contain exactly one base model; "
-            f"found {len(feature_models)} in {feature_file}"
-        )
-    model_entry = feature_models[0]
-    if "members" in model_entry:
-        raise ValueError(
-            f"Legacy member schema is not supported in {feature_file}"
-        )
+    model_entry = feature_config["base_models"][0]
     model_id = model_entry["model_id"]
-    if fitted_only and not model_entry.get("is_fitted", False):
-        return models
-
-    model_type = _normalize_model_type(
-        model_entry.get("binning_model_type", model_entry.get("model_type", "continuous_binning"))
-    )
-    model_strategy = model_entry.get("strategy", "long")
-    model_params = dict(
-        model_entry.get("binning_model_params", model_entry.get("constructor_params", {}))
-    )
-    model_params.pop("strategy", None)
-
-    merged_bias_spec = bias_node_spec.copy()
-    merged_bias_spec["params"] = _extract_bias_node_params_for_model(
-        model_entry,
-        feature_config,
-        resolved_feature_name,
-    )
-
-    model_name = model_entry.get("model_name", f"{resolved_feature_name}::{model_id}")
-    model_fitted_params = None
-    if model_entry.get("is_fitted", False):
-        fitted_payload = model_entry.get("fitted_params")
-        if fitted_payload and fitted_payload.get("model_version") == "binning_v2":
-            model_fitted_params = fitted_payload
-
-    base_model_config = {
-        "name": model_name,
-        "feature_column": resolved_feature_name,
-        "model_type": model_type,
-        "strategy": model_strategy,
-        "constructor_params": model_params,
-        "bias_node_spec": merged_bias_spec,
-        "bias_node_params": merged_bias_spec["params"],
-    }
+    models: Dict[Tuple[Ticker, str], BaseModel] = {}
 
     for ticker in tickers:
-        model_config_for_ticker = base_model_config.copy()
-        model_config_for_ticker["tickers"] = [ticker]
+        ticker_enum = ticker if isinstance(ticker, Ticker) else Ticker[str(ticker)]
+        base_model_config = {
+            "name": model_entry["model_name"],
+            "feature_column": resolved_feature_name,
+            "model_type": "domain_discrete",
+            "strategy": model_entry["strategy"],
+            "bias_node_spec": feature_bias_spec,
+            "tickers": [ticker_enum],
+        }
         base_model = create_base_model_from_config(
-            model_config_for_ticker,
-            fitted_params=model_fitted_params,
+            base_model_config,
+            ticker=ticker_enum,
+            use_cache=not fitted_only,
         )
         base_model.feature_column = resolved_feature_name
-        models[(ticker, model_id)] = base_model
-    
+        models[(ticker_enum, model_id)] = base_model
+
     return models
 
 
@@ -1235,211 +943,57 @@ def update_base_model_fitted_params(
     train_end: str,
     **legacy_kwargs: Any,
 ) -> None:
-    """
-    Update fitted parameters for a specific base model variant.
-    
-    Called after BaseModel.fit() to save the fitted state.
-    
-    Parameters
-    ----------
-    ensemble_dir : str
-        Path to ensemble directory
-    feature_name : str
-        Feature name (canonical file stem). Legacy `feature_column` is accepted.
-    model_id : str
-        Model ID to update
-    fitted_params : Dict[str, Any]
-        Fitted parameters from the base model
-    train_start : str
-        Training start date (YYYY-MM-DD)
-    train_end : str
-        Training end date (YYYY-MM-DD)
-    """
-    if feature_name is None:
-        feature_name = legacy_kwargs.get("feature_column")
-    if feature_name is None:
-        raise ValueError("feature_name must be provided")
-
-    ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / "features"
-    feature_file = _resolve_feature_file_path(features_dir, feature_name)
-    if feature_file is None:
-        raise ValueError(
-            f"Feature file not found for feature '{feature_name}' in {features_dir}"
-        )
-
-    with open(feature_file, "r") as handle:
-        feature_config = json.load(handle)
-
-    feature_models = feature_config.get("base_models", [])
-    if len(feature_models) != 1:
-        raise ValueError(
-            f"Feature '{feature_name}' must contain exactly one base model; found {len(feature_models)}"
-        )
-    if "members" in feature_models[0]:
-        raise ValueError(
-            f"Legacy member schema is not supported in {feature_file}"
-        )
-
-    model_found = False
-    for model_entry in feature_models:
-        if model_entry.get("model_id") != model_id:
-            continue
-        model_found = True
-        is_valid_v2 = bool(
-            fitted_params and fitted_params.get("model_version") == "binning_v2"
-        )
-        model_entry["is_fitted"] = is_valid_v2
-        model_entry["fitted_at"] = datetime.now(timezone.utc).isoformat()
-        model_entry["train_start"] = train_start
-        model_entry["train_end"] = train_end
-        model_entry["fitted_params"] = fitted_params if is_valid_v2 else None
-        if not is_valid_v2:
-            warnings.warn(
-                f"Skipping non-binning_v2 fitted params for model '{model_id}'",
-                RuntimeWarning,
-            )
-        break
-
-    if not model_found:
-        raise ValueError(f"Model ID '{model_id}' not found in feature '{feature_name}'")
-
-    feature_config["updated_at"] = datetime.now(timezone.utc).isoformat()
-    with open(feature_file, "w") as handle:
-        json.dump(feature_config, handle, indent=2)
+    raise_legacy_feature_artifact(
+        "update_base_model_fitted_params is no longer supported; domain_discrete features are frozen."
+    )
 
 
 def consolidate_feature_files(ensemble_dir: str) -> List[str]:
-    """
-    Consolidate fragmented legacy feature files into canonical feature files.
-
-    Returns list of consolidated file paths.
-    """
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
     features_dir = ensemble_path / "features"
     if not features_dir.exists():
         return []
 
-    grouped: Dict[str, List[Tuple[Path, Dict[str, Any]]]] = {}
+    validated_paths: List[str] = []
     for feature_file in sorted(features_dir.glob("*.json")):
-        try:
-            with open(feature_file, "r") as handle:
-                feature_config = json.load(handle)
-        except Exception:
+        with open(feature_file, "r") as handle:
+            feature_config = json.load(handle)
+        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
+        validated_paths.append(str(feature_file))
+
+    return validated_paths
+
+
+def migrate_legacy_feature_members_schema(ensemble_dir: str) -> List[str]:
+    ensemble_path = _resolve_ensemble_path(ensemble_dir)
+    features_dir = ensemble_path / "features"
+    if not features_dir.exists():
+        return []
+
+    updated_paths: List[str] = []
+    for feature_file in sorted(features_dir.glob("*.json")):
+        with open(feature_file, "r", encoding="utf-8") as handle:
+            feature_config = json.load(handle)
+
+        base_models = feature_config.get("base_models", [])
+        if not isinstance(base_models, list) or not base_models:
             continue
-        raw_feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        bias_spec = feature_config.get("bias_node_spec", {})
-        canonical_name = _canonical_feature_name_from_tokens(raw_feature_name, bias_spec)
-        grouped.setdefault(canonical_name, []).append((feature_file, feature_config))
+        model_entry = base_models[0]
+        if "members" not in model_entry:
+            continue
+        if model_entry["members"]:
+            raise_legacy_feature_artifact(
+                f"Feature file {feature_file} still contains non-empty legacy members schema payloads."
+            )
 
-    consolidated_paths: List[str] = []
-    for canonical_name, payloads in grouped.items():
-        first_file, first_config = payloads[0]
-        first_spec = first_config.get("bias_node_spec", {})
-        parsed = helpers.parse_feature_column_name(canonical_name)
-        module_name = first_spec.get("module_name") or parsed.get("module")
+        model_entry.pop("members", None)
+        feature_config["updated_at"] = datetime.now(timezone.utc).isoformat()
+        with open(feature_file, "w", encoding="utf-8") as handle:
+            json.dump(feature_config, handle, indent=2)
+            handle.write("\n")
+        updated_paths.append(str(feature_file))
 
-        raw_tfs = first_spec.get("timeframes", [])
-        if raw_tfs:
-            first_tf = raw_tfs[0]
-            timeframe_name = first_tf.name if hasattr(first_tf, "name") else str(first_tf)
-        else:
-            tf = parsed.get("tf")
-            timeframe_name = tf.name if hasattr(tf, "name") else str(tf) if tf else "D"
-
-        consolidated_bias_spec = {
-            "module_name": module_name,
-            "timeframes": [timeframe_name],
-        }
-        created_at = first_config.get("created_at", datetime.now(timezone.utc).isoformat())
-        updated_at = datetime.now(timezone.utc).isoformat()
-
-        all_tickers: set[str] = set()
-        consolidated_models: List[Dict[str, Any]] = []
-        used_model_ids: set[str] = set()
-
-        for _src_file, feature_config in payloads:
-            all_tickers.update(feature_config.get("tickers", []))
-            source_feature_name = _extract_feature_name(feature_config, _src_file.stem)
-            for model_entry in feature_config.get("base_models", []):
-                model_type = _normalize_model_type(
-                    model_entry.get(
-                        "binning_model_type",
-                        model_entry.get("model_type", "continuous_binning"),
-                    )
-                )
-                strategy = model_entry.get("strategy", "long")
-                model_params = dict(
-                    model_entry.get(
-                        "binning_model_params",
-                        model_entry.get("constructor_params", {}),
-                    )
-                )
-                model_params.pop("strategy", None)
-                model_bias_params = _extract_bias_node_params_for_model(
-                    model_entry, feature_config, source_feature_name
-                )
-
-                candidate_model_id = (
-                    model_entry.get("model_id")
-                    or generate_model_id(
-                        model_type,
-                        model_params,
-                        bias_node_params=model_bias_params,
-                    )
-                )
-                model_id = candidate_model_id
-                suffix = 2
-                while model_id in used_model_ids:
-                    model_id = f"{candidate_model_id}_{suffix}"
-                    suffix += 1
-                used_model_ids.add(model_id)
-
-                model_is_fitted = bool(model_entry.get("is_fitted", False))
-                fitted_payload = model_entry.get("fitted_params")
-                if not (fitted_payload and fitted_payload.get("model_version") == "binning_v2"):
-                    model_is_fitted = False
-                    fitted_payload = None
-
-                consolidated_model = {
-                    "model_id": model_id,
-                    "model_name": f"{canonical_name}::{model_id}",
-                    "bias_node_params": model_bias_params,
-                    "binning_model_type": model_type,
-                    "strategy": strategy,
-                    "binning_model_params": model_params,
-                    "requires_fit": _requires_fit(model_type),
-                    "is_fitted": model_is_fitted,
-                    "fitted_params": fitted_payload,
-                }
-                if model_is_fitted:
-                    consolidated_model["fitted_at"] = model_entry.get(
-                        "fitted_at",
-                        datetime.now(timezone.utc).isoformat(),
-                    )
-                consolidated_models.append(consolidated_model)
-
-        consolidated_config = {
-            "feature_name": canonical_name,
-            "created_at": created_at,
-            "updated_at": updated_at,
-            "bias_node_spec": consolidated_bias_spec,
-            "tickers": sorted(all_tickers),
-            "base_models": consolidated_models,
-        }
-
-        target_file = features_dir / f"{canonical_name}.json"
-        with open(target_file, "w") as handle:
-            json.dump(consolidated_config, handle, indent=2)
-        consolidated_paths.append(str(target_file))
-
-        # Remove legacy source files once consolidation target has been written.
-        for source_file, _ in payloads:
-            if source_file.resolve() == target_file.resolve():
-                continue
-            source_file.unlink(missing_ok=True)
-
-    return consolidated_paths
+    return updated_paths
 
 
 
@@ -1448,45 +1002,9 @@ def remove_base_model_variant(
     feature_name: str,
     model_id: str
 ) -> None:
-    """
-    Remove a base model variant from a feature.
-    
-    Useful if a model variant fails validation or is deprecated.
-    
-    Parameters
-    ----------
-    ensemble_dir : str
-        Path to ensemble directory
-    feature_name : str
-        Feature name (canonical or legacy feature_column).
-    model_id : str
-        Model ID to remove
-    """
-    ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / "features"
-    feature_file = _resolve_feature_file_path(features_dir, feature_name)
-    if feature_file is None:
-        raise ValueError(
-            f"Feature file not found for feature '{feature_name}' in {features_dir}"
-        )
-    
-    with open(feature_file, 'r') as f:
-        feature_config = json.load(f)
-    
-    # Remove model entry
-    original_count = len(feature_config['base_models'])
-    feature_config['base_models'] = [
-        bm for bm in feature_config['base_models'] if bm['model_id'] != model_id
-    ]
-    
-    if len(feature_config['base_models']) == original_count:
-        raise ValueError(f"Model ID '{model_id}' not found in feature '{feature_name}'")
-    
-    feature_config['updated_at'] = datetime.now(timezone.utc).isoformat()
-    
-    # Save updated config
-    with open(feature_file, 'w') as f:
-        json.dump(feature_config, f, indent=2)
+    raise_legacy_feature_artifact(
+        "remove_base_model_variant is not supported after the domain_discrete cutover."
+    )
 
 
 def list_features(ensemble_dir: Optional[str] = None) -> pd.DataFrame:
@@ -1504,7 +1022,7 @@ def list_features(ensemble_dir: Optional[str] = None) -> pd.DataFrame:
     pd.DataFrame
         DataFrame with columns:
         - feature_name: str
-        - feature_column: str (legacy alias, equals feature_name for new files)
+        - feature_column: str
         - n_base_models: int
         - n_fitted: int
         - created_at: str
@@ -1561,16 +1079,7 @@ def list_features(ensemble_dir: Optional[str] = None) -> pd.DataFrame:
     features_dir = ensemble_path / 'features'
     
     if not features_dir.exists():
-        return pd.DataFrame(
-            columns=[
-                'feature_name',
-                'feature_column',
-                'n_base_models',
-                'n_fitted',
-                'created_at',
-                'updated_at',
-            ]
-        )
+        return pd.DataFrame(columns=['feature_name', 'feature_column', 'n_base_models', 'n_fitted', 'created_at', 'updated_at'])
     
     features = []
     
@@ -1578,15 +1087,13 @@ def list_features(ensemble_dir: Optional[str] = None) -> pd.DataFrame:
         with open(feature_file, 'r') as f:
             feature_config = json.load(f)
         
+        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
         resolved_feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        n_base_models = len(feature_config.get('base_models', []))
-        n_fitted = sum(1 for bm in feature_config.get('base_models', []) if bm.get('is_fitted', False))
-        
         features.append({
             'feature_name': resolved_feature_name,
-            'feature_column': feature_config.get('feature_column', resolved_feature_name),
-            'n_base_models': n_base_models,
-            'n_fitted': n_fitted,
+            'feature_column': resolved_feature_name,
+            'n_base_models': 1,
+            'n_fitted': 0,
             'created_at': feature_config.get('created_at', ''),
             'updated_at': feature_config.get('updated_at', '')
         })
@@ -1609,9 +1116,8 @@ def get_bias_node_specs(ensemble_dir: Optional[str] = None) -> List[Dict[str, An
         
     Returns
     -------
-    List[Dict[str, Any]]
-        List of bias node specifications, one per base model. Each spec is
-        top-level bias_node_spec merged with per-model bias_node_params.
+        List[Dict[str, Any]]
+        Frozen domain-discrete bias node specifications, one per feature.
     """
     # Use default ensemble_dir if not provided
     if ensemble_dir is None:
@@ -1629,34 +1135,11 @@ def get_bias_node_specs(ensemble_dir: Optional[str] = None) -> List[Dict[str, An
         return []
     
     bias_specs = []
-    
     for feature_file in sorted(features_dir.glob('*.json')):
         with open(feature_file, 'r') as f:
             feature_config = json.load(f)
-        base_spec = dict(feature_config.get('bias_node_spec', {}))
-        if not base_spec:
-            continue
-        raw_timeframes = base_spec.get('timeframes', [])
-        base_spec['timeframes'] = [
-            TimeFrame[tf] if isinstance(tf, str) else tf
-            for tf in raw_timeframes
-        ]
-        feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        base_models = feature_config.get('base_models', [])
-        if not base_models:
-            spec_copy = dict(base_spec)
-            spec_copy['params'] = _normalize_bias_node_params(base_spec.get('params', {}))
-            bias_specs.append(spec_copy)
-            continue
-        for model_entry in base_models:
-            model_spec = dict(base_spec)
-            model_spec['params'] = _extract_bias_node_params_for_model(
-                model_entry,
-                feature_config,
-                feature_name,
-            )
-            bias_specs.append(model_spec)
-    
+        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
+        bias_specs.append(dict(feature_config['bias_node_spec']))
     return bias_specs
 
 
@@ -1674,8 +1157,8 @@ def get_all_base_model_names(ensemble_dir: Optional[str] = None) -> List[str]:
         
     Returns
     -------
-    List[str]
-        List of model names in format 'feature_column::model_id'
+        List[str]
+        List of model names in format 'feature_name::model_id'
     """
     # Use default ensemble_dir if not provided
     if ensemble_dir is None:
@@ -1693,17 +1176,11 @@ def get_all_base_model_names(ensemble_dir: Optional[str] = None) -> List[str]:
         return []
     
     model_names = []
-    
     for feature_file in sorted(features_dir.glob('*.json')):
         with open(feature_file, 'r') as f:
             feature_config = json.load(f)
-        feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        
-        for model_config in feature_config.get('base_models', []):
-            model_id = model_config['model_id']
-            model_name = model_config.get('model_name', f"{feature_name}::{model_id}")
-            model_names.append(model_name)
-    
+        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
+        model_names.append(feature_config['base_models'][0]['model_name'])
     return model_names
 
 
@@ -1799,10 +1276,9 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
     
     Checks:
     - Directory exists and has features/ subdirectory
-    - All feature control files are valid JSON
+    - All feature control files are canonical domain_discrete payloads
     - All base model strategies match ensemble direction
     - All bias node specs are valid and parseable
-    - All model IDs are unique within each feature
     
     Parameters
     ----------
@@ -1828,29 +1304,19 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
     
     # Load ensemble config if it exists
     ensemble_config_file = ensemble_path / 'ensemble_config.json'
-    if ensemble_config_file.exists():
-        with open(ensemble_config_file, 'r') as f:
-            ensemble_config = json.load(f)
-        expected_direction = coerce_direction(
-            ensemble_config.get('direction', Direction.LONG.value),
-            field_name="ensemble_config.direction",
+    if not ensemble_config_file.exists():
+        raise ValueError(
+            f"Ensemble config file does not exist: {ensemble_config_file}. "
+            "Legacy directory-name inference is no longer supported."
         )
-        expected_ticker_names = sorted(ensemble_config.get('tickers', []))
-    else:
-        # Backward compatibility: infer from directory name
-        ensemble_dir_name = ensemble_path.name
-        if ensemble_dir_name.endswith('_long_short'):
-            expected_direction = Direction.LONG_SHORT
-        elif ensemble_dir_name.endswith('_long'):
-            expected_direction = Direction.LONG
-        elif ensemble_dir_name.endswith('_short'):
-            expected_direction = Direction.SHORT
-        else:
-            raise ValueError(
-                f"Cannot determine ensemble direction from directory name: {ensemble_dir_name}. "
-                f"Expected suffix _long, _short, or _long_short"
-            )
-        expected_ticker_names = None  # No ticker validation for old ensembles
+
+    with open(ensemble_config_file, 'r') as f:
+        ensemble_config = json.load(f)
+    expected_direction = coerce_direction(
+        ensemble_config.get('direction', Direction.LONG.value),
+        field_name="ensemble_config.direction",
+    )
+    expected_ticker_names = sorted(ensemble_config.get('tickers', []))
 
     # Validate all feature control files
     for feature_file in sorted(features_dir.glob('*.json')):
@@ -1859,107 +1325,18 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
                 feature_config = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in feature file {feature_file}: {e}")
-        
-        # Validate structure (feature_name-first, feature_column legacy fallback)
-        required_keys = ['bias_node_spec', 'base_models']
-        missing_keys = [key for key in required_keys if key not in feature_config]
-        if missing_keys:
-            raise ValueError(f"Feature file {feature_file} missing required keys: {missing_keys}")
-        if (
-            'feature_name' not in feature_config
-            and 'feature_column' not in feature_config
-        ):
+        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
+
+        feature_ticker_names = sorted(feature_config.get("tickers", []))
+        if expected_ticker_names is not None and feature_ticker_names != expected_ticker_names:
             raise ValueError(
-                f"Feature file {feature_file} missing both 'feature_name' and legacy 'feature_column'"
+                f"Feature '{feature_file.stem}' has tickers {feature_ticker_names} "
+                f"but ensemble expects {expected_ticker_names}."
             )
-        
-        # Validate tickers field (optional for backward compatibility, but recommended)
-        if 'tickers' not in feature_config:
-            warnings.warn(
-                f"Feature file {feature_file} missing 'tickers' field. "
-                f"This is required for proper multi-ticker support. "
-                f"Defaulting to [Ticker.ES] when loading.",
-                DeprecationWarning
-            )
-        elif not isinstance(feature_config['tickers'], list):
+        if sorted(feature_config["base_models"][0]["bias_node_spec"]["params"]["ticker_scope"]["tickers"]) != feature_ticker_names:
             raise ValueError(
-                f"Feature file {feature_file} has invalid 'tickers' field: "
-                f"expected list, got {type(feature_config['tickers'])}"
+                f"Feature '{feature_file.stem}' ticker_scope must match stored tickers"
             )
-        
-        # Validate bias node spec
-        bias_node_spec = feature_config['bias_node_spec']
-        if 'module_name' not in bias_node_spec or 'timeframes' not in bias_node_spec:
-            raise ValueError(f"Invalid bias_node_spec in {feature_file}")
-        if not isinstance(bias_node_spec.get('timeframes'), list):
-            raise ValueError(f"Invalid bias_node_spec.timeframes in {feature_file}: expected list")
-
-        feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        feature_models = feature_config['base_models']
-        if len(feature_models) != 1:
-            raise ValueError(
-                f"Feature '{feature_name}' must contain exactly one base model, found {len(feature_models)}"
-            )
-
-        # Validate base model
-        model_ids = []
-        for model_config in feature_models:
-            # Check required keys
-            required_model_keys = ['model_id', 'model_name', 'binning_model_type', 'strategy', 'binning_model_params']
-            missing_model_keys = [key for key in required_model_keys if key not in model_config]
-            if missing_model_keys:
-                raise ValueError(f"Model config in {feature_file} missing keys: {missing_model_keys}")
-            
-            # Check model ID uniqueness
-            model_id = model_config['model_id']
-            if model_id in model_ids:
-                raise ValueError(f"Duplicate model_id '{model_id}' in feature {feature_file}")
-            model_ids.append(model_id)
-            
-            # Check strategy matches ensemble direction
-            model_strategy = coerce_direction(
-                model_config['strategy'],
-                field_name=f"{feature_file.name} strategy",
-            )
-            if model_strategy != expected_direction:
-                raise ValueError(
-                    f"Model strategy '{model_strategy.value}' does not match "
-                    f"ensemble direction '{expected_direction.value}' in {feature_file}"
-                )
-            
-            # Validate model_name format
-            expected_model_name = f"{feature_name}::{model_id}"
-            if model_config['model_name'] != expected_model_name:
-                raise ValueError(
-                    f"Model name '{model_config['model_name']}' does not match expected format "
-                    f"'{expected_model_name}' in {feature_file}"
-                )
-
-            # Validate requires_fit if present
-            if 'requires_fit' in model_config:
-                expected_requires_fit = _requires_fit(
-                    model_config.get('binning_model_type', model_config.get('model_type', 'continuous_binning'))
-                )
-                if bool(model_config['requires_fit']) != expected_requires_fit:
-                    raise ValueError(
-                        f"Model '{model_id}' has inconsistent requires_fit="
-                        f"{model_config['requires_fit']} (expected {expected_requires_fit})"
-                    )
-
-            if "members" in model_config:
-                raise ValueError(
-                    f"Model '{model_id}' in {feature_file} uses legacy members schema, which is unsupported"
-                )
-        
-        # Validate tickers match ensemble tickers (if ensemble config exists)
-        if expected_ticker_names is not None:
-            feature_ticker_names = sorted(feature_config.get('tickers', []))
-            if feature_ticker_names != expected_ticker_names:
-                raise ValueError(
-                    f"Feature '{feature_file.stem}' has tickers {feature_ticker_names} "
-                    f"but ensemble expects {expected_ticker_names}. "
-                    f"All features in an ensemble must use the same tickers."
-                )
 
 
 def load_ensemble_from_vault(
@@ -1977,8 +1354,8 @@ def load_ensemble_from_vault(
     ensemble_dir : str
         Path to ensemble directory (e.g., 'vault/D/buy_hold_long')
     refit : bool, default=False
-        If True, ensemble will be refitted from scratch (is_fit=False).
-        If False, uses fitted params from vault (is_fit=True).
+        If True, the temporary control file is marked unfitted.
+        If False, the ensemble-level fitted payload is synthesized from the frozen specs.
     target_volatility : float, default=0.20
         Target volatility for the ensemble
         
@@ -2005,8 +1382,6 @@ def load_ensemble_from_vault(
     if not features_dir.exists():
         raise ValueError(f"Features directory does not exist: {features_dir}")
 
-    migrate_legacy_feature_members_schema(str(ensemble_path))
-
     feature_files = list(features_dir.glob('*.json'))
     if not feature_files:
         raise ValueError(f"No feature files found in {features_dir}")
@@ -2014,13 +1389,15 @@ def load_ensemble_from_vault(
     # Load ensemble config if available
     ensemble_config_file = ensemble_path / 'ensemble_config.json'
     ensemble_config = {}
-    if ensemble_config_file.exists():
-        with open(ensemble_config_file, 'r') as f:
-            ensemble_config = json.load(f)
-        timeframe_str = ensemble_config.get('timeframe', 'D')
-    else:
-        # Infer from directory structure
-        timeframe_str = ensemble_path.parent.name  # e.g., 'D' from 'vault/D/...'
+    if not ensemble_config_file.exists():
+        raise ValueError(
+            f"Ensemble config file does not exist: {ensemble_config_file}. "
+            "Legacy directory-name inference is no longer supported."
+        )
+
+    with open(ensemble_config_file, 'r') as f:
+        ensemble_config = json.load(f)
+    timeframe_str = ensemble_config.get('timeframe', 'D')
     
     # Load all feature configs and convert to control file format
     base_models_config = []
@@ -2030,61 +1407,27 @@ def load_ensemble_from_vault(
     for feature_file in feature_files:
         with open(feature_file, 'r') as f:
             feature_config = json.load(f)
-        
-        # Collect tickers
-        feature_tickers = feature_config.get('tickers', ensemble_config.get('tickers', []))
-        all_tickers.update(feature_tickers)
-        
-        # Convert base_models to control file format
-        # Include tickers in each model config so models know which tickers they support
-        feature_tickers = feature_config.get('tickers', ensemble_config.get('tickers', []))
+        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
         feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        feature_bias_spec = dict(feature_config.get('bias_node_spec', {}))
-        raw_timeframes = feature_bias_spec.get('timeframes', [])
-        feature_bias_spec['timeframes'] = [
-            tf.name if isinstance(tf, TimeFrame) else str(tf)
-            for tf in raw_timeframes
-        ]
-        feature_models = feature_config.get("base_models", [])
-        if len(feature_models) != 1:
-            raise ValueError(
-                f"Feature '{feature_name}' must contain exactly one base model; found {len(feature_models)}"
-            )
+        feature_models = feature_config["base_models"]
         model = feature_models[0]
-        if "members" in model:
-            raise ValueError(
-                f"Legacy member schema is not supported in {feature_file}"
-            )
-        bias_node_params = _extract_bias_node_params_for_model(
-            model,
-            feature_config,
-            feature_name,
-        )
-        merged_bias_spec = dict(feature_bias_spec)
-        merged_bias_spec['params'] = bias_node_params
-
-        model_type = _normalize_model_type(
-            model.get('binning_model_type', model.get('model_type', 'continuous_binning'))
-        )
-        constructor_params = dict(
-            model.get('binning_model_params', model.get('constructor_params', {}))
-        )
-        constructor_params.pop('strategy', None)
+        feature_tickers = feature_config.get("tickers", []) or [
+            ticker.name for ticker in load_domain_discrete_spec(feature_config["bias_node_spec"]["params"]).ticker_scope.tickers
+        ]
+        all_tickers.update(feature_tickers)
 
         base_model_config = {
-            'name': model.get('model_name', f"{feature_name}::{model['model_id']}"),
-            'feature_column': feature_name,
-            'model_type': model_type,
-            'strategy': model['strategy'],
-            'constructor_params': constructor_params,
-            'bias_node_spec': merged_bias_spec,
-            'bias_node_params': bias_node_params,
-            'tickers': feature_tickers,  # Include tickers so model knows which tickers it supports
+            "name": model["model_name"],
+            "feature_column": feature_name,
+            "model_type": "domain_discrete",
+            "strategy": model["strategy"],
+            "bias_node_spec": feature_config["bias_node_spec"],
+            "tickers": feature_tickers,
         }
         base_models_config.append(base_model_config)
         model_identity_by_name[str(base_model_config['name'])] = {
-            'feature_name': feature_name,
-            'model_id': str(model['model_id']),
+            "feature_name": feature_name,
+            "model_id": str(model["model_id"]),
         }
     
     if not base_models_config:
@@ -2110,50 +1453,24 @@ def load_ensemble_from_vault(
         }
         if not refit:
             metadata['selection_method'] = ensemble_config.get('selection_method', 'manual')
-
-        fitted_base_models = None
+        model_names = [bm['name'] for bm in base_models_config]
         fitted_ensemble = None
         if not refit:
-            fitted_base_models = {}
-            for feature_file in feature_files:
-                with open(feature_file, 'r') as feat_f:
-                    feature_config = json.load(feat_f)
-                feature_name = _extract_feature_name(feature_config, feature_file.stem)
-                for model in feature_config.get('base_models', []):
-                    model_name = model.get('model_name', f"{feature_name}::{model['model_id']}")
-                    payload = model.get('fitted_params')
-                    if model.get('is_fitted', False) and payload and payload.get('model_version') == 'binning_v2':
-                        fitted_base_models[model_name] = payload
-
-            model_names = [bm['name'] for bm in base_models_config]
-            if model_names:
-                fitted_ensemble = {
-                    'weights': {name: 1.0 / len(model_names) for name in model_names},
-                    'exposure_fractions': {name: 0.5 for name in model_names},
-                    'model_exposure_fractions': {name: 0.5 for name in model_names},
-                    'feature_names': model_names,
-                    'target_volatility': target_volatility,
-                    'unique_tickers': tickers,
-                    'instrument_weights': {t: 1.0 / len(tickers) for t in tickers},
-                    'n_tickers': len(tickers),
-                }
-            else:
-                fitted_ensemble = {
-                    'weights': {},
-                    'exposure_fractions': {},
-                    'model_exposure_fractions': {},
-                    'feature_names': [],
-                    'target_volatility': target_volatility,
-                    'unique_tickers': tickers,
-                    'instrument_weights': {t: 1.0 / len(tickers) for t in tickers},
-                    'n_tickers': len(tickers),
-                }
+            fitted_ensemble = {
+                'weights': {name: 1.0 / len(model_names) for name in model_names} if model_names else {},
+                'exposure_fractions': {name: 0.5 for name in model_names},
+                'model_exposure_fractions': {name: 0.5 for name in model_names},
+                'feature_names': model_names,
+                'target_volatility': target_volatility,
+                'unique_tickers': tickers,
+                'instrument_weights': {t: 1.0 / len(tickers) for t in tickers},
+                'n_tickers': len(tickers),
+            }
 
         temp_path = save_control_file(
             filepath=f.name,
             base_models=base_models_config,
             metadata=metadata,
-            fitted_base_models=fitted_base_models,
             fitted_ensemble=fitted_ensemble,
             tickers=tickers,
         )

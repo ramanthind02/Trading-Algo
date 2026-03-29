@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -9,9 +8,6 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-
-from feature_research.config import FeatureType
-from feature_research.core_helpers import expand_params_with_selected_bin
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     get_available_date_ranges_for_tickers,
@@ -21,10 +17,7 @@ from feature_research.in_sample.data_loader import (
     populate_cache_if_needed,
 )
 from utils.evaluation.walkforward.config import WalkforwardResearchConfig
-from utils.evaluation.walkforward.evaluators import (
-    build_continuous_walkforward_evaluator,
-    build_rule_based_walkforward_evaluator,
-)
+from utils.evaluation.walkforward.evaluators import build_signed_signal_walkforward_evaluator
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from utils.evaluation.walkforward.permutation_helpers import (
     _joblib_tqdm,
@@ -32,11 +25,13 @@ from utils.evaluation.walkforward.permutation_helpers import (
 )
 from utils.evaluation.walkforward.research_data import (
     build_reference_target,
-    load_continuous_research_data,
     load_portfolio_candles,
-    load_rule_based_research_data,
+    load_signed_signal_research_data,
 )
 from utils.evaluation.walkforward.runner import run_walkforward_research
+
+
+SIGNED_SIGNAL_FEATURE_TYPE = "signed_signal"
 
 
 def load_research_data(config: object) -> tuple[
@@ -89,62 +84,25 @@ def load_research_data(config: object) -> tuple[
 
     populate_cache_if_needed(config, bias_spec=config.eval_bias_spec)
     expanded = expand_bias_specs(config.eval_bias_spec)
-    feature_type = getattr(config, "feature_type", FeatureType.CONTINUOUS)
-
-    if feature_type == FeatureType.CONTINUOUS:
-        continuous_data = load_continuous_research_data(config, expanded)
-        if not continuous_data.successful_param_grid or continuous_data.reference_index is None:
-            raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
-
-        successful_param_grid = expand_params_with_selected_bin(
-            continuous_data.successful_param_grid,
-            bin_index_min=config.binning_params.bin_index_min,
-            bin_index_max=config.binning_params.bin_index_max,
-        )
-        reference_target = build_reference_target(
-            continuous_data.reference_index,
-            continuous_data.reference_target_series,
-        )
-        reference_candles = pd.DataFrame(
-            {"close": reference_target}, index=continuous_data.reference_index
-        )
-        portfolio_candles = load_portfolio_candles(config)
-        evaluator = build_continuous_walkforward_evaluator(
-            continuous_data.combo_feature_target, config
-        )
-        return (
-            reference_candles,
-            reference_target,
-            successful_param_grid,
-            evaluator,
-            config,
-            continuous_data.combo_feature_target,
-            portfolio_candles,
-        )
-
-    rule_data = load_rule_based_research_data(
+    data = load_signed_signal_research_data(
         config,
         expanded,
-        dedupe_before_multiply=False,
-        capture_target_as_reference=True,
     )
-    if not rule_data.successful_param_grid or rule_data.reference_index is None:
+    if not data.successful_param_grid or data.reference_index is None:
         raise ValueError("No param combos loaded successfully; check cache and bias_spec.")
 
-    reference_target = build_reference_target(
-        rule_data.reference_index,
-        rule_data.reference_target_series,
-    )
-    reference_candles = pd.DataFrame({"close": reference_target}, index=rule_data.reference_index)
-    evaluator = build_rule_based_walkforward_evaluator(rule_data.combo_returns)
+    reference_target = build_reference_target(data.reference_index, data.reference_target_series)
+    reference_candles = pd.DataFrame({"close": reference_target}, index=data.reference_index)
+    portfolio_candles = load_portfolio_candles(config)
+    evaluator = build_signed_signal_walkforward_evaluator(data.combo_signal_target)
     return (
         reference_candles,
         reference_target,
-        rule_data.successful_param_grid,
+        data.successful_param_grid,
         evaluator,
         config,
-        None,
-        None,
+        data.combo_signal_target,
+        portfolio_candles,
     )
 
 
@@ -180,7 +138,6 @@ def _one_candle_shuffle_rep(
     expanded: list,
     runtime_config: WalkforwardResearchConfig,
     module_name: str,
-    feature_type: FeatureType,
     objective_metric_name: str,
 ) -> float:
     from utils.evaluation.permutation_test.candle_shuffle import permute_walk_forward
@@ -191,67 +148,30 @@ def _one_candle_shuffle_rep(
         train_windows=train_windows,
         random_seed=seed,
     )
-    if feature_type == FeatureType.CONTINUOUS:
-        continuous_data = load_continuous_research_data(
-            config,
-            expanded,
-            candles_override=shuffled_candles,
-        )
-        if not continuous_data.successful_param_grid or continuous_data.reference_index is None:
-            return 0.0
-        successful_param_grid = expand_params_with_selected_bin(
-            continuous_data.successful_param_grid,
-            bin_index_min=config.binning_params.bin_index_min,
-            bin_index_max=config.binning_params.bin_index_max,
-        )
-        ref_target = build_reference_target(
-            continuous_data.reference_index,
-            continuous_data.reference_target_series,
-        )
-        ref_candles = pd.DataFrame({"close": ref_target}, index=continuous_data.reference_index)
-        evaluator = build_continuous_walkforward_evaluator(
-            continuous_data.combo_feature_target, config
-        )
-        portfolio_candles_df = load_portfolio_candles(config)
-        report = run_walkforward_research(
-            candles_df=ref_candles,
-            target=ref_target,
-            feature_type="continuous",
-            module_name=module_name,
-            config=runtime_config,
-            param_grid=successful_param_grid,
-            evaluate_param_combo=evaluator,
-            research_config=config,
-            portfolio_candles_df=portfolio_candles_df,
-            feature_data_by_combo=continuous_data.combo_feature_target,
-            output_dir=None,
-            fold_rows_override=fold_rows,
-        )
-    else:
-        rule_data = load_rule_based_research_data(
-            config,
-            expanded,
-            candles_override=shuffled_candles,
-            dedupe_before_multiply=False,
-            capture_target_as_reference=False,
-        )
-        if not rule_data.successful_param_grid or rule_data.reference_index is None:
-            return 0.0
-        ref_target = build_reference_target(rule_data.reference_index, None)
-        ref_candles = pd.DataFrame({"close": ref_target}, index=rule_data.reference_index)
-        evaluator = build_rule_based_walkforward_evaluator(rule_data.combo_returns)
-        report = run_walkforward_research(
-            candles_df=ref_candles,
-            target=ref_target,
-            feature_type="rule_based",
-            module_name=module_name,
-            config=runtime_config,
-            param_grid=rule_data.successful_param_grid,
-            evaluate_param_combo=evaluator,
-            research_config=config,
-            output_dir=None,
-            fold_rows_override=fold_rows,
-        )
+    data = load_signed_signal_research_data(
+        config,
+        expanded,
+        candles_override=shuffled_candles,
+    )
+    if not data.successful_param_grid or data.reference_index is None:
+        return 0.0
+    ref_target = build_reference_target(data.reference_index, data.reference_target_series)
+    ref_candles = pd.DataFrame({"close": ref_target}, index=data.reference_index)
+    evaluator = build_signed_signal_walkforward_evaluator(data.combo_signal_target)
+    report = run_walkforward_research(
+        candles_df=ref_candles,
+        target=ref_target,
+        feature_type="signed_signal",
+        module_name=module_name,
+        config=runtime_config,
+        param_grid=data.successful_param_grid,
+        evaluate_param_combo=evaluator,
+        research_config=config,
+        portfolio_candles_df=load_portfolio_candles(config),
+        feature_data_by_combo=data.combo_signal_target,
+        output_dir=None,
+        fold_rows_override=fold_rows,
+    )
     return float(
         aggregate_oos_metric_from_report(
             report,
@@ -282,7 +202,6 @@ def run_candle_shuffle_null(
 
     expanded = expand_bias_specs(config.eval_bias_spec)
     module_name = str(getattr(config, "bias_spec", {}).get("module_name", "rsi"))
-    feature_type = getattr(config, "feature_type", FeatureType.CONTINUOUS)
     rng = np.random.default_rng(random_seed)
     seeds = [int(rng.integers(0, 2**31)) for _ in range(nreps)]
 
@@ -298,7 +217,6 @@ def run_candle_shuffle_null(
                 expanded,
                 runtime_config,
                 module_name,
-                feature_type,
                 objective_metric_name,
             )
         return null_metrics
@@ -319,7 +237,6 @@ def run_candle_shuffle_null(
                 expanded,
                 runtime_config,
                 module_name,
-                feature_type,
                 objective_metric_name,
             )
             for seed in seeds
@@ -364,7 +281,6 @@ def run_permutation_for_phase(
     from utils.evaluation.walkforward.metrics import resolve_objective_metric
     from utils.evaluation.walkforward.permutation_core import (
         _compute_fixed_oos_signal_by_fold,
-        _compute_rule_based_oos_signal_by_fold,
         aggregate_per_ticker_metrics,
         aggregate_per_ticker_nulls,
         run_vector_shuffle_null,
@@ -530,12 +446,8 @@ def run_permutation_for_phase(
         if not fold_rows:
             raise ValueError(f"{phase_label} fold has insufficient samples. Check {phase} window dates and data range.")
 
-        _ft = getattr(config, "feature_type", None)
-        feature_type = (
-            _ft.value if isinstance(_ft, FeatureType) else
-            ("continuous" if feature_data_by_combo is not None else "rule_based")
-        )
-
+        if feature_data_by_combo is None:
+            raise ValueError("Frozen-signal permutation requires feature_data_by_combo.")
         if portfolio_candles_df is None:
             portfolio_candles_df = load_candles_for_config(config_phase)
 
@@ -543,7 +455,7 @@ def run_permutation_for_phase(
         report0 = run_walkforward_research(
             candles_df=reference_candles,
             target=reference_target,
-            feature_type=feature_type,
+            feature_type="signed_signal",
             module_name=module_name,
             config=runtime_config,
             param_grid=param_grid,
@@ -569,127 +481,44 @@ def run_permutation_for_phase(
 
         if effective_mode == "vector_shuffle":
             unit1_mask, unit2_mask = two_unit_masks_from_fold_rows(reference_target.index, fold_rows)
-            if feature_data_by_combo is not None:
-                fixed_oos_signal_by_fold = _compute_fixed_oos_signal_by_fold(
-                    fold_rows=fold_rows,
-                    selection_summary_df=report0.selection_summary_df,
-                    reference_target=reference_target,
-                    research_config=cfg,
-                    feature_data_by_combo=feature_data_by_combo,
-                )
+            fixed_oos_signal_by_fold = _compute_fixed_oos_signal_by_fold(
+                fold_rows=fold_rows,
+                selection_summary_df=report0.selection_summary_df,
+                feature_data_by_combo=feature_data_by_combo,
+            )
+            if not fixed_oos_signal_by_fold:
+                print(f"{prefix}Frozen-signal extraction failed; null distribution set to zeros.")
+                null_metrics = np.zeros(nreps, dtype=float)
+                canonical_oos_index = pd.Index([], dtype="datetime64[ns]")
+                return_matrix = np.zeros((nreps, 0), dtype=float) if return_return_matrix else None
+            else:
                 canonical_oos_index = (
                     agg_returns_clean.index if agg_returns is not None else pd.Index([], dtype="datetime64[ns]")
                 )
                 print(f"{prefix}Running vector shuffle null (nreps={nreps})...")
+                null_result = run_vector_shuffle_null(
+                    reference_candles=reference_candles,
+                    reference_target=reference_target,
+                    fold_rows=fold_rows,
+                    unit1_mask=unit1_mask,
+                    unit2_mask=unit2_mask,
+                    nreps=nreps,
+                    random_seed=random_seed,
+                    initial_report=report0,
+                    research_config=config,
+                    feature_data_by_combo=feature_data_by_combo,
+                    portfolio_candles_df=portfolio_candles_df,
+                    n_jobs=n_jobs,
+                    fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
+                    objective_metric_name=objective_metric_name,
+                    canonical_oos_index=canonical_oos_index,
+                    return_returns=return_return_matrix,
+                )
                 if return_return_matrix:
-                    null_result = run_vector_shuffle_null(
-                        reference_candles=reference_candles,
-                        reference_target=reference_target,
-                        fold_rows=fold_rows,
-                        unit1_mask=unit1_mask,
-                        unit2_mask=unit2_mask,
-                        nreps=nreps,
-                        random_seed=random_seed,
-                        initial_report=report0,
-                        research_config=config,
-                        feature_data_by_combo=feature_data_by_combo,
-                        portfolio_candles_df=portfolio_candles_df,
-                        n_jobs=n_jobs,
-                        fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                        objective_metric_name=objective_metric_name,
-                        canonical_oos_index=canonical_oos_index,
-                        return_returns=True,
-                    )
                     null_metrics, canonical_oos_index, return_matrix = null_result
                 else:
-                    null_metrics = run_vector_shuffle_null(
-                        reference_candles=reference_candles,
-                        reference_target=reference_target,
-                        fold_rows=fold_rows,
-                        unit1_mask=unit1_mask,
-                        unit2_mask=unit2_mask,
-                        nreps=nreps,
-                        random_seed=random_seed,
-                        initial_report=report0,
-                        research_config=config,
-                        feature_data_by_combo=feature_data_by_combo,
-                        portfolio_candles_df=portfolio_candles_df,
-                        n_jobs=n_jobs,
-                        fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                        objective_metric_name=objective_metric_name,
-                        canonical_oos_index=canonical_oos_index,
-                        return_returns=False,
-                    )
+                    null_metrics = null_result
                     return_matrix = None
-            else:
-                if agg_returns is None or agg_returns_clean.empty:
-                    print(f"{prefix}Rule-based aggregate {phase_label} returns are empty; null distribution set to zeros.")
-                    null_metrics = np.zeros(nreps, dtype=float)
-                    canonical_oos_index = pd.Index([], dtype="datetime64[ns]")
-                    return_matrix = np.zeros((nreps, 0), dtype=float) if return_return_matrix else None
-                else:
-                    canonical_oos_index = (
-                        agg_returns_clean.index if agg_returns is not None else pd.Index([], dtype="datetime64[ns]")
-                    )
-                    fixed_oos_signal_by_fold = _compute_rule_based_oos_signal_by_fold(
-                        fold_rows=fold_rows,
-                        reference_candles=reference_candles,
-                        reference_target=reference_target,
-                        selection_summary_df=report0.selection_summary_df,
-                        research_config=config,
-                        portfolio_candles_df=portfolio_candles_df,
-                    )
-                    if not fixed_oos_signal_by_fold:
-                        print(
-                            f"{prefix}Rule-based fixed signal extraction failed/empty; "
-                            f"falling back to legacy per-rep refit (nreps={nreps})..."
-                        )
-                        fixed_oos_signal_by_fold = None
-                    else:
-                        print(
-                            f"{prefix}Running vector shuffle null for rule-based via fixed signal "
-                            f"(nreps={nreps})..."
-                        )
-                    if return_return_matrix:
-                        null_result = run_vector_shuffle_null(
-                            reference_candles=reference_candles,
-                            reference_target=reference_target,
-                            fold_rows=fold_rows,
-                            unit1_mask=unit1_mask,
-                            unit2_mask=unit2_mask,
-                            nreps=nreps,
-                            random_seed=random_seed,
-                            initial_report=report0,
-                            research_config=config,
-                            feature_data_by_combo=None,
-                            portfolio_candles_df=portfolio_candles_df,
-                            n_jobs=n_jobs,
-                            fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                            objective_metric_name=objective_metric_name,
-                            canonical_oos_index=canonical_oos_index,
-                            return_returns=True,
-                        )
-                        null_metrics, canonical_oos_index, return_matrix = null_result
-                    else:
-                        null_metrics = run_vector_shuffle_null(
-                            reference_candles=reference_candles,
-                            reference_target=reference_target,
-                            fold_rows=fold_rows,
-                            unit1_mask=unit1_mask,
-                            unit2_mask=unit2_mask,
-                            nreps=nreps,
-                            random_seed=random_seed,
-                            initial_report=report0,
-                            research_config=config,
-                            feature_data_by_combo=None,
-                            portfolio_candles_df=portfolio_candles_df,
-                            n_jobs=n_jobs,
-                            fixed_oos_signal_by_fold=fixed_oos_signal_by_fold,
-                            objective_metric_name=objective_metric_name,
-                            canonical_oos_index=canonical_oos_index,
-                            return_returns=False,
-                        )
-                        return_matrix = None
         else:
             print(f"{prefix}Running candle shuffle null (nreps={nreps})...")
             null_metrics = run_candle_shuffle_null(
@@ -766,7 +595,7 @@ def run_permutation_for_phase(
     if out_dir is None:
         out_dir = (
             resolve_walkforward_output_dir(
-                feature_type=getattr(config, "feature_type", FeatureType.CONTINUOUS).value,
+                feature_type=SIGNED_SIGNAL_FEATURE_TYPE,
                 module_name=module_name,
                 root_dir=getattr(config, "output_root", Path("feature_research/shared_results")),
                 output_subdir=phase_subdir,

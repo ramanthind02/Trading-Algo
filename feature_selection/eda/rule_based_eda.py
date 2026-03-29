@@ -1,4 +1,4 @@
-"""Rule-based feature EDA (T003): per-level stats, bootstrap CI, plots."""
+"""Signed-signal feature EDA (T003): per-level stats, bootstrap CI, plots."""
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
@@ -132,7 +132,7 @@ def _bootstrap_for_level(
     )
 
 
-def create_rule_based_eda_plots(
+def create_signed_signal_eda_plots(
     per_level_stats: PerLevelStats,
     bootstrap_ci: BootstrapCIResults,
 ) -> RuleBasedEDAPlots:

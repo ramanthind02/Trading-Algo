@@ -12,25 +12,18 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from feature_research.config import FeatureType
-from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
+from feature_research.core_helpers import combo_key
 from utils.evaluation.walkforward.permutation_helpers import (
     _joblib_tqdm,
     aggregate_oos_metric_from_report,
     permute_target_in_two_units,
 )
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
-from utils.evaluation.walkforward.portfolio_evaluator import (
-    _build_one_base_model_with_members,
-    _normalize_timeframe,
-    build_research_portfolio,
-)
+from utils.evaluation.walkforward.portfolio_evaluator import _signal_return_series
 from utils.evaluation.walkforward.runner import (
     _parse_top_k_param_labels,
-    _resolve_feature_type,
     run_portfolio_simulation,
 )
-from utils.core.enums import Direction, TimeFrame, coerce_direction
 
 
 def _compute_metrics_from_returns_matrix(
@@ -240,41 +233,10 @@ def run_vector_shuffle_null_vectorized(
 def _compute_fixed_oos_signal_by_fold(
     fold_rows: list[dict],
     selection_summary_df: pd.DataFrame,
-    reference_target: pd.Series,
-    research_config: object,
     feature_data_by_combo: dict,
 ) -> dict[int, pd.Series]:
-    """Compute per-fold OOS averaged binned signal (fixed feature vector) from original run.
-
-    Fits binning once per fold with real target; returns averaged member signals on test only.
-    Used for vector-shuffle null: no refit in the null loop.
-    """
+    """Compute per-fold OOS averaged frozen-signal returns from the original run."""
     result: dict[int, pd.Series] = {}
-    all_index = reference_target.index
-    if getattr(all_index, "tz", None) is not None:
-        all_index = all_index.tz_localize(None)
-    # Reindex requires unique index; multi-ticker target can have duplicate datetimes.
-    target_unique = (
-        reference_target.groupby(level=0).first()
-        if reference_target.index.duplicated().any()
-        else reference_target
-    )
-    binning_config = getattr(research_config, "binning_params", None)
-    if binning_config is None:
-        return result
-    tickers = getattr(research_config, "tickers", [])
-    bias_spec = getattr(research_config, "bias_spec", {}) or {}
-    module_name = str(bias_spec.get("module_name", "rsi")) if hasattr(bias_spec, "get") else "rsi"
-    timeframes = bias_spec.get("timeframes", [None]) if hasattr(bias_spec, "get") else [None]
-    tf_raw = timeframes[0] if timeframes else None
-    trading_timeframe = (
-        _normalize_timeframe(tf_raw) if tf_raw is not None else TimeFrame.D
-    )
-    strategy = coerce_direction(
-        getattr(binning_config, "strategy", Direction.LONG.value),
-        field_name="binning_config.strategy",
-    ).value
-
     for fold_row in fold_rows:
         fold_id = int(fold_row["fold_id"])
         summary = selection_summary_df.loc[selection_summary_df["fold_id"] == fold_id]
@@ -283,193 +245,21 @@ def _compute_fixed_oos_signal_by_fold(
         selected_params = _parse_top_k_param_labels(str(summary.iloc[0]["top_k_features"]))
         if not selected_params:
             continue
-        if all(k in fold_row for k in ("train_start", "train_end", "test_start", "test_end")):
-            train_start = pd.Timestamp(fold_row["train_start"])
-            train_end = pd.Timestamp(fold_row["train_end"])
-            test_start = pd.Timestamp(fold_row["test_start"])
-            test_end = pd.Timestamp(fold_row["test_end"])
-            train_mask = (all_index >= train_start) & (all_index <= train_end)
-            test_mask = (all_index >= test_start) & (all_index <= test_end)
-        else:
-            train_mask = cast(pd.Series, fold_row["_train_mask"])
-            test_mask = cast(pd.Series, fold_row["_test_mask"])
-        train_index = all_index[train_mask]
-        test_index = all_index[test_mask]
-        train_index_unique = pd.DatetimeIndex(train_index.unique()).sort_values()
-        test_index_unique = pd.DatetimeIndex(test_index.unique()).sort_values()
-        train_target = target_unique.reindex(train_index_unique).dropna()
-
-        try:
-            feature_type = _resolve_feature_type(research_config)
-            base_model, _train_df, test_features_df = _build_one_base_model_with_members(
-                selected_params=selected_params,
-                binning_config=binning_config,
-                tickers=list(tickers),
-                trading_timeframe=trading_timeframe,
-                module_name=module_name,
-                feature_data_by_combo=feature_data_by_combo,
-                train_index=train_index_unique,
-                test_index=test_index_unique,
-                train_target=train_target,
-                feature_type=feature_type,
-            )
-        except Exception:
-            continue
-        member_signals: list[pd.Series] = []
-        for name, bm in base_model.members:
-            col = getattr(base_model, "_member_feature_columns", {}).get(
-                name, base_model.feature_column
-            )
-            if col is None or col not in test_features_df.columns:
+        fold_returns: list[pd.Series] = []
+        for params in selected_params:
+            combo_data = feature_data_by_combo.get(combo_key(params))
+            if combo_data is None or combo_data.empty:
                 continue
-            test_ser = test_features_df[col].dropna()
-            if test_ser.empty:
-                continue
-            sig = bm.predict(test_ser, strategy=strategy)
-            member_signals.append(sig)
-        if not member_signals:
-            continue
-        aligned = pd.concat(member_signals, axis=1)
-        aligned = aligned.dropna(how="all")
-        if aligned.empty:
-            continue
-        avg_signal = aligned.mean(axis=1)
-        result[fold_id] = avg_signal
-
-    return result
-
-
-def _compute_rule_based_oos_signal_by_fold(
-    fold_rows: list[dict],
-    reference_candles: pd.DataFrame,
-    reference_target: pd.Series,
-    selection_summary_df: pd.DataFrame,
-    research_config: object,
-    portfolio_candles_df: pd.DataFrame | None = None,
-) -> dict[int, pd.Series]:
-    """Per-fold OOS position fractions from fitted rule-based portfolio (one-time, no null loop refit).
-
-    Fits the portfolio ONCE per fold with real target; extracts position_fraction
-    on the test window (averaged across tickers). Returned dict is passed to
-    run_vector_shuffle_null as fixed_oos_signal_by_fold, triggering the fast
-    vectorized null path (~50k reps/sec).
-
-    Parameters
-    ----------
-    fold_rows, reference_target, selection_summary_df, research_config : as in _compute_fixed_oos_signal_by_fold
-    reference_candles : pd.DataFrame
-        Low-level candles (may have limited columns). Used only for slicing logic;
-        actual fit/predict uses candles_for_fitting (see below).
-    portfolio_candles_df : pd.DataFrame or None
-        Full OHLCV candles with all columns required by portfolio.fit_from_candles.
-        If provided, used for fit/predict instead of reference_candles.
-    """
-    result: dict[int, pd.Series] = {}
-    binning_config = getattr(research_config, "binning_params", None)
-    if binning_config is None:
-        return result
-    tickers = list(getattr(research_config, "tickers", []))
-    bias_spec = getattr(research_config, "bias_spec", {}) or {}
-    module_name = str(bias_spec.get("module_name", "rsi")) if hasattr(bias_spec, "get") else "rsi"
-    timeframes = bias_spec.get("timeframes", [None]) if hasattr(bias_spec, "get") else [None]
-    tf_raw = timeframes[0] if timeframes else None
-    trading_timeframe = _normalize_timeframe(tf_raw) if tf_raw is not None else TimeFrame.D
-
-    # Use portfolio candles for fitting if available (has all required columns)
-    candles_for_fitting = portfolio_candles_df if portfolio_candles_df is not None else reference_candles
-
-    target_unique = (
-        reference_target.groupby(level=0).first()
-        if reference_target.index.duplicated().any()
-        else reference_target
-    )
-
-    for fold_row in fold_rows:
-        fold_id = int(fold_row["fold_id"])
-        summary = selection_summary_df.loc[selection_summary_df["fold_id"] == fold_id]
-        if summary.empty:
-            continue
-        selected_params = _parse_top_k_param_labels(str(summary.iloc[0]["top_k_features"]))
-        if not selected_params:
-            continue
-
-        # Slice candles using timestamps (masks are built on different index)
-        train_start = pd.Timestamp(fold_row["train_start"])
-        train_end = pd.Timestamp(fold_row["train_end"])
-        test_start = pd.Timestamp(fold_row["test_start"])
-        test_end = pd.Timestamp(fold_row["test_end"])
-
-        # Handle both DatetimeIndex and MultiIndex (ticker, datetime)
-        if isinstance(candles_for_fitting.index, pd.MultiIndex):
-            # Multi-level index: get last level (datetime)
-            idx = candles_for_fitting.index.get_level_values(-1)
-        else:
-            idx = candles_for_fitting.index
-
-        train_candles = candles_for_fitting.loc[(idx >= train_start) & (idx <= train_end)]
-        test_candles = candles_for_fitting.loc[(idx >= test_start) & (idx <= test_end)]
-        daily_volatility_df = compute_daily_ewsd_volatility(
-            pd.concat([train_candles, test_candles], ignore_index=True)
-        )
-
-        train_end_ts = pd.Timestamp(fold_row["train_end"])
-        train_target = target_unique.loc[:train_end_ts].dropna()
-
-        try:
-            portfolio = build_research_portfolio(
-                selected_params=selected_params,
-                binning_config=binning_config,
-                tickers=tickers,
-                trading_timeframe=trading_timeframe,
-                module_name=module_name,
-                feature_type=FeatureType.RULE_BASED,
-            )
-            portfolio.fit_from_candles(train_candles, target_data=train_target)
-            predictions = portfolio.predict_from_candles(
-                test_candles,
-                daily_volatility_df=daily_volatility_df,
-            )
-            portfolio_preds = predictions["portfolio"] if isinstance(predictions, dict) else predictions
-            if "position_fraction" not in portfolio_preds.columns:
-                continue
-            if "datetime" in portfolio_preds.columns:
-                pos_df = portfolio_preds.set_index("datetime")
+            signal_returns = _signal_return_series(combo_data)
+            if all(k in fold_row for k in ("test_start", "test_end")):
+                test_start = pd.Timestamp(fold_row["test_start"])
+                test_end = pd.Timestamp(fold_row["test_end"])
+                fold_returns.append(signal_returns.loc[(signal_returns.index >= test_start) & (signal_returns.index <= test_end)])
             else:
-                pos_df = portfolio_preds
-            # Average position_fraction across tickers per datetime.
-            # portfolio predictions may come back as:
-            # - DatetimeIndex (single ticker or already aggregated)
-            # - MultiIndex with levels in either order: (datetime, ticker) or (ticker, datetime)
-            if isinstance(pos_df.index, pd.MultiIndex):
-                dt_level: int | None = None
-                names = list(pos_df.index.names)
-                if "datetime" in names:
-                    dt_level = names.index("datetime")
-                else:
-                    for i in range(pos_df.index.nlevels):
-                        lvl = pos_df.index.get_level_values(i)
-                        if np.issubdtype(lvl.dtype, np.datetime64):
-                            dt_level = i
-                            break
-                if dt_level is None:
-                    dt_level = pos_df.index.nlevels - 1
-                pos_signal = pos_df["position_fraction"].groupby(level=dt_level).mean()
-            else:
-                pos_signal = pos_df["position_fraction"]
-            pos_signal = pos_signal.sort_index()
-            # Ensure datetime index (tz-naive) for later alignment with target_unique (DatetimeIndex).
-            try:
-                pos_idx = pd.DatetimeIndex(pos_signal.index)
-                if getattr(pos_idx, "tz", None) is not None:
-                    pos_idx = pos_idx.tz_localize(None)
-                pos_signal.index = pos_idx
-            except Exception:
-                continue
-            if pos_signal.empty:
-                continue
-            result[fold_id] = pos_signal
-        except Exception:
+                fold_returns.append(signal_returns.loc[cast(pd.Series, fold_row["_test_mask"]).astype(bool)])
+        if not fold_returns:
             continue
+        result[fold_id] = pd.concat(fold_returns, axis=1).mean(axis=1).dropna().sort_index()
 
     return result
 

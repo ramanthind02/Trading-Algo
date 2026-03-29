@@ -6,12 +6,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import pytest
 
 from ensemble.vault_manager import (
-    add_feature_to_ensemble,
     create_ensemble_directory,
     generate_model_id,
     ensure_vault_cache_coverage,
@@ -23,49 +20,106 @@ from ensemble.vault_manager import (
     update_base_model_fitted_params,
     validate_ensemble_directory,
 )
-from feature_selection.base_models import ContinuousBinningModel
-from feature_selection.base_models.feature_base_model import BaseModel
+from ensemble.ensemble_utils import create_base_model_from_config
+from feature_selection.domain_discrete import (
+    DomainDiscreteMigrationError,
+    build_domain_discrete_bias_node_spec,
+)
 from utils.core.enums import Direction, TimeFrame, Ticker
 
 
-def _make_base_model(lookback: int = 2) -> BaseModel:
-    bias_node_spec = {
-        "module_name": "rsi",
-        "timeframes": [TimeFrame.D],
-        "params": {"lookback": lookback},
+def _make_base_model(lookback: int = 2):
+    config = {
+        "name": "rsi_signal_D_domain_discrete",
+        "model_type": "domain_discrete",
+        "feature_column": f"rsi_signal_D_lookback_{lookback}",
+        "strategy": "long",
+        "bias_node_spec": {
+            "module_name": "domain_discrete",
+            "timeframes": ["D"],
+            "params": {
+                "source_bias_node_spec": {
+                    "module_name": "rsi",
+                    "timeframes": ["D"],
+                    "params": {"lookback": lookback},
+                },
+                "ticker_scope": {"tickers": ["ES"], "scope_name": "ES"},
+                "edges": [-0.5, 0.5],
+                "n_bins": 3,
+                "long_bins": [2],
+                "short_bins": [],
+                "direction": "long",
+                "spec_version": "v1",
+            },
+        },
+        "tickers": ["ES"],
     }
-    model = BaseModel(
-        feature_config={"bias_node_spec": bias_node_spec},
-        tickers=[Ticker.ES],
-        binning_model=ContinuousBinningModel(n_bins=3, strategy="long"),
-        use_cache=False,
+    return create_base_model_from_config(config, use_cache=False)
+
+
+def _write_domain_discrete_feature_file(
+    ensemble_dir: str,
+    feature_name: str = "rsi_signal_D",
+    lookback: int = 2,
+    *,
+    members: list[dict[str, object]] | None = None,
+) -> str:
+    model = _make_base_model(lookback=lookback)
+    model_id = generate_model_id(
+        "domain_discrete",
+        {},
+        bias_node_params={"params": model.domain_discrete_spec.to_mapping()},
     )
-    idx = pd.date_range("2020-01-01", periods=150, freq="D")
-    candles = pd.DataFrame(
-        {
-            "datetime": idx,
-            "open": 100.0 + np.arange(len(idx)) * 0.1,
-            "high": 101.0 + np.arange(len(idx)) * 0.1,
-            "low": 99.0 + np.arange(len(idx)) * 0.1,
-            "close": 100.2 + np.arange(len(idx)) * 0.1,
-            "volume": 1_000_000.0,
-            "ticker": Ticker.ES,
-            "timeframe": TimeFrame.D,
-        }
+    serializable_bias_node_spec = build_domain_discrete_bias_node_spec(
+        model.domain_discrete_spec
     )
-    rng = np.random.default_rng(42)
-    target = pd.Series(0.01 + rng.normal(0, 0.002, len(idx)), index=idx)
-    model.fit(candles, target)
-    return model
+    payload = {
+        "feature_name": feature_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "bias_node_spec": serializable_bias_node_spec,
+        "tickers": [Ticker.ES.name],
+        "base_models": [
+            {
+                "model_id": model_id,
+                "model_name": f"{feature_name}::{model_id}",
+                "model_type": "domain_discrete",
+                "feature_column": feature_name,
+                "strategy": model.strategy.value if hasattr(model.strategy, "value") else model.strategy,
+                "bias_node_spec": serializable_bias_node_spec,
+            }
+        ],
+    }
+    if members is not None:
+        payload["base_models"][0]["members"] = members
+
+    feature_file = Path(ensemble_dir) / "features" / f"{feature_name}.json"
+    feature_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(feature_file, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+        handle.write("\n")
+    return model_id
 
 
 def test_generate_model_id_appends_bias_node_params() -> None:
     model_id = generate_model_id(
-        "rule_based",
-        {"selection_metric": "t_stat"},
-        bias_node_params={"lookback": 2},
+        "domain_discrete",
+        {
+            "source_bias_node_spec": {
+                "module_name": "rsi",
+                "timeframes": ["D"],
+                "params": {"lookback": 2},
+            },
+            "ticker_scope": {"tickers": ["ES"], "scope_name": "ES"},
+            "edges": [-0.5, 0.5],
+            "n_bins": 3,
+            "long_bins": [2],
+            "short_bins": [],
+            "direction": "long",
+            "spec_version": "v1",
+        },
     )
-    assert model_id == "rule_based_lookback_2"
+    assert model_id == "domain_discrete_rsi_long_es_v1"
 
 
 def test_add_feature_writes_feature_name_only(tmp_path) -> None:
@@ -75,20 +129,7 @@ def test_add_feature_writes_feature_name_only(tmp_path) -> None:
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    bias_node_spec = model.bias_node_spec
-
-    model_id = add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={
-            "module_name": bias_node_spec["module_name"],
-            "timeframes": bias_node_spec["timeframes"],
-        },
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    model_id = _write_domain_discrete_feature_file(ensemble_dir)
 
     feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
     assert feature_file.exists()
@@ -97,8 +138,11 @@ def test_add_feature_writes_feature_name_only(tmp_path) -> None:
     assert payload["feature_name"] == "rsi_signal_D"
     assert "feature_column" not in payload
     assert payload["base_models"][0]["model_id"] == model_id
-    assert payload["base_models"][0]["bias_node_params"] == {"lookback": 2}
-    assert payload["base_models"][0]["requires_fit"] is True
+    assert payload["base_models"][0]["model_type"] == "domain_discrete"
+    assert payload["base_models"][0]["bias_node_spec"]["module_name"] == "domain_discrete"
+    assert payload["base_models"][0]["bias_node_spec"]["params"]["spec_version"] == "v1"
+    assert "requires_fit" not in payload["base_models"][0]
+    assert "fitted_params" not in payload["base_models"][0]
 
 
 def test_load_models_merges_bias_node_params_single_model(tmp_path) -> None:
@@ -108,15 +152,7 @@ def test_load_models_merges_bias_node_params_single_model(tmp_path) -> None:
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=5)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 5},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    _write_domain_discrete_feature_file(ensemble_dir, lookback=5)
 
     loaded = load_feature_base_models(
         feature_name="rsi_signal_D",
@@ -124,7 +160,8 @@ def test_load_models_merges_bias_node_params_single_model(tmp_path) -> None:
     )
     assert len(loaded) == 1
     loaded_model = next(iter(loaded.values()))
-    assert loaded_model.bias_node_spec["params"]["lookback"] == 5
+    assert loaded_model.model_type == "domain_discrete"
+    assert loaded_model.bias_node_spec["params"]["source_bias_node_spec"]["params"]["lookback"] == 5
 
 
 def test_update_fitted_params_path(tmp_path) -> None:
@@ -134,34 +171,21 @@ def test_update_fitted_params_path(tmp_path) -> None:
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
-    model_id = Path(ensemble_dir).joinpath("features", "rsi_signal_D.json")
-    with open(model_id, "r") as handle:
+    _write_domain_discrete_feature_file(ensemble_dir)
+    feature_file = Path(ensemble_dir).joinpath("features", "rsi_signal_D.json")
+    with open(feature_file, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
     base_model_id = payload["base_models"][0]["model_id"]
 
-    fitted_payload = model.binning_model.get_fitted_params()
-    update_base_model_fitted_params(
-        ensemble_dir=ensemble_dir,
-        feature_name="rsi_signal_D",
-        model_id=base_model_id,
-        fitted_params=fitted_payload,
-        train_start="2020-01-01",
-        train_end="2020-12-31",
+    with pytest.raises(DomainDiscreteMigrationError, match="domain-discrete cutover"):
+        update_base_model_fitted_params(
+            ensemble_dir=ensemble_dir,
+            feature_name="rsi_signal_D",
+            model_id=base_model_id,
+            fitted_params={"model_version": "binning_v2"},
+            train_start="2020-01-01",
+            train_end="2020-12-31",
     )
-    with open(model_id, "r") as handle:
-        updated = json.load(handle)
-    entry = updated["base_models"][0]
-    assert entry["is_fitted"] is True
-    assert entry["fitted_params"]["model_version"] == "binning_v2"
 
 
 def test_list_specs_names_and_validate(tmp_path) -> None:
@@ -171,15 +195,7 @@ def test_list_specs_names_and_validate(tmp_path) -> None:
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    _write_domain_discrete_feature_file(ensemble_dir)
 
     features_df = list_features(ensemble_dir)
     assert "feature_name" in features_df.columns
@@ -187,7 +203,8 @@ def test_list_specs_names_and_validate(tmp_path) -> None:
 
     specs = get_bias_node_specs(ensemble_dir)
     assert len(specs) == 1
-    assert specs[0]["params"]["lookback"] == 2
+    assert specs[0]["module_name"] == "domain_discrete"
+    assert specs[0]["timeframes"] == ["D"]
 
     names = get_all_base_model_names(ensemble_dir)
     assert len(names) == 1
@@ -196,31 +213,26 @@ def test_list_specs_names_and_validate(tmp_path) -> None:
     validate_ensemble_directory(ensemble_dir)
 
 
-def test_validate_rejects_legacy_members_schema(tmp_path) -> None:
+def test_validate_rejects_legacy_continuous_artifact(tmp_path) -> None:
     ensemble_dir = create_ensemble_directory(
         timeframe=TimeFrame.D,
-        ensemble_name="reject_members",
+        ensemble_name="reject_continuous",
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    _write_domain_discrete_feature_file(ensemble_dir)
     feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
-    with open(feature_file, "r") as handle:
+    with open(feature_file, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
-    payload["base_models"][0]["members"] = []
-    with open(feature_file, "w") as handle:
+    payload["base_models"][0]["model_type"] = "continuous_binning"
+    with open(feature_file, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
 
-    with pytest.raises(ValueError, match="legacy members schema"):
-        validate_ensemble_directory(ensemble_dir)
+    with pytest.raises(DomainDiscreteMigrationError, match="domain-discrete cutover"):
+        load_feature_base_models(
+            feature_name="rsi_signal_D",
+            ensemble_dir=ensemble_dir,
+        )
 
 
 def test_migrate_legacy_members_strips_empty_keys_and_updates_timestamp(tmp_path) -> None:
@@ -230,15 +242,7 @@ def test_migrate_legacy_members_strips_empty_keys_and_updates_timestamp(tmp_path
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    _write_domain_discrete_feature_file(ensemble_dir)
     feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
     with open(feature_file, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -265,15 +269,7 @@ def test_migrate_legacy_members_rejects_non_empty_payload(tmp_path) -> None:
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    _write_domain_discrete_feature_file(ensemble_dir)
     feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
     with open(feature_file, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -294,15 +290,7 @@ def test_ensure_vault_cache_coverage_dedupes_specs_and_tickers(tmp_path, monkeyp
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    _write_domain_discrete_feature_file(ensemble_dir)
     feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
     with open(feature_file, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -342,15 +330,7 @@ def test_validate_rejects_multiple_base_models_in_feature_file(tmp_path) -> None
         direction=Direction.LONG,
         vault_root=str(tmp_path / "vault"),
     )
-    model = _make_base_model(lookback=2)
-    add_feature_to_ensemble(
-        feature_name="rsi_signal_D",
-        bias_node_spec={"module_name": "rsi", "timeframes": [TimeFrame.D]},
-        bias_node_params={"lookback": 2},
-        base_model=model,
-        ensemble_dir=ensemble_dir,
-        tickers=[Ticker.ES],
-    )
+    _write_domain_discrete_feature_file(ensemble_dir)
     feature_file = Path(ensemble_dir) / "features" / "rsi_signal_D.json"
     with open(feature_file, "r") as handle:
         payload = json.load(handle)

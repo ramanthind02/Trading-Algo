@@ -33,14 +33,10 @@ import pandas as pd
 import pytest
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
-from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from feature_selection.validation.orchestration import run_permutation_test_suite
-from feature_selection.validation.permutation_tests import (
-    run_pipeline_permutation_continuous,
-    run_vector_shuffle_test,
-)
+from feature_selection.validation.permutation_tests import run_pipeline_permutation, run_vector_shuffle_test
 from feature_selection.validation.report_generator import generate_permutation_reports
 from feature_selection.validation.reports import (
     PipelinePermutationReport,
@@ -314,7 +310,7 @@ def _visualize_candle_shuffle(
     return out_path
 
 
-def _run_rule_based_permutation_suite(
+def _run_signed_signal_permutation_suite(
     bias_module: str = DEFAULT_BIAS_MODULE,
     param_name: str = DEFAULT_PARAM_NAME,
     ticker: Ticker = DEFAULT_TICKER,
@@ -325,7 +321,7 @@ def _run_rule_based_permutation_suite(
     oos_objective_metric: Optional[ObjectiveMetricSpec] = None,
     extractor_mode: Literal['momentum_proxy', 'gate_stress_proxy'] = 'momentum_proxy',
 ) -> tuple[PermutationTestSuite, list[dict], str]:
-    """Run full suite with real candles and a lightweight rule proxy extractor.
+    """Run full suite with real candles and a lightweight signed-signal proxy extractor.
 
     The extractor intentionally uses candle-derived returns as a fast integration
     proxy for orchestration plumbing. It is not a bias-node extraction
@@ -395,7 +391,6 @@ def _run_rule_based_permutation_suite(
         fold_structure=fold_structure,
         config=config,
         extractor_func=extractor,
-        feature_type='rule_based',
         feature_name=feature_col,
     )
     return suite, param_grid, feature_col
@@ -441,24 +436,16 @@ def test_vector_shuffle_stage1(
 
     feature = features_df[feature_col].dropna()
     target = targets_df['log_return'].reindex(feature.index).dropna()
-    feature = feature.reindex(target.index)
+    feature = feature.reindex(target.index).dropna()
+    target = target.reindex(feature.index)
 
     print(f'Bias: {feature_col}')
     print(f'Ticker: {ticker.value}  |  Timeframe: {timeframe.value}')
     print(f'Samples: {len(feature)} observations')
     print(f'nreps={nreps}  |  alpha={alpha}')
 
-    # Fit binning model to get position multipliers
-    model = ContinuousBinningModel(n_bins=15)
-    try:
-        model.fit(feature, target)
-        fitted_vec = model.get_fitted_vector(strategy='long')
-    except Exception as e:
-        pytest.skip(f'Could not fit binning model: {e}')
-        return
-
     report = run_vector_shuffle_test(
-        fitted_feature=fitted_vec,
+        fitted_feature=feature,
         target=target,
         objective_func=_sharpe,
         nreps=nreps,
@@ -576,15 +563,12 @@ def test_pipeline_permutation_stage2(
             return ret.rename(feature_col)
         except Exception:
             return df['close'].pct_change().fillna(0.0).rename(feature_col)
-    template_model = ContinuousBinningModel(n_bins=15)
-
     # --- Mode 1: Feature shuffle ---
     print(f'\n--- Mode 1: feature_shuffle (nreps={nreps}) ---')
     if candles is not None:
-        report_fs = run_pipeline_permutation_continuous(
+        report_fs = run_pipeline_permutation(
             candles_df=candles,
-            bias_node_extractor=bias_node_extractor,
-            binning_model=template_model,
+            signal_extractor=bias_node_extractor,
             target=target.reindex(candles.index).dropna(),
             objective_func=_sharpe,
             permutation_mode='feature_shuffle',
@@ -603,10 +587,9 @@ def test_pipeline_permutation_stage2(
 
         # --- Mode 2: Candle shuffle ---
         print(f'\n--- Mode 2: candle_shuffle (nreps={nreps}) ---')
-        report_cs = run_pipeline_permutation_continuous(
+        report_cs = run_pipeline_permutation(
             candles_df=candles,
-            bias_node_extractor=bias_node_extractor,
-            binning_model=template_model,
+            signal_extractor=bias_node_extractor,
             target=target.reindex(candles.index).dropna(),
             objective_func=_sharpe,
             permutation_mode='candle_shuffle',
@@ -692,7 +675,6 @@ def test_walkforward_stability_stage3(
         param_grid=param_grid,
         fold_structure=fold_structure,
         top_k=3,
-        feature_type='rule_based',
         feature_name=feature_col,
     )
 
@@ -736,7 +718,7 @@ def test_permutation_suite_runs_in_sample_walkforward_oos(
     print('Integration Test: In-Sample + OOS Permutation Suite Coverage')
     print('=' * 60)
 
-    suite, param_grid, feature_col = _run_rule_based_permutation_suite(
+    suite, param_grid, feature_col = _run_signed_signal_permutation_suite(
         bias_module=bias_module,
         param_name=param_name,
         ticker=ticker,
@@ -785,7 +767,7 @@ def test_permutation_suite_respects_vector_first_gate_in_oos(
     print('Integration Test: OOS Vector-First Gate')
     print('=' * 60)
 
-    suite, _, feature_col = _run_rule_based_permutation_suite(
+    suite, _, feature_col = _run_signed_signal_permutation_suite(
         bias_module=bias_module,
         param_name=param_name,
         ticker=ticker,
@@ -845,7 +827,7 @@ def test_early_stopping_orchestration(
     print('Integration Test: T016+T017 — Orchestration + Report Generation')
     print('=' * 60)
 
-    suite, param_grid, feature_col = _run_rule_based_permutation_suite(
+    suite, param_grid, feature_col = _run_signed_signal_permutation_suite(
         bias_module=bias_module,
         param_name=param_name,
         ticker=ticker,

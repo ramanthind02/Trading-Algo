@@ -1,28 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-from feature_research.config import FeatureType
-from feature_research.core_helpers import expand_params_with_bin_count, normalize_timeframe_from_bias_spec
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     load_candles_for_config,
     load_features_for_combo,
     populate_cache_if_needed,
 )
-from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
 from feature_selection.validation.objective_metrics import resolve_objective_metric
 from feature_selection.validation.orchestration import run_permutation_test_suite
 
 if TYPE_CHECKING:
     from feature_research.in_sample.config import ResearchConfig
-    from utils.evaluation.walkforward.runner import WalkforwardRunReport
     from feature_selection.validation.reports import PermutationTestSuite
 
 
@@ -126,27 +121,15 @@ def run_permutation_pipeline(
 
     _, target, feature_col = seed_feature_data
     module_name = config.bias_spec["module_name"]
-    timeframe = normalize_timeframe_from_bias_spec(config.bias_spec)
 
-    if config.feature_type == FeatureType.CONTINUOUS:
-        param_grid = [
-            combo_params
-            for single_spec in expanded
-            for combo_params in expand_params_with_bin_count(
-                dict(single_spec["params"]),
-                config.binning_params.bin_counts,
-            )
-        ]
-    else:
-        param_grid = [single_spec["params"] for single_spec in expanded]
-
+    param_grid = [single_spec["params"] for single_spec in expanded]
     bias_only_keys = frozenset(config.bias_spec.get("params", {}).keys())
 
     def extractor_func(df: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
         bias_params = {k: v for k, v in params.items() if k in bias_only_keys}
         single_spec = {
             "module_name": module_name,
-            "timeframes": [timeframe],
+            "timeframes": config.bias_spec.get("timeframes", []),
             "params": bias_params,
         }
         loaded = load_features_for_combo(single_spec, config, candles_override=df)
@@ -171,17 +154,6 @@ def run_permutation_pipeline(
     )
     objective_func = resolve_objective_metric(config.permutation.objective_metric)
 
-    if config.feature_type == FeatureType.CONTINUOUS:
-        from feature_research.in_sample.binning_analysis import binning_model_from_config
-        bp = config.binning_params
-
-        def binning_model_factory(params: dict[str, Any]) -> ContinuousBinningModel:
-            bin_count = int(cast(int, params.get("bin_count", bp.bin_counts[0])))
-            return binning_model_from_config(bp, bin_count)
-    else:
-        def binning_model_factory(_params: dict[str, Any]) -> None:
-            return None
-
     return run_permutation_test_suite(
         candles_df=candles_df,
         feature_spec=config.bias_spec,
@@ -190,7 +162,5 @@ def run_permutation_pipeline(
         objective_func=objective_func,
         config=permutation_config,
         extractor_func=extractor_func,
-        binning_model_factory=binning_model_factory,
-        feature_type=config.feature_type.value,
         feature_name=feature_col,
     )

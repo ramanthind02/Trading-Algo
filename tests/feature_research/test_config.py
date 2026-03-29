@@ -18,12 +18,12 @@ from feature_research.pipeline import run_oos_pipeline
 from utils.core.enums import Ticker, TimeFrame
 
 
-def test_load_config_returns_research_config():
+def test_load_config_returns_research_config() -> None:
     config = load_config()
     assert isinstance(config, ResearchConfig)
 
 
-def test_load_config_defaults():
+def test_load_config_defaults() -> None:
     config = load_config()
     assert Ticker.ES in config.tickers
     assert config.start == datetime(2000, 1, 1)
@@ -47,18 +47,15 @@ def test_build_objective_metric_presets_uses_timeframe_bars_per_year() -> None:
 def test_in_sample_defaults_catalog_default_for_timeframe() -> None:
     weekly_defaults = InSampleDefaultsCatalog.default_for(TimeFrame.W)
     assert weekly_defaults.continuous.bias_spec["timeframes"] == [TimeFrame.W]
-    # Rule-based preset may use a different timeframe in the catalog
-    # Just verify it has a valid bias_spec
-    assert "timeframes" in weekly_defaults.rule_based.bias_spec
+    assert "timeframes" in weekly_defaults.signed_signal.bias_spec
+    assert weekly_defaults.domain_discrete is weekly_defaults.signed_signal
+    assert weekly_defaults.for_feature_type(FeatureType.SIGNED_SIGNAL) is weekly_defaults.signed_signal
 
 
-def test_reports_dir_includes_module_name():
-    # The new unified ResearchConfig doesn't have a reports_dir field at the top level;
-    # it's derived from in_sample_defaults based on feature_type.
-    # This test is kept to document that behavior exists in the sub-configs.
+def test_reports_dir_includes_module_name() -> None:
     config = load_config()
-    rule_based_config = config.in_sample_defaults.rule_based
-    assert rule_based_config is not None
+    signed_signal_config = config.in_sample_defaults.signed_signal
+    assert signed_signal_config is not None
 
 
 # Note: The following tests were based on an older ResearchConfig structure

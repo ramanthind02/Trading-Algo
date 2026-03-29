@@ -79,7 +79,7 @@ class FeatureType(str, Enum):
     """Feature type determines validation path."""
 
     CONTINUOUS = "continuous"
-    RULE_BASED = "rule_based"
+    SIGNED_SIGNAL = "signed_signal"
 
 
 @dataclass(frozen=True)
@@ -186,9 +186,9 @@ def _default_continuous_in_sample_defaults(
             "module_name": "cyclical_rsi",
             "timeframes": [tf],
             "params": {
-                "short_period": [4],
-                "long_period": [120],
-                "rsi_period": [2]
+                "short_period": [2, 3, 4, 5, 6, 7],
+                "long_period": [80, 100, 120, 140, 160, 180, 200],
+                "rsi_period": [2, 3, 4, 5]
             },
         },
         target_col="log_return_ewsd",
@@ -198,10 +198,10 @@ def _default_continuous_in_sample_defaults(
     )
 
 
-def _default_rule_based_in_sample_defaults(
+def _default_signed_signal_in_sample_defaults(
     tf: TimeFrame = TimeFrame.D,
 ) -> InSamplePhaseDefaultsConfig:
-    """Rule-based preset: rebalancing node (ES vs TLT). Uses DEFAULT_TIMEFRAME."""
+    """Signed-signal preset: rebalancing node (ES vs TLT). Uses DEFAULT_TIMEFRAME."""
     return InSamplePhaseDefaultsConfig(
         bias_spec={
             "module_name": "rebalancing",
@@ -210,30 +210,43 @@ def _default_rule_based_in_sample_defaults(
         },
         target_col="log_return_ewsd",
         strategy=Direction.LONG,
-        reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "rule_based",
+        reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "signed_signal",
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class InSampleDefaultsCatalog:
     """Single source of truth for in-sample phase presets by feature type."""
 
     continuous: InSamplePhaseDefaultsConfig
-    rule_based: InSamplePhaseDefaultsConfig
+    signed_signal: InSamplePhaseDefaultsConfig
+
+    def __init__(
+        self,
+        *,
+        continuous: InSamplePhaseDefaultsConfig,
+        signed_signal: InSamplePhaseDefaultsConfig,
+    ) -> None:
+        object.__setattr__(self, "continuous", continuous)
+        object.__setattr__(self, "signed_signal", signed_signal)
+
+    @property
+    def domain_discrete(self) -> InSamplePhaseDefaultsConfig:
+        return self.signed_signal
 
     @classmethod
     def default_for(cls, tf: TimeFrame = TimeFrame.D) -> "InSampleDefaultsCatalog":
         return cls(
             continuous=_default_continuous_in_sample_defaults(tf),
-            rule_based=_default_rule_based_in_sample_defaults(tf),
+            signed_signal=_default_signed_signal_in_sample_defaults(tf),
         )
 
     def for_feature_type(self, feature_type: FeatureType) -> InSamplePhaseDefaultsConfig:
         match feature_type:
             case FeatureType.CONTINUOUS:
                 return self.continuous
-            case FeatureType.RULE_BASED:
-                return self.rule_based
+            case FeatureType.SIGNED_SIGNAL:
+                return self.signed_signal
         raise ValueError(f"Unknown feature_type: {feature_type}")
 
 
@@ -325,12 +338,11 @@ def load_config() -> ResearchConfig:
     # ==========================================================================
     tickers = [
 
-        Ticker.ES
+        Ticker.ES, 
+        Ticker.NQ
 
     ]
-    sector_allocation_config_path = str(
-        _FEATURE_RESEARCH_DIR / "config" / "sector_buy_hold_60_20_20.json"
-    )
+
     start = datetime(2000, 1, 1)
     end = datetime(2025, 9, 18)
     timeframe = DEFAULT_TIMEFRAME
@@ -362,7 +374,7 @@ def load_config() -> ResearchConfig:
         enabled=True,
     )
 
-    feature_type = FeatureType.RULE_BASED
+    feature_type = FeatureType.CONTINUOUS
     in_sample_defaults = InSampleDefaultsCatalog.default_for(timeframe)
     # Example: after IS EDA, set eval_bias_spec to pin specific param combos
     # for validation+OOS:
@@ -387,7 +399,7 @@ def load_config() -> ResearchConfig:
     #         strategy="long",
     #         reports_dir=_FEATURE_RESEARCH_DIR / "in_sample" / "results" / "continuous" / "rsi",
     #     ),
-    #     rule_based=_default_rule_based_in_sample_defaults(timeframe),
+    #     signed_signal=_default_signed_signal_in_sample_defaults(timeframe),
     # )
     param_sensitivity = ParamSensitivityConfig()
     # Optional: set to save research model to vault after satisfying results.
@@ -431,5 +443,4 @@ def load_config() -> ResearchConfig:
         output_root=Path("feature_research/shared_results"),
         generate_ticker_tearsheets=True,
         vault_save=vault_save,
-        sector_allocation_config_path=sector_allocation_config_path,
     )

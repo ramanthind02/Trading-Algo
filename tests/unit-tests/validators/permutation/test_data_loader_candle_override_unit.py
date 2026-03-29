@@ -402,7 +402,7 @@ def test_continuous_loader_forwards_candles_override(monkeypatch: Any) -> None:
     assert captured["candles_override"] is override
 
 
-def test_rule_based_loader_default_behavior_without_override(monkeypatch: Any) -> None:
+def test_signed_signal_loader_default_behavior_without_override(monkeypatch: Any) -> None:
     captured: dict[str, Any] = {}
 
     def _fake_extract_features_for_bias_node(**kwargs: Any) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -421,7 +421,7 @@ def test_rule_based_loader_default_behavior_without_override(monkeypatch: Any) -
         end=datetime(2024, 1, 10),
         target_col="log_return",
         use_cache=False,
-        feature_type=FeatureType.RULE_BASED,
+        feature_type=FeatureType.SIGNED_SIGNAL,
     )
 
     result = in_sample_data_loader.load_features_for_combo(
@@ -433,7 +433,7 @@ def test_rule_based_loader_default_behavior_without_override(monkeypatch: Any) -
     assert captured["candles_override"] is None
 
 
-def test_rule_based_loader_forwards_candles_override(monkeypatch: Any) -> None:
+def test_signed_signal_loader_forwards_candles_override(monkeypatch: Any) -> None:
     override = _sample_override_candles()
     captured: dict[str, Any] = {}
 
@@ -453,7 +453,7 @@ def test_rule_based_loader_forwards_candles_override(monkeypatch: Any) -> None:
         end=datetime(2024, 1, 10),
         target_col="log_return",
         use_cache=False,
-        feature_type=FeatureType.RULE_BASED,
+        feature_type=FeatureType.SIGNED_SIGNAL,
     )
 
     result = in_sample_data_loader.load_features_for_combo(
@@ -573,10 +573,11 @@ class TestPermutationCrossTickerStoreUpdate:
 # BaseModel cross-ticker pre-loading
 # ---------------------------------------------------------------------------
 
-class TestBaseModelCrossTickerPreload:
-    def test_base_model_preloads_cross_tickers_on_init(self) -> None:
-        """BaseModel.__init__ should call _preload_cross_ticker_data for spread nodes."""
+class TestBaseModelSignedSignalMigration:
+    def test_base_model_rejects_legacy_cross_ticker_spec_on_init(self) -> None:
+        """Legacy non-domain-discrete specs are rejected at BaseModel construction."""
         from feature_selection.base_models.feature_base_model import BaseModel
+        from feature_selection.domain_discrete import DomainDiscreteMigrationError
 
         feature_config = {
             "bias_node_spec": {
@@ -585,16 +586,18 @@ class TestBaseModelCrossTickerPreload:
                 "params": {"cross_tickers": ["NQ"], "lookback": 20},
             }
         }
-        _model = BaseModel(
-            feature_config=feature_config,
-            tickers=[Ticker.ES],
-            use_cache=False,
-        )
+        with pytest.raises(DomainDiscreteMigrationError, match="domain_discrete"):
+            BaseModel(
+                feature_config=feature_config,
+                tickers=[Ticker.ES],
+                use_cache=False,
+            )
         store = CrossTickerDataStore.get_instance()
-        assert store.is_loaded(Ticker.NQ, TimeFrame.D)
+        assert not store.is_loaded(Ticker.NQ, TimeFrame.D)
 
-    def test_base_model_skips_preload_for_non_cross_ticker_nodes(self) -> None:
+    def test_base_model_rejects_legacy_non_cross_ticker_spec_on_init(self) -> None:
         from feature_selection.base_models.feature_base_model import BaseModel
+        from feature_selection.domain_discrete import DomainDiscreteMigrationError
 
         feature_config = {
             "bias_node_spec": {
@@ -603,11 +606,12 @@ class TestBaseModelCrossTickerPreload:
                 "params": {"lookback": 14},
             }
         }
-        _model = BaseModel(
-            feature_config=feature_config,
-            tickers=[Ticker.ES],
-            use_cache=False,
-        )
+        with pytest.raises(DomainDiscreteMigrationError, match="domain_discrete"):
+            BaseModel(
+                feature_config=feature_config,
+                tickers=[Ticker.ES],
+                use_cache=False,
+            )
         store = CrossTickerDataStore.get_instance()
         assert not store.is_loaded(Ticker.NQ, TimeFrame.D)
         assert not store.is_loaded(Ticker.GC, TimeFrame.D)

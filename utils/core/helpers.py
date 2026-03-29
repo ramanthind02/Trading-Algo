@@ -660,6 +660,7 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     # Known multi-word module names (in order of length, longest first to match greedily)
     # All use snake_case to match Python file names
     known_modules = [
+        'domain_discrete',
         'cumulative_rsi',
         'consec_momentum',
         'ts_feature',

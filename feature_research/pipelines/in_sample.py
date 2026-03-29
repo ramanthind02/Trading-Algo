@@ -6,11 +6,9 @@ from typing import TYPE_CHECKING, cast
 
 import matplotlib
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
-from eda.parameter_analysis import generate_parameter_sensitivity_report
-from feature_research.core_helpers import normalize_series_datetime_index, normalize_timeframe_from_bias_spec
+from feature_research.core_helpers import normalize_timeframe_from_bias_spec
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     load_features_for_combo,
@@ -18,11 +16,9 @@ from feature_research.in_sample.data_loader import (
     populate_cache_if_needed,
 )
 from feature_research.in_sample.metric_helpers import compute_param_sensitivity_metric
-from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
 from feature_selection.eda.eda_reporter import (
-    run_eda_for_continuous_feature,
-    run_eda_for_rule_based_feature,
+    run_eda_for_signed_signal_feature,
     save_eda_report,
 )
 from utils.core.enums import Ticker
@@ -33,22 +29,11 @@ if TYPE_CHECKING:
 
 matplotlib.use("Agg")
 
+SIGNED_SIGNAL_FEATURE_TYPE_LABEL = "SIGNED_SIGNAL"
+
 
 def _default_rolling_window(feature: pd.Series) -> int:
     return max(20, min(252, len(feature) // 4))
-
-
-def _build_bin_count_specific_returns(
-    feature: pd.Series,
-    target: pd.Series,
-    bin_count: int,
-    config: "ResearchConfig",
-) -> pd.Series:
-    from feature_research.in_sample.binning_analysis import binning_model_from_config
-    model = binning_model_from_config(config.binning_params, bin_count)
-    model.fit(feature, target)
-    signal = model.predict(feature, strategy=config.binning_params.strategy)
-    return normalize_series_datetime_index(signal.mul(target))
 
 
 def _write_cumsum_plot(
@@ -73,45 +58,6 @@ def _write_cumsum_plot(
     plt.close(fig)
 
 
-def _write_continuous_in_sample_cumsum_plots(
-    feature: pd.Series,
-    target: pd.Series,
-    combo_output_dir: Path,
-    config: "ResearchConfig",
-    *,
-    label: str,
-) -> None:
-    plots_dir = combo_output_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-
-    bin_counts = config.binning_params.bin_counts
-    for bin_count in sorted({int(bin_count) for bin_count in bin_counts}, reverse=True):
-        returns = _build_bin_count_specific_returns(feature, target, bin_count, config)
-        _write_cumsum_plot(
-            returns=returns,
-            output_path=plots_dir / f"in_sample_cumsum_bin_count_{bin_count}.png",
-            title=f"In-sample cumulative sum ({label}, bin_count={bin_count})",
-        )
-
-
-def _write_rule_based_in_sample_cumsum_plot(
-    feature: pd.Series,
-    target: pd.Series,
-    combo_output_dir: Path,
-    *,
-    label: str,
-) -> None:
-    """Write in-sample cumulative sum plot for rule-based signal (position * target)."""
-    plots_dir = combo_output_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
-    returns = feature.mul(target).dropna()
-    _write_cumsum_plot(
-        returns=returns,
-        output_path=plots_dir / "in_sample_cumsum.png",
-        title=f"In-sample cumulative sum ({label})",
-    )
-
-
 def run_eda_pipeline(
     config: "ResearchConfig",
     output_dir: Path,
@@ -122,10 +68,12 @@ def run_eda_pipeline(
     expanded = expand_bias_specs(config.bias_spec)
     timeframe = normalize_timeframe_from_bias_spec(config.bias_spec)
     results: dict[str, Path] = {}
-    feature_type_label = config.feature_type.value.upper()
 
     print(f"\n{'='*64}")
-    print(f"EDA Pipeline: {config.bias_spec['module_name'].upper()} ({feature_type_label})")
+    print(
+        f"EDA Pipeline: {config.bias_spec['module_name'].upper()} "
+        f"({SIGNED_SIGNAL_FEATURE_TYPE_LABEL})"
+    )
     print(f"Tickers : {[t.name for t in config.tickers]}")
     print(f"Period  : {config.start.date()} -> {config.end.date()}")
     print(f"Target  : {config.target_col}  |  Strategy: {config.strategy}")
@@ -133,197 +81,140 @@ def run_eda_pipeline(
     print(f"Output  : {output_dir}")
     print(f"{'='*64}\n")
 
-    if config.feature_type.value == "continuous":
-        for single_spec in expanded:
-            combo = single_spec["params"]
-            label = param_combo_label(combo)
-            data = load_features_for_combo(single_spec, config)
-            if data is None:
-                print(f"  [{label}] SKIP -- no data")
-                continue
+    combo_store: dict[str, tuple[pd.Series, pd.Series, str]] = {}
+    varying_params = [
+        key for key, values in config.bias_spec["params"].items() if isinstance(values, list) and len(values) > 1
+    ]
+    metric_rows: list[dict[str, object]] = []
 
-            feature, target, feature_col = data
-            paired = pd.DataFrame({"feature": feature, "target": target}).dropna()
-            if paired.empty:
-                print(f"  [{label}] SKIP -- aligned feature/target empty")
-                continue
+    print(f"Loading data for {len(expanded)} combos...")
+    for single_spec in expanded:
+        combo = single_spec["params"]
+        label = param_combo_label(combo)
+        data = load_features_for_combo(single_spec, config)
+        if data is None:
+            print(f"  [{label}] SKIP -- no data")
+            continue
 
-            feature = paired["feature"]
-            target = paired["target"]
-            timestamps = pd.DatetimeIndex(feature.index)
-            rolling_window = _default_rolling_window(feature)
+        feature, target, feature_col = data
+        paired = pd.DataFrame({"signal": feature, "target": target}).dropna()
+        if paired.empty:
+            print(f"  [{label}] SKIP -- aligned feature/target empty")
+            continue
 
-            metadata = EDAMetadata(
-                feature_name=feature_col,
-                param_combo=combo,
-                timeframe=timeframe,
-                ticker=cast(Ticker, config.tickers[0]),
-                timestamp=datetime.now(),
-            )
-            eda_config = EDAConfig(n_bins=15, rolling_window=rolling_window)
-            report = run_eda_for_continuous_feature(feature, target, timestamps, metadata, eda_config)
+        signal = paired["signal"]
+        target = paired["target"]
+        combo_store[label] = (signal, target, feature_col)
 
-            combo_output_dir = output_dir / label
-            combo_output_dir.mkdir(parents=True, exist_ok=True)
-            saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
-            _write_continuous_in_sample_cumsum_plots(
-                feature=feature,
-                target=target,
-                combo_output_dir=saved_path,
-                config=config,
-                label=label,
-            )
-            results[label] = saved_path
+        if varying_params:
+            active = signal.fillna(0).to_numpy() != 0
+            selected_returns = target.values[active]
+            if len(selected_returns) >= 5:
+                try:
+                    metric_value = compute_param_sensitivity_metric(selected_returns, "t_stat", timeframe)
+                    row: dict[str, object] = {
+                        f"param{k + 1}_value": combo[key]
+                        for k, key in enumerate(varying_params)
+                    }
+                    row["t_stat"] = metric_value
+                    metric_rows.append(row)
+                except Exception:
+                    pass
 
-            pearson = report.common_stats.correlation_analysis.pearson
-            spread = report.continuous_stats.quintile_spread.spread
-            trend = report.continuous_stats.decile_analysis.overall_trend
-            viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
-            warnings_count = len(report.diagnostics.warnings)
-            print(
-                f"  [{label}] n={len(feature):,}  pearson={pearson:+.3f}  "
-                f"spread={spread:+.3f}  trend={trend}  {viable}  warnings={warnings_count}"
-            )
-    else:
-        combo_store: dict[str, tuple[pd.Series, pd.Series, str]] = {}
-        metric_col = "t_stat"
-        varying_params = [
-            key
-            for key, values in config.bias_spec["params"].items()
-            if isinstance(values, list) and len(values) > 1
-        ]
-        metric_rows: list[dict[str, object]] = []
-
-        print(f"Loading data for {len(expanded)} combos...")
-        for single_spec in expanded:
-            combo = single_spec["params"]
-            label = param_combo_label(combo)
-            data = load_features_for_combo(single_spec, config)
-            if data is None:
-                print(f"  [{label}] SKIP -- no data")
-                continue
-
-            feature, target, feature_col = data
-            paired = pd.DataFrame({"feature": feature, "target": target}).dropna()
-            if paired.empty:
-                print(f"  [{label}] SKIP -- aligned feature/target empty")
-                continue
-
-            feature = paired["feature"]
-            target = paired["target"]
-            combo_store[label] = (feature, target, feature_col)
-
-            if varying_params:
-                signals = np.asarray(feature.values == 1).flatten()
-                selected_returns = target.values[signals]
-                if len(selected_returns) >= 5:
-                    try:
-                        metric_value = compute_param_sensitivity_metric(selected_returns, metric_col, timeframe)
-                        row: dict[str, object] = {
-                            f"param{k + 1}_value": combo[key]
-                            for k, key in enumerate(varying_params)
-                        }
-                        row[metric_col] = metric_value
-                        metric_rows.append(row)
-                    except Exception:
-                        pass
-
-        max_eda_combos = config.param_sensitivity.max_eda_output_combos
-        should_preselect = (
-            max_eda_combos > 0
-            and len(combo_store) > max_eda_combos
-            and varying_params
-            and metric_rows
+    max_eda_combos = config.param_sensitivity.max_eda_output_combos
+    should_preselect = (
+        max_eda_combos > 0
+        and len(combo_store) > max_eda_combos
+        and varying_params
+        and metric_rows
+    )
+    if should_preselect:
+        ps_df = pd.DataFrame(metric_rows)
+        ps_cfg = config.param_sensitivity
+        fixed_params = {
+            key: values for key, values in config.bias_spec["params"].items() if key not in varying_params
+        }
+        print(
+            f"\nParam sensitivity pre-selection: {len(combo_store)} combos → "
+            f"selecting top {max_eda_combos} for EDA output..."
         )
-        if should_preselect:
-            ps_df = pd.DataFrame(metric_rows)
-            ps_cfg = config.param_sensitivity
-            fixed_params = {
-                key: values for key, values in config.bias_spec["params"].items() if key not in varying_params
-            }
-            print(
-                f"\nParam sensitivity pre-selection: {len(combo_store)} combos → "
-                f"selecting top {max_eda_combos} for EDA output..."
+        try:
+            from eda.parameter_analysis import generate_parameter_sensitivity_report
+
+            ps_report = generate_parameter_sensitivity_report(
+                results_df=ps_df,
+                param_names=varying_params,
+                metric_col="t_stat",
+                stability_threshold=ps_cfg.stability_threshold,
+                top_k=max_eda_combos,
+                plot_3d_mode="heatmap_slices",
+                smoothing_self_weight=ps_cfg.smoothing_self_weight,
             )
-            try:
-                ps_report = generate_parameter_sensitivity_report(
-                    results_df=ps_df,
-                    param_names=varying_params,
-                    metric_col=metric_col,
-                    stability_threshold=ps_cfg.stability_threshold,
-                    top_k=max_eda_combos,
-                    plot_3d_mode="heatmap_slices",
-                    smoothing_self_weight=ps_cfg.smoothing_self_weight,
-                )
-                selected_labels: set[str] = {
-                    param_combo_label({**fixed_params, **dict(zip(varying_params, values))})
-                    for values in ps_report.top_k_combinations
-                }
-                print(
-                    f"Pre-selection complete: {len(selected_labels)}/{len(combo_store)} combos selected"
-                )
-            except Exception as exc:
-                print(f"Pre-selection failed ({exc}); falling back to top-{max_eda_combos} by raw metric")
-                sorted_rows = sorted(
-                    metric_rows, key=lambda row: row.get(metric_col, float("-inf")), reverse=True
-                )
-                selected_labels = {
-                    param_combo_label({
+            selected_labels: set[str] = {
+                param_combo_label({**fixed_params, **dict(zip(varying_params, values))})
+                for values in ps_report.top_k_combinations
+            }
+            print(f"Pre-selection complete: {len(selected_labels)}/{len(combo_store)} combos selected")
+        except Exception as exc:
+            print(f"Pre-selection failed ({exc}); falling back to top-{max_eda_combos} by raw metric")
+            sorted_rows = sorted(metric_rows, key=lambda row: row.get("t_stat", float("-inf")), reverse=True)
+            selected_labels = {
+                param_combo_label(
+                    {
                         **fixed_params,
                         **{varying_params[k]: row[f"param{k + 1}_value"] for k in range(len(varying_params))},
-                    })
-                    for row in sorted_rows[:max_eda_combos]
-                }
-        else:
-            selected_labels = set(combo_store.keys())
+                    }
+                )
+                for row in sorted_rows[:max_eda_combos]
+            }
+    else:
+        selected_labels = set(combo_store.keys())
 
-        print(
-            f"\nRunning EDA for {len(selected_labels)}/{len(combo_store)} combos"
-            + (f" (limit={max_eda_combos})" if should_preselect else "")
-            + "..."
+    print(
+        f"\nRunning EDA for {len(selected_labels)}/{len(combo_store)} combos"
+        + (f" (limit={max_eda_combos})" if should_preselect else "")
+        + "..."
+    )
+    for single_spec in expanded:
+        combo = single_spec["params"]
+        label = param_combo_label(combo)
+        if label not in combo_store or label not in selected_labels:
+            continue
+
+        signal, target, feature_col = combo_store[label]
+        timestamps = pd.DatetimeIndex(signal.index)
+        rolling_window = _default_rolling_window(signal)
+        metadata = EDAMetadata(
+            feature_name=feature_col,
+            param_combo=combo,
+            timeframe=timeframe,
+            ticker=cast(Ticker, config.tickers[0]),
+            timestamp=datetime.now(),
         )
-        for single_spec in expanded:
-            combo = single_spec["params"]
-            label = param_combo_label(combo)
-            if label not in combo_store or label not in selected_labels:
-                continue
+        eda_config = EDAConfig(rolling_window=rolling_window, bootstrap_iterations=500)
+        report = run_eda_for_signed_signal_feature(signal, target, timestamps, metadata, eda_config)
 
-            feature, target, feature_col = combo_store[label]
-            timestamps = pd.DatetimeIndex(feature.index)
-            rolling_window = _default_rolling_window(feature)
-            metadata = EDAMetadata(
-                feature_name=feature_col,
-                param_combo=combo,
-                timeframe=timeframe,
-                ticker=cast(Ticker, config.tickers[0]),
-                timestamp=datetime.now(),
-            )
-            eda_config = EDAConfig(rolling_window=rolling_window, bootstrap_iterations=500)
-            report = run_eda_for_rule_based_feature(feature, target, timestamps, metadata, eda_config)
+        combo_output_dir = output_dir / label
+        combo_output_dir.mkdir(parents=True, exist_ok=True)
+        saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
+        _write_cumsum_plot(
+            returns=signal.mul(target),
+            output_path=saved_path / "in_sample_cumsum.png",
+            title=f"In-sample cumulative sum ({label})",
+        )
+        results[label] = saved_path
 
-            combo_output_dir = output_dir / label
-            combo_output_dir.mkdir(parents=True, exist_ok=True)
-            saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
-            _write_rule_based_in_sample_cumsum_plot(
-                feature=feature,
-                target=target,
-                combo_output_dir=saved_path,
-                label=label,
-            )
-            results[label] = saved_path
+        stats_by_level = report.rule_stats.per_level_stats.stats_by_level
+        level_parts = "  ".join(
+            f"L[{level}]: sharpe={stats_by_level[level].sharpe:+.2f}"
+            if level in stats_by_level
+            else f"L[{level}]: n/a"
+            for level in [-1, 0, 1]
+        )
+        viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
+        print(
+            f"  [{label}] n={len(signal):,}  {level_parts}  {viable}  "
+            f"warnings={len(report.diagnostics.warnings)}"
+        )
 
-            stats_by_level = report.rule_stats.per_level_stats.stats_by_level
-            level_parts = "  ".join(
-                f"L[{level}]: sharpe={stats_by_level[level].sharpe:+.2f}"
-                if level in stats_by_level
-                else f"L[{level}]: n/a"
-                for level in [-1, 0, 1]
-            )
-            viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
-            warnings_count = len(report.diagnostics.warnings)
-            print(
-                f"  [{label}] n={len(feature):,}  {level_parts}  {viable}  warnings={warnings_count}"
-            )
-
-    print(f"\nDone. {len(results)}/{len(expanded)} combos succeeded -> {output_dir}\n")
     return results

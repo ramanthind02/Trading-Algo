@@ -18,7 +18,7 @@ from utils.core.enums import Ticker, TimeFrame
 from utils.evaluation.walkforward.runner import WalkforwardRunReport
 
 
-def _build_config(tmp_path: Path) -> ResearchConfig:
+def _build_signed_signal_config(tmp_path: Path) -> ResearchConfig:
     base = load_config()
     bias_spec = {
         "module_name": "rsi_signal",
@@ -32,7 +32,7 @@ def _build_config(tmp_path: Path) -> ResearchConfig:
             "exit_bars": 5,
         },
     }
-    rule_based_defaults = InSamplePhaseDefaultsConfig(
+    signed_signal_defaults = InSamplePhaseDefaultsConfig(
         bias_spec=bias_spec,
         target_col="log_return",
         strategy="long",
@@ -41,7 +41,7 @@ def _build_config(tmp_path: Path) -> ResearchConfig:
     )
     in_sample_defaults = InSampleDefaultsCatalog(
         continuous=base.in_sample_defaults.continuous,
-        rule_based=rule_based_defaults,
+        signed_signal=signed_signal_defaults,
     )
     return base.__class__(
         tickers=[Ticker.ES],
@@ -53,7 +53,7 @@ def _build_config(tmp_path: Path) -> ResearchConfig:
         objective_metric_presets=base.objective_metric_presets,
         binning_params=base.binning_params,
         timeframe=TimeFrame.D,
-        feature_type=FeatureType.RULE_BASED,
+        feature_type=FeatureType.SIGNED_SIGNAL,
         in_sample_defaults=in_sample_defaults,
         param_sensitivity=base.param_sensitivity,
         validation_window=OOSWindowConfig(
@@ -96,11 +96,11 @@ def _mock_candles_for_config() -> pd.DataFrame:
     )
 
 
-def test_run_rule_based_validation_pipeline_returns_report_and_writes_artifacts(
+def test_run_signed_signal_validation_pipeline_returns_report_and_writes_artifacts(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    config = _build_config(tmp_path)
+    config = _build_signed_signal_config(tmp_path)
 
     monkeypatch.setattr(
         "feature_research.pipelines._shared.populate_cache_if_needed",
@@ -147,8 +147,5 @@ def test_run_rule_based_validation_pipeline_returns_report_and_writes_artifacts(
     report = run_validation_pipeline(config, tmp_path / "validation_out")
 
     assert isinstance(report, WalkforwardRunReport)
-    validation_dir = (
-        config.output_root / "rule_based" / config.eval_bias_spec["module_name"] / "validation"
-    )
-    assert validation_dir.exists()
-    assert (validation_dir / "report.json").exists()
+    report_paths = list((tmp_path / "validation_out").rglob("report.json"))
+    assert report_paths
