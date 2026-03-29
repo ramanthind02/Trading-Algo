@@ -13,7 +13,11 @@ Scheduled candle fetch (per TF)
 CentralCacheStore.upsert_candles(...)
         │
         ▼
-Rebalance tick builds PortfolioCacheQuery
+Automatic live refresh
+  bias refresh -> base-model materialization -> portfolio materialization
+        │
+        ▼
+Rebalance tick reads current live forecast state
         │
         ▼
 GlobalPortfolio.predict_from_cache(query)
@@ -35,7 +39,7 @@ Each timeframe has its own fetch trigger. Between triggers, its forecast is **co
 | Daily     | After daily close | 00:00 EST (futures) or 16:00 EST (equities) |
 | Hourly    | Every hour during RTH | On the hour |
 
-On each trigger, fetch and upsert the newly available candles for that TF into `CentralCacheStore`. When a dependent bias artifact is refreshed, cache orchestration performs a stateless cold rebuild using that node's machine-readable warmup window and trims the saved artifact back to the requested output range.
+On each trigger, fetch and upsert the newly available candles for that TF into `CentralCacheStore`. If `deployment/config/live_cache_refresh.json` is enabled, the runtime then coalesces dirty keys and automatically refreshes the affected live inference chain. When a dependent bias artifact is refreshed, cache orchestration performs a stateless cold rebuild using that node's machine-readable warmup window and trims the saved artifact back to the requested output range.
 
 ---
 
@@ -93,6 +97,8 @@ def on_tf_candle_close(tf: TimeFrame):
     """Triggered when new candles are available for a timeframe."""
     candles = fetch_candles(tf, n_bars=max_lookback_for[tf])
     central_cache.upsert_candles(ticker, tf, candles)
+    # If the live refresh manifest is enabled, this schedules the async
+    # inference-only refresh path automatically.
 
 def on_rebalance_tick():
     """Triggered at rebalance frequency (e.g., daily or hourly)."""
@@ -110,10 +116,11 @@ def on_rebalance_tick():
 
 ## Startup Sequence
 
-1. **Load fitted `GlobalPortfolio`** from persisted state (vault control files + fitted weights).
+1. **Load fitted `GlobalPortfolio`** from persisted state (vault control files + fitted weights) or from a saved `portfolio_id` snapshot.
 2. **Warm cache coverage** — bootstrap the runtime cache once, then run `on_tf_candle_close` for every timeframe to keep central-cache candles current.
-3. **Start the scheduler** — register per-TF triggers and the rebalance tick.
-4. **First rebalance** — combine cached forecasts and send orders.
+3. **Enable the live refresh manifest** — declare the working-vault ensemble dirs plus the deployed `portfolio_id` snapshots in `deployment/config/live_cache_refresh.json`.
+4. **Start the scheduler** — register per-TF triggers and the rebalance tick.
+5. **First rebalance** — combine cached forecasts and send orders.
 
 On restart after a crash, the same startup sequence runs. Because prediction is stateless (lookback candles re-warm the nodes), there is no lost state to recover.
 
@@ -125,6 +132,7 @@ On restart after a crash, the same startup sequence runs. Because prediction is 
 |---------|--------|----------|
 | Candle fetch fails for one TF | That TF's cached forecast goes stale | Carry forward last known forecast; alert operator; retry on next trigger |
 | Candle fetch fails for all TFs | No rebalance possible | Hold existing positions; alert operator |
+| Auto refresh fails after candle write | Candle cache is updated but downstream live inference is stale | Inspect `.cache/trading_algo/central_cache/live_refresh/last_run.json`, fix the error, then run `run_live_cache_refresh_now(...)` or wait for the next tracked write |
 | Bias node error for one model | One base model missing from ensemble | Ensemble falls back to remaining models; `WeightLayer` handles missing model gracefully |
 | Volatility data unavailable | Cannot scale forecasts | Block rebalance; alert operator (volatility is required) |
 
@@ -144,4 +152,4 @@ The prediction logic is **identical** in both paths. The only difference is how 
 
 ---
 
-**See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[Cache/architecture]], [[Cache/user_guide]]
+**See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[Cache/architecture]], [[Cache/user_guide]], [[Deployment/live_cache_refresh]]

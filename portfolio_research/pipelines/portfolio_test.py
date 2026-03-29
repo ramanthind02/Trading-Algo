@@ -18,7 +18,9 @@ from ensemble.portfolio import (
     GlobalPortfolio,
     Portfolio,
     PortfolioCacheQuery,
+    PortfolioWorld,
     TFPortfolio,
+    materialize_global_portfolio_predictions,
 )
 from ensemble.portfolio_tester import (
     PortfolioTester,
@@ -108,6 +110,17 @@ def _coerce_ticker(ticker: object) -> Ticker:
     if hasattr(ticker, "name") and not isinstance(ticker, str):
         return ticker  # type: ignore[return-value]
     return Ticker[str(ticker)]
+
+
+def _phase_world(output_dir_name: str) -> PortfolioWorld:
+    normalized = output_dir_name.strip().lower()
+    if normalized == "train":
+        return PortfolioWorld.TRAIN
+    if normalized == "validation":
+        return PortfolioWorld.VAL
+    if normalized == "test":
+        return PortfolioWorld.TEST
+    return PortfolioWorld.LIVE
 
 
 def _load_candles(
@@ -537,12 +550,22 @@ def _evaluate_phase(
         fit_query,
         instrument_returns,
     )
+    portfolio_id = global_portfolio.save_to_vault(
+        fit_start=fit_start.to_pydatetime(),
+        fit_end=fit_end.to_pydatetime(),
+    )
     export_global_weight_layer_report(
         global_portfolio,
         phase_name=output_dir_name,
         output_dir=phase_out / "global_weight_layer",
     )
     global_positions_raw = global_portfolio.predict_from_cache(predict_query)
+    materialize_global_portfolio_predictions(
+        portfolio=global_portfolio,
+        query=predict_query,
+        portfolio_id=portfolio_id,
+        world=_phase_world(output_dir_name),
+    )
     global_positions_raw["datetime"] = pd.to_datetime(
         global_positions_raw["datetime"]
     ).dt.floor("s")

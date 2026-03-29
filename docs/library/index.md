@@ -47,11 +47,16 @@
 - [[Ensemble/portfolio]] — Instrument weights + IDM formula
 
 ### Vault
+- [[Vault/architecture]] — In-depth vault architecture, working-vault invariants, and snapshot/deployment boundaries
+- [[Vault/user_guide]] — Practical guide for saving models, loading ensembles, and using portfolio snapshots
 - [[Vault/vault]] — Validated feature storage, JSON control files, `is_fit` flag
 - [[Vault/monitoring]] — Strategy decay monitoring store: `(signal, target)` vectors, CUSUM, rolling Sharpe
+- [[Vault/portfolio_snapshots_and_predictions]] — Immutable portfolio snapshot files, materialized predictions, `world` column (train/val/test/live)
+- [[Vault/portfolio_snapshot_usage]] — Workflow examples for saving, reloading, materializing, and pruning portfolio snapshots
 
 ### Deployment
 - [[Deployment/production]] — REST forecast server, production training pipeline
+- [[Deployment/live_cache_refresh]] — Automatic live inference refresh after LIVE candle-cache writes
 - [[Deployment/cython]] — Compiling Cython extensions for performance
 
 ## Research Reading Order
@@ -62,7 +67,7 @@
 > 3. [[bias_nodes/creating_nodes]] — implement your first node
 > 4. [[Ensemble/base_model]] → [[Ensemble/weight_layer]] → [[Ensemble/portfolio]]
 > 5. [[Feature_selection/Phase_3_4_Walkforward/param_stability]] + [[Feature_selection/Phase_2_IS_Screening/permutation_testing]]
-> 6. [[Vault/vault]] — understand how validated features are stored
+> 6. [[Vault/user_guide]] → [[Vault/architecture]] — understand how validated features, snapshots, and deployment boundaries are stored
 
 ## Key Naming Convention
 

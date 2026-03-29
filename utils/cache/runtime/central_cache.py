@@ -155,9 +155,12 @@ class CentralCacheStore:
 
     @classmethod
     def reset(cls) -> None:
+        from .live_cache_refresh import reset_live_cache_refresh_orchestrator
+
         if cls._instance is not None:
             cls._instance.clear()
         cls._instance = None
+        reset_live_cache_refresh_orchestrator()
 
     def clear(self) -> None:
         self._candle_frames.clear()
@@ -458,6 +461,7 @@ class CentralCacheStore:
         self._persist_dataframe(self._candle_path(ticker, timeframe), normalized)
         self._persist_record(self._candle_path(ticker, timeframe), record)
         self.mark_dependents_stale(ticker, timeframe)
+        self._notify_live_refresh(ticker, timeframe, scope)
 
     def upsert_candles(
         self,
@@ -500,6 +504,7 @@ class CentralCacheStore:
         self._persist_dataframe(self._candle_path(ticker, timeframe), merged)
         self._persist_record(self._candle_path(ticker, timeframe), record)
         self.mark_dependents_stale(ticker, timeframe)
+        self._notify_live_refresh(ticker, timeframe, scope)
 
     def query_candle(
         self,
@@ -781,6 +786,30 @@ class CentralCacheStore:
             self._artifact_records[descriptor] = stale_record
             if descriptor_path := self._artifact_path(descriptor):
                 self._persist_record(descriptor_path, stale_record)
+
+    def _notify_live_refresh(
+        self,
+        ticker: Ticker,
+        timeframe: TimeFrame,
+        scope: ArtifactScope,
+    ) -> None:
+        if scope is not ArtifactScope.LIVE:
+            return
+        try:
+            from .live_cache_refresh import get_live_cache_refresh_orchestrator
+
+            get_live_cache_refresh_orchestrator().note_candle_update(
+                ticker=ticker,
+                timeframe=timeframe,
+                scope=scope,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Live cache refresh notification failed for %s/%s: %s",
+                ticker.name,
+                timeframe.name,
+                exc,
+            )
 
     def _remove_artifact_dependencies(self, descriptor: ArtifactDescriptor) -> None:
         dependency_keys = [

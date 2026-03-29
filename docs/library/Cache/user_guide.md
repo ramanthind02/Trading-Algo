@@ -9,6 +9,7 @@
 - `CentralCacheStore` is the main facade
 - `ArtifactDescriptor` names derived artifacts such as EWSD or node outputs
 - `CacheRequest` describes exact, as-of, or range reads
+- **Inference vs fitting:** routine candle updates call for **inference** only—refresh stale **bias** outputs and run **predict** on base models and portfolio using **already fitted** state. **Fitting** (`fit_from_cache` for a research window, base model `fit`, vault saves) is a **research / refit** concern, not something that runs on every live bar. See the *Inference vs fitting (live vs research)* subsection in [[Cache/architecture]].
 
 ## Imports
 
@@ -50,6 +51,7 @@ Notes:
 - `upsert_candles(...)` merges by datetime and replaces any overlapping bar
 - use `set_candles(...)` only when you want a full snapshot replacement
 - do not write runtime candles back into `data/ohlc_data`
+- if `deployment/config/live_cache_refresh.json` is enabled, LIVE candle writes also schedule the async live refresh flow for tracked `(ticker, timeframe)` keys
 
 ### Explicit bootstrap from the repository source dataset
 
@@ -72,6 +74,34 @@ python -m utils.cache.bootstrap_source_candles --tickers ES NQ --timeframes D W 
 ```
 
 `ingest_source_candles(...)` still exists as a deprecated compatibility alias, but new code should call `bootstrap_source_candles(...)`.
+
+### Automatic live refresh from candle writes
+
+If the live refresh manifest is configured, LIVE candle writes become the single operator-maintained input:
+
+- candle writes mark dependent artifacts stale
+- the runtime coalesces dirty keys asynchronously
+- stale live bias artifacts are rebuilt
+- live base-model prediction parquet files are rematerialized
+- live portfolio prediction parquet files are rematerialized
+
+This path is inference only. It does not refit models and it does not create new portfolio snapshots.
+
+Manual recovery:
+
+```python
+from utils.cache import run_live_cache_refresh_now
+
+summary = run_live_cache_refresh_now(
+    manifest_path="deployment/config/live_cache_refresh.json",
+)
+```
+
+Status file:
+
+```text
+.cache/trading_algo/central_cache/live_refresh/last_run.json
+```
 
 ## 2. Read candles
 
@@ -245,6 +275,10 @@ positions = global_portfolio.predict_from_cache(query)
 
 The cache-native portfolio path resolves volatility from cached EWSD artifacts. Callers should not supply `daily_volatility_df`.
 
+For **live** ticks, use **`predict_from_cache`** after bias artifacts are current. **`fit_from_cache`** is for **research** calibration on a historical window (or explicit refit), not for each new bar—see [[Cache/architecture]] (*Inference vs fitting*).
+
+If `deployment/config/live_cache_refresh.json` is enabled, LIVE candle writes keep the deployed `portfolio_id` snapshots current automatically by rematerializing the affected live outputs.
+
 ## 9. Preflight vault cache coverage
 
 Before running portfolio backtests, refresh the cache for the exact ensemble set and date window you need.
@@ -369,14 +403,16 @@ Rules of thumb:
 Recommended pattern:
 
 1. Upsert the new or corrected bars into `.cache/trading_algo/central_cache/candles`
-2. Rebuild stale artifacts for the affected ensembles or feature specs
-3. Run portfolio research, feature research, or live prediction
+2. **Refresh** stale derived artifacts for the affected ensembles (bias outputs, then inference to forecasts)—this is **inference**, not refitting models or portfolio weights
+3. Run portfolio research, feature research, or live **prediction**
+
+**Live trading:** a new bar implies you need a new **forecast**, so you will run the inference chain (bias → base-model predict → `predict_from_cache`) for the deployed ensemble anyway. Orchestrate that after candle ingest; do **not** confuse it with **`fit_from_cache`**, which is for research windows and refits.
 
 Why this order matters:
 
 - `CentralCacheStore.upsert_candles(...)` marks dependent artifacts stale
 - stale artifacts cannot be read as if they were current
-- the correct fix is to refresh them, not to ignore the lifecycle error
+- the correct fix is to refresh them (recompute derived columns from fixed specs and fitted state), not to ignore the lifecycle error
 
 ### Runtime update workflow
 
@@ -498,17 +534,24 @@ Use persisted cleanup carefully. It removes writable runtime cache files under `
 1. Ensure candle coverage exists in the cache
 2. Read cached features or populate them on miss
 3. Train from cache-backed feature and volatility lineage
+4. **Fit** portfolios and base models in research as needed (`fit_from_cache`, vault saves)—separate from the live inference loop below
 
 ### Live
 
 1. Write new bars into the runtime cache with `upsert_candles(...)`
-2. Refresh stale artifacts for the exact live ensemble set using stateless cold rebuilds sized from each bias node's warmup metadata
-3. Read the latest rows with exact or as-of requests
-4. Run `predict_from_cache(...)`
+2. **Inference only:** refresh stale **bias** artifacts for the exact live ensemble set (stateless cold rebuilds sized from each bias node's warmup metadata), run base-model **predict** with fitted vault models, then `predict_from_cache(...)`—all using **existing** fitted weights and specs
+3. If the live refresh manifest is enabled, this fanout is triggered automatically from the LIVE candle write boundary and the latest status lands in `.cache/trading_algo/central_cache/live_refresh/last_run.json`
+4. Read the latest rows with exact or as-of requests as needed
+5. Do **not** run portfolio or base-model **fit** on each tick; refits are explicit research or scheduled events
+
+The live loop is “new OHLC → consistent derived features → next forecast,” not “refit the book on every bar.”
 
 ## Related
 
 - [[Cache/architecture]] — system design and ownership rules
+- [[Vault/architecture]] — vault-side persistence and snapshot architecture
+- [[Vault/user_guide]] — vault-side practical usage guide
+- [[Deployment/live_cache_refresh]] — manifest contract and automatic live refresh semantics
 - [[portfolio]] — portfolio layer behavior
 - [[pipeline]] — feature extraction workflow
 - [[live_multi_timeframe]] — live orchestration flow

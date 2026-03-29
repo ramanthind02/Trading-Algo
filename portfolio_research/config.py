@@ -188,7 +188,7 @@ def load_config() -> PortfolioResearchConfig:
     ]
     timeframe = TimeFrame.D
     start = datetime(2006, 1, 1)
-    end = datetime(2025, 9, 18)
+    end = datetime(2026, 2, 20)
     use_cache = True
     populate_cache = False
 
@@ -214,7 +214,7 @@ def load_config() -> PortfolioResearchConfig:
         train_start=datetime(2007, 1, 1),
         train_end=datetime(2023, 12, 30),
         test_start=datetime(2024, 1, 1),
-        test_end=datetime(2025, 12, 31),
+        test_end=datetime(2026, 2, 20),
     )
 
     # By default, use daily + monthly ensembles.

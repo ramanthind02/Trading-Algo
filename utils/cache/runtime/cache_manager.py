@@ -342,42 +342,49 @@ class CacheManager:
         store = self._central_cache_store()
         if reset_existing:
             store.clear_candles(purge_persisted=True)
+        from .live_cache_refresh import get_live_cache_refresh_orchestrator
+
+        refresh_orchestrator = get_live_cache_refresh_orchestrator()
+        refresh_orchestrator.begin_batch()
 
         details: list[dict[str, Any]] = []
         success = 0
         failed = 0
 
-        for ticker in requested_tickers:
-            for timeframe in requested_timeframes:
-                try:
-                    candles_df = self.load_source_candles(
-                        ticker,
-                        timeframe,
-                        start_date=start_date,
-                        end_date=end_date,
-                    )
-                    if candles_df.empty:
-                        raise ValueError("No source candles found in requested range")
-                    store.set_candles(ticker, timeframe, candles_df)
-                    details.append(
-                        {
-                            "ticker": ticker.name,
-                            "tf": timeframe.name,
-                            "status": "success",
-                            "rows": len(candles_df),
-                        }
-                    )
-                    success += 1
-                except Exception as exc:
-                    details.append(
-                        {
-                            "ticker": ticker.name,
-                            "tf": timeframe.name,
-                            "status": "failed",
-                            "message": str(exc),
-                        }
-                    )
-                    failed += 1
+        try:
+            for ticker in requested_tickers:
+                for timeframe in requested_timeframes:
+                    try:
+                        candles_df = self.load_source_candles(
+                            ticker,
+                            timeframe,
+                            start_date=start_date,
+                            end_date=end_date,
+                        )
+                        if candles_df.empty:
+                            raise ValueError("No source candles found in requested range")
+                        store.set_candles(ticker, timeframe, candles_df)
+                        details.append(
+                            {
+                                "ticker": ticker.name,
+                                "tf": timeframe.name,
+                                "status": "success",
+                                "rows": len(candles_df),
+                            }
+                        )
+                        success += 1
+                    except Exception as exc:
+                        details.append(
+                            {
+                                "ticker": ticker.name,
+                                "tf": timeframe.name,
+                                "status": "failed",
+                                "message": str(exc),
+                            }
+                        )
+                        failed += 1
+        finally:
+            refresh_orchestrator.end_batch()
 
         return {
             "total": len(details),

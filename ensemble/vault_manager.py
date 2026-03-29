@@ -2024,6 +2024,7 @@ def load_ensemble_from_vault(
     
     # Load all feature configs and convert to control file format
     base_models_config = []
+    model_identity_by_name: Dict[str, Dict[str, str]] = {}
     all_tickers = set()
     
     for feature_file in feature_files:
@@ -2081,6 +2082,10 @@ def load_ensemble_from_vault(
             'tickers': feature_tickers,  # Include tickers so model knows which tickers it supports
         }
         base_models_config.append(base_model_config)
+        model_identity_by_name[str(base_model_config['name'])] = {
+            'feature_name': feature_name,
+            'model_id': str(model['model_id']),
+        }
     
     if not base_models_config:
         raise ValueError(f"No base models found in ensemble directory: {ensemble_dir}")
@@ -2159,7 +2164,12 @@ def load_ensemble_from_vault(
         target_volatility=target_volatility,
         base_tf=TimeFrame[timeframe_str]
     )
-    
+
+    ensemble.vault_ensemble_dir = str(ensemble_path)
+    ensemble.vault_ensemble_name = ensemble_path.name
+    ensemble.vault_timeframe = timeframe_str
+    ensemble.vault_base_model_identities = model_identity_by_name
+
     # Clean up temp file
     os.unlink(temp_path)
     

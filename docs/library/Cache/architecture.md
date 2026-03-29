@@ -26,6 +26,7 @@ All cache-owned logic should live under `utils/cache/runtime/` (implementation) 
 | Cross-ticker adapter | `utils/cache/runtime/cross_ticker_store.py` | Cache-backed candle lookups for bias nodes and helpers |
 | Feature helpers | `utils/cache/runtime/feature_pipeline_support.py` | Shared cache helpers extracted from feature extraction |
 | Cache orchestration | `utils/cache/runtime/cache_manager.py` and `utils/cache/runtime/bootstrap_source_candles.py` | Explicit bootstrap plus vault artifact preflight |
+| Live refresh orchestration | `utils/cache/runtime/live_cache_refresh.py` | Async LIVE candle-write fanout into bias refresh and portfolio/base-model materialization |
 | Public exports | `utils/cache/__init__.py` | Stable import surface |
 | Import shims | `utils/cache/<module>.py` (thin) | Re-export matching `utils.cache.<module>` for callers |
 
@@ -41,6 +42,8 @@ The `utils/cache/` tree is **only** Python: `runtime/` holds the real modules; t
 | Runtime candles | `.cache/trading_algo/central_cache/candles` | Writable cache state |
 | Live artifacts | `.cache/trading_algo/central_cache/artifacts/live` | Durable runtime artifacts used by live and deployment paths |
 | Research artifacts | `.cache/trading_algo/central_cache/artifacts/research` | Disposable local artifacts safe to prune |
+| Portfolio materializations | `.cache/trading_algo/central_cache/materialized/<scope>` | Parquet outputs for `GlobalPortfolio` and active base-model members |
+| Live refresh status | `.cache/trading_algo/central_cache/live_refresh/last_run.json` | Last async live-refresh run summary for ops/debugging |
 
 This separation is intentional:
 
@@ -135,6 +138,19 @@ The cache tracks causal lineage rather than treating parquet files as anonymous 
 
 This keeps cache-native reads aligned with source updates and avoids silent drift between candles and derived artifacts.
 
+### Inference vs fitting (live vs research)
+
+The cache distinguishes **lineage and staleness** (what must be recomputed when candles change) from **what kind of recomputation** is appropriate:
+
+| Kind | Typical operations | When it runs |
+|------|-------------------|--------------|
+| **Inference** | Extend or refresh **bias** artifacts from candles using fixed node specs; **predict** base models with **fitted** vault state; **predict_from_cache** on the portfolio with **already-fitted** weights | After new OHLC in **live** (or when you need a forecast for the latest bar); also batch refresh for backtests |
+| **Fitting** | `fit_from_cache` on portfolios, base model `fit`, vault saves, weight-layer estimation | **Research** and scheduled refits—not part of the routine “new bar arrived” loop |
+
+When **live** trading ingests a new or corrected bar, you need an up-to-date **forecast**, which implies running the **inference** chain for the deployed ensemble: **bias outputs → base-model predict → portfolio predict**. That work is **required** for the next prediction whether or not it is triggered automatically; it is **not** the same as **refitting** the portfolio or base models on every tick.
+
+**Implementation note:** Orchestration (candles → materialize stale bias → predict) may live in the **live / deployment** path rather than inside every `upsert_candles` call, so research jobs that only touch candles are not forced to fan out the full live pipeline. The **contract** remains: stale derived artifacts must be refreshed (or computed on read) before they are treated as current; **fitting** stays an explicit, separate lifecycle.
+
 ## Downstream Integration
 
 ### Cross-ticker nodes
@@ -153,6 +169,10 @@ This keeps cache-native reads aligned with source updates and avoids silent drif
 
 - `ensemble/portfolio.py` exposes `PortfolioCacheQuery`
 - `TFPortfolio` and `GlobalPortfolio` support `fit_from_cache(...)` and `predict_from_cache(...)`
+- `GlobalPortfolio.save_to_vault(...)` persists frozen snapshots under `vault/portfolio_snapshots/<portfolio_id>/`
+- `load_global_portfolio_snapshot(...)` reconstructs a `GlobalPortfolio` from the snapshot-local frozen ensemble files
+- `materialize_global_portfolio_predictions(...)` writes portfolio and base-model parquet outputs under `.cache/trading_algo/central_cache/materialized/<scope>/`
+- `prune_inactive_base_model_materializations(...)` scans the current working vault and removes stale base-model parquet files only
 - volatility lineage is resolved from cached EWSD artifacts rather than caller-supplied `daily_volatility_df`
 - `portfolio_research/run_portfolio_test.py` now bootstraps its exact candle dependencies from `data/ohlc_data`, then performs vault schema migration and cache preflight before loading ensembles
 
@@ -173,6 +193,18 @@ This keeps cache-native reads aligned with source updates and avoids silent drif
 - bootstrap writes candles into the cache explicitly
 - downstream readers query the cache by datetime or range
 - backtest, training, and live should reuse the same read contracts wherever practical
+- **live:** after `upsert_candles` / `set_candles` with `ArtifactScope.LIVE`, the async live-refresh orchestrator can fan out the inference chain (vault-selected bias artifacts → base-model materialization → portfolio materialization) for the deployed manifest set; **fitting** stays out of band
+- **research / batch:** explicit preflight (`ensure_vault_cache_coverage`) and portfolio **`fit_from_cache`** apply to research windows and refits, not to each live tick
+
+### Automatic live refresh
+
+- `deployment/config/live_cache_refresh.json` is the explicit source of truth for the active live set
+- only dirty `(ticker, timeframe)` keys tracked by that manifest participate
+- the orchestrator is in-process, async, best-effort, and single-worker
+- repeated writes are coalesced with a debounce window
+- each run computes a bounded replay window from the latest common available candle end across the portfolio's tracked timeframes
+- failures do not block candle writes; they are recorded in `live_refresh/last_run.json` and the dirty keys remain queued for a later retry-triggering write
+- "base-model cache" in this context means the materialized base-model prediction parquet store, not fitted state
 
 ## Maintenance Rules
 
@@ -182,10 +214,14 @@ This keeps cache-native reads aligned with source updates and avoids silent drif
 - Prefer `ArtifactDescriptor` plus typed requests/errors over ad hoc path conventions.
 - Keep cache docs updated in `docs/library/Cache/` and `docs/api/cache/`.
 - Keep repository source bootstrap and vault cache preflight separate: source candles live under `data/ohlc_data`, runtime writes live under `.cache/trading_algo/central_cache`.
+- Portfolio cleanup only removes inactive base-model materializations; historical portfolio parquet files are retained.
 
 ## Related
 
 - [[Cache/user_guide]] — quick-start usage examples
+- [[Vault/architecture]] — vault-specific persistence and snapshot architecture
+- [[Vault/user_guide]] — vault-specific practical guide
+- [[Deployment/live_cache_refresh]] — live manifest contract and operational recovery flow
 - [[portfolio]] — cache-native portfolio entrypoints
 - [[multi_timeframe]] — forecast alignment across timeframes
 - [[live_multi_timeframe]] — live orchestration with cache-native queries
