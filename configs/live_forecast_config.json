@@ -22,7 +22,7 @@
     "idm_max": 2.5
   },
   "data": {
-    "lookback_days": 365,
-    "bar_size": "1 day"
+    "min_lookback_days": 10,
+    "max_lookback_days": 365
   }
 }

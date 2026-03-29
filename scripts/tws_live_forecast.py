@@ -53,7 +53,6 @@ from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
 from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.portfolio import TFPortfolio, GlobalPortfolio
 from deployment.telegram_notifier import TelegramNotifier
-from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 from utils.core.enums import TimeFrame, Ticker
 
 
@@ -857,6 +856,14 @@ def main():
     if missing_tickers:
         print(f"   Warning: Tickers not in config (will be skipped): {sorted(missing_tickers)}")
 
+    # Step 3: Ensure central cache has baseline data (bootstrap if empty)
+    print("\n2. Ensuring cache is ready...")
+    cache_status = ensure_cache_ready(required_tickers)
+    if cache_status["bootstrapped"]:
+        print("  Cache bootstrapped from repo parquets.")
+    for tk, cov in cache_status.get("coverage", {}).items():
+        print(f"  {tk}: {cov['start'].date()} to {cov['end'].date()}")
+
     # Create IB client
     ib_config = IBConfig(
         host=config["connection"]["host"],
@@ -867,7 +874,7 @@ def main():
 
     try:
         # Connect to TWS
-        print("\n2. Connecting to TWS...")
+        print("\n3. Connecting to TWS...")
         client.connect_to_ib()
 
         # Wait for connection (nextValidId callback sets connected=True)
@@ -890,20 +897,24 @@ def main():
         # Brief pause to ensure API is fully ready
         time.sleep(1)
 
-        # Step 3: Fetch historical data for all required tickers
-        print("\n3. Fetching historical data...")
+        # Step 4: Fetch historical data with smart lookback per ticker
+        print("\n4. Fetching historical data...")
         all_candles = []
         instruments = config["instruments"]
-        lookback_days = config["data"]["lookback_days"]
+        data_cfg = config["data"]
+        min_lb = data_cfg.get("min_lookback_days", 10)
+        max_lb = data_cfg.get("max_lookback_days", 365)
 
         for ticker in sorted(required_tickers):
             if ticker not in instruments:
                 continue
+            lookback = compute_fetch_lookback(ticker, max_lookback=max_lb, min_lookback=min_lb)
+            print(f"  {ticker}: fetching {lookback} days")
             candles = fetch_historical_candles(
                 client,
                 ticker,
                 instruments[ticker],
-                lookback_days=lookback_days,
+                lookback_days=lookback,
             )
             if not candles.empty:
                 all_candles.append(candles)
@@ -915,23 +926,11 @@ def main():
         daily_candles = pd.concat(all_candles, ignore_index=True)
         print(f"Total daily candles: {len(daily_candles)} across {daily_candles['ticker'].nunique()} instruments")
 
-        # Step 4: Resample daily to monthly (for M/ ensembles)
-        candles_per_tf: Dict[TimeFrame, pd.DataFrame] = {TimeFrame.D: daily_candles}
+        # Step 5: Upsert fetched candles into central cache (+ auto monthly resample)
+        print("\n5. Upserting TWS candles into cache...")
+        upsert_tws_candles(daily_candles, required_tickers)
 
-        has_monthly = any(
-            tf_p.trading_timeframe == TimeFrame.M
-            for tf_p in portfolio.tf_portfolios
-        )
-        if has_monthly:
-            print("\n   Resampling daily to monthly candles...")
-            monthly_candles = resample_daily_to_monthly(daily_candles)
-            if not monthly_candles.empty:
-                candles_per_tf[TimeFrame.M] = monthly_candles
-                print(f"   Monthly candles: {len(monthly_candles)} across {monthly_candles['ticker'].nunique()} instruments")
-            else:
-                print("   Warning: Could not resample to monthly candles")
-
-        # Step 5: Populate cross-ticker store with ALL fetched tickers.
+        # Populate cross-ticker store with ALL fetched tickers.
         # Ensembles with cross-ticker bias nodes (e.g., rebalancing) look up
         # data from the cross-ticker store at predict time. We pre-load every
         # fetched ticker so lookups succeed regardless of camelCase/snake_case
@@ -952,15 +951,14 @@ def main():
             ct_store.set_data(ct_ticker, TimeFrame.D, daily_candles.loc[ticker_mask].copy())
             print(f"   Cross-ticker {ticker_str}: loaded from fetched data")
 
-        # Step 6: Compute volatility and instrument returns
-        print("\n4. Fitting portfolio...")
-        daily_volatility_df = compute_daily_ewsd_volatility(daily_candles)
-        instrument_returns = daily_candles.pivot_table(
-            index="datetime", columns="ticker", values="close"
-        ).pct_change().dropna(how="all")
+        # Step 6: Refresh stale bias node caches
+        print("\n6. Refreshing bias caches...")
+        refresh_bias_caches(config["portfolio"]["vault_root"], required_tickers)
 
-        # Step 7: Fit portfolio
-        portfolio.fit(candles_per_tf, instrument_returns, daily_volatility_df)
+        # Step 7: Build cache query and fit portfolio
+        print("\n7. Fitting portfolio from cache...")
+        query, instrument_returns = build_cache_query(required_tickers)
+        portfolio.fit_from_cache(query, instrument_returns)
 
         # Log portfolio parameters
         print("\n" + "=" * 60)
@@ -974,9 +972,9 @@ def main():
         print(f"  Max Position %: {portfolio.max_position_pct}")
         print("=" * 60)
 
-        # Step 8: Generate forecasts
-        print("\n5. Generating forecasts...")
-        positions_df = portfolio.predict(candles_per_tf, daily_volatility_df)
+        # Step 8: Generate forecasts from cache
+        print("\n8. Generating forecasts from cache...")
+        positions_df = portfolio.predict_from_cache(query)
 
         if positions_df.empty:
             print("ERROR: No forecasts generated.")
@@ -995,7 +993,7 @@ def main():
         print("=" * 60)
 
         # Step 9: Fetch current ETF prices
-        print("\n6. Fetching current ETF prices...")
+        print("\n9. Fetching current ETF prices...")
         # Only fetch ETF prices for tickers that appear in positions
         position_tickers = set()
         for _, row in latest.iterrows():
@@ -1016,7 +1014,7 @@ def main():
             sys.exit(1)
 
         # Step 10: Calculate ETF shares
-        print("\n7. Calculating ETF positions...")
+        print("\n10. Calculating ETF positions...")
         shares_df = calculate_etf_shares(
             positions_df,
             prices,
@@ -1043,7 +1041,7 @@ def main():
 
         # Send Telegram notification
         if not args.dry_run:
-            print("\n8. Sending Telegram notification...")
+            print("\n11. Sending Telegram notification...")
             notifier = TelegramNotifier()
             message = format_telegram_message(shares_df, capital)
             if notifier.send_message(message):
@@ -1051,7 +1049,7 @@ def main():
             else:
                 print("Warning: Failed to send Telegram notification")
         else:
-            print("\n8. Skipping Telegram (dry-run mode)")
+            print("\n11. Skipping Telegram (dry-run mode)")
             print("\nTelegram message would be:")
             print("-" * 40)
             print(format_telegram_message(shares_df, capital))
