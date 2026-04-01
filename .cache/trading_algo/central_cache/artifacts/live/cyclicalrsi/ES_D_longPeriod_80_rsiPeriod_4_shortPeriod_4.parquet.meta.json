@@ -1,0 +1,28 @@
+{
+  "coverage": {
+    "end": "2026-02-20T00:00:00",
+    "start": "1999-06-21T00:00:00"
+  },
+  "depends_on": [
+    [
+      "ES",
+      "D"
+    ]
+  ],
+  "descriptor": {
+    "artifact_name": "cyclicalrsi",
+    "family": "bias",
+    "module_name": "cyclicalrsi",
+    "params": {
+      "longPeriod": 80,
+      "rsiPeriod": 4,
+      "shortPeriod": 4
+    },
+    "scope": "live",
+    "ticker": "ES",
+    "timeframe": "D"
+  },
+  "lifecycle_state": "stale",
+  "revision": 1,
+  "source_revision": 3
+}

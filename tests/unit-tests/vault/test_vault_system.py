@@ -14,6 +14,7 @@ from ensemble.vault_manager import (
     ensure_vault_cache_coverage,
     get_all_base_model_names,
     get_bias_node_specs,
+    list_ensembles,
     list_features,
     load_feature_base_models,
     migrate_legacy_feature_members_schema,
@@ -213,6 +214,27 @@ def test_list_specs_names_and_validate(tmp_path) -> None:
     validate_ensemble_directory(ensemble_dir)
 
 
+def test_list_features_autodetects_ensemble_dir_when_default_missing(tmp_path, monkeypatch) -> None:
+    from ensemble import vault_manager
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(vault_manager, "_DEFAULT_ENSEMBLE_DIR", None)
+
+    ensemble_dir = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="autodetect",
+        direction=Direction.LONG,
+        vault_root=str(tmp_path / "vault"),
+    )
+    _write_domain_discrete_feature_file(ensemble_dir)
+    monkeypatch.setattr(vault_manager, "_DEFAULT_ENSEMBLE_DIR", None)
+
+    features_df = list_features()
+
+    assert features_df.iloc[0]["feature_name"] == "rsi_signal_D"
+    assert vault_manager._DEFAULT_ENSEMBLE_DIR == ensemble_dir
+
+
 def test_validate_rejects_legacy_continuous_artifact(tmp_path) -> None:
     ensemble_dir = create_ensemble_directory(
         timeframe=TimeFrame.D,
@@ -340,3 +362,71 @@ def test_validate_rejects_multiple_base_models_in_feature_file(tmp_path) -> None
 
     with pytest.raises(ValueError, match="exactly one base model"):
         validate_ensemble_directory(ensemble_dir)
+
+
+def test_create_ensemble_directory_reuses_existing_dir_with_matching_tickers(tmp_path) -> None:
+    ensemble_dir = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="existing_match",
+        direction=Direction.LONG,
+        tickers=[Ticker.ES, Ticker.NQ],
+        vault_root=str(tmp_path / "vault"),
+    )
+
+    repeated = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="existing_match",
+        direction=Direction.LONG,
+        tickers=[Ticker.NQ, Ticker.ES],
+        vault_root=str(tmp_path / "vault"),
+    )
+
+    assert repeated == ensemble_dir
+    config = json.loads((Path(ensemble_dir) / "ensemble_config.json").read_text())
+    assert config["tickers"] == ["ES", "NQ"]
+
+
+def test_create_ensemble_directory_rejects_existing_dir_with_different_tickers(tmp_path) -> None:
+    create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="existing_mismatch",
+        direction=Direction.LONG,
+        tickers=[Ticker.ES],
+        vault_root=str(tmp_path / "vault"),
+    )
+
+    with pytest.raises(ValueError, match="different tickers"):
+        create_ensemble_directory(
+            timeframe=TimeFrame.D,
+            ensemble_name="existing_mismatch",
+            direction=Direction.LONG,
+            tickers=[Ticker.NQ],
+            vault_root=str(tmp_path / "vault"),
+        )
+
+
+def test_list_ensembles_parses_named_dirs_and_counts_features(tmp_path) -> None:
+    vault_root = tmp_path / "vault"
+    ensemble_a = create_ensemble_directory(
+        timeframe=TimeFrame.D,
+        ensemble_name="enum_a",
+        direction=Direction.LONG,
+        vault_root=str(vault_root),
+    )
+    ensemble_b = create_ensemble_directory(
+        timeframe=TimeFrame.W,
+        ensemble_name="enum_b",
+        direction=Direction.SHORT,
+        vault_root=str(vault_root),
+    )
+    _write_domain_discrete_feature_file(ensemble_a, feature_name="rsi_signal_D")
+    _write_domain_discrete_feature_file(ensemble_b, feature_name="rsi_signal_W")
+    (vault_root / "D" / "invalid_name").mkdir(parents=True)
+
+    ensembles = list_ensembles(str(vault_root)).sort_values(
+        ["timeframe", "ensemble_name"]
+    ).reset_index(drop=True)
+
+    assert list(ensembles["ensemble_name"]) == ["enum_a", "enum_b"]
+    assert list(ensembles["direction"]) == ["long", "short"]
+    assert list(ensembles["n_features"]) == [1, 1]

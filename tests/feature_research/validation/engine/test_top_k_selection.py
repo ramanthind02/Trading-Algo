@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-import sys
 from typing import cast
 
 import numpy as np
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.config import (
     WalkforwardResearchConfig,

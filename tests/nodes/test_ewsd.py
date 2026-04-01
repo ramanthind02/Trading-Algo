@@ -2,14 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from pathlib import Path
-import sys
 
 import numpy as np
 import pytest
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from nodes.ewsd import EWSDNode
 from utils.core.enums import Ticker, TimeFrame
@@ -101,9 +96,6 @@ def test_log_return_ewsd_coverage_is_close_to_log_return_when_cache_available() 
     data_dir = project_root / "data" / "ohlc_data"
     if not data_dir.exists():
         pytest.skip(f"Skipping coverage check, dataset missing at {data_dir}")
-
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
 
     from feature_research.in_sample.config import load_config
     from feature_research.in_sample.data_loader import (

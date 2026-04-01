@@ -51,6 +51,7 @@ from feature_selection.validation.stability_analysis import (
 from utils.cache.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.evaluation.permutation_test.candle_shuffle import CandleShuffler
+from ._support import project_root as _project_root
 
 # ---------------------------------------------------------------------------
 # Default integration test configuration (RSI-5 on ES daily 2020-2023)
@@ -69,10 +70,6 @@ NREPS_FAST = 100  # fast for integration tests
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
 
 
 def _sharpe(returns: pd.Series) -> float:

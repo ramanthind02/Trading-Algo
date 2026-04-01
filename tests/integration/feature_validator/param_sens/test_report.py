@@ -5,15 +5,11 @@ generate_parameter_sensitivity_report() orchestrator.
 Covers 1D, 2D report generation, top-K selection, determinism,
 and report field validation.
 """
-import sys
-import os
 import unittest
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")))
 
 from eda.parameter_analysis import (
     ParameterSensitivityReport,

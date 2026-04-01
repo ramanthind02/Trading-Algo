@@ -40,8 +40,12 @@ logging.basicConfig(
 # Suppress ibapi debug logs
 logging.getLogger('ibapi').setLevel(logging.WARNING)
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from scripts._bootstrap import ensure_project_root_on_path
+except ImportError:
+    from _bootstrap import ensure_project_root_on_path
+
+PROJECT_ROOT = ensure_project_root_on_path()
 
 # IB API imports
 from ibapi.contract import Contract

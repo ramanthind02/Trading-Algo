@@ -1,21 +1,18 @@
-"""
-Run Manual Forecast
+"""Run a manual forecast pass without waiting for the deployment scheduler."""
 
-Quick script to test forecast server immediately without waiting for schedule.
-
-Usage:
-    python run_manual_forecast.py [--timeframe D|W] [--output results.json]
-"""
-
-import sys
-import os
 import argparse
 import json
+import sys
+from pathlib import Path
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from scripts._bootstrap import ensure_project_root_on_path
+except ImportError:
+    from _bootstrap import ensure_project_root_on_path
 
-from deployment.test_forecast_server import TestForecastServer
+PROJECT_ROOT = ensure_project_root_on_path()
+
+from deployment.forecast_server import ForecastServer
 from utils.core.enums import TimeFrame
 from utils.core.logger import get_logger
 
@@ -44,16 +41,16 @@ def print_forecast_results(results: dict) -> None:
     print("="*80)
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Run manual forecast test')
-    parser.add_argument('--timeframe', choices=['D', 'W'], help='Specific timeframe to test')
-    parser.add_argument('--output', type=str, help='Save results to JSON file')
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run a manual forecast test")
+    parser.add_argument("--timeframe", choices=["D", "W"], help="Specific timeframe to test")
+    parser.add_argument("--output", type=str, help="Save results to JSON file")
     args = parser.parse_args()
     
     try:
         print("🚀 Initializing test server...")
         logger.info("🚀 Initializing test server...")
-        server = TestForecastServer()
+        server = ForecastServer()
         print("✅ Server initialized")
         
         print("📚 Loading historical data...")
@@ -71,7 +68,7 @@ def main():
         print_forecast_results(results)
         
         if args.output:
-            with open(args.output, 'w') as f:
+            with open(args.output, "w", encoding="utf-8") as f:
                 json.dump(results, f, indent=2)
             logger.info(f"💾 Results saved to {args.output}")
         

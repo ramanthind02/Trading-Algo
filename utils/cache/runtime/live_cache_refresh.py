@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Iterable, Optional, Sequence
 
 import pandas as pd
 
-from .cache_paths import project_root
+from .cache_paths import project_root, resolve_relative_path
 from .central_cache_models import ArtifactScope
 from utils.core.enums import Ticker, TimeFrame
 
@@ -59,19 +59,6 @@ class LiveCacheRefreshRunSummary:
 
 def default_live_cache_refresh_manifest_path() -> Path:
     return project_root() / "deployment" / "config" / "live_cache_refresh.json"
-
-
-def _resolve_path(path_value: str | Path) -> Path:
-    candidate = Path(path_value)
-    if candidate.is_absolute():
-        return candidate
-    cwd_candidate = Path.cwd() / candidate
-    if cwd_candidate.exists():
-        return cwd_candidate
-    project_candidate = project_root() / candidate
-    if project_candidate.exists():
-        return project_candidate
-    return project_candidate
 
 
 def _status_path(cache_root: Path) -> Path:
@@ -161,7 +148,10 @@ def _parse_active_portfolio(payload: dict[str, Any]) -> ActiveLivePortfolioConfi
 def load_live_cache_refresh_manifest(
     manifest_path: str | None = None,
 ) -> LiveCacheRefreshManifest | None:
-    resolved_path = _resolve_path(manifest_path or default_live_cache_refresh_manifest_path())
+    resolved_path = resolve_relative_path(
+        manifest_path or default_live_cache_refresh_manifest_path(),
+        project_root_fallback="project_candidate",
+    )
     if not resolved_path.exists():
         return None
 
@@ -330,7 +320,12 @@ def _run_live_cache_refresh_cycle(
     from utils.cache.portfolio_materialization import materialize_global_portfolio_predictions
 
     started_at = _utc_now_iso()
-    resolved_manifest_path = str(_resolve_path(manifest_path or default_live_cache_refresh_manifest_path()))
+    resolved_manifest_path = str(
+        resolve_relative_path(
+            manifest_path or default_live_cache_refresh_manifest_path(),
+            project_root_fallback="project_candidate",
+        )
+    )
     normalized_dirty_keys = _normalize_dirty_keys(dirty_keys)
     manifest: LiveCacheRefreshManifest | None = None
 

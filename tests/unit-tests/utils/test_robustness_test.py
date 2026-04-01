@@ -17,10 +17,6 @@ import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for testing
 import matplotlib.pyplot as plt
 
-# Add the project root to the path for imports
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from utils.evaluation.robustness_test import (
     robustness_test,
     ResamplingStrategy,

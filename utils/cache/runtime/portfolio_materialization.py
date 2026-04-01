@@ -11,7 +11,7 @@ import pandas as pd
 from .cache_paths import (
     default_live_materialized_cache_dir,
     default_research_materialized_cache_dir,
-    project_root,
+    resolve_relative_path,
 )
 from .central_cache_models import ArtifactScope
 from utils.core.enums import TimeFrame
@@ -221,21 +221,6 @@ def _remove_empty_parent_dirs(path: Path, stop_at: Path) -> None:
         current = current.parent
 
 
-def _resolve_vault_root(vault_root: str) -> Path:
-    candidate = Path(vault_root)
-    if candidate.is_absolute():
-        return candidate
-    if candidate.exists():
-        return candidate
-    cwd_candidate = Path.cwd() / candidate
-    if cwd_candidate.exists():
-        return cwd_candidate
-    project_candidate = project_root() / candidate
-    if project_candidate.exists():
-        return project_candidate
-    return candidate
-
-
 def _feature_name_from_payload(feature_path: Path, payload: dict[str, Any]) -> str:
     return str(
         payload.get("feature_name")
@@ -250,7 +235,12 @@ def _scan_active_live_base_model_identities(
 ) -> set[BaseModelMaterializationIdentity]:
     from ensemble.vault_manager import _resolve_ensemble_path
 
-    resolved_vault_root = _resolve_vault_root(vault_root)
+    resolved_vault_root = resolve_relative_path(
+        vault_root,
+        prefer_existing_candidate=True,
+        include_project_root=True,
+        project_root_fallback="candidate",
+    )
     target_ensemble_dirs: list[Path]
     if ensemble_dirs is not None:
         target_ensemble_dirs = [

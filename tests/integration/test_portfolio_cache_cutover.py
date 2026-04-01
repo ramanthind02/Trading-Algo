@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
-
-import pytest
 
 from ensemble.portfolio import Portfolio, PortfolioCacheQuery
 from ensemble.vault_manager import (
@@ -17,14 +14,6 @@ from utils.cache.central_cache import CentralCacheStore
 from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
 from utils.cache.ingest_source_candles import ingest_source_candles
 from utils.core.enums import TimeFrame
-
-
-@pytest.fixture
-def isolated_central_cache(tmp_path: Path) -> None:
-    CentralCacheStore.reset()
-    CentralCacheStore._instance = CentralCacheStore(cache_dir=tmp_path / "central_cache")  # type: ignore[attr-defined]
-    yield
-    CentralCacheStore.reset()
 
 
 def test_monthly_buy_hold_portfolio_runs_from_central_cache(

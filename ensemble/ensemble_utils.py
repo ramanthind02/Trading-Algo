@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 import utils.core.helpers as helpers
+from ensemble.vault_feature_files import validate_domain_discrete_bias_node_spec
 from feature_selection.base_models import BaseModel
 from feature_selection.domain_discrete import (
     build_domain_discrete_bias_node_spec,
@@ -93,33 +94,6 @@ def parse_control_file(filepath: str) -> Dict[str, Any]:
     return control_file
 
 
-def _validate_domain_discrete_bias_node_spec(
-    bias_node_spec: Dict[str, Any],
-    *,
-    prefix: str,
-) -> None:
-    if not isinstance(bias_node_spec, dict):
-        raise ValueError(f"{prefix}bias_node_spec must be a dictionary")
-    if bias_node_spec.get("module_name") != "domain_discrete":
-        _reject_legacy_feature_artifact(
-            f"{prefix}bias_node_spec.module_name must be 'domain_discrete'."
-        )
-    params = bias_node_spec.get("params")
-    if not isinstance(params, dict):
-        raise ValueError(f"{prefix}bias_node_spec.params must be a dictionary")
-    domain_spec = load_domain_discrete_spec(params)
-    if "timeframes" in bias_node_spec:
-        stored_timeframes = [
-            tf if isinstance(tf, TimeFrame) else TimeFrame[str(tf)]
-            for tf in bias_node_spec["timeframes"]
-        ]
-        expected_timeframes = list(domain_spec.source_bias_node_spec.timeframes)
-        if stored_timeframes != expected_timeframes:
-            raise ValueError(
-                f"{prefix}bias_node_spec.timeframes must match source_bias_node_spec.timeframes"
-            )
-
-
 def _validate_domain_discrete_model_config(
     config: Dict[str, Any],
     *,
@@ -146,7 +120,7 @@ def _validate_domain_discrete_model_config(
         ) from exc
     config["strategy"] = strategy.value
 
-    _validate_domain_discrete_bias_node_spec(config["bias_node_spec"], prefix=prefix)
+    validate_domain_discrete_bias_node_spec(config["bias_node_spec"], prefix=prefix)
 
 
 def validate_control_file(control_file: Dict[str, Any]) -> None:

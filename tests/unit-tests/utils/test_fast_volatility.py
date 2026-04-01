@@ -1,10 +1,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-from pathlib import Path
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
 from ensemble.portfolio_tester import (

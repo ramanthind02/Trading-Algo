@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import sys
 
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.io import (
     _build_selected_params_detailed,

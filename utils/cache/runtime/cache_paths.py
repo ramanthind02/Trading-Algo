@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 
 def project_root() -> Path:
@@ -13,6 +14,37 @@ def project_root() -> Path:
         ),
         resolved.parents[2],
     )
+
+
+def resolve_relative_path(
+    path_value: str | Path,
+    *,
+    prefer_existing_candidate: bool = False,
+    include_project_root: bool = True,
+    project_root_fallback: Literal["candidate", "project_candidate"] = "project_candidate",
+) -> Path:
+    """Resolve a path against cwd and optionally the repo root without changing fallbacks."""
+    candidate = Path(path_value)
+    if candidate.is_absolute():
+        return candidate
+
+    if prefer_existing_candidate and candidate.exists():
+        return candidate
+
+    cwd_candidate = Path.cwd() / candidate
+    if cwd_candidate.exists():
+        return cwd_candidate
+
+    if not include_project_root:
+        return candidate
+
+    project_candidate = project_root() / candidate
+    if project_candidate.exists():
+        return project_candidate
+
+    if project_root_fallback == "candidate":
+        return candidate
+    return project_candidate
 
 
 def default_runtime_root() -> Path:

@@ -6,10 +6,6 @@ using Cython-optimized kernels or pure Python fallbacks. Tests use monkeypatchin
 to toggle CYTHON_*_AVAILABLE flags and compare results.
 """
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import numpy as np
 import pytest
 from datetime import datetime, timedelta

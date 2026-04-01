@@ -267,12 +267,25 @@ def _mean_off_diagonal_correlation(corr_matrix: pd.DataFrame) -> float:
     return float(correlations.mean())
 
 
-def _compute_fdm_from_corr_matrix(corr_matrix: pd.DataFrame, fdm_max: float) -> float:
+def _correlation_multiplier_from_corr_matrix(
+    corr_matrix: pd.DataFrame,
+    *,
+    cap: float,
+    epsilon: float = 0.01,
+) -> tuple[float, float]:
+    """Return the mean off-diagonal correlation and capped diversification multiplier."""
     if len(corr_matrix.columns) <= 1:
-        return 1.0
-    mean_corr = _mean_off_diagonal_correlation(corr_matrix)
-    fdm = float(np.sqrt(1.0 / (mean_corr + 0.01)))
-    return min(fdm, fdm_max)
+        return 1.0, 1.0
+
+    positive_corr = _positive_clipped_correlation(corr_matrix.copy())
+    mean_corr = _mean_off_diagonal_correlation(positive_corr)
+    multiplier = min(float(np.sqrt(1.0 / (mean_corr + epsilon))), cap)
+    return mean_corr, multiplier
+
+
+def _compute_fdm_from_corr_matrix(corr_matrix: pd.DataFrame, fdm_max: float) -> float:
+    _, fdm = _correlation_multiplier_from_corr_matrix(corr_matrix, cap=fdm_max)
+    return fdm
 
 
 def _apply_group_weight_cap(weights: np.ndarray, cap: float) -> np.ndarray:

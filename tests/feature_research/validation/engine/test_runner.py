@@ -4,14 +4,11 @@ import dataclasses
 from datetime import datetime
 import json
 from pathlib import Path
-import sys
 from typing import Callable, cast
 
 import numpy as np
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.config import (
     WeightLayerAlgorithm,

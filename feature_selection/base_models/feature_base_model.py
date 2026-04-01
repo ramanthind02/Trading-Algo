@@ -75,6 +75,53 @@ def _project_signal_to_strategy(signal: pd.Series, strategy: Direction) -> pd.Se
     return signal
 
 
+def _prepare_candle_rows(candles_df: pd.DataFrame) -> pd.DataFrame:
+    rows = candles_df.copy()
+    if "datetime" in rows.columns:
+        rows["datetime"] = pd.to_datetime(rows["datetime"])
+        sort_columns = ["datetime", "ticker"] if "ticker" in rows.columns else ["datetime"]
+        rows = rows.sort_values(sort_columns)
+    return rows
+
+
+def _fallback_feature_column_name(
+    nodes: dict[tuple[Ticker, TimeFrame], object],
+    tickers: list[Ticker],
+    timeframes: list[TimeFrame],
+) -> str:
+    first_key = (tickers[0], timeframes[0])
+    fallback_node = nodes[first_key]
+    names = fallback_node.get_column_names() if hasattr(fallback_node, "get_column_names") else []
+    return names[0] if names else "domain_discrete_signal"
+
+
+def _build_default_feature_column(
+    source_module_name: str,
+    direction: Direction,
+    spec_version: str,
+    first_timeframe: TimeFrame,
+) -> str:
+    return helpers.build_feature_column_name(
+        module="domain_discrete",
+        feature="signal",
+        tf=first_timeframe,
+        params={
+            "sourceModule": source_module_name,
+            "direction": direction.value,
+            "specVersion": spec_version,
+        },
+    )
+
+
+def _feature_name_from_column(feature_column: str) -> str:
+    parsed = helpers.parse_feature_column_name(feature_column)
+    tf = parsed.get("tf")
+    tf_name = tf.name if hasattr(tf, "name") else str(tf)
+    if parsed.get("module") and parsed.get("feature") and tf_name:
+        return f"{parsed.get('module')}_{parsed.get('feature')}_{tf_name}"
+    return feature_column
+
+
 class BaseModel:
     """Thin node-backed adapter for frozen domain-discrete signed signals."""
 
@@ -183,18 +230,18 @@ class BaseModel:
         )
         return FilteredBiasNode(node, filters)
 
-    def _extract_feature_series(self, candles_df: pd.DataFrame) -> pd.Series:
-        nodes: dict[tuple[Ticker, TimeFrame], object] = {
-            (ticker, tf): self._instantiate_bias_node(ticker, tf)
+    def _build_bias_nodes(self) -> dict[tuple[Ticker, TimeFrame], object]:
+        return {
+            (ticker, timeframe): self._instantiate_bias_node(ticker, timeframe)
             for ticker in self.tickers
-            for tf in self.bias_node_spec["timeframes"]
+            for timeframe in self.bias_node_spec["timeframes"]
         }
+
+    def _extract_feature_series(self, candles_df: pd.DataFrame) -> pd.Series:
+        nodes = self._build_bias_nodes()
         self.bias_nodes = nodes
 
-        rows = candles_df.copy()
-        if "datetime" in rows.columns:
-            rows["datetime"] = pd.to_datetime(rows["datetime"])
-            rows = rows.sort_values(["datetime", "ticker"] if "ticker" in rows.columns else ["datetime"])
+        rows = _prepare_candle_rows(candles_df)
 
         values: list[float] = []
         index: list[pd.Timestamp] = []
@@ -216,11 +263,11 @@ class BaseModel:
             index.append(pd.Timestamp(candle.datetime))
 
         if column_name is None:
-            first_ticker = self.tickers[0]
-            first_tf = self.bias_node_spec["timeframes"][0]
-            fallback_node = nodes[(first_ticker, first_tf)]
-            names = fallback_node.get_column_names() if hasattr(fallback_node, "get_column_names") else []
-            column_name = names[0] if names else "domain_discrete_signal"
+            column_name = _fallback_feature_column_name(
+                nodes,
+                self.tickers,
+                self.bias_node_spec["timeframes"],
+            )
 
         feature_series = pd.Series(values, index=pd.DatetimeIndex(index), name=column_name, dtype=float)
         if feature_series.index.duplicated().any():
@@ -299,26 +346,13 @@ class BaseModel:
         from ensemble.vault_manager import add_feature_to_ensemble
 
         if self.feature_column is None:
-            first_tf = self.bias_node_spec["timeframes"][0]
-            self.feature_column = helpers.build_feature_column_name(
-                module="domain_discrete",
-                feature="signal",
-                tf=first_tf,
-                params={
-                    "sourceModule": self.domain_discrete_spec.source_bias_node_spec.module_name,
-                    "direction": self.domain_discrete_spec.direction.value,
-                    "specVersion": self.domain_discrete_spec.spec_version,
-                },
+            self.feature_column = _build_default_feature_column(
+                source_module_name=self.domain_discrete_spec.source_bias_node_spec.module_name,
+                direction=self.domain_discrete_spec.direction,
+                spec_version=self.domain_discrete_spec.spec_version,
+                first_timeframe=self.bias_node_spec["timeframes"][0],
             )
-
-        parsed = helpers.parse_feature_column_name(str(self.feature_column))
-        tf = parsed.get("tf")
-        tf_name = tf.name if hasattr(tf, "name") else str(tf)
-        feature_name = (
-            f"{parsed.get('module')}_{parsed.get('feature')}_{tf_name}"
-            if parsed.get("module") and parsed.get("feature") and tf_name
-            else str(self.feature_column)
-        )
+        feature_name = _feature_name_from_column(str(self.feature_column))
 
         return add_feature_to_ensemble(
             feature_name=feature_name,

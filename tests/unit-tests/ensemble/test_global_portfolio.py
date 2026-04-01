@@ -5,15 +5,15 @@ TFPortfolio instances are lightweight mocks to isolate GlobalPortfolio orchestra
 """
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
+from ensemble.global_weight_layer_adapter import (
+    build_global_adapter_rollups,
+    decode_global_weight_layer_output,
+    encode_forecast_vectors_for_global_weight_layer,
+)
 from utils.cache.central_cache import CentralCacheStore
 from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
 from utils.core.enums import TimeFrame, Ticker
@@ -374,6 +374,32 @@ class TestDiagnostics:
         gp, _ = _build_global_portfolio()
         assert gp.get_diagnostics()["is_fitted"] is True
 
+    def test_collect_global_strategy_health_diagnostics_records_model_stats(self):
+        gp = GlobalPortfolio(tf_portfolios=[])
+        forecast_vectors = [
+            pd.DataFrame(
+                {
+                    "ticker": ["ES", "ES"],
+                    "datetime": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+                    "model_name": ["alpha", "alpha"],
+                    "forecast": [0.5, 0.5],
+                    "signal": [1.0, 1.0],
+                    "timeframe": ["D", "D"],
+                }
+            )
+        ]
+
+        eligible_vectors, diagnostics = gp._collect_global_strategy_health_diagnostics(
+            forecast_vectors,
+            global_returns=None,
+        )
+
+        assert eligible_vectors == forecast_vectors
+        assert diagnostics["tickers"]["ES"]["n_models_before"] == 1
+        assert diagnostics["tickers"]["ES"]["n_models_after"] == 1
+        assert diagnostics["tickers"]["ES"]["model_stats"][0]["effective_obs"] == 2
+        assert gp.global_eligible_models_by_ticker_ == {"ES": {"alpha"}}
+
 
 class TestInstrumentWeights:
     """Custom instrument weights affect position_fraction proportionally."""
@@ -415,9 +441,7 @@ class TestGlobalAdapter:
                 "timeframe": ["D", "D", "W", "W"],
             }
         )
-        encoded_vectors, decode_map = GlobalPortfolio._encode_forecast_vectors_for_global_weight_layer(
-            [data]
-        )
+        encoded_vectors, decode_map = encode_forecast_vectors_for_global_weight_layer([data])
 
         assert len(encoded_vectors) == 1
         encoded = encoded_vectors[0]
@@ -440,17 +464,6 @@ class TestGlobalAdapter:
         }
 
     def test_decode_aggregates_streams_back_to_tickers(self):
-        gp = GlobalPortfolio(tf_portfolios=[])
-        gp.weight_layer.weights_ = {
-            "__GLOBAL__": pd.Series(
-                {
-                    "ES::D::m1": 0.60,
-                    "NQ::W::m2": 0.40,
-                }
-            )
-        }
-        gp.weight_layer.fdm_ = {"__GLOBAL__": 1.0}
-
         encoded = pd.DataFrame(
             {
                 "ticker": ["__GLOBAL__", "__GLOBAL__", "__GLOBAL__", "__GLOBAL__"],
@@ -475,7 +488,17 @@ class TestGlobalAdapter:
             },
         }
 
-        decoded = gp._decode_global_weight_layer_output([encoded], decode_map)
+        decoded = decode_global_weight_layer_output(
+            [encoded],
+            decode_map,
+            global_weights=pd.Series(
+                {
+                    "ES::D::m1": 0.60,
+                    "NQ::W::m2": 0.40,
+                }
+            ),
+            global_fdm=1.0,
+        )
         expected = pd.DataFrame(
             {
                 "ticker": ["ES", "ES", "NQ", "NQ"],
@@ -489,6 +512,43 @@ class TestGlobalAdapter:
             decoded.sort_values(["ticker", "datetime"]).reset_index(drop=True),
             expected.sort_values(["ticker", "datetime"]).reset_index(drop=True),
         )
+
+    def test_decode_falls_back_for_missing_stream_weights_and_clips_with_fdm(self):
+        encoded = pd.DataFrame(
+            {
+                "ticker": ["__GLOBAL__", "__GLOBAL__"],
+                "datetime": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+                "model_name": ["ES::D::m1", "NQ::W::m2"],
+                "forecast": [1.0, 1.0],
+                "signal": [1.0, 1.0],
+            }
+        )
+        decode_map = {
+            "ES::D::m1": {
+                "ticker": "ES",
+                "timeframe": "D",
+                "original_model_name": "m1",
+            },
+            "NQ::W::m2": {
+                "ticker": "NQ",
+                "timeframe": "W",
+                "original_model_name": "m2",
+            },
+        }
+        global_weights = pd.Series({"ES::D::m1": 0.60}, dtype=float)
+
+        decoded = decode_global_weight_layer_output(
+            [encoded],
+            decode_map,
+            global_weights=global_weights,
+            global_fdm=5.0,
+        )
+        assert decoded.sort_values("ticker")["forecast_score"].tolist() == pytest.approx([2.0, 2.0])
+
+        rollups = build_global_adapter_rollups(decode_map, global_weights)
+        assert rollups["stream_weights"] == {"ES::D::m1": 0.6}
+        assert rollups["ticker_rollups"] == {"ES": 0.6}
+        assert rollups["timeframe_rollups"] == {"D": 0.6}
 
     def test_removed_sector_constructor_surface_rejected(self):
         with pytest.raises(TypeError):

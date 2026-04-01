@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import importlib
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,10 +9,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 rpt = importlib.import_module("portfolio_research.run_portfolio_test")
 pipeline = importlib.import_module("portfolio_research.pipelines.portfolio_test")

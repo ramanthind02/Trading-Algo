@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
 import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-
-from ensemble.weight_layer import WeightLayer, WeightLayerConfig
+from ensemble.weight_layer import (
+    WeightLayer,
+    WeightLayerConfig,
+    _correlation_multiplier_from_corr_matrix,
+)
 
 
 def _make_forecasts(
@@ -243,6 +242,19 @@ def test_fdm_uses_raw_signal_correlations_and_respects_cap() -> None:
     diag = layer.get_diagnostics()["tickers"]["ES"]
     assert layer.fdm_["ES"] <= 1.3
     assert diag["mean_signal_correlation"] < 1.0
+
+
+def test_correlation_multiplier_helper_floors_negative_correlation_and_caps_result() -> None:
+    corr = pd.DataFrame(
+        [[1.0, -0.4, 0.6], [-0.4, 1.0, 0.2], [0.6, 0.2, 1.0]],
+        columns=["a", "b", "c"],
+        index=["a", "b", "c"],
+    )
+
+    mean_corr, multiplier = _correlation_multiplier_from_corr_matrix(corr, cap=1.5)
+
+    assert mean_corr == pytest.approx((0.0 + 0.6 + 0.2) / 3.0)
+    assert multiplier == pytest.approx(1.5)
 
 
 def test_combine_returns_datetime_level_forecasts() -> None:

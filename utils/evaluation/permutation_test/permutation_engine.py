@@ -31,18 +31,7 @@ from abc import ABC, abstractmethod
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from datetime import datetime
-from pathlib import Path
-import sys
-import os
 
-# Add project root to sys.path
-_CURRENT_FILE = Path(__file__).resolve()
-REPO_ROOT = next(
-    (parent for parent in _CURRENT_FILE.parents if (parent / ".git").exists()),
-    _CURRENT_FILE.parents[2],
-)
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 from utils.core.enums import Ticker, TimeFrame
 
 

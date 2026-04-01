@@ -20,7 +20,7 @@
     "ticker": "RTY",
     "timeframe": "D"
   },
-  "lifecycle_state": "fresh",
+  "lifecycle_state": "stale",
   "revision": 27,
   "source_revision": 2
 }

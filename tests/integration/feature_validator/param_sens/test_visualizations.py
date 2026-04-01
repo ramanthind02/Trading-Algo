@@ -4,15 +4,11 @@ Tests for T011 — Stability-aware visualization functions.
 Validates figure structure, trace types, hover templates, stable region
 shading, and the 3D slicing interface.
 """
-import sys
-import os
 import unittest
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")))
 
 from metrics.plotting.parameter_plots import (
     plot_parameter_sensitivity_with_stability,

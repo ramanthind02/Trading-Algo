@@ -5,10 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pandas as pd
-from pathlib import Path
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from ensemble.portfolio import Portfolio

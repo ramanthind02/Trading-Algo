@@ -18,15 +18,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
-import numpy as np
 import pandas as pd
 
-import utils.core.helpers as helpers
+from ensemble.vault_feature_files import (
+    build_feature_listing,
+    collect_base_model_names,
+    collect_bias_node_specs,
+    consolidate_feature_files_in_dir,
+    extract_feature_name,
+    iter_validated_feature_configs,
+    load_validated_feature_config,
+    migrate_legacy_feature_members_schema_in_dir,
+    resolve_feature_file_path,
+    validate_feature_configs_for_ensemble,
+    validate_domain_discrete_feature_config,
+)
 from feature_selection.base_models.feature_base_model import BaseModel
 from feature_selection.domain_discrete import build_domain_discrete_bias_node_spec, load_domain_discrete_spec, raise_legacy_feature_artifact
 
 from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
-from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS
 
 # Type hint for forward reference
 if TYPE_CHECKING:
@@ -44,6 +54,17 @@ VAULT_ROOT: str = 'vault'
 # CLI/interactive defaults; in library code prefer passing ensemble_dir explicitly.
 _DEFAULT_ENSEMBLE_DIR: Optional[str] = None
 _DEFAULT_ENSEMBLE_TICKERS: Optional[List[Ticker]] = None
+
+_REQUIRE_ENSEMBLE_DIR_MESSAGE = (
+    "ensemble_dir must be provided or call create_ensemble_directory() first. "
+    "Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
+)
+
+_AUTO_DETECT_ENSEMBLE_DIR_MESSAGE = (
+    "ensemble_dir must be provided or call create_ensemble_directory() first. "
+    "Could not auto-detect any ensemble directory with features. "
+    "Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
+)
 
 
 def get_default_ensemble_dir() -> Optional[str]:
@@ -70,6 +91,121 @@ def get_default_ensemble_tickers() -> Optional[List[Ticker]]:
     return _DEFAULT_ENSEMBLE_TICKERS
 
 
+def _iter_vault_root_candidates() -> List[Path]:
+    cwd = Path.cwd()
+    module_root = Path(__file__).resolve().parent.parent
+    bases = [cwd, cwd.parent]
+    current = cwd
+    while current != current.parent:
+        bases.append(current)
+        current = current.parent
+    bases.append(module_root)
+
+    candidate_paths: List[Path] = []
+    seen: set[Path] = set()
+    for base in bases:
+        candidate = base / VAULT_ROOT
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        candidate_paths.append(candidate)
+    return candidate_paths
+
+
+def _iter_vault_timeframe_dirs(vault_path: Path) -> List[Path]:
+    if not vault_path.exists():
+        return []
+    return [
+        timeframe_path
+        for timeframe_path in sorted(vault_path.iterdir())
+        if timeframe_path.is_dir() and timeframe_path.name in {"D", "W", "M"}
+    ]
+
+
+def _parse_ensemble_dir_identity(dir_name: str) -> Optional[tuple[str, str]]:
+    suffixes = (
+        ("_long_short", "long_short"),
+        ("_long", "long"),
+        ("_short", "short"),
+    )
+    for suffix, direction in suffixes:
+        if dir_name.endswith(suffix):
+            return dir_name[: -len(suffix)], direction
+    return None
+
+
+def _iter_vault_ensemble_dirs(vault_path: Path) -> List[tuple[str, Path]]:
+    ensemble_dirs: List[tuple[str, Path]] = []
+    for timeframe_path in _iter_vault_timeframe_dirs(vault_path):
+        for ensemble_path in sorted(timeframe_path.iterdir()):
+            if ensemble_path.is_dir():
+                ensemble_dirs.append((timeframe_path.name, ensemble_path))
+    return ensemble_dirs
+
+
+def _has_feature_files(ensemble_path: Path) -> bool:
+    features_dir = _get_features_dir(ensemble_path)
+    return features_dir.exists() and next(features_dir.glob("*.json"), None) is not None
+
+
+def _resolve_vault_root_path(vault_root: Optional[str] = None) -> Path:
+    if vault_root is not None:
+        return Path(vault_root)
+
+    for candidate in _iter_vault_root_candidates():
+        if candidate.exists():
+            return candidate
+    return Path(VAULT_ROOT)
+
+
+def _autodetect_ensemble_dir_with_features() -> Optional[str]:
+    for vault_path in _iter_vault_root_candidates():
+        if not vault_path.exists():
+            continue
+        for _, ensemble_dir_path in _iter_vault_ensemble_dirs(vault_path):
+            if _has_feature_files(ensemble_dir_path):
+                return str(ensemble_dir_path)
+    return None
+
+
+def _require_ensemble_dir(
+    ensemble_dir: Optional[str],
+    *,
+    auto_detect: bool = False,
+) -> str:
+    global _DEFAULT_ENSEMBLE_DIR
+
+    if ensemble_dir is not None:
+        return ensemble_dir
+    if _DEFAULT_ENSEMBLE_DIR is not None:
+        return _DEFAULT_ENSEMBLE_DIR
+    if auto_detect:
+        detected = _autodetect_ensemble_dir_with_features()
+        if detected is not None:
+            _DEFAULT_ENSEMBLE_DIR = detected
+            return detected
+        raise ValueError(_AUTO_DETECT_ENSEMBLE_DIR_MESSAGE)
+    raise ValueError(_REQUIRE_ENSEMBLE_DIR_MESSAGE)
+
+
+def _load_ensemble_config(ensemble_path: Path) -> Dict[str, Any]:
+    ensemble_config_file = ensemble_path / "ensemble_config.json"
+    if not ensemble_config_file.exists():
+        raise ValueError(
+            f"Ensemble config file does not exist: {ensemble_config_file}. "
+            "Legacy directory-name inference is no longer supported."
+        )
+    with open(ensemble_config_file, "r") as handle:
+        return json.load(handle)
+
+
+def _get_features_dir(ensemble_path: Path, *, require_exists: bool = False) -> Path:
+    features_dir = ensemble_path / "features"
+    if require_exists and not features_dir.exists():
+        raise ValueError(f"Features directory does not exist: {features_dir}")
+    return features_dir
+
+
 def get_ensemble_tickers(ensemble_dir: Optional[str] = None) -> List[Ticker]:
     """
     Get tickers for an ensemble directory.
@@ -91,15 +227,7 @@ def get_ensemble_tickers(ensemble_dir: Optional[str] = None) -> List[Ticker]:
     ValueError
         If ensemble_dir is None and no default is set, or if config file doesn't exist
     """
-    global _DEFAULT_ENSEMBLE_DIR
-    
-    if ensemble_dir is None:
-        ensemble_dir = _DEFAULT_ENSEMBLE_DIR
-        if ensemble_dir is None:
-            raise ValueError(
-                "ensemble_dir must be provided or call create_ensemble_directory() first"
-            )
-    
+    ensemble_dir = _require_ensemble_dir(ensemble_dir)
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
     ensemble_config_file = ensemble_path / 'ensemble_config.json'
     
@@ -144,60 +272,16 @@ def _resolve_ensemble_path(ensemble_dir: str) -> Path:
     if ensemble_path.exists():
         return ensemble_path
     
-    # Try resolving from project root (where vault/ should be)
-    cwd = Path.cwd()
-    
-    # Check current directory
-    if (cwd / 'vault').exists():
-        resolved = cwd / ensemble_dir
+    for vault_root_path in _iter_vault_root_candidates():
+        resolved = vault_root_path.parent / ensemble_dir
         if resolved.exists():
             return resolved
-    
-    # Check parent directory (common for notebooks in research/)
-    if (cwd.parent / 'vault').exists():
-        resolved = cwd.parent / ensemble_dir
-        if resolved.exists():
-            return resolved
-    
-    # Walk up directory tree to find project root
-    current = cwd
-    while current != current.parent:
-        if (current / 'vault').exists():
-            resolved = current / ensemble_dir
-            if resolved.exists():
-                return resolved
-        current = current.parent
-    
-    # Try relative to where vault_manager.py is located
-    vault_manager_dir = Path(__file__).parent.parent
-    if (vault_manager_dir / 'vault').exists():
-        resolved = vault_manager_dir / ensemble_dir
-        if resolved.exists():
-            return resolved
-    
+        nested_resolved = vault_root_path / ensemble_dir
+        if nested_resolved.exists():
+            return nested_resolved
+
     # If still not found, return the original path (will fail later with better error)
     return ensemble_path
-
-
-# ============================================================================
-# Internal Helpers
-# ============================================================================
-
-def _normalize_bias_node_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Normalize per-model bias params; unwrap singleton lists from legacy payloads.
-
-    List-valued params that are semantically multi-valued (e.g. ``cross_tickers``)
-    are preserved as-is even when they contain a single element.
-    """
-    if not params:
-        return {}
-    normalized: Dict[str, Any] = {}
-    for key, value in params.items():
-        if isinstance(value, list) and len(value) == 1 and key not in SCALAR_LIST_PARAM_KEYS:
-            normalized[key] = value[0]
-        else:
-            normalized[key] = value
-    return normalized
 
 
 def _model_id_token(value: Any) -> str:
@@ -209,196 +293,79 @@ def _model_id_token(value: Any) -> str:
     return token or "na"
 
 
-def _extract_feature_name(feature_config: Dict[str, Any], fallback_stem: str) -> str:
-    """Resolve feature name from new/legacy payload keys."""
-    return (
-        feature_config.get("feature_name")
-        or feature_config.get("feature_column")
-        or fallback_stem
-    )
-
-
-def _validate_domain_discrete_bias_node_spec(
-    bias_node_spec: Dict[str, Any],
-    *,
-    prefix: str,
-) -> None:
-    if not isinstance(bias_node_spec, dict):
-        raise ValueError(f"{prefix}bias_node_spec must be a dictionary")
-    if bias_node_spec.get("module_name") != "domain_discrete":
-        raise_legacy_feature_artifact(
-            f"{prefix}bias_node_spec.module_name must be 'domain_discrete'."
-        )
-    params = bias_node_spec.get("params")
-    if not isinstance(params, dict):
-        raise ValueError(f"{prefix}bias_node_spec.params must be a dictionary")
-    domain_spec = load_domain_discrete_spec(params)
-    raw_timeframes = bias_node_spec.get("timeframes", [])
-    if raw_timeframes:
-        stored_timeframes = [
-            tf if isinstance(tf, TimeFrame) else TimeFrame[str(tf)]
-            for tf in raw_timeframes
-        ]
-        if stored_timeframes != list(domain_spec.source_bias_node_spec.timeframes):
-            raise ValueError(
-                f"{prefix}bias_node_spec.timeframes must match source_bias_node_spec.timeframes"
-            )
-
-
-def _validate_domain_discrete_feature_config(
-    feature_config: Dict[str, Any],
-    *,
-    feature_file: Path,
-) -> None:
-    required_keys = ["feature_name", "bias_node_spec", "base_models"]
-    missing_keys = [key for key in required_keys if key not in feature_config]
-    if missing_keys:
-        raise ValueError(f"Feature file {feature_file} missing required keys: {missing_keys}")
-    if not isinstance(feature_config["base_models"], list):
-        raise ValueError(f"Feature file {feature_file} base_models must be a list")
-    if len(feature_config["base_models"]) != 1:
-        raise ValueError(
-            f"Feature file {feature_file} must contain exactly one base model; "
-            f"found {len(feature_config['base_models'])}"
-        )
-    if "feature_column" in feature_config:
-        raise_legacy_feature_artifact(
-            f"Feature file {feature_file} still stores legacy top-level feature_column."
-        )
-
-    _validate_domain_discrete_bias_node_spec(
-        feature_config["bias_node_spec"],
-        prefix=f"{feature_file}: ",
-    )
-
-    model_entry = feature_config["base_models"][0]
-    legacy_keys = {
-        key
-        for key in (
-            "binning_model_type",
-            "binning_model_params",
-            "requires_fit",
-            "is_fitted",
-            "fitted_params",
-        )
-        if key in model_entry
-    }
-    if legacy_keys:
-        raise_legacy_feature_artifact(
-            f"Feature file {feature_file} contains legacy model keys: {sorted(legacy_keys)}"
-        )
-
-    expected_feature_name = _extract_feature_name(feature_config, feature_file.stem)
-    if model_entry.get("feature_column") not in {expected_feature_name, feature_file.stem}:
-        raise ValueError(
-            f"Feature file {feature_file} base model feature_column must match feature name"
-        )
-    if model_entry.get("model_type") != "domain_discrete":
-        raise_legacy_feature_artifact(
-            f"Feature file {feature_file} base model model_type must be 'domain_discrete'."
-        )
-    if model_entry.get("bias_node_spec") != feature_config["bias_node_spec"]:
-        raise ValueError(
-            f"Feature file {feature_file} base model bias_node_spec must match top-level bias_node_spec"
-        )
-
-
-def _candidate_feature_names(raw_name: str) -> List[str]:
-    """Generate likely feature-file stems for canonical and legacy names."""
-    candidates = [raw_name]
-    parsed = helpers.parse_feature_column_name(raw_name)
-    tf = parsed.get("tf")
-    tf_name = tf.name if hasattr(tf, "name") else str(tf) if tf else None
-    if parsed.get("module") and parsed.get("feature") and tf_name:
-        canonical = f"{parsed['module']}_{parsed['feature']}_{tf_name}"
-        if canonical not in candidates:
-            candidates.append(canonical)
-    return candidates
-
-
-def _resolve_feature_file_path(features_dir: Path, raw_name: str) -> Optional[Path]:
-    """Find feature JSON path by filename or payload-level feature keys."""
-    for candidate in _candidate_feature_names(raw_name):
-        path = features_dir / f"{candidate}.json"
-        if path.exists():
-            return path
-    for path in sorted(features_dir.glob("*.json")):
-        try:
-            with open(path, "r") as handle:
-                payload = json.load(handle)
-        except Exception:
-            continue
-        if payload.get("feature_name") == raw_name or payload.get("feature_column") == raw_name:
-            return path
-    return None
-
-
-def _canonical_feature_name_from_tokens(
-    raw_feature_name: str, bias_node_spec: Dict[str, Any]
-) -> str:
-    """
-    Build canonical feature file name key: {module}_{feature}_{timeframe}.
-
-    Falls back to the raw name if parsing fails.
-    """
-    parsed = helpers.parse_feature_column_name(raw_feature_name)
-    module = parsed.get("module") or bias_node_spec.get("module_name")
-    feature = parsed.get("feature")
-    tf = parsed.get("tf")
-    if hasattr(tf, "name"):
-        tf_name = tf.name
-    elif isinstance(tf, str):
-        tf_name = tf
+def _normalize_ensemble_tickers(
+    tickers: Optional[List[Ticker] | Ticker],
+) -> tuple[List[Ticker], List[str]]:
+    normalized_tickers: List[Ticker]
+    if tickers is None:
+        normalized_tickers = [Ticker.ES]
+    elif isinstance(tickers, Ticker):
+        normalized_tickers = [tickers]
     else:
-        spec_tfs = bias_node_spec.get("timeframes") or []
-        first_tf = spec_tfs[0] if spec_tfs else None
-        tf_name = first_tf.name if hasattr(first_tf, "name") else str(first_tf) if first_tf else None
-    if module and feature and tf_name:
-        return f"{module}_{feature}_{tf_name}"
-    return raw_feature_name
+        normalized_tickers = list(tickers)
+
+    ticker_names = sorted(
+        ticker.name if isinstance(ticker, Ticker) else str(ticker)
+        for ticker in normalized_tickers
+    )
+    return normalized_tickers, ticker_names
 
 
-def _serialize_bias_node_spec_for_storage(bias_node_spec: Dict[str, Any]) -> Dict[str, Any]:
-    """Store only module_name + timeframes in new schema."""
-    timeframes = bias_node_spec.get("timeframes", [])
-    serialized_tfs = [
-        tf.name if isinstance(tf, TimeFrame) else str(tf)
-        for tf in timeframes
-    ]
+def _build_ensemble_config(
+    timeframe: TimeFrame,
+    ensemble_name: str,
+    direction: Direction,
+    ticker_names: List[str],
+) -> Dict[str, Any]:
+    timestamp = datetime.now(timezone.utc).isoformat()
     return {
-        "module_name": bias_node_spec["module_name"],
-        "timeframes": serialized_tfs,
+        "timeframe": timeframe.name,
+        "ensemble_name": ensemble_name,
+        "direction": direction.value,
+        "tickers": ticker_names,
+        "created_at": timestamp,
+        "updated_at": timestamp,
     }
 
 
-def _extract_bias_node_params_for_model(
-    model_entry: Dict[str, Any],
-    feature_config: Dict[str, Any],
-    feature_name: str,
-) -> Dict[str, Any]:
-    """Read per-model bias params with legacy fallbacks."""
-    if "bias_node_params" in model_entry:
-        return _normalize_bias_node_params(model_entry.get("bias_node_params"))
-
-    legacy_spec = feature_config.get("bias_node_spec", {})
-    if "params" in legacy_spec:
-        return _normalize_bias_node_params(legacy_spec.get("params"))
-
-    parsed = helpers.parse_feature_column_name(feature_name)
-    return _normalize_bias_node_params(parsed.get("params", {}))
+def _write_ensemble_config(ensemble_path: Path, config: Dict[str, Any]) -> None:
+    ensemble_config_file = ensemble_path / "ensemble_config.json"
+    with open(ensemble_config_file, "w") as handle:
+        json.dump(config, handle, indent=2)
 
 
-def _canonical_bias_spec_key(spec: Dict[str, Any]) -> tuple[str, tuple[str, ...], str]:
-    """Build a stable key for deduplicating bias-node specs."""
-    module_name = str(spec.get("module_name", ""))
-    timeframes = tuple(
-        sorted(
-            tf.name if hasattr(tf, "name") else str(tf)
-            for tf in spec.get("timeframes", [])
-        )
-    )
-    params = json.dumps(spec.get("params", {}), sort_keys=True, default=str)
-    return module_name, timeframes, params
+def _ensure_ensemble_directory_state(
+    ensemble_path: Path,
+    *,
+    config: Dict[str, Any],
+    ticker_names: List[str],
+) -> None:
+    if ensemble_path.exists():
+        ensemble_config_file = ensemble_path / "ensemble_config.json"
+        if ensemble_config_file.exists():
+            existing_tickers = sorted(_load_ensemble_config(ensemble_path).get("tickers", []))
+            if existing_tickers != ticker_names:
+                raise ValueError(
+                    f"Ensemble directory already exists with different tickers. "
+                    f"Existing: {existing_tickers}, Provided: {ticker_names}. "
+                    f"All features in an ensemble must use the same tickers."
+                )
+        else:
+            _write_ensemble_config(ensemble_path, config)
+        return
+
+    _get_features_dir(ensemble_path).mkdir(parents=True, exist_ok=False)
+    _write_ensemble_config(ensemble_path, config)
+
+
+def _set_default_ensemble_context(
+    ensemble_dir: str,
+    tickers: List[Ticker],
+) -> None:
+    global _DEFAULT_ENSEMBLE_DIR, _DEFAULT_ENSEMBLE_TICKERS
+
+    _DEFAULT_ENSEMBLE_DIR = ensemble_dir
+    _DEFAULT_ENSEMBLE_TICKERS = tickers
 
 
 # ============================================================================
@@ -505,8 +472,6 @@ def create_ensemble_directory(
     >>> # Now all vault functions use this as default
     >>> models = load_feature_base_models(feature_column='rsi_signal_D')
     """
-    global _DEFAULT_ENSEMBLE_DIR, _DEFAULT_ENSEMBLE_TICKERS
-
     # Backward compatibility: legacy positional signature
     # create_ensemble_directory(vault_root, timeframe, ensemble_name, direction)
     if isinstance(timeframe, str) and isinstance(ensemble_name, TimeFrame):
@@ -524,98 +489,25 @@ def create_ensemble_directory(
     if isinstance(timeframe, str):
         timeframe = TimeFrame[timeframe]
     direction = coerce_direction(direction, field_name="direction")
+    tickers, ticker_names = _normalize_ensemble_tickers(tickers)
 
-    # Default tickers if not provided
-    if tickers is None:
-        tickers = [Ticker.ES]
-    
-    # Normalize tickers to list
-    if isinstance(tickers, Ticker):
-        tickers = [tickers]
-    
-    # Convert to sorted list of names for consistency
-    ticker_names = sorted([ticker.name if isinstance(ticker, Ticker) else ticker for ticker in tickers])
-    
-    # Build ensemble directory name
     ensemble_dir_name = f"{ensemble_name}_{direction.value}"
-    
-    # Build full path (hardcoded default root unless explicit override provided).
-    if vault_root is not None:
-        vault_path = Path(vault_root)
-    else:
-        cwd = Path.cwd()
-        if (cwd / VAULT_ROOT).exists():
-            vault_path = cwd / VAULT_ROOT
-        elif (cwd.parent / VAULT_ROOT).exists():
-            vault_path = cwd.parent / VAULT_ROOT
-        else:
-            # Walk up to find project root
-            current = cwd
-            while current != current.parent:
-                if (current / VAULT_ROOT).exists():
-                    vault_path = current / VAULT_ROOT
-                    break
-                current = current.parent
-            else:
-                vault_path = Path(VAULT_ROOT)  # Fallback to relative
-    
+    vault_path = _resolve_vault_root_path(vault_root)
     ensemble_path = vault_path / timeframe.name / ensemble_dir_name
     ensemble_dir_str = str(ensemble_path)
-    
-    # Ensemble config file path
-    ensemble_config_file = ensemble_path / 'ensemble_config.json'
-    
-    # Check if already exists
-    if ensemble_path.exists():
-        # Directory exists - validate tickers match if config exists
-        if ensemble_config_file.exists():
-            with open(ensemble_config_file, 'r') as f:
-                existing_config = json.load(f)
-            existing_tickers = sorted(existing_config.get('tickers', []))
-            
-            if existing_tickers != ticker_names:
-                raise ValueError(
-                    f"Ensemble directory already exists with different tickers. "
-                    f"Existing: {existing_tickers}, Provided: {ticker_names}. "
-                    f"All features in an ensemble must use the same tickers."
-                )
-        else:
-            # Create config file for existing directory
-            config = {
-                'timeframe': timeframe.name,
-                'ensemble_name': ensemble_name,
-                'direction': direction.value,
-                'tickers': ticker_names,
-                'created_at': datetime.now(timezone.utc).isoformat(),
-                'updated_at': datetime.now(timezone.utc).isoformat()
-            }
-            with open(ensemble_config_file, 'w') as f:
-                json.dump(config, f, indent=2)
-        
-        # Set as default
-        _DEFAULT_ENSEMBLE_DIR = ensemble_dir_str
-        _DEFAULT_ENSEMBLE_TICKERS = tickers
-        return ensemble_dir_str
-    
-    # Create directory structure
-    features_dir = ensemble_path / 'features'
-    features_dir.mkdir(parents=True, exist_ok=False)
-    
-    # Create ensemble config file
-    config = {
-        'timeframe': timeframe.name,
-        'ensemble_name': ensemble_name,
-        'direction': direction.value,
-        'tickers': ticker_names,
-        'created_at': datetime.now(timezone.utc).isoformat(),
-        'updated_at': datetime.now(timezone.utc).isoformat()
-    }
-    with open(ensemble_config_file, 'w') as f:
-        json.dump(config, f, indent=2)
-    
-    # Automatically set as default
-    _DEFAULT_ENSEMBLE_DIR = ensemble_dir_str
-    _DEFAULT_ENSEMBLE_TICKERS = tickers
+
+    config = _build_ensemble_config(
+        timeframe=timeframe,
+        ensemble_name=str(ensemble_name),
+        direction=direction,
+        ticker_names=ticker_names,
+    )
+    _ensure_ensemble_directory_state(
+        ensemble_path,
+        config=config,
+        ticker_names=ticker_names,
+    )
+    _set_default_ensemble_context(ensemble_dir_str, tickers)
     
     return ensemble_dir_str
 
@@ -660,8 +552,8 @@ def get_ensemble_path(
         timeframe = TimeFrame[timeframe]
     direction = coerce_direction(direction, field_name="direction")
 
-    ensemble_dir_name = f"{ensemble_name}_{direction.value}"
-    root = vault_root or VAULT_ROOT
+    ensemble_dir_name = _build_ensemble_dir_name(ensemble_name, direction)
+    root = _resolve_vault_root_path(vault_root)
     ensemble_path = Path(root) / timeframe.name / ensemble_dir_name
     return str(ensemble_path)
 
@@ -690,46 +582,245 @@ def list_ensembles(vault_root: str) -> pd.DataFrame:
         return pd.DataFrame(columns=['ensemble_name', 'timeframe', 'direction', 'n_features', 'path'])
     
     ensembles = []
-    
-    # Iterate through timeframe directories
-    for tf_dir in vault_path.iterdir():
-        if not tf_dir.is_dir() or tf_dir.name not in ['D', 'W', 'M']:
+
+    for timeframe, ensemble_dir in _iter_vault_ensemble_dirs(vault_path):
+        parsed_identity = _parse_ensemble_dir_identity(ensemble_dir.name)
+        if parsed_identity is None:
             continue
-        
-        timeframe = tf_dir.name
-        
-        # Iterate through ensemble directories
-        for ensemble_dir in tf_dir.iterdir():
-            if not ensemble_dir.is_dir():
-                continue
-            
-            # Parse ensemble name and direction from directory name
-            dir_name = ensemble_dir.name
-            if dir_name.endswith('_long_short'):
-                ensemble_name = dir_name[:-12]  # Remove '_long_short'
-                direction = 'long_short'
-            elif dir_name.endswith('_long'):
-                ensemble_name = dir_name[:-5]  # Remove '_long'
-                direction = 'long'
-            elif dir_name.endswith('_short'):
-                ensemble_name = dir_name[:-6]  # Remove '_short'
-                direction = 'short'
-            else:
-                continue
-            
-            # Count features
-            features_dir = ensemble_dir / 'features'
-            n_features = len(list(features_dir.glob('*.json'))) if features_dir.exists() else 0
-            
-            ensembles.append({
-                'ensemble_name': ensemble_name,
-                'timeframe': timeframe,
-                'direction': direction,
-                'n_features': n_features,
-                'path': str(ensemble_dir)
-            })
+        ensemble_name, direction = parsed_identity
+        features_dir = _get_features_dir(ensemble_dir)
+        n_features = len(list(features_dir.glob("*.json"))) if features_dir.exists() else 0
+        ensembles.append({
+            'ensemble_name': ensemble_name,
+            'timeframe': timeframe,
+            'direction': direction,
+            'n_features': n_features,
+            'path': str(ensemble_dir)
+        })
     
     return pd.DataFrame(ensembles)
+
+
+def _feature_tickers_from_config(feature_config: Dict[str, Any]) -> List[str]:
+    configured_tickers = feature_config.get("tickers", [])
+    if configured_tickers:
+        return list(configured_tickers)
+    domain_spec = load_domain_discrete_spec(feature_config["bias_node_spec"]["params"])
+    return [ticker.name for ticker in domain_spec.ticker_scope.tickers]
+
+
+def _base_model_config_from_feature(
+    feature_file: Path,
+    feature_config: Dict[str, Any],
+) -> tuple[Dict[str, Any], Dict[str, str], List[str]]:
+    feature_name = extract_feature_name(feature_config, feature_file.stem)
+    model = feature_config["base_models"][0]
+    feature_tickers = _feature_tickers_from_config(feature_config)
+    base_model_config = {
+        "name": model["model_name"],
+        "feature_column": feature_name,
+        "model_type": "domain_discrete",
+        "strategy": model["strategy"],
+        "bias_node_spec": feature_config["bias_node_spec"],
+        "tickers": feature_tickers,
+    }
+    model_identity = {
+        "feature_name": feature_name,
+        "model_id": str(model["model_id"]),
+    }
+    return base_model_config, model_identity, feature_tickers
+
+
+def _build_ensemble_loader_payload(
+    validated_feature_configs: List[tuple[Path, Dict[str, Any]]],
+) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, str]], List[str]]:
+    base_models_config: List[Dict[str, Any]] = []
+    model_identity_by_name: Dict[str, Dict[str, str]] = {}
+    all_tickers: set[str] = set()
+
+    for feature_file, feature_config in validated_feature_configs:
+        base_model_config, model_identity, feature_tickers = _base_model_config_from_feature(
+            feature_file,
+            feature_config,
+        )
+        base_models_config.append(base_model_config)
+        model_identity_by_name[str(base_model_config["name"])] = model_identity
+        all_tickers.update(feature_tickers)
+
+    return base_models_config, model_identity_by_name, sorted(all_tickers)
+
+
+def _build_vault_loader_metadata(
+    *,
+    first_feature_config: Dict[str, Any],
+    timeframe_str: str,
+    refit: bool,
+    selection_method: str,
+) -> Dict[str, Any]:
+    metadata = {
+        "created_at": first_feature_config.get("created_at", datetime.now(timezone.utc).isoformat()),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "is_fit": not refit,
+        "base_tf": timeframe_str,
+    }
+    if not refit:
+        metadata["selection_method"] = selection_method
+    return metadata
+
+
+def _build_vault_loader_fitted_ensemble(
+    *,
+    model_names: List[str],
+    tickers: List[str],
+    target_volatility: float,
+) -> Dict[str, Any]:
+    return {
+        "weights": {name: 1.0 / len(model_names) for name in model_names} if model_names else {},
+        "exposure_fractions": {name: 0.5 for name in model_names},
+        "model_exposure_fractions": {name: 0.5 for name in model_names},
+        "feature_names": model_names,
+        "target_volatility": target_volatility,
+        "unique_tickers": tickers,
+        "instrument_weights": {ticker: 1.0 / len(tickers) for ticker in tickers},
+        "n_tickers": len(tickers),
+    }
+
+
+def _write_temp_vault_control_file(
+    *,
+    base_models_config: List[Dict[str, Any]],
+    metadata: Dict[str, Any],
+    fitted_ensemble: Optional[Dict[str, Any]],
+    tickers: List[str],
+) -> str:
+    from ensemble.ensemble_utils import save_control_file
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as handle:
+        return save_control_file(
+            filepath=handle.name,
+            base_models=base_models_config,
+            metadata=metadata,
+            fitted_ensemble=fitted_ensemble,
+            tickers=tickers,
+        )
+
+
+def _require_domain_spec(base_model: BaseModel) -> Any:
+    domain_spec = getattr(base_model, "domain_discrete_spec", None)
+    if domain_spec is None:
+        _reject_legacy_feature_artifact(
+            "add_feature_to_ensemble requires a domain_discrete BaseModel."
+        )
+    return domain_spec
+
+
+def _validate_feature_add_request(
+    *,
+    base_model: BaseModel,
+    bias_node_spec: Optional[Dict[str, Any]],
+    bias_node_params: Optional[Dict[str, Any]],
+) -> Any:
+    domain_spec = _require_domain_spec(base_model)
+    if bias_node_spec is not None and bias_node_spec != base_model.bias_node_spec:
+        _reject_legacy_feature_artifact(
+            "Provided bias_node_spec does not match the BaseModel's frozen domain-discrete spec."
+        )
+    if bias_node_params is not None:
+        _reject_legacy_feature_artifact(
+            "add_feature_to_ensemble no longer accepts bias_node_params."
+        )
+    return domain_spec
+
+
+def _resolve_feature_ticker_names(
+    domain_spec: Any,
+    tickers: Optional[List[Ticker]],
+) -> List[str]:
+    return sorted(
+        ticker.name if isinstance(ticker, Ticker) else str(ticker)
+        for ticker in (tickers or list(domain_spec.ticker_scope.tickers))
+    )
+
+
+def _validate_feature_alignment(
+    *,
+    feature_name: str,
+    domain_spec: Any,
+    ensemble_config: Dict[str, Any],
+    ticker_names: List[str],
+) -> None:
+    expected_ticker_names = sorted(ensemble_config.get("tickers", []))
+    expected_direction = coerce_direction(
+        ensemble_config.get("direction", Direction.LONG.value),
+        field_name="ensemble_config.direction",
+    )
+
+    if domain_spec.direction != expected_direction:
+        raise ValueError(
+            f"Base model direction '{domain_spec.direction.value}' does not match "
+            f"ensemble direction '{expected_direction.value}'"
+        )
+    if expected_ticker_names is not None and ticker_names != expected_ticker_names:
+        raise ValueError(
+            f"Tickers do not match ensemble tickers. Ensemble tickers: {expected_ticker_names}, "
+            f"Provided: {ticker_names}."
+        )
+    if sorted(ticker.name for ticker in domain_spec.ticker_scope.tickers) != ticker_names:
+        raise ValueError(
+            f"Feature '{feature_name}' tickers must match the frozen domain-discrete ticker_scope."
+        )
+
+
+def _build_feature_control_payload(
+    *,
+    feature_name: str,
+    model_id: str,
+    ticker_names: List[str],
+    serializable_bias_spec: Dict[str, Any],
+    strategy: str,
+) -> Dict[str, Any]:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    return {
+        "feature_name": feature_name,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "bias_node_spec": serializable_bias_spec,
+        "tickers": ticker_names,
+        "base_models": [
+            {
+                "model_id": model_id,
+                "model_name": f"{feature_name}::{model_id}",
+                "model_type": "domain_discrete",
+                "feature_column": feature_name,
+                "strategy": strategy,
+                "bias_node_spec": serializable_bias_spec,
+            }
+        ],
+    }
+
+
+def _validate_existing_feature_file(
+    *,
+    feature_file: Path,
+    model_id: str,
+    serializable_bias_spec: Dict[str, Any],
+) -> Optional[str]:
+    if not feature_file.exists():
+        return None
+
+    existing_config = load_validated_feature_config(feature_file)
+    existing_model_id = existing_config["base_models"][0]["model_id"]
+    if existing_model_id != model_id:
+        raise ValueError(
+            f"Feature '{feature_file.stem}' already exists with model_id '{existing_model_id}' "
+            f"which does not match the frozen spec-derived id '{model_id}'."
+        )
+    if existing_config["bias_node_spec"] != serializable_bias_spec:
+        raise ValueError(
+            f"Feature '{feature_file.stem}' already exists with a different frozen spec."
+        )
+    return existing_model_id
 
 
 # ============================================================================
@@ -751,109 +842,45 @@ def add_feature_to_ensemble(
         raise ValueError("feature_name must be provided")
     if base_model is None:
         raise ValueError("base_model must be provided")
+    domain_spec = _validate_feature_add_request(
+        base_model=base_model,
+        bias_node_spec=bias_node_spec,
+        bias_node_params=bias_node_params,
+    )
 
-    domain_spec = getattr(base_model, "domain_discrete_spec", None)
-    if domain_spec is None:
-        _reject_legacy_feature_artifact(
-            "add_feature_to_ensemble requires a domain_discrete BaseModel."
-        )
-
-    if bias_node_spec is not None and bias_node_spec != base_model.bias_node_spec:
-        _reject_legacy_feature_artifact(
-            "Provided bias_node_spec does not match the BaseModel's frozen domain-discrete spec."
-        )
-
-    if bias_node_params is not None:
-        _reject_legacy_feature_artifact(
-            "add_feature_to_ensemble no longer accepts bias_node_params."
-        )
-
-    if ensemble_dir is None:
-        ensemble_dir = _DEFAULT_ENSEMBLE_DIR
-        if ensemble_dir is None:
-            raise ValueError(
-                "ensemble_dir must be provided or call create_ensemble_directory() first. "
-                "Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
-            )
+    ensemble_dir = _require_ensemble_dir(ensemble_dir)
 
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / "features"
+    features_dir = _get_features_dir(ensemble_path)
     features_dir.mkdir(parents=True, exist_ok=True)
 
-    ensemble_config_file = ensemble_path / "ensemble_config.json"
-    if not ensemble_config_file.exists():
-        raise ValueError(
-            f"Ensemble config file does not exist: {ensemble_config_file}. "
-            "Legacy directory-name inference is no longer supported."
-        )
-
-    with open(ensemble_config_file, "r") as f:
-        ensemble_config = json.load(f)
-    expected_ticker_names = sorted(ensemble_config.get("tickers", []))
-    expected_direction = coerce_direction(
-        ensemble_config.get("direction", Direction.LONG.value),
-        field_name="ensemble_config.direction",
+    ensemble_config = _load_ensemble_config(ensemble_path)
+    ticker_names = _resolve_feature_ticker_names(domain_spec, tickers)
+    _validate_feature_alignment(
+        feature_name=feature_name,
+        domain_spec=domain_spec,
+        ensemble_config=ensemble_config,
+        ticker_names=ticker_names,
     )
-
-    if domain_spec.direction != expected_direction:
-        raise ValueError(
-            f"Base model direction '{domain_spec.direction.value}' does not match "
-            f"ensemble direction '{expected_direction.value}'"
-        )
-
-    ticker_names = sorted(
-        ticker.name if isinstance(ticker, Ticker) else str(ticker)
-        for ticker in (tickers or list(domain_spec.ticker_scope.tickers))
-    )
-    if expected_ticker_names is not None and ticker_names != expected_ticker_names:
-        raise ValueError(
-            f"Tickers do not match ensemble tickers. Ensemble tickers: {expected_ticker_names}, "
-            f"Provided: {ticker_names}."
-        )
-    if sorted(ticker.name for ticker in domain_spec.ticker_scope.tickers) != ticker_names:
-        raise ValueError(
-            "Base model tickers must match the frozen domain-discrete ticker_scope."
-        )
 
     model_id = generate_model_id("domain_discrete", {}, bias_node_params={"params": domain_spec.to_mapping()})
     feature_file = features_dir / f"{feature_name}.json"
     serializable_bias_spec = build_domain_discrete_bias_node_spec(domain_spec)
-
-    existing_config: Optional[Dict[str, Any]] = None
-    if feature_file.exists():
-        with open(feature_file, "r") as f:
-            existing_config = json.load(f)
-        _validate_domain_discrete_feature_config(existing_config, feature_file=feature_file)
-        existing_model_id = existing_config["base_models"][0]["model_id"]
-        if existing_model_id != model_id:
-            raise ValueError(
-                f"Feature '{feature_name}' already exists with model_id '{existing_model_id}' "
-                f"which does not match the frozen spec-derived id '{model_id}'."
-            )
-        if existing_config["bias_node_spec"] != serializable_bias_spec:
-            raise ValueError(
-                f"Feature '{feature_name}' already exists with a different frozen spec."
-            )
+    if _validate_existing_feature_file(
+        feature_file=feature_file,
+        model_id=model_id,
+        serializable_bias_spec=serializable_bias_spec,
+    ) is not None:
         return model_id
 
-    feature_config = {
-        "feature_name": feature_name,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "bias_node_spec": serializable_bias_spec,
-        "tickers": ticker_names,
-        "base_models": [
-            {
-                "model_id": model_id,
-                "model_name": f"{feature_name}::{model_id}",
-                "model_type": "domain_discrete",
-                "feature_column": feature_name,
-                "strategy": domain_spec.direction.value,
-                "bias_node_spec": serializable_bias_spec,
-            }
-        ],
-    }
-    _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
+    feature_config = _build_feature_control_payload(
+        feature_name=feature_name,
+        model_id=model_id,
+        ticker_names=ticker_names,
+        serializable_bias_spec=serializable_bias_spec,
+        strategy=domain_spec.direction.value,
+    )
+    validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
 
     with open(feature_file, "w") as f:
         json.dump(feature_config, f, indent=2)
@@ -873,33 +900,23 @@ def load_feature_base_models(
     """
     from ensemble.ensemble_utils import create_base_model_from_config
 
-    global _DEFAULT_ENSEMBLE_DIR
-
     if feature_name is None and "feature_column" in legacy_kwargs:
         feature_name = legacy_kwargs["feature_column"]
     if feature_name is None:
         raise ValueError("feature_name must be provided")
 
-    if ensemble_dir is None:
-        ensemble_dir = _DEFAULT_ENSEMBLE_DIR
-        if ensemble_dir is None:
-            raise ValueError(
-                "ensemble_dir must be provided or call create_ensemble_directory() first."
-            )
+    ensemble_dir = _require_ensemble_dir(ensemble_dir)
 
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / "features"
-    feature_file = _resolve_feature_file_path(features_dir, feature_name)
+    features_dir = _get_features_dir(ensemble_path)
+    feature_file = resolve_feature_file_path(features_dir, feature_name)
     if feature_file is None or not feature_file.exists():
         raise FileNotFoundError(
             f"Feature file not found for feature '{feature_name}' in {features_dir}"
         )
 
-    with open(feature_file, "r") as f:
-        feature_config = json.load(f)
-
-    _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
-    resolved_feature_name = _extract_feature_name(feature_config, feature_file.stem)
+    feature_config = load_validated_feature_config(feature_file)
+    resolved_feature_name = extract_feature_name(feature_config, feature_file.stem)
     feature_bias_spec = feature_config["bias_node_spec"]
     domain_spec = load_domain_discrete_spec(feature_bias_spec["params"])
 
@@ -950,50 +967,14 @@ def update_base_model_fitted_params(
 
 def consolidate_feature_files(ensemble_dir: str) -> List[str]:
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / "features"
-    if not features_dir.exists():
-        return []
-
-    validated_paths: List[str] = []
-    for feature_file in sorted(features_dir.glob("*.json")):
-        with open(feature_file, "r") as handle:
-            feature_config = json.load(handle)
-        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
-        validated_paths.append(str(feature_file))
-
-    return validated_paths
+    features_dir = _get_features_dir(ensemble_path)
+    return consolidate_feature_files_in_dir(features_dir)
 
 
 def migrate_legacy_feature_members_schema(ensemble_dir: str) -> List[str]:
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / "features"
-    if not features_dir.exists():
-        return []
-
-    updated_paths: List[str] = []
-    for feature_file in sorted(features_dir.glob("*.json")):
-        with open(feature_file, "r", encoding="utf-8") as handle:
-            feature_config = json.load(handle)
-
-        base_models = feature_config.get("base_models", [])
-        if not isinstance(base_models, list) or not base_models:
-            continue
-        model_entry = base_models[0]
-        if "members" not in model_entry:
-            continue
-        if model_entry["members"]:
-            raise_legacy_feature_artifact(
-                f"Feature file {feature_file} still contains non-empty legacy members schema payloads."
-            )
-
-        model_entry.pop("members", None)
-        feature_config["updated_at"] = datetime.now(timezone.utc).isoformat()
-        with open(feature_file, "w", encoding="utf-8") as handle:
-            json.dump(feature_config, handle, indent=2)
-            handle.write("\n")
-        updated_paths.append(str(feature_file))
-
-    return updated_paths
+    features_dir = _get_features_dir(ensemble_path)
+    return migrate_legacy_feature_members_schema_in_dir(features_dir)
 
 
 
@@ -1028,77 +1009,14 @@ def list_features(ensemble_dir: Optional[str] = None) -> pd.DataFrame:
         - created_at: str
         - updated_at: str
     """
-    global _DEFAULT_ENSEMBLE_DIR
-    
-    # Use default ensemble_dir if not provided
-    if ensemble_dir is None:
-        ensemble_dir = _DEFAULT_ENSEMBLE_DIR
-        if ensemble_dir is None:
-            # Auto-detect: find first ensemble directory with features
-            cwd = Path.cwd()
-            possible_paths = []
-            
-            # Check current directory and parent for vault
-            for base in [cwd, cwd.parent]:
-                if (base / 'vault').exists():
-                    vault_path = base / 'vault'
-                    for tf_dir in ['D', 'W', 'M']:
-                        tf_path = vault_path / tf_dir
-                        if tf_path.exists():
-                            for ensemble_dir_path in tf_path.iterdir():
-                                if ensemble_dir_path.is_dir():
-                                    features_dir = ensemble_dir_path / 'features'
-                                    if features_dir.exists() and list(features_dir.glob('*.json')):
-                                        possible_paths.append(str(ensemble_dir_path))
-            
-            # Also check relative to vault_manager.py location
-            vault_manager_dir = Path(__file__).parent.parent
-            if (vault_manager_dir / 'vault').exists():
-                vault_path = vault_manager_dir / 'vault'
-                for tf_dir in ['D', 'W', 'M']:
-                    tf_path = vault_path / tf_dir
-                    if tf_path.exists():
-                        for ensemble_dir_path in tf_path.iterdir():
-                            if ensemble_dir_path.is_dir():
-                                features_dir = ensemble_dir_path / 'features'
-                                if features_dir.exists() and list(features_dir.glob('*.json')):
-                                    possible_paths.append(str(ensemble_dir_path))
-            
-            if possible_paths:
-                # Use first match and set as default
-                ensemble_dir = possible_paths[0]
-                _DEFAULT_ENSEMBLE_DIR = ensemble_dir
-            else:
-                raise ValueError(
-                    "ensemble_dir must be provided or call create_ensemble_directory() first. "
-                    "Could not auto-detect any ensemble directory with features. "
-                    "Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
-                )
-    
+    ensemble_dir = _require_ensemble_dir(ensemble_dir, auto_detect=True)
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / 'features'
+    features_dir = _get_features_dir(ensemble_path)
     
     if not features_dir.exists():
         return pd.DataFrame(columns=['feature_name', 'feature_column', 'n_base_models', 'n_fitted', 'created_at', 'updated_at'])
-    
-    features = []
-    
-    for feature_file in sorted(features_dir.glob('*.json')):
-        with open(feature_file, 'r') as f:
-            feature_config = json.load(f)
-        
-        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
-        resolved_feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        features.append({
-            'feature_name': resolved_feature_name,
-            'feature_column': resolved_feature_name,
-            'n_base_models': 1,
-            'n_fitted': 0,
-            'created_at': feature_config.get('created_at', ''),
-            'updated_at': feature_config.get('updated_at', '')
-        })
-    
-    return pd.DataFrame(features)
+
+    return pd.DataFrame(build_feature_listing(features_dir))
 
 
 def get_bias_node_specs(ensemble_dir: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -1119,28 +1037,14 @@ def get_bias_node_specs(ensemble_dir: Optional[str] = None) -> List[Dict[str, An
         List[Dict[str, Any]]
         Frozen domain-discrete bias node specifications, one per feature.
     """
-    # Use default ensemble_dir if not provided
-    if ensemble_dir is None:
-        ensemble_dir = _DEFAULT_ENSEMBLE_DIR
-        if ensemble_dir is None:
-            raise ValueError(
-                "ensemble_dir must be provided or call create_ensemble_directory() first. "
-                "Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
-            )
-    
+    ensemble_dir = _require_ensemble_dir(ensemble_dir)
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / 'features'
+    features_dir = _get_features_dir(ensemble_path)
     
     if not features_dir.exists():
         return []
-    
-    bias_specs = []
-    for feature_file in sorted(features_dir.glob('*.json')):
-        with open(feature_file, 'r') as f:
-            feature_config = json.load(f)
-        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
-        bias_specs.append(dict(feature_config['bias_node_spec']))
-    return bias_specs
+
+    return collect_bias_node_specs(features_dir)
 
 
 def get_all_base_model_names(ensemble_dir: Optional[str] = None) -> List[str]:
@@ -1160,28 +1064,14 @@ def get_all_base_model_names(ensemble_dir: Optional[str] = None) -> List[str]:
         List[str]
         List of model names in format 'feature_name::model_id'
     """
-    # Use default ensemble_dir if not provided
-    if ensemble_dir is None:
-        ensemble_dir = _DEFAULT_ENSEMBLE_DIR
-        if ensemble_dir is None:
-            raise ValueError(
-                "ensemble_dir must be provided or call create_ensemble_directory() first. "
-                "Example: create_ensemble_directory(TimeFrame.D, 'buy_hold', Direction.LONG)"
-            )
-    
+    ensemble_dir = _require_ensemble_dir(ensemble_dir)
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
-    features_dir = ensemble_path / 'features'
+    features_dir = _get_features_dir(ensemble_path)
     
     if not features_dir.exists():
         return []
-    
-    model_names = []
-    for feature_file in sorted(features_dir.glob('*.json')):
-        with open(feature_file, 'r') as f:
-            feature_config = json.load(f)
-        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
-        model_names.append(feature_config['base_models'][0]['model_name'])
-    return model_names
+
+    return collect_base_model_names(features_dir)
 
 
 def ensure_vault_cache_coverage(
@@ -1298,45 +1188,15 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
     if not ensemble_path.is_dir():
         raise ValueError(f"Path is not a directory: {ensemble_dir} (resolved to: {ensemble_path})")
     
-    features_dir = ensemble_path / 'features'
-    if not features_dir.exists():
-        raise ValueError(f"Features directory does not exist: {features_dir}")
+    features_dir = _get_features_dir(ensemble_path, require_exists=True)
     
     # Load ensemble config if it exists
-    ensemble_config_file = ensemble_path / 'ensemble_config.json'
-    if not ensemble_config_file.exists():
-        raise ValueError(
-            f"Ensemble config file does not exist: {ensemble_config_file}. "
-            "Legacy directory-name inference is no longer supported."
-        )
-
-    with open(ensemble_config_file, 'r') as f:
-        ensemble_config = json.load(f)
-    expected_direction = coerce_direction(
-        ensemble_config.get('direction', Direction.LONG.value),
-        field_name="ensemble_config.direction",
-    )
+    ensemble_config = _load_ensemble_config(ensemble_path)
     expected_ticker_names = sorted(ensemble_config.get('tickers', []))
-
-    # Validate all feature control files
-    for feature_file in sorted(features_dir.glob('*.json')):
-        try:
-            with open(feature_file, 'r') as f:
-                feature_config = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in feature file {feature_file}: {e}")
-        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
-
-        feature_ticker_names = sorted(feature_config.get("tickers", []))
-        if expected_ticker_names is not None and feature_ticker_names != expected_ticker_names:
-            raise ValueError(
-                f"Feature '{feature_file.stem}' has tickers {feature_ticker_names} "
-                f"but ensemble expects {expected_ticker_names}."
-            )
-        if sorted(feature_config["base_models"][0]["bias_node_spec"]["params"]["ticker_scope"]["tickers"]) != feature_ticker_names:
-            raise ValueError(
-                f"Feature '{feature_file.stem}' ticker_scope must match stored tickers"
-            )
+    validate_feature_configs_for_ensemble(
+        features_dir,
+        expected_ticker_names=expected_ticker_names,
+    )
 
 
 def load_ensemble_from_vault(
@@ -1370,124 +1230,67 @@ def load_ensemble_from_vault(
         If ensemble directory doesn't exist or has no features
     """
     from ensemble.diversified_ensemble import DiversifiedEnsemble
-    from ensemble.ensemble_utils import save_control_file
-    import tempfile
     
     ensemble_path = _resolve_ensemble_path(ensemble_dir)
     
     if not ensemble_path.exists():
         raise ValueError(f"Ensemble directory does not exist: {ensemble_dir} (resolved to: {ensemble_path})")
     
-    features_dir = ensemble_path / 'features'
-    if not features_dir.exists():
-        raise ValueError(f"Features directory does not exist: {features_dir}")
+    features_dir = _get_features_dir(ensemble_path, require_exists=True)
 
-    feature_files = list(features_dir.glob('*.json'))
-    if not feature_files:
+    validated_feature_configs = list(iter_validated_feature_configs(features_dir))
+    if not validated_feature_configs:
         raise ValueError(f"No feature files found in {features_dir}")
     
     # Load ensemble config if available
-    ensemble_config_file = ensemble_path / 'ensemble_config.json'
-    ensemble_config = {}
-    if not ensemble_config_file.exists():
-        raise ValueError(
-            f"Ensemble config file does not exist: {ensemble_config_file}. "
-            "Legacy directory-name inference is no longer supported."
-        )
-
-    with open(ensemble_config_file, 'r') as f:
-        ensemble_config = json.load(f)
+    ensemble_config = _load_ensemble_config(ensemble_path)
     timeframe_str = ensemble_config.get('timeframe', 'D')
     
-    # Load all feature configs and convert to control file format
-    base_models_config = []
-    model_identity_by_name: Dict[str, Dict[str, str]] = {}
-    all_tickers = set()
-    
-    for feature_file in feature_files:
-        with open(feature_file, 'r') as f:
-            feature_config = json.load(f)
-        _validate_domain_discrete_feature_config(feature_config, feature_file=feature_file)
-        feature_name = _extract_feature_name(feature_config, feature_file.stem)
-        feature_models = feature_config["base_models"]
-        model = feature_models[0]
-        feature_tickers = feature_config.get("tickers", []) or [
-            ticker.name for ticker in load_domain_discrete_spec(feature_config["bias_node_spec"]["params"]).ticker_scope.tickers
-        ]
-        all_tickers.update(feature_tickers)
-
-        base_model_config = {
-            "name": model["model_name"],
-            "feature_column": feature_name,
-            "model_type": "domain_discrete",
-            "strategy": model["strategy"],
-            "bias_node_spec": feature_config["bias_node_spec"],
-            "tickers": feature_tickers,
-        }
-        base_models_config.append(base_model_config)
-        model_identity_by_name[str(base_model_config['name'])] = {
-            "feature_name": feature_name,
-            "model_id": str(model["model_id"]),
-        }
+    base_models_config, model_identity_by_name, fallback_tickers = _build_ensemble_loader_payload(
+        validated_feature_configs
+    )
     
     if not base_models_config:
         raise ValueError(f"No base models found in ensemble directory: {ensemble_dir}")
     
     # Get tickers (prefer ensemble config, then feature configs)
-    tickers = sorted(ensemble_config.get('tickers', list(all_tickers)))
+    tickers = sorted(ensemble_config.get('tickers', fallback_tickers))
     if not tickers:
         raise ValueError(f"Could not determine tickers for ensemble: {ensemble_dir}")
-    
-    # Create temporary control file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        # Get created_at from first feature or use current time
-        first_feature_file = feature_files[0]
-        with open(first_feature_file, 'r') as feat_f:
-            first_feature_config = json.load(feat_f)
-        
-        metadata = {
-            'created_at': first_feature_config.get('created_at', datetime.now(timezone.utc).isoformat()),
-            'updated_at': datetime.now(timezone.utc).isoformat(),
-            'is_fit': not refit,
-            'base_tf': timeframe_str,
-        }
-        if not refit:
-            metadata['selection_method'] = ensemble_config.get('selection_method', 'manual')
-        model_names = [bm['name'] for bm in base_models_config]
-        fitted_ensemble = None
-        if not refit:
-            fitted_ensemble = {
-                'weights': {name: 1.0 / len(model_names) for name in model_names} if model_names else {},
-                'exposure_fractions': {name: 0.5 for name in model_names},
-                'model_exposure_fractions': {name: 0.5 for name in model_names},
-                'feature_names': model_names,
-                'target_volatility': target_volatility,
-                'unique_tickers': tickers,
-                'instrument_weights': {t: 1.0 / len(tickers) for t in tickers},
-                'n_tickers': len(tickers),
-            }
 
-        temp_path = save_control_file(
-            filepath=f.name,
-            base_models=base_models_config,
-            metadata=metadata,
-            fitted_ensemble=fitted_ensemble,
-            tickers=tickers,
-        )
-    
-    # Create ensemble from control file
-    ensemble = DiversifiedEnsemble(
-        control_file_path=temp_path,
-        target_volatility=target_volatility,
-        base_tf=TimeFrame[timeframe_str]
+    _, first_feature_config = validated_feature_configs[0]
+    metadata = _build_vault_loader_metadata(
+        first_feature_config=first_feature_config,
+        timeframe_str=timeframe_str,
+        refit=refit,
+        selection_method=str(ensemble_config.get("selection_method", "manual")),
     )
+    model_names = [str(base_model["name"]) for base_model in base_models_config]
+    fitted_ensemble = None
+    if not refit:
+        fitted_ensemble = _build_vault_loader_fitted_ensemble(
+            model_names=model_names,
+            tickers=tickers,
+            target_volatility=target_volatility,
+        )
+
+    temp_path = _write_temp_vault_control_file(
+        base_models_config=base_models_config,
+        metadata=metadata,
+        fitted_ensemble=fitted_ensemble,
+        tickers=tickers,
+    )
+    try:
+        ensemble = DiversifiedEnsemble(
+            control_file_path=temp_path,
+            target_volatility=target_volatility,
+            base_tf=TimeFrame[timeframe_str]
+        )
+    finally:
+        os.unlink(temp_path)
 
     ensemble.vault_ensemble_dir = str(ensemble_path)
     ensemble.vault_ensemble_name = ensemble_path.name
     ensemble.vault_timeframe = timeframe_str
     ensemble.vault_base_model_identities = model_identity_by_name
-
-    # Clean up temp file
-    os.unlink(temp_path)
-    
     return ensemble

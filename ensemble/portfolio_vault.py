@@ -12,21 +12,19 @@ import pandas as pd
 from ensemble.portfolio import GlobalPortfolio, TFPortfolio
 from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.weight_layer import deserialize_weight_layer_state, serialize_weight_layer_state
+from utils.cache.runtime.cache_paths import resolve_relative_path
 from utils.core.enums import TimeFrame
 
 _SNAPSHOT_SCHEMA_VERSION = "1.0"
 
 
 def _resolve_vault_root(vault_root: str) -> Path:
-    candidate = Path(vault_root)
-    if candidate.is_absolute():
-        return candidate
-    if candidate.exists():
-        return candidate
-    cwd_candidate = Path.cwd() / candidate
-    if cwd_candidate.exists():
-        return cwd_candidate
-    return candidate
+    return resolve_relative_path(
+        vault_root,
+        prefer_existing_candidate=True,
+        include_project_root=False,
+        project_root_fallback="candidate",
+    )
 
 
 def _snapshot_root(vault_root: str) -> Path:

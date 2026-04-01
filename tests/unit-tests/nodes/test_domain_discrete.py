@@ -74,6 +74,30 @@ def test_domain_discrete_base_model_emits_signed_signal() -> None:
     )
 
 
+def test_domain_discrete_base_model_save_to_vault_derives_canonical_feature_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_add_feature_to_ensemble(**kwargs):  # noqa: ANN003
+        captured.update(kwargs)
+        return "model_id"
+
+    monkeypatch.setattr(
+        "ensemble.vault_manager.add_feature_to_ensemble",
+        _fake_add_feature_to_ensemble,
+    )
+
+    model = BaseModel(feature_config=_feature_config(), tickers=[Ticker.ES], use_cache=False)
+    model.feature_column = (
+        "domain_discrete_signal_D_direction_long_sourceModule_buy_hold_specVersion_v1"
+    )
+
+    model.save_to_vault(ensemble_dir="vault/D/example_long")
+
+    assert captured["feature_name"] == "domain_discrete_signal_D"
+
+
 def test_domain_discrete_base_model_enforces_ticker_scope() -> None:
     config = _feature_config()
     config["bias_node_spec"]["params"] = _frozen_spec(tickers=["ES"])
