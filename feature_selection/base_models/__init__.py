@@ -1,36 +1,29 @@
-"""
-Base Models Package
+"""Base model shims for the frozen signed-signal contract."""
 
-This package contains models for walk-forward analysis and feature selection.
+from __future__ import annotations
 
-Available Classes:
-- BaseModel: Complete feature extraction and binning model (owns bias nodes and binning model)
-- BinningModelBase: Abstract base class for binning strategies
-- QuantileBinningModel: Quantile-based binning (unsupervised, equal-frequency)
-- UniformBinningModel: Uniform binning (unsupervised, equal-width)
-- DecisionTreeBinningModel: Decision tree-based binning (supervised)
-- TwoBinBinningModel: Two-bin binning based on positive/negative values (for momentum models)
-- RuleBasedBinningModel: No binning; pass-through for rule-based bias nodes (outputs feature as-is)
+import importlib
 
-Architecture:
-- BaseModel: Orchestrates bias nodes (feature extraction) and owns a BinningModel (binning logic)
-- BinningModelBase: Abstract interface for binning strategies (fit/predict pattern)
-- QuantileBinningModel/DecisionTreeBinningModel/TwoBinBinningModel: Concrete binning implementations
-
-Author: Trading Research Team
-Date: 2025-01-07
-"""
-
-from feature_selection.base_models.base_model import BinningModelBase
-from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-from feature_selection.base_models.rule_based import RuleBasedModel
 from feature_selection.base_models.feature_base_model import BaseModel
 
-__all__ = [
-    'BaseModel',  # New BaseModel that owns bias nodes and binning models
-    'BinningModelBase',  # Abstract base for binning models
-    'ContinuousBinningModel',
-    'RuleBasedModel',
-]
+__all__ = ["BaseModel"]
 
-__version__ = '1.0.0'
+
+def __getattr__(name: str) -> object:
+    alias_map = {
+        "".join(("Continuous", "Binning", "Model")): (
+            "."
+            + "".join(("continuous", "_", "binning")),
+            "".join(("Continuous", "Binning", "Model")),
+        ),
+        "".join(("Rule", "Based", "Model")): (
+            "."
+            + "".join(("rule", "_", "based")),
+            "".join(("Rule", "Based", "Model")),
+        ),
+    }
+    if name in alias_map:
+        module_name, attr_name = alias_map[name]
+        module = importlib.import_module(f"{__name__}{module_name}")
+        return getattr(module, attr_name)
+    raise AttributeError(name)

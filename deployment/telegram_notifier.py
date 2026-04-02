@@ -10,8 +10,12 @@ import requests
 from typing import Dict, List, Optional
 from datetime import datetime
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from deployment._bootstrap import ensure_project_root_on_path
+except ImportError:
+    from _bootstrap import ensure_project_root_on_path
+
+ensure_project_root_on_path()
 
 from utils.core.logger import get_logger
 from utils.core.enums import TimeFrame

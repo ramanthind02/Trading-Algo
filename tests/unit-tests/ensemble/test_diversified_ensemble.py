@@ -15,10 +15,6 @@ import os
 import json
 from datetime import datetime
 
-# Add the project root to the path for imports
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from utils.core.enums import TimeFrame
 

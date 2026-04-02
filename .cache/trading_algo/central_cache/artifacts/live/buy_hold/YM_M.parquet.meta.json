@@ -18,7 +18,7 @@
     "ticker": "YM",
     "timeframe": "M"
   },
-  "lifecycle_state": "fresh",
+  "lifecycle_state": "stale",
   "revision": 22,
   "source_revision": 3
 }

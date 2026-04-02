@@ -31,28 +31,11 @@ from feature_research.pipeline import (
     run_eda_pipeline,
     run_permutation_pipeline,
 )
+from ._support import (
+    skip_if_missing_data_prereq as _skip_if_missing_data_prereq,
+    skip_if_no_data as _skip_if_no_data,
+)
 from utils.core.enums import Direction, Ticker, TimeFrame
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _skip_if_no_data() -> None:
-    candle_dir = _project_root() / "data" / "ohlc_data"
-    if not candle_dir.exists():
-        pytest.skip(f"Missing persisted candle directory: {candle_dir}")
-
-
-def _skip_if_missing_data_prereq(exc: Exception) -> None:
-    message = str(exc)
-    if isinstance(exc, FileNotFoundError):
-        pytest.skip(f"Missing persisted data prerequisite: {message}")
-    if isinstance(exc, ValueError) and (
-        "Unable to load feature/target data" in message
-        or "Feature extraction returned no data" in message
-    ):
-        pytest.skip(f"Missing data prerequisite for permutation suite: {message}")
 
 
 def _make_test_config(
@@ -79,7 +62,7 @@ def _make_test_config(
             strategy=Direction.LONG_SHORT,
             reports_dir=reports_dir,
         ),
-        rule_based=InSampleDefaultsCatalog.default_for().rule_based,
+        signed_signal=InSampleDefaultsCatalog.default_for().signed_signal,
     )
     return ResearchConfig(
         tickers=tickers,
@@ -126,7 +109,11 @@ def test_continuous_eda_pipeline_smoke(
             },
             reports_dir=Path(tmpdir),
         )
-        results = run_eda_pipeline(config, Path(tmpdir))
+        try:
+            results = run_eda_pipeline(config, Path(tmpdir))
+        except Exception as exc:  # pragma: no cover - integration environment guard
+            _skip_if_missing_data_prereq(exc)
+            raise
 
         assert len(results) == 1, f"Expected 1 result, got {len(results)}"
 
@@ -181,7 +168,11 @@ def test_continuous_eda_pipeline_multi_combo(
             },
             reports_dir=Path(tmpdir),
         )
-        results = run_eda_pipeline(config, Path(tmpdir))
+        try:
+            results = run_eda_pipeline(config, Path(tmpdir))
+        except Exception as exc:  # pragma: no cover - integration environment guard
+            _skip_if_missing_data_prereq(exc)
+            raise
 
         assert len(results) == len(lookbacks), (
             f"Expected {len(lookbacks)} results, got {len(results)}"
@@ -227,7 +218,7 @@ def test_continuous_pipeline_can_run_permutation_suite_mode(
             _skip_if_missing_data_prereq(exc)
             raise
 
-        assert suite.feature_type == "continuous"
+        assert suite.feature_type == "signed_signal"
         # Param grid is (bin_count × lookback), so total_params can exceed len(lookbacks).
         assert suite.funnel_stats.total_params == len(suite.stage1_reports)
         assert len(suite.stage1_reports) >= len(lookbacks)

@@ -5,12 +5,9 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-import sys
 
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import utils.cache.runtime.live_cache_refresh as live_refresh  # noqa: E402
 from ensemble.portfolio import GlobalPortfolio, PortfolioCacheQuery, TFPortfolio  # noqa: E402
@@ -19,6 +16,10 @@ from ensemble.vault_manager import (  # noqa: E402
     get_ensemble_tickers,
     load_ensemble_from_vault,
 )
+from tests.integration._portfolio_cache_helpers import (  # noqa: E402
+    instrument_returns_from_cache,
+    source_data_available,
+)
 from utils.cache.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
 from utils.cache.central_cache import CentralCacheStore  # noqa: E402
 from utils.cache.central_cache_models import (  # noqa: E402
@@ -26,38 +27,6 @@ from utils.cache.central_cache_models import (  # noqa: E402
     ArtifactScope,
 )
 from utils.core.enums import TimeFrame  # noqa: E402
-
-
-def _source_data_available(ensemble_dir: str) -> bool:
-    return all(
-        (Path("data/ohlc_data") / ticker.name / f"{timeframe.name}_{ticker.name}.parquet").exists()
-        for ticker in get_ensemble_tickers(ensemble_dir)
-        for timeframe in (TimeFrame.D, TimeFrame.M)
-    )
-
-
-def _instrument_returns_from_cache(
-    store: CentralCacheStore,
-    tickers: list,
-    start: datetime,
-    end: datetime,
-) -> pd.DataFrame:
-    daily_frames = [
-        store.query_candles(ticker, TimeFrame.D, start=start, end=end)
-        .reset_index()[["datetime", "ticker", "close"]]
-        for ticker in tickers
-    ]
-    all_daily = pd.concat(daily_frames, ignore_index=True)
-    all_daily["datetime"] = pd.to_datetime(all_daily["datetime"]).dt.normalize()
-    returns = (
-        all_daily
-        .sort_values(["ticker", "datetime"])
-        .assign(ret=lambda frame: frame.groupby("ticker")["close"].pct_change())
-        .pivot(index="datetime", columns="ticker", values="ret")
-        .fillna(0.0)
-    )
-    returns.columns = [str(column.name) if hasattr(column, "name") else str(column) for column in returns.columns]
-    return returns
 
 
 def _materialized_portfolio_row(portfolio_id: str, dt: datetime, ticker_name: str) -> pd.DataFrame:
@@ -74,21 +43,13 @@ def _materialized_portfolio_row(portfolio_id: str, dt: datetime, ticker_name: st
     )
 
 
-@pytest.fixture
-def isolated_central_cache(tmp_path: Path) -> None:
-    CentralCacheStore.reset()
-    CentralCacheStore._instance = CentralCacheStore(cache_dir=tmp_path / "central_cache")  # type: ignore[attr-defined]
-    yield
-    CentralCacheStore.reset()
-
-
 def test_live_candle_updates_trigger_automatic_refresh(
     isolated_central_cache: None,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ensemble_dir = "vault/M/buy_hold_long"
-    if not _source_data_available(ensemble_dir):
+    if not source_data_available(ensemble_dir):
         pytest.skip("Repository-backed OHLC dataset is missing required buy_hold_long files")
 
     tickers = get_ensemble_tickers(ensemble_dir)
@@ -135,7 +96,7 @@ def test_live_candle_updates_trigger_automatic_refresh(
         max_position_pct=3.5,
     )
 
-    instrument_returns = _instrument_returns_from_cache(
+    instrument_returns = instrument_returns_from_cache(
         store=store,
         tickers=tickers,
         start=train_start,

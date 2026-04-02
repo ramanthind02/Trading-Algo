@@ -4,14 +4,11 @@ import dataclasses
 from datetime import datetime
 import json
 from pathlib import Path
-import sys
 from typing import Callable, cast
 
 import numpy as np
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.config import (
     WeightLayerAlgorithm,
@@ -1667,51 +1664,11 @@ def test_evaluate_fold_portfolio_returns_per_ticker_oos_returns_shape(
         }
     )
     target = pd.Series(np.linspace(-0.01, 0.01, 6), index=index)
-
-    positions_df = pd.DataFrame(
-        {
-            "datetime": index[3:],
-            "ticker": ["NQ", "ES", "NQ"],
-            "position_fraction": [0.1, -0.2, 0.3],
-        }
-    )
-
-    class _FakePortfolio:
-        def fit_from_candles(self, _candles: pd.DataFrame, target_data: pd.Series | None = None) -> None:
-            _ = target_data
-
-        def predict_from_candles(
-            self,
-            _candles: pd.DataFrame,
-            daily_volatility_df: pd.DataFrame | None = None,
-        ) -> dict[str, pd.DataFrame]:
-            _ = daily_volatility_df
-            return {"portfolio": positions_df}
-
-    def _fake_build_research_portfolio(**_kwargs: object) -> _FakePortfolio:
-        return _FakePortfolio()
-
-    def _fake_returns(
-        positions_df: pd.DataFrame,
-        candles_df: pd.DataFrame,
-        *,
-        series_name: str,
-    ) -> pd.Series:
-        idx = pd.DatetimeIndex(pd.to_datetime(candles_df["datetime"]).unique()).sort_values()
-        return pd.Series(0.01, index=idx, name=series_name)
-
-    monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.build_research_portfolio",
-        _fake_build_research_portfolio,
-    )
-    monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator._calculate_oos_returns_from_positions",
-        _fake_returns,
-    )
-    monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator._ensure_cross_ticker_data",
-        lambda *_args, **_kwargs: None,
-    )
+    feature_data_by_combo = {
+        tuple(sorted({"lookback": 5}.items())): pd.DataFrame(
+            {"signal": pd.Series([0.1, 0.1, 0.1, 0.1], index=index), "target": target}
+        ),
+    }
 
     result = evaluate_fold_portfolio(
         train_candles=train_candles,
@@ -1721,7 +1678,7 @@ def test_evaluate_fold_portfolio_returns_per_ticker_oos_returns_shape(
         binning_config=object(),
         tickers=[Ticker.ES, Ticker.NQ],
         trading_timeframe=TimeFrame.D,
-        feature_type=FeatureType.CONTINUOUS,
+        feature_data_by_combo=feature_data_by_combo,
     )
 
     assert result.per_ticker_oos_returns is not None

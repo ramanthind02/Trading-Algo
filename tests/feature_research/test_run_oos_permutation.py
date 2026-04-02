@@ -35,6 +35,11 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
     index = pd.date_range("2020-01-01", periods=1100, freq="D")
     reference_target = pd.Series(0.01, index=index, name="walkforward_target")
     reference_candles = pd.DataFrame({"close": reference_target}, index=index)
+    feature_data_by_combo = {
+        tuple(sorted({"x": 1}.items())): pd.DataFrame(
+            {"signal": pd.Series(0.1, index=index), "target": reference_target}
+        ),
+    }
     oos = OOSWindowConfig(
         train_start=datetime(2020, 1, 1),
         train_end=datetime(2021, 12, 31),
@@ -49,7 +54,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
             [{"x": 1}],
             lambda *args, **kwargs: pd.Series(0.1, index=reference_target.index),
             cfg,
-            None,
+            feature_data_by_combo,
             None,
         )
 

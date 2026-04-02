@@ -37,7 +37,7 @@ def initialize_monitoring(
     feature_name:
         Canonical feature name (e.g. 'rsi_signal_D').
     model_id:
-        Auto-generated model ID (e.g. 'continuous_binning_3').
+        Auto-generated model ID (e.g. 'signal_3').
     signals:
         Position-multiplier vector with DatetimeIndex.
     targets:

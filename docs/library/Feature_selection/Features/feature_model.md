@@ -5,6 +5,8 @@
 > - **Continuous** (e.g., RSI, momentum): require Phase 2 binning analysis (grid search → single best bin per direction)
 > - **Rule-based** (e.g., breakouts, discrete signals): already discrete (-1/0/+1) → Phase 2 skipped, use three fixed levels
 
+If you intentionally **avoid Phase 2–style learned quantile binning in production**—by freezing domain-meaningful absolute cutpoints and bin policy at research time—use the target architecture in [[Feature_selection/domain_discrete_signals]]. Legacy continuous features may still use the Phase 2 path below until migrated.
+
 See [[base_feature]] for shared interface and Sharpe formula.
 
 ---
@@ -34,7 +36,7 @@ Whether quantile bins (continuous) or fixed 3 levels (rule-based), compute for e
 Maps per-level/per-bin adjusted Sharpe to position multiplier:
 
 | Level/Bin | Formula | Output range |
-|-----------|---------|-------------|
+|-----------|---------|--------------|
 | **Long (+1)** | `clip(1 + adjusted_Sharpe_long, 0.5, 2.0)` | [0.5, 2.0] |
 | **Short (-1)** | `-clip(1 + adjusted_Sharpe_short, 0.5, 2.0)` | [-2.0, -0.5] |
 | **Flat (0)** | `0.0` | 0 |

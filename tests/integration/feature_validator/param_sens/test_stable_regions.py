@@ -4,14 +4,10 @@ Tests for T010 — StableRegion dataclass and identify_stable_regions().
 Covers 1D contiguous regions, 2D plateau detection (BFS), boundary detection,
 multiple disjoint regions, and minimum size enforcement.
 """
-import sys
-import os
 import unittest
 
 import numpy as np
 import pandas as pd
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")))
 
 from eda.parameter_analysis import (
     StableRegion,

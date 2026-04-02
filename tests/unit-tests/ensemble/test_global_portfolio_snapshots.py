@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import sys
 
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from ensemble.portfolio import (
     GlobalPortfolio,
@@ -44,21 +41,49 @@ def _write_vault_ensemble(vault_root: Path) -> str:
                 "created_at": "2026-03-22T00:00:00+00:00",
                 "updated_at": "2026-03-22T00:00:00+00:00",
                 "bias_node_spec": {
-                    "module_name": "rsi",
+                    "module_name": "domain_discrete",
                     "timeframes": ["D"],
+                    "params": {
+                        "source_bias_node_spec": {
+                            "module_name": "rsi",
+                            "timeframes": ["D"],
+                            "params": {"lookback": 2},
+                        },
+                        "ticker_scope": {"tickers": ["ES"], "scope_name": "ES"},
+                        "edges": [-0.5, 0.5],
+                        "n_bins": 3,
+                        "long_bins": [2],
+                        "short_bins": [],
+                        "direction": "long",
+                        "spec_version": "v1",
+                    },
                 },
                 "tickers": ["ES"],
                 "base_models": [
                     {
                         "model_id": "rule_based_3",
                         "model_name": "rsi_signal_D::rule_based_3",
-                        "bias_node_params": {"lookback": 2},
-                        "binning_model_type": "rule_based",
+                        "model_type": "domain_discrete",
+                        "feature_column": "rsi_signal_D",
                         "strategy": "long",
-                        "binning_model_params": {"n_bins": 3},
-                        "requires_fit": False,
-                        "is_fitted": False,
-                        "fitted_params": None,
+                        "bias_node_spec": {
+                            "module_name": "domain_discrete",
+                            "timeframes": ["D"],
+                            "params": {
+                                "source_bias_node_spec": {
+                                    "module_name": "rsi",
+                                    "timeframes": ["D"],
+                                    "params": {"lookback": 2},
+                                },
+                                "ticker_scope": {"tickers": ["ES"], "scope_name": "ES"},
+                                "edges": [-0.5, 0.5],
+                                "n_bins": 3,
+                                "long_bins": [2],
+                                "short_bins": [],
+                                "direction": "long",
+                                "spec_version": "v1",
+                            },
+                        },
                     }
                 ],
             },

@@ -20,8 +20,12 @@ Date: 2026-01-18
 import sys
 import os
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from scripts._bootstrap import ensure_project_root_on_path
+except ImportError:
+    from _bootstrap import ensure_project_root_on_path
+
+PROJECT_ROOT = ensure_project_root_on_path()
 
 import numpy as np
 import pandas as pd

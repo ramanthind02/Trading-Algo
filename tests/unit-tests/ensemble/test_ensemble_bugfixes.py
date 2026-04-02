@@ -7,11 +7,8 @@ validate_control_file strictness, load_feature_base_models raise on missing file
 
 import tempfile
 from pathlib import Path
-import sys
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from ensemble.ensemble_utils import validate_base_model_config
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig

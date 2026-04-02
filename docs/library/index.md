@@ -22,6 +22,7 @@
 
 ### Feature Selection
 - [[Feature_selection/pipeline]] — End-to-end feature selection pipeline overview
+- [[Feature_selection/domain_discrete_signals]] — Frozen domain cutpoints, ticker scope, two-stage research → production (target architecture)
 
 **Feature Types**
 - [[Feature_selection/Features/base_feature]] — Base feature contracts and naming conventions

@@ -13,7 +13,7 @@ from feature_research.pipeline import run_oos_pipeline
 from utils.core.enums import Ticker
 
 
-def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path) -> None:
+def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path) -> None:
     base_config = load_config()
     oos_window = base_config.oos_window or OOSWindowConfig(
         train_start=datetime(2009, 1, 1),
@@ -21,7 +21,7 @@ def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path)
         test_start=datetime(2024, 1, 1),
         test_end=datetime(2025, 12, 31),
     )
-    config = replace(base_config, feature_type=FeatureType.RULE_BASED, oos_window=oos_window)
+    config = replace(base_config, feature_type=FeatureType.SIGNED_SIGNAL, oos_window=oos_window)
 
     base_index = pd.date_range("2023-01-01", periods=15, freq="D")
     index = pd.DatetimeIndex(np.repeat(base_index.values, 2))
@@ -106,7 +106,7 @@ def test_rule_based_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path)
     assert isinstance(feature_data_by_combo, dict)
     assert len(feature_data_by_combo) == 1
     only_value = next(iter(feature_data_by_combo.values()))
-    assert list(only_value.columns) == ["feature", "target"]
+    assert list(only_value.columns) == ["signal", "target"]
 
 
 def test_oos_pipeline_uses_available_data_when_no_full_coverage(
@@ -121,7 +121,7 @@ def test_oos_pipeline_uses_available_data_when_no_full_coverage(
         test_end=datetime(2025, 12, 31),
     )
     config = replace(
-        base_config, feature_type=FeatureType.RULE_BASED, oos_window=oos_window
+        base_config, feature_type=FeatureType.SIGNED_SIGNAL, oos_window=oos_window
     )
 
     base_index = pd.date_range("2023-01-01", periods=15, freq="D")

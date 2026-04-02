@@ -4,14 +4,10 @@ Tests for T009 — compute_neighbor_smoothing() and identify_neighbors().
 Covers 1D, 2D, 3D grids, stability ratio computation, determinism,
 boundary handling, and the identify_neighbors() helper.
 """
-import sys
-import os
 import unittest
 
 import numpy as np
 import pandas as pd
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")))
 
 from eda.parameter_analysis import compute_neighbor_smoothing, identify_neighbors
 

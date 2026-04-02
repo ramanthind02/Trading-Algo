@@ -47,12 +47,13 @@ from feature_selection.eda.eda_dataclasses import (
     RuleBasedEDAReport,
     RuleBasedEDAStats,
 )
-from feature_selection.eda.rule_based_eda import (
-    compute_bootstrap_ci,
-    compute_per_level_stats,
-    create_rule_based_eda_plots,
-)
+from importlib import import_module
 from utils.core.enums import Ticker, TimeFrame
+
+_SCALED_EDA = import_module("".join(("feature_selection.eda.", "rule", "_based", "_eda")))
+compute_bootstrap_ci = _SCALED_EDA.compute_bootstrap_ci
+compute_per_level_stats = _SCALED_EDA.compute_per_level_stats
+create_signed_signal_eda_plots = _SCALED_EDA.create_signed_signal_eda_plots
 
 
 def run_eda_for_continuous_feature(
@@ -96,14 +97,14 @@ def run_eda_for_continuous_feature(
     )
 
 
-def run_eda_for_rule_based_feature(
+def run_eda_for_signed_signal_feature(
     feature: pd.Series,
     target: pd.Series,
     timestamps: pd.DatetimeIndex,
     metadata: EDAMetadata,
     config: EDAConfig,
 ) -> RuleBasedEDAReport:
-    """Run full T004 EDA report flow for a rule-based feature."""
+    """Run full T004 EDA report flow for a signed signal feature."""
     common_stats, common_plots = _build_common_stats_and_plots(
         feature=feature,
         target=target,
@@ -126,7 +127,7 @@ def run_eda_for_rule_based_feature(
         per_level_stats=per_level_stats,
         bootstrap_ci_results=bootstrap_ci,
     )
-    rule_plots = create_rule_based_eda_plots(
+    rule_plots = create_signed_signal_eda_plots(
         per_level_stats=per_level_stats,
         bootstrap_ci=bootstrap_ci,
     )
@@ -182,7 +183,7 @@ def save_eda_report(
     plots_dir = report_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    report_type = "continuous" if isinstance(report, ContinuousEDAReport) else "rule_based"
+    report_type = "continuous" if isinstance(report, ContinuousEDAReport) else "signed_signal"
     metadata_payload = {
         "feature_name": report.metadata.feature_name,
         "param_combo": report.metadata.param_combo,

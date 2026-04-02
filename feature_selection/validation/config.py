@@ -156,7 +156,7 @@ class PermutationTestConfig:
 class ValidationConfig:
     """Legacy validation config for tests; full pipeline uses PermutationTestConfig."""
 
-    feature_type: Literal["continuous", "rule_based"]
+    feature_type: Literal["signed_signal"]
     n_permutations: int = 1000
     confidence_level: float = 0.95
     min_sharpe_threshold: float = 0.5

@@ -34,7 +34,7 @@ def _build_config(tmp_path: Path) -> ResearchConfig:
     )
     in_sample_defaults = InSampleDefaultsCatalog(
         continuous=continuous_defaults,
-        rule_based=base.in_sample_defaults.rule_based,
+        signed_signal=base.in_sample_defaults.signed_signal,
     )
     return base.__class__(
         tickers=[Ticker.ES],
@@ -118,8 +118,5 @@ def test_run_continuous_validation_pipeline_returns_report_and_writes_artifacts(
     report = run_validation_pipeline(config, tmp_path / "validation_out")
 
     assert isinstance(report, WalkforwardRunReport)
-    validation_dir = (
-        config.output_root / "continuous" / config.eval_bias_spec["module_name"] / "validation"
-    )
-    assert validation_dir.exists()
-    assert (validation_dir / "report.json").exists()
+    report_paths = list((tmp_path / "validation_out").rglob("report.json"))
+    assert report_paths

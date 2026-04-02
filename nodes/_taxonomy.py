@@ -11,6 +11,7 @@ CANONICAL_MODULE_IMPORTS = {
     "cyclical_rsi": "nodes.mean_reversion.rsi.cyclical_rsi",
     "demark_rei": "nodes.momentum.oscillators.demark_rei",
     "detrended_rsi": "nodes.mean_reversion.rsi.detrended_rsi",
+    "domain_discrete": "nodes.domain_discrete.domain_discrete",
     "donchian_channel": "nodes.breakout.donchian.donchian_channel",
     "double7s": "nodes.mean_reversion.connors.double7s",
     "eoy_sp500": "nodes.seasonal.eoy_sp500",

@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import sys
 
 import pandas as pd
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.io import (
     _build_selected_params_detailed,
@@ -155,7 +152,7 @@ def test_write_walkforward_artifacts_normalizes_metadata_identifiers_to_match_ou
     report = _build_report()
     whitespace_paths = write_walkforward_artifacts(
         report=report,
-        feature_type="  continuous  ",
+        feature_type="  signed_signal  ",
         module_name="  rsi  ",
         root_dir=tmp_path,
     )
@@ -164,13 +161,13 @@ def test_write_walkforward_artifacts_normalizes_metadata_identifiers_to_match_ou
 
     trimmed_paths = write_walkforward_artifacts(
         report=report,
-        feature_type="continuous",
+        feature_type="signed_signal",
         module_name="rsi",
         root_dir=tmp_path,
     )
 
-    assert whitespace_paths.output_dir == tmp_path / "continuous" / "rsi" / "walkforward"
-    assert whitespace_payload["feature_type"] == "continuous"
+    assert whitespace_paths.output_dir == tmp_path / "signed_signal" / "rsi" / "walkforward"
+    assert whitespace_payload["feature_type"] == "signed_signal"
     assert whitespace_payload["module_name"] == "rsi"
     assert whitespace_payload["output_dir"] == str(whitespace_paths.output_dir)
     assert whitespace_json_bytes == trimmed_paths.report_json.read_bytes()
@@ -178,12 +175,12 @@ def test_write_walkforward_artifacts_normalizes_metadata_identifiers_to_match_ou
 
 def test_resolve_walkforward_output_dir_returns_expected_layout(tmp_path: Path) -> None:
     output_dir = resolve_walkforward_output_dir(
-        feature_type="rule_based",
+        feature_type="signed_signal",
         module_name="atr_breakout",
         root_dir=tmp_path,
     )
 
-    assert output_dir == tmp_path / "rule_based" / "atr_breakout" / "walkforward"
+    assert output_dir == tmp_path / "signed_signal" / "atr_breakout" / "walkforward"
 
 
 @pytest.mark.parametrize("feature_type,module_name", [("", "x"), ("x", ""), ("   ", "x"), ("x", "   ")])
@@ -215,7 +212,7 @@ def test_write_walkforward_artifacts_includes_research_context_and_last_fold_tes
     report = _build_report()
     paths = write_walkforward_artifacts(
         report=report,
-        feature_type="continuous",
+        feature_type="signed_signal",
         module_name="rsi",
         root_dir=tmp_path,
         research_context={"custom_key": "custom_value"},

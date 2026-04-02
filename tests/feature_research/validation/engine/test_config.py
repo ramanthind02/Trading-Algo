@@ -3,11 +3,8 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 from datetime import datetime
 from pathlib import Path
-import sys
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.config import (
     WalkforwardResearchConfig,

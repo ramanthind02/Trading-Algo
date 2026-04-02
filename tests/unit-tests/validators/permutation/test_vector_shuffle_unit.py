@@ -126,20 +126,3 @@ def test_early_stopping_filter() -> None:
     assert len(passers) == 3
     assert all(r.p_value <= alpha for r in passers)
 
-
-def test_get_fitted_vector() -> None:
-    """BinningModelBase.get_fitted_vector() returns pd.Series on training index."""
-    from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-
-    rng = np.random.default_rng(0)
-    n = 100
-    feature = pd.Series(rng.standard_normal(n), name='rsi_signal_D_lookback_5')
-    target = pd.Series(rng.standard_normal(n))
-
-    model = ContinuousBinningModel(n_bins=5)
-    model.fit(feature, target)
-
-    fitted_vec = model.get_fitted_vector(strategy='long')
-    assert isinstance(fitted_vec, pd.Series)
-    assert len(fitted_vec) == n
-    assert fitted_vec.index.equals(feature.index)

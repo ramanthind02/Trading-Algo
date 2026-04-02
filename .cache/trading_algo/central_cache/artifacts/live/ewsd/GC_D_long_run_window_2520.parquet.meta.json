@@ -20,7 +20,7 @@
     "ticker": "GC",
     "timeframe": "D"
   },
-  "lifecycle_state": "fresh",
+  "lifecycle_state": "stale",
   "revision": 21,
   "source_revision": 2
 }

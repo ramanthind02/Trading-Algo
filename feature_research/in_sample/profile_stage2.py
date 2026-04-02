@@ -29,9 +29,9 @@ Options
 Interpreting results
 --------------------
 Look for: (1) feature_extractor lambdas / _normalize_ticker_str (millions of
-calls → consider vectorizing or caching); (2) continuous_binning fit/predict
-(inherent per-combo cost); (3) pandas map_array / parquet reads (I/O or
-per-row Python). Use --out and snakeviz to drill into call trees.
+calls → consider vectorizing or caching); (2) frozen signed-signal extraction
+per combo; (3) pandas map_array / parquet reads (I/O or per-row Python).
+Use --out and snakeviz to drill into call trees.
 """
 
 from __future__ import annotations

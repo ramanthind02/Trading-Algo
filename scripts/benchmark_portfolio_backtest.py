@@ -17,7 +17,6 @@ Usage:
 import argparse
 import cProfile
 import pstats
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -25,10 +24,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# Ensure project root is on path
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
+try:
+    from scripts._bootstrap import ensure_project_root_on_path
+except ImportError:
+    from _bootstrap import ensure_project_root_on_path
+
+PROJECT_ROOT = ensure_project_root_on_path()
 
 from ensemble.portfolio import Portfolio  # noqa: E402
 from ensemble.portfolio_tester import PortfolioTester  # noqa: E402

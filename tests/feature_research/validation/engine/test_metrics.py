@@ -3,9 +3,6 @@ from __future__ import annotations
 import pandas as pd
 from pathlib import Path
 import pytest
-import sys
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
 

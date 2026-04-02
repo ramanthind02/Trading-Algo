@@ -1,16 +1,6 @@
 import pytest
 
-try:
-    from feature_selection.validators.eda.rule_based import (
-        compute_level_distribution,
-        compute_level_stats,
-        compute_transition_matrix,
-    )
-except ModuleNotFoundError:
-    pytest.skip(
-        "Legacy validators.eda.rule_based API removed; use feature_selection.eda.rule_based_eda",
-        allow_module_level=True,
-    )
+pytest.skip("Legacy validators.eda API removed; use signed-signal EDA helpers", allow_module_level=True)
 
 import numpy as np
 import pandas as pd

@@ -1,10 +1,8 @@
-"""Unified in-sample research entry point for both continuous and rule-based features.
+"""Unified in-sample research entry point for signed-signal research.
 
 This single script runs the in-sample research pipeline:
   1. EDA (exploratory data analysis for all param combos)
   2. Optional in-sample permutation (Stage 1 vector shuffle → Stage 2 candle shuffle)
-  3. Optional Phase 2 binning analysis (continuous only)
-
 Validation is a separate phase; run ``feature_research/validation/run_validation.py`` for that.
 
 Usage
@@ -31,11 +29,9 @@ Nodes that use ``utils.compute.fast_nodes`` then use the compiled path when avai
 Output
 ------
 All reports and artifacts are written to the configured ``reports_dir`` from the
-in-sample config (e.g., ``feature_research/in_sample/results/continuous/`` or
-``feature_research/in_sample/results/rule_based/``). When permutation is enabled,
-``permutation_summary.csv`` and ``permutation_summary.md`` are written there.
+in-sample config. When permutation is enabled, ``permutation_summary.csv`` and
+``permutation_summary.md`` are written there.
 """
-import dataclasses
 import sys
 from pathlib import Path
 
@@ -47,8 +43,6 @@ from feature_research.bootstrap import ensure_repo_root_on_syspath
 
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
-from feature_research.config import FeatureType
-from feature_research.in_sample.binning_analysis import run_binning_analysis_pipeline
 from feature_research.in_sample.config import load_config
 from feature_research.pipeline import (
     run_eda_pipeline,
@@ -65,21 +59,14 @@ if __name__ == "__main__":
 
     # Run EDA for all param combos
     print(f"\n{'*'*70}")
-    print(f"PHASE 1: In-Sample EDA ({config.feature_type.value.upper()})")
+    print("PHASE 1: In-Sample EDA (SIGNED_SIGNAL)")
     print(f"{'*'*70}")
     eda_results = run_eda_pipeline(config, config.reports_dir)
-
-    # Run optional continuous binning analysis (Phase 2, continuous features only)
-    if config.feature_type == FeatureType.CONTINUOUS:
-        print(f"\n{'*'*70}")
-        print(f"PHASE 2: Continuous Binning Analysis")
-        print(f"{'*'*70}")
-        run_binning_analysis_pipeline(config, config.reports_dir)
 
     # Run optional in-sample permutation test (Stage 1 vector shuffle → Stage 2 candle shuffle)
     if config.permutation.enabled:
         print(f"\n{'*'*70}")
-        print(f"PHASE 2: In-Sample Permutation ({config.feature_type.value.upper()})")
+        print("PHASE 2: In-Sample Permutation (SIGNED_SIGNAL)")
         print(f"{'*'*70}")
         try:
             permutation_suite = run_permutation_pipeline(config, config.reports_dir)

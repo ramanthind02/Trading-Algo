@@ -99,6 +99,9 @@ Applied at Phase 8 graduation. Full spec: [[param_stability]].
 
 Both types follow the same Phases 1, 3–8. Only Phase 2 (Binning Analysis) is type-specific.
 
+> [!tip] Target path: domain discrete signals
+> For new features, the preferred direction is to **avoid runtime learned bin edges** entirely: fix absolute, domain-meaningful cutpoints and bin policy at research time, then emit a discrete column with **no production `fit` for geometry**. When fully adopted, that path skips Phase 2–style quantile binning in the trading stack. See [[Feature_selection/domain_discrete_signals]].
+
 ---
 
 ## Related Docs

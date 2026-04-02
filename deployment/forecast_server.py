@@ -6,10 +6,8 @@ Generates forecasts for multiple ticker/timeframe combinations efficiently.
 """
 
 import os
-import sys
 import time
 import schedule
-import numpy as np
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -17,73 +15,34 @@ from pathlib import Path
 
 import pandas as pd
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+try:
+    from deployment._bootstrap import ensure_project_root_on_path
+except ImportError:
+    from _bootstrap import ensure_project_root_on_path
+
+ensure_project_root_on_path()
 
 from utils.core.logger import get_logger
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.models import Candle
 import utils.core.helpers as helpers
+from deployment.forecast_live_inputs import ForecastLiveInputs
+from deployment.forecast_prediction_runtime import ForecastPredictionRuntime
 from deployment.mt5_data_connector import ForecastMT5DataConnector
 from deployment.telegram_notifier import TelegramNotifier
-from ensemble.portfolio import Portfolio
-from feature_extraction.ml_manager import MLManager
 from utils.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
 
 logger = get_logger(__name__)
 NY_TZ = ZoneInfo("America/New_York")
 
-
-def _candle_row(candle: Candle, ticker: Ticker, timeframe: TimeFrame) -> dict[str, Any]:
-    return {
-        "datetime": candle.datetime,
-        "open": candle.open,
-        "high": candle.high,
-        "low": candle.low,
-        "close": candle.close,
-        "volume": candle.volume,
-        "ticker": ticker.name,
-        "timeframe": timeframe,
-    }
-
-
-def _candles_to_frame(
-    candles: List[Candle],
-    ticker: Ticker,
-    timeframe: TimeFrame,
-) -> pd.DataFrame:
-    return pd.DataFrame([_candle_row(candle, ticker, timeframe) for candle in candles])
-
-
-def _upsert_candle_frame(
-    frame: pd.DataFrame,
-    candle: Candle,
-    ticker: Ticker,
-    timeframe: TimeFrame,
-) -> pd.DataFrame:
-    base = frame.copy()
-    if "datetime" not in base.columns:
-        base = base.reset_index()
-    if base.empty:
-        return pd.DataFrame([_candle_row(candle, ticker, timeframe)])
-
-    base["datetime"] = pd.to_datetime(base["datetime"])
-    filtered = base.loc[base["datetime"] != pd.Timestamp(candle.datetime)].copy()
-    merged = pd.concat(
-        [filtered, pd.DataFrame([_candle_row(candle, ticker, timeframe)])],
-        ignore_index=True,
-    )
-    return merged.sort_values("datetime").reset_index(drop=True)
-
 class ForecastServer:
     """
     Production forecasting server.
     
-    Uses Portfolio class to manage multiple ensembles efficiently.
+    Uses one ensemble and MLManager per ticker/timeframe combination.
     Generates one forecast per ticker/timeframe combination.
     
     Architecture:
-    - One Portfolio per timeframe (Daily, Weekly, etc.)
     - One MLManager per ticker/timeframe (for feature extraction)
     - Features computed from real-time market data
     - Forecasts generated on schedule and sent to Telegram
@@ -112,7 +71,7 @@ class ForecastServer:
         
         # MLManagers - one per ticker/timeframe for feature extraction
         # We need separate MLManagers per ticker because each ticker has different price data
-        self.ml_managers: Dict[tuple, MLManager] = {}  # (ticker, timeframe) -> MLManager
+        self.ml_managers: Dict[tuple, Any] = {}  # (ticker, timeframe) -> MLManager-like
         
         # Candle buffers for each ticker/timeframe
         self.candle_buffers: Dict[tuple, List[Candle]] = {}  # (ticker, timeframe) -> [candles]
@@ -135,6 +94,30 @@ class ForecastServer:
         logger.info(f"✅ ForecastServer initialized")
         logger.info(f"   Ensembles: {len(self.ensembles)}")
         logger.info(f"   MLManagers: {len(self.ml_managers)}")
+
+    def _live_inputs(self) -> ForecastLiveInputs:
+        """Build the live-input runtime helper around current server state."""
+        return ForecastLiveInputs(
+            mt5_connector=getattr(self, "mt5_connector", None),
+            volatility_service=getattr(self, "volatility_service", None),
+            candle_buffers=getattr(self, "candle_buffers", {}),
+            ml_managers=getattr(self, "ml_managers", {}),
+            ensembles=getattr(self, "ensembles", {}),
+            lookback_candles=getattr(self, "lookback_candles", 0),
+            tickers=getattr(self, "tickers", []),
+            logger=logger,
+        )
+
+    def _prediction_runtime(self) -> ForecastPredictionRuntime:
+        """Build the forecast-prediction runtime helper around current server state."""
+        return ForecastPredictionRuntime(
+            volatility_service=getattr(self, "volatility_service", None),
+            ensembles=getattr(self, "ensembles", {}),
+            ml_managers=getattr(self, "ml_managers", {}),
+            candle_buffers=getattr(self, "candle_buffers", {}),
+            tickers=getattr(self, "tickers", []),
+            logger=logger,
+        )
     
     def _setup_ensembles(self) -> None:
         """Setup one ensemble per ticker/timeframe combination."""
@@ -263,42 +246,7 @@ class ForecastServer:
         market_status = "Open" if market_open else "Closed"
         logger.info(f"Market status: {market_status}")
 
-        cross_pairs = self._get_cross_tickers()
-        updated_cross_tickers: set[Ticker] = set()
-        
-        # Get latest candles and update MLManagers
-        for ticker in self.tickers:
-            try:
-                if timeframe != TimeFrame.D:
-                    self._refresh_daily_volatility(ticker)
-
-                ml_manager_key = (ticker, timeframe)
-                
-                if ml_manager_key not in self.ml_managers:
-                    logger.warning(f"No MLManager for {ticker.name} {timeframe.name}")
-                    continue
-                
-                # Get latest candle
-                latest_candle = self.mt5_connector.get_latest_candle(ticker.value, timeframe)
-                
-                if latest_candle is None:
-                    logger.warning(f"No candle data for {ticker.name}")
-                    continue
-                
-                # Add candle to buffer and MLManager
-                self._add_candle(ticker, timeframe, latest_candle)
-
-                # If this traded ticker is also used as a cross-ticker,
-                # update the cross-ticker store from the same live candle.
-                if (ticker, timeframe) in cross_pairs:
-                    self._upsert_cross_ticker_candle(ticker, timeframe, latest_candle)
-                    updated_cross_tickers.add(ticker)
-                
-            except Exception as e:
-                logger.error(f"Error updating {ticker.name}: {e}")
-        
-        # Fetch latest candles for remaining cross-tickers (not updated above).
-        self._update_cross_ticker_latest(timeframe, skip_tickers=updated_cross_tickers)
+        self._update_live_inputs_for_timeframe(timeframe)
         
         # Generate forecasts for all tickers using portfolio
         forecasts = self._generate_portfolio_forecasts(timeframe)
@@ -323,86 +271,54 @@ class ForecastServer:
         
         successful_count = len(forecasts)
         logger.info(f"🏁 {timeframe_name} forecast run complete: {successful_count}/{len(self.tickers)} successful")
-    
-    def _add_candle(self, ticker: Ticker, timeframe: TimeFrame, candle: Candle) -> None:
-        """
-        Add candle to buffer and MLManager.
-        
-        Parameters
-        ----------
-        ticker : Ticker
-            Ticker symbol
-        timeframe : TimeFrame
-            Timeframe
-        candle : Candle
-            Market candle
-        """
-        key = (ticker, timeframe)
-        
-        # Add to buffer
-        if key not in self.candle_buffers:
-            self.candle_buffers[key] = []
-        
-        self.candle_buffers[key].append(candle)
-        try:
-            from utils.cache.central_cache import CentralCacheStore
 
-            cache = CentralCacheStore.get_instance()
-            cache.upsert_candles(
-                ticker,
-                timeframe,
-                _candles_to_frame(self.candle_buffers[key], ticker, timeframe),
-            )
-        except Exception as exc:
-            logger.debug("Central cache candle sync failed for %s %s: %s", ticker.name, timeframe.name, exc)
-        
-        # Keep only required number of candles
-        if len(self.candle_buffers[key]) > self.lookback_candles:
-            self.candle_buffers[key] = self.candle_buffers[key][-self.lookback_candles:]
-        
-        # Add to MLManager
-        if key in self.ml_managers:
-            ml_manager = self.ml_managers[key]
-            ml_manager.add_candle(candle, timeframe)
-            
-            logger.debug(f"Added candle to {ticker.name} {timeframe.name}: {candle.datetime}")
+    def _update_live_inputs_for_timeframe(self, timeframe: TimeFrame) -> None:
+        """Refresh live candles, cross-ticker data, and daily volatility for one timeframe."""
+        self._live_inputs().update_live_inputs_for_timeframe(timeframe)
 
-        if timeframe == TimeFrame.D:
+    def run_test_forecast(
+        self,
+        timeframe: Optional[TimeFrame] = None,
+    ) -> dict[str, Any]:
+        """Run a manual forecast pass and return structured results."""
+        requested_timeframes = [timeframe] if timeframe is not None else list(self.timeframes)
+        timestamp = datetime.now(NY_TZ).isoformat()
+        results: dict[str, Any] = {
+            "timestamp": timestamp,
+            "forecasts": {},
+            "errors": [],
+        }
+
+        for requested_timeframe in requested_timeframes:
             try:
-                self.volatility_service.update_incremental(
-                    pd.DataFrame(
-                        [
-                            {
-                                "datetime": candle.datetime,
-                                "ticker": ticker.name,
-                                "close": candle.close,
-                            }
-                        ]
-                    )
-                )
+                self._update_live_inputs_for_timeframe(requested_timeframe)
+                predictions = self._generate_portfolio_forecasts(requested_timeframe)
+                results["forecasts"][requested_timeframe.name] = {
+                    "count": len(predictions),
+                    "predictions": predictions,
+                }
             except Exception as exc:
                 logger.error(
-                    "Failed updating daily EWSD volatility for %s: %s",
-                    ticker.name,
+                    "Manual forecast failed for %s: %s",
+                    requested_timeframe.name,
                     exc,
+                    exc_info=True,
                 )
+                results["errors"].append(f"{requested_timeframe.name}: {exc}")
+                results["forecasts"][requested_timeframe.name] = {
+                    "count": 0,
+                    "predictions": {},
+                }
+
+        return results
+    
+    def _add_candle(self, ticker: Ticker, timeframe: TimeFrame, candle: Candle) -> None:
+        """Add a live candle to buffers, cache, MLManager, and volatility state."""
+        self._live_inputs().add_candle(ticker, timeframe, candle)
 
     def _refresh_daily_volatility(self, ticker: Ticker) -> None:
         """Refresh incremental daily EWSD state for a ticker using latest daily candle."""
-        daily_candle = self.mt5_connector.get_latest_candle(ticker.value, TimeFrame.D)
-        if daily_candle is None:
-            return
-        self.volatility_service.update_incremental(
-            pd.DataFrame(
-                [
-                    {
-                        "datetime": daily_candle.datetime,
-                        "ticker": ticker.name,
-                        "close": daily_candle.close,
-                    }
-                ]
-            )
-        )
+        self._live_inputs().refresh_daily_volatility(ticker)
     
     def _generate_portfolio_forecasts(self, timeframe: TimeFrame) -> Dict[str, float]:
         """
@@ -418,78 +334,7 @@ class ForecastServer:
         Dict[str, float]
             Mapping of ticker name to forecast value (0-1)
         """
-        forecasts = {}
-        
-        # Generate forecast for each ticker
-        for ticker in self.tickers:
-            try:
-                # Get ensemble for this ticker/timeframe
-                ensemble_key = (ticker, timeframe)
-                
-                if ensemble_key not in self.ensembles:
-                    logger.warning(f"No ensemble for {ticker.name} {timeframe.name}")
-                    continue
-                
-                ensemble = self.ensembles[ensemble_key]
-                
-                ml_manager_key = (ticker, timeframe)
-                
-                if ml_manager_key not in self.ml_managers:
-                    continue
-                
-                ml_manager = self.ml_managers[ml_manager_key]
-                
-                # Check if we have enough data
-                if len(self.candle_buffers.get(ml_manager_key, [])) < 20:
-                    logger.warning(f"Insufficient candles for {ticker.name}: {len(self.candle_buffers.get(ml_manager_key, []))}/20")
-                    continue
-                
-                # Get features from MLManager
-                features_df = ml_manager.matrix_df
-                
-                if features_df is None or features_df.empty:
-                    logger.warning(f"No features for {ticker.name}")
-                    continue
-                
-                # Get latest row of features
-                latest_features = features_df.iloc[[-1]]
-                
-                # Prepare ticker and volatility series
-                ticker_series, volatility_series = self._prepare_prediction_data(
-                    ticker, 
-                    ml_manager_key,
-                    len(latest_features)
-                )
-                
-                # Generate prediction using individual ensemble
-                predictions = ensemble.predict(
-                    X=latest_features,
-                    ticker=ticker_series,
-                    volatility=volatility_series
-                )
-                
-                # DiversifiedEnsemble.predict() returns numpy array, not DataFrame
-                # predictions is a numpy array with shape (1,) containing the forecast
-                if not isinstance(predictions, np.ndarray):
-                    logger.error(f"Unexpected predictions type for {ticker.name}: {type(predictions)}")
-                    continue
-                
-                if len(predictions) == 0:
-                    logger.warning(f"No predictions for {ticker.name}")
-                    continue
-                
-                # Extract forecast value (first element of array)
-                forecast = float(predictions[0])
-                
-                # Normalize to 0-1 range if needed (ensemble already returns position sizes)
-                forecast_normalized = 1.0 / (1.0 + np.exp(-forecast * 2))
-                forecasts[ticker.name] = forecast_normalized
-                logger.info(f"✅ {ticker.name}: {forecast_normalized:.4f}")
-            except Exception as e:
-                logger.error(f"❌ Error forecasting {ticker.name}: {e}")
-                logger.exception("Full traceback:")
-        
-        return forecasts
+        return self._prediction_runtime().generate_portfolio_forecasts(timeframe)
     
     def _prepare_prediction_data(self, ticker: Ticker, ml_manager_key: tuple, n_samples: int) -> tuple:
         """
@@ -509,31 +354,8 @@ class ForecastServer:
         tuple
             (ticker_series, volatility_series)
         """
-        import pandas as pd
-        
-        # Create ticker series - use ticker value
-        ticker_value = ticker.value
-        ticker_series = pd.Series([ticker_value] * n_samples)
-        
-        # DEBUG LOGGING
-        logger.info(f"🔍 _prepare_prediction_data for {ticker.name}:")
-        logger.info(f"   ticker.value = {ticker_value}")
-        logger.info(f"   n_samples = {n_samples}")
-        logger.info(f"   ticker_series = {ticker_series.tolist()}")
-        
         _ = ml_manager_key
-        latest_map = self.volatility_service.latest_volatility_map()
-        ticker_key = ticker.name
-        if ticker_key not in latest_map:
-            raise ValueError(
-                f"Missing daily EWSD volatility for ticker {ticker_key}. "
-                "Daily volatility must be available before forecasting."
-            )
-        volatility = float(latest_map[ticker_key])
-        
-        volatility_series = pd.Series([volatility] * n_samples)
-        
-        return ticker_series, volatility_series
+        return self._prediction_runtime().prepare_prediction_data(ticker, n_samples)
     
     def _run_test_forecast(self) -> None:
         """Run a test forecast to verify system is working."""
@@ -630,57 +452,15 @@ class ForecastServer:
 
     def _get_cross_tickers(self) -> set[tuple[Ticker, TimeFrame]]:
         """Discover cross-tickers from ensemble bias node specs."""
-        from utils.data.cross_ticker_store import extract_cross_ticker_names
-        cross: set[tuple[Ticker, TimeFrame]] = set()
-        for (_, timeframe), ensemble in self.ensembles.items():
-            for spec in ensemble.get_required_bias_nodes():
-                params = spec.get('params', {})
-                for ct_name in extract_cross_ticker_names(params):
-                    try:
-                        cross.add((Ticker[ct_name], timeframe))
-                    except KeyError:
-                        logger.warning(f"Unknown cross ticker '{ct_name}' in bias node params; skipping.")
-        return cross
+        return self._live_inputs().get_cross_tickers()
 
     def _load_cross_ticker_history(self) -> None:
         """Fetch historical data for cross-tickers from MT5 and load into store."""
-        cross = self._get_cross_tickers()
-        if not cross:
-            return
-        from utils.cache.central_cache import CentralCacheStore
-        ct_store = CentralCacheStore.get_instance()
-        for ct_ticker, tf in cross:
-            try:
-                # If this ticker/timeframe was already loaded into candle buffers as a
-                # traded instrument, reuse it instead of fetching again.
-                buffered = self.candle_buffers.get((ct_ticker, tf), [])
-                if buffered:
-                    ct_store.set_candles(ct_ticker, tf, _candles_to_frame(buffered, ct_ticker, tf))
-                    logger.info(f"Loaded cross-ticker {ct_ticker.name} from traded history ({len(buffered)} candles)")
-                    continue
-
-                logger.info(f"Fetching cross-ticker history {ct_ticker.name} {tf.name}...")
-                candles = self.mt5_connector.get_historical_candles(
-                    ct_ticker.value, tf, count=self.lookback_candles
-                )
-                if candles:
-                    ct_store.set_candles(ct_ticker, tf, _candles_to_frame(candles, ct_ticker, tf))
-                    logger.info(f"Loaded cross-ticker {ct_ticker.name} ({len(candles)} candles)")
-            except Exception as e:
-                logger.warning(f"Failed to load cross-ticker {ct_ticker.name}: {e}")
+        self._live_inputs().load_cross_ticker_history()
 
     def _upsert_cross_ticker_candle(self, ticker: Ticker, tf: TimeFrame, candle: Candle) -> None:
         """Insert or replace the latest candle for a cross-ticker in the store."""
-        from utils.cache.central_cache import CentralCacheStore
-        from utils.cache.central_cache_errors import ArtifactMissingError
-
-        ct_store = CentralCacheStore.get_instance()
-        try:
-            existing_frame = ct_store.query_candles(ticker, tf).reset_index()
-        except ArtifactMissingError:
-            existing_frame = _candles_to_frame(self.candle_buffers.get((ticker, tf), []), ticker, tf)
-        merged_frame = _upsert_candle_frame(existing_frame, candle, ticker, tf)
-        ct_store.upsert_candles(ticker, tf, merged_frame)
+        self._live_inputs().upsert_cross_ticker_candle(ticker, tf, candle)
 
     def _update_cross_ticker_latest(
         self,
@@ -688,19 +468,10 @@ class ForecastServer:
         skip_tickers: Optional[set[Ticker]] = None,
     ) -> None:
         """Fetch latest candle for each cross-ticker and update the store."""
-        cross = self._get_cross_tickers()
-        if not cross:
-            return
-        skip_tickers = skip_tickers or set()
-        for ct_ticker, tf in cross:
-            if tf != timeframe or ct_ticker in skip_tickers:
-                continue
-            try:
-                candle = self.mt5_connector.get_latest_candle(ct_ticker.value, tf)
-                if candle is not None:
-                    self._upsert_cross_ticker_candle(ct_ticker, tf, candle)
-            except Exception as e:
-                logger.warning(f"Failed to update cross-ticker {ct_ticker.name}: {e}")
+        self._live_inputs().update_cross_ticker_latest(
+            timeframe,
+            skip_tickers=skip_tickers,
+        )
     
     def start(self) -> None:
         """Start the forecast server."""
@@ -790,8 +561,6 @@ if __name__ == '__main__':
     """
     Run forecast server as standalone application.
     """
-    import numpy as np  # Need numpy for normalization
-    
     try:
         server = ForecastServer()
         server.start()

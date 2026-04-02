@@ -323,9 +323,6 @@ class DiversifiedEnsemble:
                 self.n_tickers_ = fitted_ensemble.get('n_tickers')
                 self.is_fitted_ = True
         
-        # Get fitted base models if available
-        fitted_base_models = control_file.get('fitted_base_models', {}) if is_fit else {}
-        
         # Initialize base models
         self.base_models = {}
         self.column_to_model = {}
@@ -334,18 +331,11 @@ class DiversifiedEnsemble:
         for model_config in control_file['base_models']:
             model_name = model_config['name']
             feature_column = model_config['feature_column']
-            
-            # Get fitted params if available
-            fitted_params = fitted_base_models.get(model_name)
             model_config_for_create = model_config.copy()
             if 'tickers' not in model_config_for_create and 'tickers' in control_file:
                 model_config_for_create['tickers'] = control_file.get('tickers', [])
-            
-            # Create base model instance
-            # create_base_model_from_config will use tickers from model_config if available
             base_model = create_base_model_from_config(
                 model_config_for_create,
-                fitted_params=fitted_params,
                 use_cache=self.use_cache
             )
             
@@ -353,29 +343,6 @@ class DiversifiedEnsemble:
             self.base_models[model_name] = base_model
             self.column_to_model[feature_column] = model_name
             self.required_columns.append(feature_column)
-    
-    def _create_base_model_instance(
-        self,
-        model_config: Dict[str, Any],
-        fitted_params: Optional[Dict[str, Any]] = None
-    ) -> Any:
-        """
-        Factory method to create base model instances.
-        
-        Parameters
-        ----------
-        model_config : Dict[str, Any]
-            Base model configuration
-        fitted_params : Dict[str, Any], optional
-            Fitted parameters to restore
-            
-        Returns
-        -------
-        BaseModel
-            Instantiated base model
-        """
-        from ensemble.ensemble_utils import create_base_model_from_config
-        return create_base_model_from_config(model_config, fitted_params=fitted_params)
     
     def get_required_columns(self) -> List[str]:
         """
@@ -623,32 +590,17 @@ class DiversifiedEnsemble:
             if feature_column is None:
                 raise ValueError(f"Could not find feature column for model: {model_name}")
             
-            # Get feature data
-            feature_data = X_filtered[feature_column]
-            
-            # Get normalization data for this feature if provided
-            norm_data = None
-            if normalization_data is not None and feature_column in normalization_data.columns:
-                norm_data = normalization_data[feature_column]
-            
-            underlying_model = (
-                base_model.binning_model if hasattr(base_model, "binning_model") else base_model
-            )
-
-            # Fit model if not already fitted (from ensemble_model)
-            if not underlying_model.is_fitted_:
-                underlying_model.fit(
-                    feature_data=feature_data,
-                    target_data=y,
-                    normalization_data=norm_data,
+            if feature_column not in X_filtered.columns:
+                raise ValueError(
+                    f"Required feature column '{feature_column}' not found in input data."
                 )
-            
-            # Generate binned forecast signals using the model's strategy
-            binary_signals[model_name] = underlying_model.predict(
-                feature_data,
-                strategy=underlying_model.strategy,
-                normalization_data=norm_data
-            )
+
+            signal_series = X_filtered[feature_column].astype(float)
+            if not set(signal_series.dropna().unique()).issubset({-1.0, 0.0, 1.0}):
+                raise ValueError(
+                    f"Feature column '{feature_column}' must contain signed discrete signals."
+                )
+            binary_signals[model_name] = signal_series
         
         # Step 2: Combine binary signals into DataFrame
         binary_df = pd.DataFrame(binary_signals, index=X_filtered.index)
@@ -885,22 +837,6 @@ class DiversifiedEnsemble:
                     at_least_one_fit_viable = True
                     continue
 
-                requires_fit = bool(
-                    getattr(
-                        base_model,
-                        "requires_fit",
-                        getattr(base_model.binning_model, "model_type", "") != "rule_based",
-                    )
-                )
-                # Rule-based models can be reused when pre-fitted.
-                if base_model.is_fitted_ and not requires_fit:
-                    logger.debug(
-                        "Skipping pre-fitted static model '%s' (requires_fit=False)",
-                        model_name,
-                    )
-                    at_least_one_fit_viable = True
-                    continue
-
                 # Fit base model with filtered candles and aggregated returns
                 # BaseModel.fit() will:
                 # 1. Stream candles from all supported tickers (or use cache if use_cache=True)
@@ -924,17 +860,7 @@ class DiversifiedEnsemble:
                     else:
                         raise
                 at_least_one_fit_viable = True
-
-                # Debug: Log fitting results
-                if base_model.binning_model.is_fitted_:
-                    bin_stats = base_model.binning_model.bin_stats_
-                    if bin_stats:
-                        logger.debug(
-                            f"Model '{model_name}' fitted: "
-                            f"n_bins={base_model.binning_model.n_bins}, "
-                            f"active_long_bins={base_model.binning_model.active_bins_by_strategy_.get('long', [])}, "
-                            f"n_bins_with_stats={len(bin_stats)}"
-                        )
+                logger.debug("Model '%s' prepared from frozen domain-discrete spec", model_name)
             except Exception as e:
                 logger.error(
                     f"Error fitting base model '{model_name}': {e}",
@@ -1569,24 +1495,17 @@ class DiversifiedEnsemble:
             if feature_column is None:
                 raise ValueError(f"Could not find feature column for model: {model_name}")
             
-            # Get feature data
-            feature_data = X_filtered[feature_column]
-            
-            # Get normalization data for this feature if provided
-            norm_data = None
-            if normalization_data is not None and feature_column in normalization_data.columns:
-                norm_data = normalization_data[feature_column]
-            
-            underlying_model = (
-                base_model.binning_model if hasattr(base_model, "binning_model") else base_model
-            )
+            if feature_column not in X_filtered.columns:
+                raise ValueError(
+                    f"Required feature column '{feature_column}' not found in input data."
+                )
 
-            # Get forecast signals using the model's strategy
-            binary_signals[model_name] = underlying_model.predict(
-                feature_data,
-                strategy=underlying_model.strategy,
-                normalization_data=norm_data
-            )
+            signal_series = X_filtered[feature_column].astype(float)
+            if not set(signal_series.dropna().unique()).issubset({-1.0, 0.0, 1.0}):
+                raise ValueError(
+                    f"Feature column '{feature_column}' must contain signed discrete signals."
+                )
+            binary_signals[model_name] = signal_series
         
         # Step 2: Combine binary signals into DataFrame
         binary_df = pd.DataFrame(binary_signals, index=X_filtered.index)
@@ -1802,22 +1721,9 @@ class DiversifiedEnsemble:
         if self.is_fitted_ and 'selection_method' not in metadata:
             metadata['selection_method'] = 'manual'
 
-        # Extract fitted base model states if fitted
-        fitted_base_models = None
         fitted_ensemble = None
         
         if self.is_fitted_:
-            # Only save fitted params for base models that are actually fitted
-            # This allows partial fitted states (some models fitted, some not)
-            fitted_base_models = {}
-            for model_name, base_model in self.base_models.items():
-                underlying_model = (
-                    base_model.binning_model if hasattr(base_model, "binning_model") else base_model
-                )
-                if underlying_model.is_fitted_:
-                    fitted_base_models[model_name] = underlying_model.get_fitted_params()
-            # Note: fitted_base_models can be empty dict if no base models are fitted
-            
             fitted_ensemble = {
                 'weights': self.weights_,
                 'exposure_fractions': self.exposure_fractions_,
@@ -1834,7 +1740,6 @@ class DiversifiedEnsemble:
             filepath=filepath,
             base_models=self.control_file_data['base_models'],
             metadata=metadata,
-            fitted_base_models=fitted_base_models,
             fitted_ensemble=fitted_ensemble,
             tickers=self.control_file_data.get('tickers', [])
         )

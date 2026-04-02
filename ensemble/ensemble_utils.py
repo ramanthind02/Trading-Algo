@@ -10,109 +10,21 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
 import utils.core.helpers as helpers
-from feature_selection.base_models import (
-    BaseModel,
-    ContinuousBinningModel,
-    RuleBasedModel,
+from ensemble.vault_feature_files import validate_domain_discrete_bias_node_spec
+from feature_selection.base_models import BaseModel
+from feature_selection.domain_discrete import (
+    build_domain_discrete_bias_node_spec,
+    load_domain_discrete_spec,
+    raise_legacy_feature_artifact,
 )
-try:
-    from feature_selection.base_models import DecisionTreeBinningModel
-except ImportError:  # pragma: no cover - optional model
-    DecisionTreeBinningModel = None
-
-try:
-    from feature_selection.base_models import TwoBinBinningModel
-except ImportError:  # pragma: no cover - optional model
-    TwoBinBinningModel = None
 from utils.core.enums import Direction, Ticker, TimeFrame, coerce_direction
 
 
-_MODEL_TYPE_ALIASES: Dict[str, str] = {
-    'QuantileBinningModel': 'continuous_binning',
-    'ContinuousBinningModel': 'continuous_binning',
-    'continuous_binning': 'continuous_binning',
-    'RuleBasedBinningModel': 'rule_based',
-    'RuleBasedModel': 'rule_based',
-    'rule_based': 'rule_based',
-    'DecisionTreeBinningModel': 'decision_tree_binning',
-    'decision_tree_binning': 'decision_tree_binning',
-    'TwoBinBinningModel': 'two_bin_binning',
-    'two_bin_binning': 'two_bin_binning',
-}
-
-
-def _normalize_model_type(model_type: str) -> str:
-    return _MODEL_TYPE_ALIASES.get(model_type, model_type)
-
-
-def _restore_fitted_state(
-    binning_model: Any,
-    fitted_params: Dict[str, Any],
-) -> None:
-    """Restore binning_v2 fitted payload onto a model instance."""
-    if fitted_params.get('model_version') != 'binning_v2':
-        raise ValueError(
-            "Unsupported fitted schema. Expected 'binning_v2'. "
-            "Regenerate fitted models with the new binning architecture."
-        )
-    binning_model.bin_edges_ = fitted_params.get('bin_edges')
-    binning_model.bin_stats_ = fitted_params.get('bin_stats', {})
-    binning_model.significant_regions_ = fitted_params.get('significant_regions', [])
-    binning_model.active_bins_by_strategy_ = fitted_params.get(
-        'active_bins_by_strategy',
-        {'long': [], 'short': [], 'long_short': []},
-    )
-    binning_model.position_multipliers_by_strategy_ = fitted_params.get(
-        'position_multipliers_by_strategy',
-        {'long': {}, 'short': {}, 'long_short': {}},
-    )
-    binning_model.fit_config_ = fitted_params.get('fit_config', {})
-    binning_model.model_version_ = fitted_params.get('model_version', 'binning_v2')
-    binning_model.is_fitted_ = True
-
-
-def _create_binning_model_instance(
-    model_type: str,
-    constructor_params: Dict[str, Any],
-) -> Any:
-    """Create a binning model instance from canonical/legacy model type ids."""
-    normalized = _normalize_model_type(model_type)
-    if normalized == 'continuous_binning':
-        # Only pass params accepted by ContinuousBinningModel (binary output; no clipping/coverage).
-        continuous_params = {
-            k: constructor_params[k]
-            for k in ('n_bins', 'bin_counts', 'strategy', 'bin_index_min', 'bin_index_max')
-            if k in constructor_params
-        }
-        if 'bin_counts' not in continuous_params and 'n_bins' in continuous_params:
-            continuous_params['bin_counts'] = [continuous_params['n_bins']]
-        return ContinuousBinningModel(**continuous_params)
-    if normalized == 'decision_tree_binning':
-        if DecisionTreeBinningModel is None:
-            raise ValueError("decision_tree_binning is not available in this repository build")
-        tree_params = constructor_params.copy()
-        tree_params.pop('normalize_by', None)
-        return DecisionTreeBinningModel(**tree_params)
-    if normalized == 'two_bin_binning':
-        if TwoBinBinningModel is None:
-            raise ValueError("two_bin_binning is not available in this repository build")
-        two_bin_params = constructor_params.copy()
-        two_bin_params.pop('n_bins', None)
-        two_bin_params.pop('normalize_by', None)
-        return TwoBinBinningModel(**two_bin_params)
-    if normalized == 'rule_based':
-        rule_params = constructor_params.copy()
-        rule_params.pop('n_bins', None)
-        # Backward compatibility for legacy control files that still include
-        # continuous-binning-only parameters. RuleBasedModel ignores these.
-        rule_params.pop('t_threshold', None)
-        rule_params.pop('min_region_width', None)
-        return RuleBasedModel(**rule_params)
-    raise ValueError(f"Unsupported model type: {model_type}")
+def _reject_legacy_feature_artifact(message: str) -> None:
+    raise_legacy_feature_artifact(message)
 
 
 def normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
@@ -182,6 +94,35 @@ def parse_control_file(filepath: str) -> Dict[str, Any]:
     return control_file
 
 
+def _validate_domain_discrete_model_config(
+    config: Dict[str, Any],
+    *,
+    index: Optional[int] = None,
+) -> None:
+    prefix = f"Base model at index {index}: " if index is not None else "Base model: "
+
+    required_keys = ["name", "model_type", "feature_column", "strategy", "bias_node_spec"]
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
+
+    if config["model_type"] != "domain_discrete":
+        _reject_legacy_feature_artifact(
+            f"{prefix}model_type must be 'domain_discrete' (got {config['model_type']!r})."
+        )
+
+    try:
+        strategy = coerce_direction(config["strategy"], field_name=f"{prefix}strategy")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{prefix}Invalid strategy: {config['strategy']}. "
+            f"Must be one of: {[d.value for d in Direction]}"
+        ) from exc
+    config["strategy"] = strategy.value
+
+    validate_domain_discrete_bias_node_spec(config["bias_node_spec"], prefix=prefix)
+
+
 def validate_control_file(control_file: Dict[str, Any]) -> None:
     """
     Validate control file structure.
@@ -201,7 +142,7 @@ def validate_control_file(control_file: Dict[str, Any]) -> None:
     missing_keys = [key for key in required_keys if key not in control_file]
     if missing_keys:
         raise ValueError(f"Control file missing required keys: {missing_keys}")
-    
+
     # Validate metadata
     metadata = control_file.get('metadata', {})
     if 'is_fit' not in metadata:
@@ -217,21 +158,13 @@ def validate_control_file(control_file: Dict[str, Any]) -> None:
         raise ValueError("base_models must be a list")
     
     for i, model_config in enumerate(control_file['base_models']):
-        validate_base_model_config(model_config, index=i)
+        _validate_domain_discrete_model_config(model_config, index=i)
     
-    # If is_fit=True, validate fitted params are present
+    # If is_fit=True, validate fitted ensemble is present
     if is_fit:
-        if 'fitted_base_models' not in control_file:
-            raise ValueError("Control file with is_fit=True must contain 'fitted_base_models'")
         if 'fitted_ensemble' not in control_file:
             raise ValueError("Control file with is_fit=True must contain 'fitted_ensemble'")
-        
-        # Validate fitted_base_models structure
-        # Note: fitted_base_models can be empty dict (not all base models need fitted params)
-        fitted_base_models = control_file['fitted_base_models']
-        if not isinstance(fitted_base_models, dict):
-            raise ValueError("fitted_base_models must be a dictionary")
-        
+
         # Validate fitted_ensemble structure
         fitted_ensemble = control_file['fitted_ensemble']
         required_ensemble_keys = [
@@ -242,10 +175,8 @@ def validate_control_file(control_file: Dict[str, Any]) -> None:
         if missing_ensemble_keys:
             raise ValueError(f"fitted_ensemble missing required keys: {missing_ensemble_keys}")
     
-    # If is_fit=False, fitted params must be absent (do not accept empty dict or null)
+    # If is_fit=False, fitted params must be absent
     if not is_fit:
-        if 'fitted_base_models' in control_file:
-            raise ValueError("Control file with is_fit=False should not contain 'fitted_base_models'")
         if 'fitted_ensemble' in control_file:
             raise ValueError("Control file with is_fit=False should not contain 'fitted_ensemble'")
 
@@ -254,7 +185,6 @@ def save_control_file(
     filepath: str,
     base_models: List[Dict[str, Any]],
     metadata: Dict[str, Any],
-    fitted_base_models: Optional[Dict[str, Any]] = None,
     fitted_ensemble: Optional[Dict[str, Any]] = None,
     tickers: Optional[List[str]] = None
 ) -> str:
@@ -269,8 +199,6 @@ def save_control_file(
         List of base model configurations
     metadata : Dict[str, Any]
         Metadata dictionary (must include is_fit flag)
-    fitted_base_models : Dict[str, Any], optional
-        Fitted base model parameters (required if is_fit=True)
     fitted_ensemble : Dict[str, Any], optional
         Fitted ensemble parameters (required if is_fit=True)
     tickers : List[str], optional
@@ -291,21 +219,13 @@ def save_control_file(
         raise ValueError("metadata must contain 'is_fit' flag")
     
     is_fit = metadata['is_fit']
-    
+
     # Validate consistency
     if is_fit:
-        # fitted_base_models can be empty dict (some models may not be fitted)
-        if fitted_base_models is None:
-            raise ValueError("fitted_base_models required when is_fit=True (can be empty dict)")
-        if not isinstance(fitted_base_models, dict):
-            raise ValueError("fitted_base_models must be a dictionary")
         if fitted_ensemble is None:
             raise ValueError("fitted_ensemble required when is_fit=True")
-    else:
-        if fitted_base_models is not None:
-            raise ValueError("fitted_base_models should not be provided when is_fit=False")
-        if fitted_ensemble is not None:
-            raise ValueError("fitted_ensemble should not be provided when is_fit=False")
+    elif fitted_ensemble is not None:
+        raise ValueError("fitted_ensemble should not be provided when is_fit=False")
     
     # Build control file structure
     control_file = {
@@ -313,9 +233,8 @@ def save_control_file(
         'base_models': base_models,
         'tickers': tickers or []
     }
-    
+
     if is_fit:
-        control_file['fitted_base_models'] = fitted_base_models
         control_file['fitted_ensemble'] = fitted_ensemble
     
     # Validate before saving
@@ -407,14 +326,7 @@ def parse_ensemble_model(filepath: str) -> Dict[str, Any]:
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in ensemble model file: {e}")
     
-    # Validate structure
-    required_keys = ['feature_list', 'fitted_base_models', 'fitted_ensemble']
-    missing_keys = [key for key in required_keys if key not in ensemble_model]
-    if missing_keys:
-        raise ValueError(f"Ensemble model missing required keys: {missing_keys}")
-    
-    # Validate feature_list structure
-    parse_feature_list_data(ensemble_model['feature_list'])
+    validate_control_file(ensemble_model)
     
     return ensemble_model
 
@@ -428,16 +340,7 @@ def parse_feature_list_data(feature_list: Dict[str, Any]) -> None:
     feature_list : Dict[str, Any]
         Feature list dictionary to validate
     """
-    required_keys = ['metadata', 'tickers', 'base_models']
-    missing_keys = [key for key in required_keys if key not in feature_list]
-    if missing_keys:
-        raise ValueError(f"Feature list missing required keys: {missing_keys}")
-    
-    if not isinstance(feature_list['base_models'], list):
-        raise ValueError("base_models must be a list")
-    
-    for i, model_config in enumerate(feature_list['base_models']):
-        validate_base_model_config(model_config, index=i)
+    validate_control_file(feature_list)
 
 
 def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = None) -> None:
@@ -456,49 +359,7 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
     ValueError
         If configuration is invalid
     """
-    prefix = f"Base model at index {index}: " if index is not None else "Base model: "
-    
-    required_keys = ['name', 'model_type', 'feature_column', 'strategy', 'constructor_params']
-    missing_keys = [key for key in required_keys if key not in config]
-    if missing_keys:
-        raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
-    
-    # Validate model_type
-    model_type = _normalize_model_type(config['model_type'])
-    valid_model_types = [
-        'continuous_binning',
-        'decision_tree_binning',
-        'two_bin_binning',
-        'rule_based',
-    ]
-    if model_type == 'uniform_binning':
-        raise ValueError(
-            f"{prefix}Invalid model_type: 'uniform_binning'. "
-            f"Uniform binning is not supported in this repository; "
-            f"use 'continuous_binning' or 'two_bin_binning' instead."
-        )
-    if model_type not in valid_model_types:
-        raise ValueError(
-            f"{prefix}Invalid model_type: {model_type}. "
-            f"Must be one of: {valid_model_types}"
-        )
-    
-    # Validate strategy
-    try:
-        strategy = coerce_direction(config['strategy'], field_name=f"{prefix}strategy")
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"{prefix}Invalid strategy: {config['strategy']}. "
-            f"Must be one of: {[d.value for d in Direction]}"
-        ) from exc
-    config['strategy'] = strategy.value
-    
-    # Validate constructor_params is a dict
-    if not isinstance(config['constructor_params'], dict):
-        raise ValueError(f"{prefix}constructor_params must be a dictionary")
-    
-    if "members" in config:
-        raise ValueError(f"{prefix}'members' is not supported in single-feature mode")
+    _validate_domain_discrete_model_config(config, index=index)
 
 
 def create_base_model_from_config(
@@ -510,167 +371,68 @@ def create_base_model_from_config(
     """
     Factory function to create base model instances from configuration.
     
-    Creates BaseModel instances that own both bias nodes and binning models.
+    Creates thin BaseModel instances backed by frozen domain-discrete node specs.
     
     Parameters
     ----------
     config : Dict[str, Any]
-        Base model configuration with 'model_type', 'constructor_params', and optionally 'bias_node_spec'
+        Base model configuration with 'model_type' and frozen 'bias_node_spec'
     ticker : Ticker, optional
         Ticker symbol for the base model. If None, will try to extract from feature_column or use default.
     fitted_params : Dict[str, Any], optional
-        Fitted parameters to restore (thresholds, best bins, etc.)
+        Unsupported after the domain-discrete cutover.
     use_cache : bool, default=True
         If True, BaseModel will use vectorized cached data when available.
         If False, uses streaming candle-by-candle processing.
 
     Returns
     -------
-    BaseModel
-        Instantiated BaseModel (owns bias nodes and binning model)
+        BaseModel
+        Instantiated BaseModel (node-backed, no fitted feature geometry)
         
     Raises
     ------
     ValueError
         If model_type is not supported or bias_node_spec cannot be determined
     """
-    model_type = _normalize_model_type(config['model_type'])
-    constructor_params = config['constructor_params'].copy()
-    
-    # Extract strategy from config and add to constructor params
-    strategy = config.get('strategy', 'long')
-    constructor_params['strategy'] = strategy
-    
-    # Create binning model instance
-    binning_model = _create_binning_model_instance(model_type, constructor_params)
-    
-    # Restore fitted state to binning model if provided
     if fitted_params is not None:
-        _restore_fitted_state(binning_model, fitted_params)
-    
-    # Get or extract bias_node_spec
-    bias_node_spec = config.get('bias_node_spec')
-    
-    # Convert timeframes from strings to TimeFrame enums if bias_node_spec is provided
-    if bias_node_spec is not None and 'timeframes' in bias_node_spec:
-        bias_node_spec = bias_node_spec.copy()  # Don't modify original
-        bias_node_spec['timeframes'] = [
-            TimeFrame[tf] if isinstance(tf, str) else tf 
-            for tf in bias_node_spec['timeframes']
-        ]
-    
-    if bias_node_spec is None:
-        # Try to extract from feature_column name
-        feature_column = config.get('feature_column')
-        if feature_column:
-            parsed = helpers.parse_feature_column_name(feature_column)
-            module_name = parsed.get('module')
-            tf_str = parsed.get('tf')
-            params = parsed.get('params', {})
-            
-            if module_name and tf_str:
-                # Convert tf string to TimeFrame enum
-                if isinstance(tf_str, str):
-                    try:
-                        tf = TimeFrame[tf_str]
-                    except (KeyError, AttributeError):
-                        raise ValueError(f"Cannot parse timeframe '{tf_str}' from feature_column")
-                else:
-                    tf = tf_str
-                
-                bias_node_spec = {
-                    'module_name': module_name,
-                    'timeframes': [tf],
-                    'params': params
-                }
-            else:
-                raise ValueError(
-                    f"Cannot extract bias_node_spec from feature_column '{feature_column}'. "
-                    f"Please provide bias_node_spec in config."
-                )
-        else:
-            raise ValueError(
-                "Cannot create BaseModel: neither 'bias_node_spec' nor 'feature_column' found in config"
-            )
-    else:
-        # Merge per-model params from new schema onto shared spec.
-        merged_params = dict(bias_node_spec.get('params', {}))
-        merged_params.update(config.get('bias_node_params', {}))
-        bias_node_spec['params'] = merged_params
-    
-    # Determine tickers (prefer config, then ticker parameter, then default)
+        _reject_legacy_feature_artifact(
+            "create_base_model_from_config no longer accepts fitted_params."
+        )
+
+    _validate_domain_discrete_model_config(config)
+
+    bias_node_spec = config["bias_node_spec"].copy()
+    domain_spec = load_domain_discrete_spec(bias_node_spec["params"])
+    feature_config = {
+        "model_type": "domain_discrete",
+        "feature_column": config["feature_column"],
+        "bias_node_spec": build_domain_discrete_bias_node_spec(domain_spec),
+        "strategy": config["strategy"],
+    }
+
     if 'tickers' in config:
-        # Use tickers from config (for multi-ticker models loaded from vault)
         tickers_from_config = config['tickers']
         if isinstance(tickers_from_config, list):
-            # Convert ticker strings to Ticker enums if needed
             if tickers_from_config and isinstance(tickers_from_config[0], str):
                 tickers_list = [Ticker[t] for t in tickers_from_config]
             else:
-                tickers_list = tickers_from_config
+                tickers_list = [ticker if isinstance(ticker, Ticker) else Ticker[str(ticker)] for ticker in tickers_from_config]
         else:
-            # Single ticker provided as string or enum
-            if isinstance(tickers_from_config, str):
-                tickers_list = [Ticker[tickers_from_config]]
-            else:
-                tickers_list = [tickers_from_config]
+            tickers_list = [Ticker[tickers_from_config]] if isinstance(tickers_from_config, str) else [tickers_from_config]
     elif ticker is not None:
-        # Use provided ticker parameter
         tickers_list = [ticker]
     else:
-        # Default fallback
-        tickers_list = [Ticker.ES]
-    
-    # Create feature_config for BaseModel
-    feature_config = {
-        'bias_node_spec': bias_node_spec,
-        'model_type': model_type,
-        'constructor_params': constructor_params,
-        'strategy': strategy
-    }
-    
-    if 'feature_column' in config:
-        feature_config['feature_column'] = config['feature_column']
-    
-    # Create BaseModel instance (owns bias nodes and binning model)
-    # BaseModel expects tickers parameter (list of tickers for multi-ticker support)
+        tickers_list = list(domain_spec.ticker_scope.tickers)
+
     try:
-        base_model = BaseModel(
+        return BaseModel(
             feature_config=feature_config,
             tickers=tickers_list,
-            binning_model=binning_model,
-            use_cache=use_cache
+            use_cache=use_cache,
         )
     except ValueError as exc:
-        # Backward compatibility for synthetic test control files that use
-        # placeholder modules (for example "dummy_*" feature columns).
-        if "Could not find module file recursively for" not in str(exc):
-            raise
-        fallback_spec = dict(feature_config["bias_node_spec"])
-        fallback_spec["module_name"] = "buy_hold"
-        fallback_spec["params"] = {}
-        fallback_feature_config = dict(feature_config)
-        fallback_feature_config["bias_node_spec"] = fallback_spec
-        base_model = BaseModel(
-            feature_config=fallback_feature_config,
-            tickers=tickers_list,
-            binning_model=binning_model,
-            use_cache=False,
-        )
-    
-    # Set feature_column if available
-    if 'feature_column' in config:
-        base_model.feature_column = config['feature_column']
-    setattr(
-        base_model,
-        "requires_fit",
-        bool(config.get("requires_fit", model_type != "rule_based")),
-    )
-
-    if "members" in config:
-        raise ValueError("members are not supported in single-feature mode")
-    
-    return base_model
+        raise ValueError(f"Unable to create domain_discrete BaseModel: {exc}") from exc
 
 
 def add_feature_to_control_file(filepath: str, feature_config: Dict[str, Any], tickers: Optional[List[str]] = None) -> None:
@@ -788,45 +550,25 @@ def extract_bias_node_specs_from_control_file(filepath: str) -> List[Dict[str, A
         If file format is invalid
     """
     control_file = parse_control_file(filepath)
-    bias_node_specs = []
-    seen_specs = set()  # Track unique specs to avoid duplicates
-    
-    for model_config in control_file['base_models']:
-        feature_column = model_config.get('feature_column')
-        if not feature_column:
-            continue
-        
-        # Parse feature column name to extract module, params, timeframe
-        parsed = helpers.parse_feature_column_name(feature_column)
-        module_name = parsed.get('module')
-        params = parsed.get('params', {})
-        tf = parsed.get('tf')
-        
-        if module_name is None or tf is None:
-            # Skip if we can't parse the column name
-            continue
-        
-        # Convert tf to TimeFrame enum if it's a string
-        if isinstance(tf, str):
-            try:
-                tf = TimeFrame[tf]
-            except (KeyError, AttributeError):
-                continue
-        
-        # Create spec key for deduplication
-        spec_key = (module_name, tf.name, tuple(sorted(params.items())))
+    bias_node_specs: List[Dict[str, Any]] = []
+    seen_specs: set[tuple[str, tuple[str, ...], str]] = set()
+
+    for i, model_config in enumerate(control_file["base_models"]):
+        _validate_domain_discrete_model_config(model_config, index=i)
+        bias_node_spec = dict(model_config["bias_node_spec"])
+        spec_key = (
+            bias_node_spec["module_name"],
+            tuple(
+                tf.name if isinstance(tf, TimeFrame) else str(tf)
+                for tf in bias_node_spec.get("timeframes", [])
+            ),
+            json.dumps(bias_node_spec.get("params", {}), sort_keys=True, default=str),
+        )
         if spec_key in seen_specs:
             continue
         seen_specs.add(spec_key)
-        
-        # Create bias node spec
-        bias_node_spec = {
-            'module_name': module_name,
-            'timeframes': [tf],
-            'params': params
-        }
         bias_node_specs.append(bias_node_spec)
-    
+
     return bias_node_specs
 
 

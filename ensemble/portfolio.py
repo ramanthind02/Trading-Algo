@@ -19,20 +19,57 @@ from __future__ import annotations
 import logging
 import json
 from pathlib import Path
-from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
-import numpy as np
 import pandas as pd
 
-from utils.cache.central_cache import CentralCacheStore
-from utils.cache.central_cache_errors import ArtifactMissingError, CacheCoverageError
-from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
-from utils.core.enums import TimeFrame, Ticker
-from .ensemble_utils import normalize_candles_datetime_column, normalize_ticker_key
-from .weight_layer import BaseWeightLayer, WeightLayer
+from .portfolio_allocation import (
+    effective_instrument_weights,
+    load_sector_allocation_config,
+    resolve_sector_allocation,
+)
+from .portfolio_postprocessing import (
+    aggregate_forecast_vectors_fallback,
+    apply_forecast_risk_management,
+)
+from .portfolio_result_formatting import format_portfolio_result
+from .portfolio_returns import calculate_idm_from_returns, calculate_returns_from_candles
+from .portfolio_global_streams import (
+    align_forecast_vectors_to_daily_grid,
+    build_daily_grid,
+    build_global_signals_df,
+    normalize_global_signals_by_downside_vol,
+)
+from utils.cache.central_cache_errors import ArtifactMissingError
+from utils.cache.central_cache_models import ArtifactScope
+from utils.core.enums import TimeFrame
+from .global_weight_layer_adapter import (
+    _GLOBAL_WEIGHT_LAYER_TICKER,
+    build_global_adapter_rollups,
+    build_global_model_name,
+    decode_global_weight_layer_output,
+    encode_forecast_vectors_for_global_weight_layer,
+)
+from .global_portfolio_runtime import (
+    apply_global_position_constraints,
+    build_global_returns_proxy,
+    build_reference_grid_from_daily_candles,
+    collect_tf_forecast_streams,
+)
+from .global_portfolio_diagnostics import collect_global_strategy_health_diagnostics
+from .ensemble_utils import normalize_candles_datetime_column
+from .portfolio_cache import (
+    PortfolioCacheQuery,
+    _query_candles_from_cache,
+    _query_volatility_from_cache,
+)
+from .weight_layer import (
+    BaseWeightLayer,
+    WeightLayer,
+    _correlation_multiplier_from_corr_matrix,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,218 +87,11 @@ def _forecast_to_activity_signal(forecast: pd.Series) -> pd.Series:
     return forecast.ne(0.0).astype(int)
 
 
-def _coerce_ticker(value: str | Ticker) -> Ticker:
-    if isinstance(value, Ticker):
-        return value
-    return Ticker[str(value)]
-
-
-def _clamp_range_to_coverage(
-    *,
-    coverage_start: datetime | None,
-    coverage_end: datetime | None,
-    start: datetime,
-    end: datetime,
-    module_name: str,
-    ticker: Ticker | None,
-    timeframe: TimeFrame | None,
-) -> tuple[datetime, datetime]:
-    effective_start = max(pd.Timestamp(start), pd.Timestamp(coverage_start or start))
-    effective_end = min(pd.Timestamp(end), pd.Timestamp(coverage_end or end))
-    if effective_start > effective_end:
-        raise CacheCoverageError(
-            module_name=module_name,
-            ticker=ticker,
-            timeframe=timeframe,
-            start=start,
-            end=end,
-            coverage_start=coverage_start,
-            coverage_end=coverage_end,
-        )
-    return effective_start.to_pydatetime(), effective_end.to_pydatetime()
-
-
-@dataclass(frozen=True)
-class PortfolioCacheQuery:
-    """Cache-native request for portfolio fit/predict operations."""
-
-    tickers: tuple[str, ...]
-    start: datetime
-    end: datetime
-    timeframes: tuple[TimeFrame, ...]
-    volatility_timeframe: TimeFrame = TimeFrame.D
-    scope: ArtifactScope = ArtifactScope.LIVE
-    grid: tuple[datetime, ...] = ()
-
-    def for_timeframe(self, timeframe: TimeFrame) -> "PortfolioCacheQuery":
-        return PortfolioCacheQuery(
-            tickers=self.tickers,
-            start=self.start,
-            end=self.end,
-            timeframes=(timeframe,),
-            volatility_timeframe=self.volatility_timeframe,
-            scope=self.scope,
-            grid=self.grid,
-        )
-
-
 class PortfolioWorld(str, Enum):
     TRAIN = "train"
     VAL = "val"
     TEST = "test"
     LIVE = "live"
-
-
-def _query_candles_from_cache(
-    query: PortfolioCacheQuery,
-    timeframe: TimeFrame,
-) -> pd.DataFrame:
-    store = CentralCacheStore.get_instance()
-    frames = []
-    for ticker in query.tickers:
-        ticker_enum = _coerce_ticker(ticker)
-        record = store.describe_candle(ticker_enum, timeframe)
-        if record is None:
-            raise ArtifactMissingError(
-                module_name="candles",
-                ticker=ticker_enum,
-                timeframe=timeframe,
-                requested_at=query.end,
-                reason="Candles are not loaded",
-            )
-        effective_start, effective_end = _clamp_range_to_coverage(
-            coverage_start=record.coverage.start,
-            coverage_end=record.coverage.end,
-            start=query.start,
-            end=query.end,
-            module_name="candles",
-            ticker=ticker_enum,
-            timeframe=timeframe,
-        )
-        frame = store.query_candles(
-            ticker_enum,
-            timeframe,
-            start=effective_start,
-            end=effective_end,
-        ).reset_index()
-        if "ticker" not in frame.columns:
-            frame["ticker"] = ticker_enum.name
-        if "timeframe" not in frame.columns:
-            frame["timeframe"] = timeframe
-        frames.append(frame)
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True).sort_values(["ticker", "datetime"]).reset_index(drop=True)
-
-
-def _query_volatility_from_cache(query: PortfolioCacheQuery) -> pd.DataFrame:
-    store = CentralCacheStore.get_instance()
-    frames: list[pd.DataFrame] = []
-    for ticker in query.tickers:
-        ticker_enum = _coerce_ticker(ticker)
-        descriptor = ArtifactDescriptor(
-            family="bias",
-            ticker=ticker_enum,
-            timeframe=query.volatility_timeframe,
-            module_name="ewsd",
-            params={"long_run_window": 2520},
-            scope=query.scope,
-            artifact_name="ewsd",
-        )
-        try:
-            record = store.describe_artifact(descriptor)
-            if record is None:
-                raise ArtifactMissingError(
-                    module_name="ewsd",
-                    ticker=ticker_enum,
-                    timeframe=query.volatility_timeframe,
-                    requested_at=query.end,
-                    reason="EWSD volatility is missing from the central cache",
-                )
-            effective_start, effective_end = _clamp_range_to_coverage(
-                coverage_start=record.coverage.start,
-                coverage_end=record.coverage.end,
-                start=query.start,
-                end=query.end,
-                module_name="ewsd",
-                ticker=ticker_enum,
-                timeframe=query.volatility_timeframe,
-            )
-            frame = store.read_artifact(
-                descriptor,
-                request=CacheRequest(start=effective_start, end=effective_end),
-            )
-        except ArtifactMissingError as exc:
-            raise ArtifactMissingError(
-                module_name="ewsd",
-                ticker=ticker_enum,
-                timeframe=query.volatility_timeframe,
-                requested_at=query.end,
-                reason="EWSD volatility is missing from the central cache",
-            ) from exc
-        frames.append(
-            frame.reset_index().rename(columns={"index": "datetime"}).assign(
-                ticker=ticker_enum.name
-            )
-        )
-    if not frames:
-        raise ArtifactMissingError(
-            module_name="ewsd",
-            ticker=None,
-            timeframe=query.volatility_timeframe,
-            requested_at=query.end,
-            reason="EWSD volatility is missing from the central cache",
-        )
-    volatility_df = pd.concat(frames, ignore_index=True)
-    if "ewsd_annual_vol" not in volatility_df.columns and "close" in volatility_df.columns:
-        volatility_df = volatility_df.rename(columns={"close": "ewsd_annual_vol"})
-    return volatility_df
-
-
-def _build_global_model_name(
-    timeframe: TimeFrame,
-    ensemble_idx: int,
-    model_name: str,
-) -> str:
-    """Stable global model namespace with explicit strategy + timeframe tags.
-
-    Format: ``{model_name}__{TF}::ensemble_{idx}``.
-    """
-    return f"{model_name}__{timeframe.name}::ensemble_{ensemble_idx}"
-
-
-def _parse_timeframe_from_global_model_name(model_name: str) -> str:
-    """Extract timeframe tag from global names produced by _build_global_model_name."""
-    left = str(model_name).split("::", 1)[0]
-    if "__" in left:
-        _, tf = left.rsplit("__", 1)
-        return tf
-    return left
-
-
-_GLOBAL_WEIGHT_LAYER_TICKER = "__GLOBAL__"
-
-
-def _build_global_stream_id(ticker: str, timeframe: str, model_name: str) -> str:
-    """Build a stable global stream id for adapter-encoded WeightLayer inputs."""
-    return f"{ticker}::{timeframe}::{model_name}"
-
-
-def _decode_global_stream_id(stream_id: str) -> Dict[str, str]:
-    """Decode stream id created by ``_build_global_stream_id``."""
-    parts = str(stream_id).split("::", 2)
-    if len(parts) != 3:
-        raise ValueError(
-            "Invalid global stream_id; expected format "
-            "'{ticker}::{timeframe}::{model_name}', got "
-            f"'{stream_id}'"
-        )
-    ticker, timeframe, model_name = parts
-    return {
-        "ticker": ticker,
-        "timeframe": timeframe,
-        "original_model_name": model_name,
-    }
 
 
 class TFPortfolio:
@@ -398,10 +228,10 @@ class TFPortfolio:
         self.sector_allocation_config_path = sector_allocation_config_path
         self.sector_allocation_config_: Optional[Dict[str, Any]] = None
         if self.sector_allocation_config_path is not None:
-            self.sector_allocation_config_ = self._load_sector_allocation_config(
+            self.sector_allocation_config_ = load_sector_allocation_config(
                 self.sector_allocation_config_path
             )
-            self.instrument_weights = self._resolve_sector_allocation(
+            self.instrument_weights = resolve_sector_allocation(
                 self.sector_allocation_config_
             )
         else:
@@ -448,163 +278,9 @@ class TFPortfolio:
                     )
         return loaded
 
-    def _load_sector_allocation_config(self, config_path: str) -> Dict[str, Any]:
-        """Load and validate a sector allocation configuration file."""
-        try:
-            with open(config_path, "r", encoding="utf-8") as handle:
-                config = json.load(handle)
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Sector allocation configuration file not found: {config_path}")
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid JSON in sector allocation configuration file: {exc}") from exc
-
-        if not isinstance(config, dict):
-            raise ValueError("Sector allocation root must be a JSON object")
-
-        self._validate_sector_allocation_node(config, seen_tickers=set(), node_path="root")
-        return config
-
-    def _validate_sector_allocation_node(
-        self,
-        node: Dict[str, Any],
-        seen_tickers: Set[str],
-        node_path: str,
-    ) -> None:
-        """Validate node schema recursively before resolution."""
-        weight = node.get("weight")
-        if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
-            raise ValueError(f"Node '{node_path}' weight must be > 0")
-
-        has_children = "children" in node
-        has_tickers = "tickers" in node
-        if has_children == has_tickers:
-            raise ValueError(
-                f"Node '{node_path}' must define exactly one of 'children' or 'tickers'"
-            )
-
-        if has_children:
-            children = node["children"]
-            if not isinstance(children, list) or len(children) == 0:
-                raise ValueError(f"Node '{node_path}' children must be a non-empty list")
-            for idx, child in enumerate(children):
-                if not isinstance(child, dict):
-                    raise ValueError(f"Node '{node_path}.children[{idx}]' must be an object")
-                self._validate_sector_allocation_node(
-                    child,
-                    seen_tickers=seen_tickers,
-                    node_path=f"{node_path}.children[{idx}]",
-                )
-            return
-
-        tickers = node["tickers"]
-        if not isinstance(tickers, list) or len(tickers) == 0:
-            raise ValueError(f"Node '{node_path}' must define at least one ticker")
-        if not all(isinstance(ticker, str) and ticker for ticker in tickers):
-            raise ValueError(f"Node '{node_path}' tickers must be non-empty strings")
-        if len(set(tickers)) != len(tickers):
-            raise ValueError(f"Node '{node_path}' contains duplicate tickers within a leaf")
-
-        duplicates = [ticker for ticker in tickers if ticker in seen_tickers]
-        if duplicates:
-            raise ValueError(f"Duplicate ticker in sector allocation config: {duplicates[0]}")
-        seen_tickers.update(tickers)
-
-        ticker_weights = node.get("ticker_weights")
-        if ticker_weights is None:
-            return
-
-        if not isinstance(ticker_weights, dict):
-            raise ValueError(f"Node '{node_path}' ticker_weights must be an object")
-        if set(ticker_weights.keys()) != set(tickers):
-            raise ValueError(
-                f"Node '{node_path}' ticker_weights keys must match tickers exactly"
-            )
-        for ticker, ticker_weight in ticker_weights.items():
-            if (
-                not isinstance(ticker_weight, (int, float))
-                or isinstance(ticker_weight, bool)
-                or ticker_weight <= 0
-            ):
-                raise ValueError(
-                    f"Node '{node_path}' ticker_weights values must be > 0 (ticker={ticker})"
-                )
-
-    def _resolve_sector_allocation(self, config: Dict[str, Any]) -> Dict[str, float]:
-        """Resolve sector tree into normalized ticker->weight mapping."""
-        resolved: Dict[str, float] = {}
-
-        if "children" in config:
-            children = config["children"]
-            total_weight = sum(child["weight"] for child in children)
-            for child in children:
-                contribution = child["weight"] / total_weight
-                self._resolve_sector_allocation_node(child, contribution, resolved)
-        elif "tickers" in config:
-            self._resolve_sector_allocation_node(config, 1.0, resolved)
-        else:
-            raise ValueError("Sector allocation root must define exactly one of 'children' or 'tickers'")
-
-        total_resolved = sum(resolved.values())
-        if total_resolved <= 0:
-            raise ValueError("Resolved sector allocation produced zero total weight")
-        return {
-            ticker: weight / total_resolved
-            for ticker, weight in resolved.items()
-        }
-
-    def _resolve_sector_allocation_node(
-        self,
-        node: Dict[str, Any],
-        parent_contribution: float,
-        resolved: Dict[str, float],
-    ) -> None:
-        """Recursively accumulate ticker contributions from a validated node tree."""
-        if "children" in node:
-            children = node["children"]
-            total_weight = sum(child["weight"] for child in children)
-            for child in children:
-                contribution = parent_contribution * (child["weight"] / total_weight)
-                self._resolve_sector_allocation_node(child, contribution, resolved)
-            return
-
-        tickers = node["tickers"]
-        ticker_weights = node.get("ticker_weights")
-        if ticker_weights is None:
-            equal_share = parent_contribution / len(tickers)
-            for ticker in tickers:
-                resolved[ticker] = resolved.get(ticker, 0.0) + equal_share
-            return
-
-        total_ticker_weight = sum(ticker_weights[ticker] for ticker in tickers)
-        for ticker in tickers:
-            ticker_share = parent_contribution * (ticker_weights[ticker] / total_ticker_weight)
-            resolved[ticker] = resolved.get(ticker, 0.0) + ticker_share
-
     def _get_effective_instrument_weights(self, tickers: List[str]) -> Dict[str, float]:
         """Return instrument weights for the provided tickers, including fallback handling."""
-        unique_tickers = list(dict.fromkeys(tickers))
-        if not unique_tickers:
-            return {}
-
-        if self.instrument_weights is None:
-            equal_weight = 1.0 / len(unique_tickers)
-            return {ticker: equal_weight for ticker in unique_tickers}
-
-        configured_weights = self.instrument_weights
-        missing_tickers = [ticker for ticker in unique_tickers if ticker not in configured_weights]
-        used_weight = sum(
-            configured_weights[ticker] for ticker in unique_tickers if ticker in configured_weights
-        )
-        remaining_weight = max(1.0 - used_weight, 0.0)
-        fallback_weight = (
-            remaining_weight / len(missing_tickers)
-            if missing_tickers
-            else 0.0
-        )
-        return {
-            ticker: configured_weights.get(ticker, fallback_weight)
-            for ticker in unique_tickers
-        }
+        return effective_instrument_weights(tickers, self.instrument_weights)
 
     def fit(
         self,
@@ -685,43 +361,11 @@ class TFPortfolio:
         float
             IDM value (capped at idm_max)
         """
-        if instrument_returns.empty or len(instrument_returns.columns) < 2:
-            # Single instrument or no data: IDM = 1.0
-            self.mean_return_correlation_ = 1.0
-            return 1.0
-        
-        # Build correlation matrix of instrument returns
-        # Columns are tickers, rows are time periods
-        corr_matrix = instrument_returns.corr()
-        
-        # Floor negative correlations at zero (Carver's recommendation)
-        # This treats negative correlations as zero (no diversification benefit from negative correlation)
-        corr_matrix = corr_matrix.clip(lower=0.0)
-        
-        # Calculate mean correlation (excluding diagonal)
-        # Get upper triangle (excluding diagonal) and calculate mean
-        # This gives us mean(|rho_ij|) for i != j as specified
-        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
-        correlations = corr_matrix.where(mask).stack()
-        
-        if len(correlations) == 0:
-            # No correlations to calculate (shouldn't happen with 2+ instruments)
-            self.mean_return_correlation_ = 1.0
-            return 1.0
-        
-        # Mean correlation: mean(|rho_ij|) for i != j
-        # Since we've already floored at zero, this is effectively mean(|rho_ij|)
-        mean_correlation = correlations.mean()
+        mean_correlation, idm = calculate_idm_from_returns(
+            instrument_returns,
+            idm_max=self.idm_max,
+        )
         self.mean_return_correlation_ = mean_correlation
-        
-        # Calculate IDM: sqrt(1 / (mean_correlation + epsilon))
-        # Lower correlation = higher IDM (more diversification benefit)
-        epsilon = 0.01  # Small epsilon to avoid division by zero
-        idm = np.sqrt(1.0 / (mean_correlation + epsilon))
-        
-        # Cap at idm_max (Carver's recommendation: 2.5)
-        idm = min(idm, self.idm_max)
-        
         return idm
 
     def predict(
@@ -1012,7 +656,7 @@ class TFPortfolio:
                 model_df["datetime"] = pd.to_datetime(model_df["datetime"]).dt.floor("s")
                 model_df["forecast"] = model_df["forecast_score"].astype(float)
                 model_df["signal"] = model_df["forecast"].astype(float)
-                model_df["model_name"] = _build_global_model_name(
+                model_df["model_name"] = build_global_model_name(
                     timeframe=self.trading_timeframe,
                     ensemble_idx=ensemble_idx,
                     model_name=model_name,
@@ -1461,8 +1105,12 @@ class TFPortfolio:
                     ensemble_name = f"ensemble_{ensemble_idx}"
                     full_model_name = f"{ensemble_name}::{model_name}"
                     # Convert to position fractions (vectorized - O(n+m) complexity)
-                    base_model_positions = self._apply_risk_management_to_forecasts(
-                        model_pred, tf_candles
+                    base_model_positions = apply_forecast_risk_management(
+                        model_pred,
+                        tf_candles,
+                        instrument_weights=self.instrument_weights,
+                        idm=self.idm_,
+                        max_position_pct=self.max_position_pct,
                     )
                     base_model_predictions_dict[full_model_name] = base_model_positions
                 
@@ -1471,8 +1119,12 @@ class TFPortfolio:
                     ensemble_name = f"ensemble_{ensemble_idx}"
                     
                     # Convert to position fractions (vectorized - O(n+m) complexity)
-                    ensemble_positions = self._apply_risk_management_to_forecasts(
-                        ensemble_pred, tf_candles
+                    ensemble_positions = apply_forecast_risk_management(
+                        ensemble_pred,
+                        tf_candles,
+                        instrument_weights=self.instrument_weights,
+                        idm=self.idm_,
+                        max_position_pct=self.max_position_pct,
                     )
                     
                     ensemble_predictions_dict[ensemble_name] = ensemble_positions
@@ -1481,8 +1133,12 @@ class TFPortfolio:
                 ensemble_pred = ensemble_result
                 if ensemble_pred is not None:
                     ensemble_name = f"ensemble_{ensemble_idx}"
-                    ensemble_positions = self._apply_risk_management_to_forecasts(
-                        ensemble_pred, tf_candles
+                    ensemble_positions = apply_forecast_risk_management(
+                        ensemble_pred,
+                        tf_candles,
+                        instrument_weights=self.instrument_weights,
+                        idm=self.idm_,
+                        max_position_pct=self.max_position_pct,
                     )
                     ensemble_predictions_dict[ensemble_name] = ensemble_positions
         
@@ -1498,11 +1154,15 @@ class TFPortfolio:
             return empty_df
         
         # Hard cutover: bypass TF-level WeightLayer and use unweighted model aggregation.
-        forecast_scores_df = self._aggregate_ensembles_fallback(forecast_vectors, tf_candles)
+        forecast_scores_df = aggregate_forecast_vectors_fallback(forecast_vectors)
         
         # Apply risk management for portfolio-level
-        positions_df = self._apply_risk_management(
-            forecast_scores_df, tf_candles
+        positions_df = apply_forecast_risk_management(
+            forecast_scores_df,
+            tf_candles,
+            instrument_weights=self.instrument_weights,
+            idm=self.idm_,
+            max_position_pct=self.max_position_pct,
         )
         
         full_result = {
@@ -1510,441 +1170,19 @@ class TFPortfolio:
             'ensembles': ensemble_predictions_dict,
             'base_models': base_model_predictions_dict
         }
-        return self._format_cached_result(full_result, return_ensemble_predictions, return_base_model_predictions)
-    
-    def _format_cached_result(
-        self,
-        cached_result: Dict[str, Any],
-        return_ensemble_predictions: bool,
-        return_base_model_predictions: bool
-    ) -> Union[pd.DataFrame, Dict[str, Any]]:
-        """
-        Format cached result based on return flags.
-        
-        Returns a deep copy of relevant portions to avoid cache mutation.
-        
-        Parameters
-        ----------
-        cached_result : Dict[str, Any]
-            Full cached result with 'portfolio', 'ensembles', 'base_models' keys
-        return_ensemble_predictions : bool
-            Whether to include ensemble predictions
-        return_base_model_predictions : bool
-            Whether to include base model predictions
-            
-        Returns
-        -------
-        pd.DataFrame or Dict[str, Any]
-            Formatted result based on flags
-        """
-        if return_ensemble_predictions or return_base_model_predictions:
-            result = {'portfolio': self._deep_copy_result(cached_result['portfolio'])}
-            if return_ensemble_predictions:
-                result['ensembles'] = self._deep_copy_result(cached_result.get('ensembles', {}))
-            if return_base_model_predictions:
-                result['base_models'] = self._deep_copy_result(cached_result.get('base_models', {}))
-            return result
-        else:
-            # Just return portfolio DataFrame
-            return self._deep_copy_result(cached_result['portfolio'])
-    
-    def _deep_copy_result(self, obj: Any) -> Any:
-        """
-        Recursively deep copy DataFrames in nested structures.
-        
-        Handles:
-        - pd.DataFrame: returns .copy()
-        - dict: recursively copies values
-        - list: recursively copies elements
-        - other: returns as-is (immutable or primitive types)
-        
-        Parameters
-        ----------
-        obj : Any
-            Object to deep copy (DataFrame, dict, list, or primitive)
-            
-        Returns
-        -------
-        Any
-            Deep copied object with all DataFrames copied
-        """
-        if isinstance(obj, pd.DataFrame):
-            return obj.copy()
-        elif isinstance(obj, dict):
-            return {k: self._deep_copy_result(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._deep_copy_result(item) for item in obj]
-        else:
-            return obj
-    
-    def _aggregate_ensembles(
-        self,
-        ensemble_predictions: List[pd.DataFrame],
-        candles_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """
-        Aggregate predictions from multiple ensembles.
-        
-        Aggregates across ensembles (if multiple), but preserves ticker-level information.
-        Each ticker keeps its own forecast_score.
-        
-        Parameters
-        ----------
-        ensemble_predictions : List[pd.DataFrame]
-            List of prediction DataFrames from each ensemble (columns: ticker, datetime, forecast_score)
-        candles_df : pd.DataFrame
-            Candles DataFrame for alignment
-            
-        Returns
-        -------
-        pd.DataFrame
-            Aggregated forecast scores with columns: ticker, datetime, forecast_score
-            (aggregated across ensembles, but preserving ticker-level granularity)
-        """
-        if not ensemble_predictions:
-            return pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
-        
-        # Combine all predictions (DataFrames)
-        combined_df = pd.concat(ensemble_predictions, ignore_index=True)
-        
-        # Group by (datetime, ticker) and take mean of forecast_score across ensembles
-        # This preserves ticker-level information while aggregating across ensembles
-        if 'ticker' in combined_df.columns and 'datetime' in combined_df.columns:
-            # Group by (datetime, ticker) and take mean across ensembles
-            aggregated = combined_df.groupby(['datetime', 'ticker'])['forecast_score'].mean().reset_index()
-        elif 'datetime' in combined_df.columns:
-            # If no ticker column, just group by datetime
-            aggregated = combined_df.groupby('datetime')['forecast_score'].mean().reset_index()
-            # Add dummy ticker column if needed (shouldn't happen in normal flow)
-            if 'ticker' not in aggregated.columns:
-                aggregated['ticker'] = candles_df['ticker'].iloc[0] if len(candles_df) > 0 else None
-        else:
-            # Fallback: use index if datetime is index
-            if combined_df.index.name == 'datetime' or isinstance(combined_df.index, pd.DatetimeIndex):
-                aggregated = combined_df.groupby(combined_df.index)['forecast_score'].mean().reset_index()
-                aggregated.columns = ['datetime', 'forecast_score']
-            else:
-                # Last resort: try to use index as-is
-                aggregated = combined_df.set_index('datetime')['forecast_score'].groupby(level=0).mean().reset_index()
-                aggregated.columns = ['datetime', 'forecast_score']
-            
-            # Add ticker column if missing
-            if 'ticker' not in aggregated.columns:
-                aggregated['ticker'] = candles_df['ticker'].iloc[0] if len(candles_df) > 0 else None
-        
-        # Ensure columns are in correct order
-        if 'ticker' in aggregated.columns and 'datetime' in aggregated.columns:
-            aggregated = aggregated[['ticker', 'datetime', 'forecast_score']]
-        
-        # Note: FDM is now applied by WeightLayer.combine(), not here
-        # This method is only used as fallback when WeightLayer is not fitted
-        
-        return aggregated
+        return format_portfolio_result(
+            full_result,
+            return_ensemble_predictions=return_ensemble_predictions,
+            return_base_model_predictions=return_base_model_predictions,
+        )
     
     def _calculate_returns_from_candles(
         self,
         candles_df: pd.DataFrame
     ) -> pd.DataFrame:
-        """
-        Calculate returns DataFrame from candles for IDM calculation.
-        
-        Parameters
-        ----------
-        candles_df : pd.DataFrame
-            Candles DataFrame
-            
-        Returns
-        -------
-        pd.DataFrame
-            Returns DataFrame with tickers as columns, datetime as index
-        """
-        returns_dict: Dict[str, pd.Series] = {}
-        date_ranges_dict = {}  # Store date ranges for logging
-
-        candles_df = _normalize_candles_datetime_column(candles_df)
-        
-        for ticker in candles_df['ticker'].unique():
-            ticker_candles = candles_df[candles_df['ticker'] == ticker].copy()
-            
-            # Ensure datetime column is properly formatted as datetime
-            ticker_candles['datetime'] = pd.to_datetime(ticker_candles['datetime'])
-            ticker_candles = ticker_candles.sort_values('datetime')
-            
-            # Calculate returns
-            ticker_candles['returns'] = ticker_candles['close'].pct_change()
-            
-            # Set datetime as index (already datetime type)
-            ticker_candles = ticker_candles.set_index('datetime')
-            # Drop NaN from individual ticker (first row will be NaN from pct_change)
-            ticker_returns = ticker_candles['returns'].dropna()
-            
-            ticker_key = self._normalize_ticker_key(ticker)
-            
-            if len(ticker_returns) > 0:
-                # Ensure datetime index is properly formatted as DatetimeIndex
-                if not isinstance(ticker_returns.index, pd.DatetimeIndex):
-                    ticker_returns.index = pd.to_datetime(ticker_returns.index)
-                
-                # Normalize datetime index to remove timezone and time components for alignment
-                # This ensures all tickers align on the same dates
-                ticker_returns.index = ticker_returns.index.normalize()
-                
-                returns_dict[ticker_key] = ticker_returns
-                date_ranges_dict[ticker_key] = (ticker_returns.index.min(), ticker_returns.index.max())
-                
-                logger.debug(
-                    f"Added returns for ticker {ticker_key}: {len(ticker_returns)} rows, "
-                    f"date range: {ticker_returns.index.min()} to {ticker_returns.index.max()}"
-                )
-            else:
-                logger.warning(f"No valid returns for ticker {ticker_key} after dropna()")
-                date_ranges_dict[ticker_key] = (None, None)
-        
-        if not returns_dict:
-            logger.warning("No returns calculated for any ticker")
-            return pd.DataFrame()
-        
-        # Create DataFrame with all ticker returns
-        # This will align by datetime index (union of all datetimes)
-        # Ensure all indices are normalized and the same type before creating DataFrame
-        normalized_returns_dict: Dict[str, pd.Series] = {}
-        for ticker_key, ticker_returns in returns_dict.items():
-            # Create a copy to avoid modifying original
-            normalized_returns = ticker_returns.copy()
-            
-            # Ensure index is DatetimeIndex and normalized (date-only, no time)
-            if not isinstance(normalized_returns.index, pd.DatetimeIndex):
-                normalized_returns.index = pd.to_datetime(normalized_returns.index)
-            
-            # Normalize to remove time components (ensures alignment)
-            normalized_returns.index = normalized_returns.index.normalize()
-            
-            normalized_returns_dict[ticker_key] = normalized_returns
-        
-        returns_df = pd.DataFrame(normalized_returns_dict)
-        
-        logger.debug(
-            f"Returns DataFrame created: shape={returns_df.shape}, "
-            f"columns={list(returns_df.columns)}, "
-            f"index type: {type(returns_df.index)}, "
-            f"NaN count per column: {returns_df.isna().sum().to_dict()}, "
-            f"Sample index values: {returns_df.index[:5].tolist() if len(returns_df) > 0 else 'empty'}"
-        )
-        
-        # Only drop rows where we have fewer than 2 tickers with valid returns
-        # We need at least 2 tickers for correlation calculation
-        # Use dropna with thresh=2 to keep rows with at least 2 non-NaN values
-        if len(returns_df.columns) >= 2:
-            rows_before = len(returns_df)
-            # Count non-NaN values per row
-            non_nan_per_row = returns_df.notna().sum(axis=1)
-            rows_with_2plus = (non_nan_per_row >= 2).sum()
-            
-            logger.debug(
-                f"Before dropna(thresh=2): {rows_before} rows, "
-                f"{rows_with_2plus} rows have 2+ non-NaN values"
-            )
-            
-            returns_df = returns_df.dropna(thresh=2)
-            rows_after = len(returns_df)
-            
-            if rows_after == 0:
-                # Get date ranges from stored dict (before DataFrame creation)
-                date_ranges = [(col, date_ranges_dict.get(col, (None, None))[0], date_ranges_dict.get(col, (None, None))[1]) 
-                              for col in returns_df.columns]
-                
-                logger.warning(
-                    f"Returns DataFrame is empty after dropna(thresh=2). "
-                    f"Input: {rows_before} rows, {len(returns_df.columns)} columns. "
-                    f"Only {rows_with_2plus} rows had 2+ non-NaN values. "
-                    f"This suggests tickers have no overlapping datetime indices. "
-                    f"Date ranges from individual tickers: {date_ranges}"
-                )
-            else:
-                logger.debug(
-                    f"After dropna(thresh=2): {rows_before} -> {rows_after} rows, "
-                    f"columns={list(returns_df.columns)}"
-                )
-        else:
-            # Fewer than 2 tickers: return 1-column returns (non-empty); fit_from_candles
-            # will set IDM=1.0 and log the "Only N instrument(s)" warning.
-            # #region agent log
-            try:
-                import json
-                _log = {"sessionId": "1a52b7", "hypothesisId": "H1", "location": "portfolio.py:_calculate_returns_from_candles", "message": "returning 1-column returns (columns < 2)", "data": {"n_columns": len(returns_df.columns), "columns": list(returns_df.columns)}, "timestamp": int(__import__("time").time() * 1000)}
-                open("/home/raman/repos/Trading-Algo/.cursor/debug-1a52b7.log", "a").write(json.dumps(_log) + "\n")
-            except Exception: pass
-            # #endregion
-            return returns_df
-
-        return returns_df
-
-    @staticmethod
-    def _normalize_ticker_key(ticker: object) -> str:
-        """Normalize ticker to string key; delegate to shared helper."""
-        return normalize_ticker_key(ticker)
+        """Calculate returns DataFrame from candles for IDM calculation."""
+        return calculate_returns_from_candles(candles_df)
     
-    def _align_forecasts_with_candles(
-        self,
-        combined_forecasts: pd.DataFrame,
-        candles_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """
-        Align combined forecasts (from WeightLayer) with candles DataFrame.
-        
-        WeightLayer.combine() returns ['ticker', 'datetime', 'forecast_score'] if datetime is available.
-        If datetime is missing, we merge with candles to add it.
-        
-        Parameters
-        ----------
-        combined_forecasts : pd.DataFrame
-            Combined forecasts from WeightLayer with columns: ['ticker', 'forecast_score'] or ['ticker', 'datetime', 'forecast_score']
-        candles_df : pd.DataFrame
-            Candles DataFrame for datetime alignment
-            
-        Returns
-        -------
-        pd.DataFrame
-            Forecast scores with columns: ['ticker', 'datetime', 'forecast_score']
-        """
-        # If datetime is already in combined_forecasts, use it directly
-        if 'datetime' in combined_forecasts.columns:
-            # Ensure datetime is datetime type
-            combined_forecasts = combined_forecasts.copy()
-            combined_forecasts['datetime'] = pd.to_datetime(combined_forecasts['datetime'])
-            return combined_forecasts[['ticker', 'datetime', 'forecast_score']]
-        
-        # Fallback: datetime not in combined_forecasts; broadcast forecast_score per ticker over candle datetimes
-        ticker_scores = combined_forecasts.groupby('ticker', as_index=False)['forecast_score'].first()
-        candles_subset = candles_df[['ticker', 'datetime']].copy()
-        candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime'])
-        merged = candles_subset.merge(ticker_scores, on='ticker', how='left')
-        merged['forecast_score'] = merged['forecast_score'].fillna(0.0)
-        return merged[['ticker', 'datetime', 'forecast_score']]
-    
-    def _aggregate_ensembles_fallback(
-        self,
-        forecast_vectors: List[pd.DataFrame],
-        candles_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """
-        Fallback aggregation when WeightLayer is not fitted.
-        
-        Simple averaging across all base models.
-        
-        Parameters
-        ----------
-        forecast_vectors : List[pd.DataFrame]
-            List of forecast vectors from all ensembles
-        candles_df : pd.DataFrame
-            Candles DataFrame for alignment
-            
-        Returns
-        -------
-        pd.DataFrame
-            Aggregated forecast scores with columns: ['ticker', 'datetime', 'forecast_score']
-        """
-        if not forecast_vectors:
-            return pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
-        
-        # Combine all forecast vectors
-        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
-        
-        # Group by (datetime, ticker) and take mean of forecast
-        if 'ticker' in all_forecasts.columns and 'datetime' in all_forecasts.columns:
-            aggregated = all_forecasts.groupby(['datetime', 'ticker'])['forecast'].mean().reset_index()
-            aggregated.columns = ['datetime', 'ticker', 'forecast_score']
-            aggregated = aggregated[['ticker', 'datetime', 'forecast_score']]
-        else:
-            # Fallback
-            aggregated = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score'])
-        
-        return aggregated
-    
-    def _apply_risk_management_to_forecasts(
-        self,
-        forecasts_df: pd.DataFrame,
-        candles_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """
-        Apply risk management to forecast DataFrame (for ensemble/base model level).
-        
-        Uses vectorized pandas operations for O(n+m) complexity instead of O(n*m).
-        Note: Forecasts are already volatility-adjusted from Ensemble layer.
-        
-        Parameters
-        ----------
-        forecasts_df : pd.DataFrame
-            Forecast scores with columns: ticker, datetime, forecast_score
-            (already volatility-adjusted from Ensemble)
-        candles_df : pd.DataFrame
-            Candles DataFrame for alignment
-            
-        Returns
-        -------
-        pd.DataFrame
-            Position fractions with columns: ticker, datetime, forecast_score, position_fraction
-        """
-        # Normalize to bar granularity for (datetime, ticker) merge
-        forecasts_clean = forecasts_df[['ticker', 'datetime', 'forecast_score']].copy()
-        forecasts_clean['datetime'] = pd.to_datetime(forecasts_clean['datetime']).dt.floor('s')
-        candles_subset = candles_df[['ticker', 'datetime']].copy()
-        candles_subset['datetime'] = pd.to_datetime(candles_subset['datetime']).dt.floor('s')
-        
-        # Vectorized merge on (ticker, datetime) - O(n+m) complexity
-        result = candles_subset.merge(
-            forecasts_clean,
-            on=['ticker', 'datetime'],
-            how='left'
-        )
-        
-        # Fill missing forecast scores with 0.0
-        result['forecast_score'] = result['forecast_score'].fillna(0.0)
-        
-        # Vectorized IDM application
-        idm_value = self.idm_ if self.idm_ is not None else 1.0
-        result['position_fraction'] = result['forecast_score'] * idm_value
-        
-        # Vectorized instrument weight application
-        weights_by_ticker = self._get_effective_instrument_weights(result['ticker'].tolist())
-        result['position_fraction'] *= result['ticker'].map(weights_by_ticker)
-        
-        # Vectorized position cap
-        if self.max_position_pct is not None:
-            result['position_fraction'] = result['position_fraction'].clip(
-                lower=-self.max_position_pct,
-                upper=self.max_position_pct
-            )
-        
-        return result[['ticker', 'datetime', 'forecast_score', 'position_fraction']]
-    
-    def _apply_risk_management(
-        self,
-        forecast_scores_df: pd.DataFrame,
-        candles_df: pd.DataFrame
-    ) -> pd.DataFrame:
-        """
-        Apply risk management to forecast scores.
-        
-        Uses vectorized pandas operations for O(n+m) complexity instead of O(n*m).
-        Note: Forecasts are already volatility-adjusted from Ensemble layer.
-        
-        Parameters
-        ----------
-        forecast_scores_df : pd.DataFrame
-            Forecast scores with columns: ticker, datetime, forecast_score
-            (already volatility-adjusted from Ensemble)
-        candles_df : pd.DataFrame
-            Candles DataFrame for alignment
-            
-        Returns
-        -------
-        pd.DataFrame
-            Position fractions with columns: ticker, datetime, forecast_score, position_fraction
-        """
-        # Delegate to vectorized implementation (same logic)
-        return self._apply_risk_management_to_forecasts(forecast_scores_df, candles_df)
-
     def get_diagnostics(self) -> Dict:
         """Return a snapshot of fitted state for inspection."""
         return {
@@ -2182,428 +1420,21 @@ class GlobalPortfolio:
             candles_per_tf[timeframe] = candles_df
         return candles_per_tf
 
-    @staticmethod
-    def _build_global_signals_df(
-        forecast_vectors: List[pd.DataFrame],
-    ) -> pd.DataFrame:
-        """Build global (date × model) scaled-signal matrix for strategy-level weighting."""
-        if not forecast_vectors:
-            return pd.DataFrame()
-
-        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
-        if all_forecasts.empty:
-            return pd.DataFrame()
-
-        if "datetime" not in all_forecasts.columns or "signal" not in all_forecasts.columns:
-            return pd.DataFrame()
-
-        df = all_forecasts.copy()
-        df["datetime"] = pd.to_datetime(df["datetime"])
-        df["date"] = df["datetime"].dt.normalize()
-        return (
-            df.pivot_table(
-                index="date",
-                columns="model_name",
-                values="signal",
-                aggfunc="mean",
-            )
-            .fillna(0.0)
-            .sort_index()
-        )
-
-    @staticmethod
-    def _build_daily_grid(
-        forecast_vectors: List[pd.DataFrame],
-        reference_index: Optional[pd.Index] = None,
-    ) -> pd.DatetimeIndex:
-        """Build a daily date grid used to align all strategy streams."""
-        if reference_index is not None and len(reference_index) > 0:
-            idx = pd.to_datetime(reference_index)
-            if isinstance(idx, pd.Series):
-                idx = idx.dt.normalize()
-            else:
-                idx = pd.DatetimeIndex(idx).normalize()
-            idx = idx[~idx.isna()]
-            if len(idx) > 0:
-                return pd.DatetimeIndex(sorted(set(idx)))
-
-        all_forecasts = pd.concat(forecast_vectors, ignore_index=True)
-        if all_forecasts.empty or "datetime" not in all_forecasts.columns:
-            return pd.DatetimeIndex([])
-
-        dates = pd.to_datetime(all_forecasts["datetime"]).dt.normalize().dropna()
-        if dates.empty:
-            return pd.DatetimeIndex([])
-        return pd.date_range(dates.min(), dates.max(), freq="D")
-
-    @staticmethod
-    def _align_forecast_vectors_to_daily_grid(
-        forecast_vectors: List[pd.DataFrame],
-        daily_grid: pd.DatetimeIndex,
-    ) -> List[pd.DataFrame]:
-        """Resample each ticker/model stream to a common daily grid via forward-fill."""
-        if not forecast_vectors or len(daily_grid) == 0:
-            return forecast_vectors
-
-        combined = pd.concat(forecast_vectors, ignore_index=True)
-        if combined.empty:
-            return forecast_vectors
-
-        required_cols = {"ticker", "datetime", "model_name", "forecast", "signal", "timeframe"}
-        if not required_cols.issubset(set(combined.columns)):
-            return forecast_vectors
-
-        aligned_parts: List[pd.DataFrame] = []
-        for (ticker, model_name, timeframe), grp in combined.groupby(
-            ["ticker", "model_name", "timeframe"], sort=False
-        ):
-            base = grp.copy()
-            base["datetime"] = pd.to_datetime(base["datetime"]).dt.normalize()
-            base = (
-                base.sort_values("datetime")
-                .drop_duplicates(subset=["datetime"], keep="last")
-                .set_index("datetime")
-            )
-            stream = base[["forecast", "signal"]].astype(float)
-            aligned = stream.reindex(daily_grid).ffill().fillna(0.0).reset_index()
-            aligned = aligned.rename(columns={"index": "datetime"})
-            aligned["ticker"] = ticker
-            aligned["model_name"] = model_name
-            aligned["timeframe"] = timeframe
-            aligned_parts.append(
-                aligned[
-                    [
-                        "ticker",
-                        "datetime",
-                        "model_name",
-                        "forecast",
-                        "signal",
-                        "timeframe",
-                    ]
-                ]
-            )
-
-        if not aligned_parts:
-            return forecast_vectors
-
-        return [pd.concat(aligned_parts, ignore_index=True)]
-
-    @staticmethod
-    def _derive_tf_weights_from_strategy_diagnostics(
-        diagnostics: Dict[str, Any],
-    ) -> Dict[str, float]:
-        """Derive compatibility TF-level weights from strategy-level weights."""
-        tickers = diagnostics.get("tickers", {}) if isinstance(diagnostics, dict) else {}
-        tf_sums: Dict[str, float] = {}
-        n_tickers = 0
-
-        for ticker_info in tickers.values():
-            weights = ticker_info.get("weights") or {}
-            if not isinstance(weights, dict) or not weights:
-                continue
-            n_tickers += 1
-            per_ticker_tf: Dict[str, float] = {}
-            for model_name, weight in weights.items():
-                tf_name = _parse_timeframe_from_global_model_name(str(model_name))
-                per_ticker_tf[tf_name] = per_ticker_tf.get(tf_name, 0.0) + float(weight)
-            for tf_name, tf_weight in per_ticker_tf.items():
-                tf_sums[tf_name] = tf_sums.get(tf_name, 0.0) + tf_weight
-
-        if n_tickers == 0 or not tf_sums:
-            return {}
-
-        averaged = {tf: w / n_tickers for tf, w in tf_sums.items()}
-        total = sum(averaged.values())
-        if total <= 0:
-            return {}
-        return {tf: w / total for tf, w in averaged.items()}
-
-    @staticmethod
-    def _count_sign_changes(signal: pd.Series, eps: float = 1e-12) -> int:
-        """Count sign flips across non-zero points in a signal stream."""
-        signs = np.sign(signal.to_numpy(dtype=float))
-        non_zero = signs[np.abs(signs) > eps]
-        if len(non_zero) < 2:
-            return 0
-        return int(np.sum(non_zero[1:] != non_zero[:-1]))
-
     def _collect_global_strategy_health_diagnostics(
         self,
         forecast_vectors: List[pd.DataFrame],
         global_returns: Optional[pd.Series],
     ) -> tuple[List[pd.DataFrame], Dict[str, Any]]:
-        """Collect low-information diagnostics without dropping any strategy.
-
-        Rules are diagnostic-only:
-        - min observations
-        - min non-zero activity ratio
-        - min effective observations where signal*return is non-zero
-        """
-        min_obs = 252
-        min_activity_ratio = 0.02
-        min_effective_obs = 21
-        returns_norm: Optional[pd.Series] = None
-        if global_returns is not None and not global_returns.empty:
-            returns_norm = global_returns.astype(float).copy()
-            returns_norm.index = pd.to_datetime(returns_norm.index).normalize()
-
-        combined = pd.concat(forecast_vectors, ignore_index=True)
-        if combined.empty:
-            return forecast_vectors, {
-                "min_obs": min_obs,
-                "min_activity_ratio": min_activity_ratio,
-                "min_effective_obs": min_effective_obs,
-                "tickers": {},
-            }
-
-        tickers_diag: Dict[str, Any] = {}
-        eligible_by_ticker: Dict[str, Set[str]] = {}
-
-        for ticker, ticker_df in combined.groupby("ticker", sort=False):
-            ticker_key = str(ticker)
-            model_stats = []
-            for model_name, model_df in ticker_df.groupby("model_name", sort=False):
-                signal = model_df["signal"].astype(float)
-                obs = int(len(signal))
-                activity_ratio = float((signal.abs() > 1e-12).mean()) if obs else 0.0
-                effective_obs = 0
-                if returns_norm is not None:
-                    model_dates = pd.to_datetime(model_df["datetime"]).dt.normalize()
-                    model_rets = returns_norm.reindex(model_dates).fillna(0.0).to_numpy(dtype=float)
-                    effective_obs = int(np.sum(np.abs(signal.to_numpy(dtype=float) * model_rets) > 1e-12))
-                else:
-                    effective_obs = int(np.sum(np.abs(signal.to_numpy(dtype=float)) > 1e-12))
-                is_eligible = (
-                    obs >= min_obs
-                    and activity_ratio >= min_activity_ratio
-                    and effective_obs >= min_effective_obs
-                )
-                model_stats.append(
-                    {
-                        "model_name": str(model_name),
-                        "obs": obs,
-                        "activity_ratio": activity_ratio,
-                        "effective_obs": effective_obs,
-                        "eligible": is_eligible,
-                    }
-                )
-
-            eligible_models = {str(s["model_name"]) for s in model_stats}
-
-            eligible_by_ticker[ticker_key] = eligible_models
-            tickers_diag[ticker_key] = {
-                "eligible_models": sorted(eligible_models),
-                "n_models_before": len(model_stats),
-                "n_models_after": len(eligible_models),
-                "model_stats": model_stats,
-            }
-
+        """Collect low-information diagnostics without dropping any strategy."""
+        eligible_vectors, eligible_by_ticker, diagnostics = (
+            collect_global_strategy_health_diagnostics(
+                forecast_vectors,
+                global_returns,
+            )
+        )
         self.global_eligible_models_by_ticker_ = eligible_by_ticker
-        diag = {
-            "min_obs": min_obs,
-            "min_activity_ratio": min_activity_ratio,
-            "min_effective_obs": min_effective_obs,
-            "mode": "diagnostics_only_no_filtering",
-            "tickers": tickers_diag,
-        }
-        self.global_eligibility_diagnostics_ = diag
-        return forecast_vectors, diag
-
-    @staticmethod
-    def _normalize_global_signals_by_downside_vol(
-        forecast_vectors: List[pd.DataFrame],
-        global_returns: Optional[pd.Series],
-    ) -> List[pd.DataFrame]:
-        """Normalize per-(ticker, model) signal streams by downside vol of signal*returns."""
-        if global_returns is None or global_returns.empty:
-            return forecast_vectors
-
-        clean_returns = global_returns.astype(float).copy()
-        clean_returns.index = pd.to_datetime(clean_returns.index).normalize()
-
-        combined = pd.concat(forecast_vectors, ignore_index=True).copy()
-        combined["date"] = pd.to_datetime(combined["datetime"]).dt.normalize()
-
-        scales: Dict[tuple[str, str], float] = {}
-        for (ticker, model_name), grp in combined.groupby(["ticker", "model_name"], sort=False):
-            merged = (
-                grp[["date", "signal"]]
-                .merge(
-                    clean_returns.rename("ret").to_frame(),
-                    left_on="date",
-                    right_index=True,
-                    how="left",
-                )
-                .fillna({"ret": 0.0})
-            )
-            signal_ret = merged["signal"].astype(float) * merged["ret"].astype(float)
-            downside = np.minimum(signal_ret.to_numpy(dtype=float), 0.0)
-            downside_vol = float(np.sqrt(np.mean(np.square(downside)))) if len(downside) else 0.0
-            scales[(str(ticker), str(model_name))] = max(downside_vol, 1e-8)
-
-        normalized: List[pd.DataFrame] = []
-        for vec in forecast_vectors:
-            out = vec.copy()
-            out["signal"] = out.apply(
-                lambda r: float(r["signal"])
-                / scales.get((str(r["ticker"]), str(r["model_name"])), 1.0),
-                axis=1,
-            )
-            normalized.append(out)
-        return normalized
-
-    # ------------------------------------------------------------------
-    # Global WeightLayer adapter helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _encode_forecast_vectors_for_global_weight_layer(
-        forecast_vectors: List[pd.DataFrame],
-    ) -> tuple[List[pd.DataFrame], Dict[str, Dict[str, str]]]:
-        """Encode all streams into one synthetic global WeightLayer ticker."""
-        if not forecast_vectors:
-            return [], {}
-
-        combined = pd.concat(forecast_vectors, ignore_index=True)
-        if combined.empty:
-            return [], {}
-
-        required_cols = {"ticker", "datetime", "model_name", "forecast", "signal", "timeframe"}
-        if not required_cols.issubset(set(combined.columns)):
-            return [], {}
-
-        encoded = combined.copy()
-        encoded["stream_id"] = encoded.apply(
-            lambda row: _build_global_stream_id(
-                ticker=str(row["ticker"]),
-                timeframe=str(row["timeframe"]),
-                model_name=str(row["model_name"]),
-            ),
-            axis=1,
-        )
-        encoded["ticker"] = _GLOBAL_WEIGHT_LAYER_TICKER
-        encoded["model_name"] = encoded["stream_id"]
-
-        decode_map = {
-            str(row["stream_id"]): {
-                "ticker": str(row["ticker"]),
-                "timeframe": str(row["timeframe"]),
-                "original_model_name": str(row["model_name"]),
-            }
-            for row in (
-                combined.assign(
-                    stream_id=combined.apply(
-                        lambda r: _build_global_stream_id(
-                            ticker=str(r["ticker"]),
-                            timeframe=str(r["timeframe"]),
-                            model_name=str(r["model_name"]),
-                        ),
-                        axis=1,
-                    )
-                )[
-                    ["stream_id", "ticker", "timeframe", "model_name"]
-                ]
-                .drop_duplicates(subset=["stream_id"], keep="first")
-                .to_dict("records")
-            )
-        }
-
-        encoded_df = encoded[["ticker", "datetime", "model_name", "forecast", "signal"]].copy()
-        return [encoded_df], decode_map
-
-    def _build_global_adapter_rollups(
-        self,
-        stream_decode_map: Dict[str, Dict[str, str]],
-    ) -> Dict[str, Any]:
-        """Build ticker/timeframe rollups from fitted synthetic-stream weights."""
-        global_weights = self.weight_layer.weights_.get(_GLOBAL_WEIGHT_LAYER_TICKER)
-        if global_weights is None or global_weights.empty:
-            return {
-                "synthetic_ticker": _GLOBAL_WEIGHT_LAYER_TICKER,
-                "stream_decode_map": stream_decode_map,
-                "stream_weights": {},
-                "ticker_rollups": {},
-                "timeframe_rollups": {},
-            }
-
-        stream_weights = {
-            str(stream_id): float(weight)
-            for stream_id, weight in global_weights.to_dict().items()
-        }
-        ticker_rollups: Dict[str, float] = {}
-        timeframe_rollups: Dict[str, float] = {}
-        for stream_id, weight in stream_weights.items():
-            decoded = stream_decode_map.get(stream_id)
-            if decoded is None:
-                continue
-            ticker = str(decoded["ticker"])
-            timeframe = str(decoded["timeframe"])
-            ticker_rollups[ticker] = ticker_rollups.get(ticker, 0.0) + float(weight)
-            timeframe_rollups[timeframe] = timeframe_rollups.get(timeframe, 0.0) + float(weight)
-
-        return {
-            "synthetic_ticker": _GLOBAL_WEIGHT_LAYER_TICKER,
-            "stream_decode_map": stream_decode_map,
-            "stream_weights": stream_weights,
-            "ticker_rollups": dict(sorted(ticker_rollups.items())),
-            "timeframe_rollups": dict(sorted(timeframe_rollups.items())),
-        }
-
-    def _decode_global_weight_layer_output(
-        self,
-        encoded_vectors: List[pd.DataFrame],
-        stream_decode_map: Dict[str, Dict[str, str]],
-    ) -> pd.DataFrame:
-        """Decode synthetic global outputs back to ticker-level forecast scores."""
-        if not encoded_vectors:
-            return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
-
-        combined = pd.concat(encoded_vectors, ignore_index=True)
-        if combined.empty:
-            return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
-
-        global_weights = self.weight_layer.weights_.get(_GLOBAL_WEIGHT_LAYER_TICKER)
-        if global_weights is None:
-            available_models = combined["model_name"].unique()
-            n_models = len(available_models)
-            equal_weight = 1.0 / n_models if n_models > 0 else 1.0
-            global_weights = pd.Series(
-                {m: equal_weight for m in available_models},
-                dtype=float,
-            )
-
-        weighted = combined.copy()
-        weighted["weight"] = weighted["model_name"].map(global_weights)
-        missing_models = weighted[weighted["weight"].isna()]["model_name"].unique()
-        if len(missing_models) > 0:
-            n_known = len(global_weights)
-            fallback_weight = (
-                1.0 / (n_known + len(missing_models))
-                if n_known > 0
-                else 1.0 / len(missing_models)
-            )
-            weighted["weight"] = weighted["weight"].fillna(fallback_weight)
-
-        weighted["weighted_forecast"] = weighted["forecast"] * weighted["weight"]
-        decoded_lookup = weighted["model_name"].map(stream_decode_map)
-        weighted["ticker"] = decoded_lookup.map(
-            lambda value: str(value["ticker"]) if isinstance(value, dict) else ""
-        )
-        weighted = weighted[weighted["ticker"] != ""].copy()
-        if weighted.empty:
-            return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
-
-        grouped = (
-            weighted.groupby(["ticker", "datetime"], as_index=False)["weighted_forecast"]
-            .sum()
-            .sort_values(["ticker", "datetime"])
-        )
-        global_fdm = float(self.weight_layer.fdm_.get(_GLOBAL_WEIGHT_LAYER_TICKER, 1.0))
-        grouped["forecast_score"] = (grouped["weighted_forecast"] * global_fdm).clip(
-            lower=-2.0,
-            upper=2.0,
-        )
-        return grouped[["ticker", "datetime", "forecast_score"]].reset_index(drop=True)
+        self.global_eligibility_diagnostics_ = diagnostics
+        return eligible_vectors, diagnostics
 
     # ------------------------------------------------------------------
     # Instrument weight helper
@@ -2611,20 +1442,7 @@ class GlobalPortfolio:
 
     def _get_effective_instrument_weights(self, tickers: List[str]) -> Dict[str, float]:
         """Return global instrument weights for the given tickers (equal-weight fallback)."""
-        unique_tickers = list(dict.fromkeys(tickers))
-        if not unique_tickers:
-            return {}
-
-        if self.instrument_weights is None:
-            eq = 1.0 / len(unique_tickers)
-            return {t: eq for t in unique_tickers}
-
-        configured = self.instrument_weights
-        missing = [t for t in unique_tickers if t not in configured]
-        used_w = sum(configured[t] for t in unique_tickers if t in configured)
-        remaining = max(1.0 - used_w, 0.0)
-        fallback = remaining / len(missing) if missing else 0.0
-        return {t: configured.get(t, fallback) for t in unique_tickers}
+        return effective_instrument_weights(tickers, self.instrument_weights)
 
     # ------------------------------------------------------------------
     # IDM calculation
@@ -2644,26 +1462,12 @@ class GlobalPortfolio:
         """
         self.instruments_ = list(instrument_returns.columns)
 
-        if instrument_returns.empty or len(instrument_returns.columns) < 2:
-            self.mean_instrument_return_correlation_ = 1.0
-            self.global_idm_ = 1.0
-            return
-
-        corr_matrix = instrument_returns.corr().clip(lower=0.0)
-        mask = np.triu(np.ones_like(corr_matrix, dtype=bool), k=1)
-        off_diag = corr_matrix.where(mask).stack()
-
-        if len(off_diag) == 0:
-            self.mean_instrument_return_correlation_ = 1.0
-            self.global_idm_ = 1.0
-            return
-
-        mean_corr = float(off_diag.mean())
+        mean_corr, idm = calculate_idm_from_returns(
+            instrument_returns,
+            idm_max=self.idm_max,
+        )
         self.mean_instrument_return_correlation_ = mean_corr
-
-        epsilon = 0.01
-        idm = float(np.sqrt(1.0 / (mean_corr + epsilon)))
-        self.global_idm_ = min(idm, self.idm_max)
+        self.global_idm_ = idm
 
     # ------------------------------------------------------------------
     # fit
@@ -2708,16 +1512,11 @@ class GlobalPortfolio:
             tf_p.fit_from_candles(tf_candles)
 
         # Step 2 — collect per-TF forecast streams
-        tf_forecast_streams: Dict[TimeFrame, pd.DataFrame] = {}
-        for tf_p in self.tf_portfolios:
-            tf_candles = candles_per_tf[tf_p.trading_timeframe]
-            vectors = tf_p.predict_base_model_vectors_from_candles(
-                tf_candles,
-                daily_volatility_df=daily_volatility_df,
-            )
-            if vectors.empty:
-                continue
-            tf_forecast_streams[tf_p.trading_timeframe] = vectors
+        tf_forecast_streams = collect_tf_forecast_streams(
+            self.tf_portfolios,
+            candles_per_tf,
+            daily_volatility_df,
+        )
 
         forecast_vectors = list(tf_forecast_streams.values())
         if not forecast_vectors:
@@ -2725,20 +1524,14 @@ class GlobalPortfolio:
 
         # Use aggregate daily return proxy for eligibility diagnostics and
         # downside-vol normalization.
-        global_returns: Optional[pd.Series] = None
-        if isinstance(instrument_returns, pd.DataFrame) and not instrument_returns.empty:
-            global_returns = instrument_returns.mean(axis=1).astype(float)
-        elif isinstance(instrument_returns, pd.Series) and not instrument_returns.empty:
-            global_returns = instrument_returns.astype(float)
-        if global_returns is not None:
-            global_returns.index = pd.to_datetime(global_returns.index).normalize()
+        global_returns = build_global_returns_proxy(instrument_returns)
 
         # Align all strategy streams to a shared daily grid first.
-        daily_grid = self._build_daily_grid(
+        daily_grid = build_daily_grid(
             forecast_vectors=forecast_vectors,
             reference_index=global_returns.index if global_returns is not None else None,
         )
-        forecast_vectors = self._align_forecast_vectors_to_daily_grid(
+        forecast_vectors = align_forecast_vectors_to_daily_grid(
             forecast_vectors=forecast_vectors,
             daily_grid=daily_grid,
         )
@@ -2748,14 +1541,14 @@ class GlobalPortfolio:
             forecast_vectors=forecast_vectors,
             global_returns=global_returns,
         )
-        normalized_vectors = self._normalize_global_signals_by_downside_vol(
+        normalized_vectors = normalize_global_signals_by_downside_vol(
             forecast_vectors=eligible_vectors,
             global_returns=global_returns,
         )
         encoded_fit_vectors, stream_decode_map = (
-            self._encode_forecast_vectors_for_global_weight_layer(normalized_vectors)
+            encode_forecast_vectors_for_global_weight_layer(normalized_vectors)
         )
-        signals_df = self._build_global_signals_df(encoded_fit_vectors)
+        signals_df = build_global_signals_df(encoded_fit_vectors)
         if signals_df.empty:
             raise ValueError("Global strategy signals are empty after normalization")
 
@@ -2765,8 +1558,9 @@ class GlobalPortfolio:
             signals=signals_df,
         )
         self.weight_layer_diagnostics_ = self.weight_layer.get_diagnostics()
-        self.global_adapter_diagnostics_ = self._build_global_adapter_rollups(
-            stream_decode_map=stream_decode_map
+        self.global_adapter_diagnostics_ = build_global_adapter_rollups(
+            stream_decode_map=stream_decode_map,
+            global_weights=self.weight_layer.weights_.get(_GLOBAL_WEIGHT_LAYER_TICKER),
         )
         self.global_tf_weights_compat_ = dict(
             self.global_adapter_diagnostics_.get("timeframe_rollups", {})
@@ -2831,20 +1625,11 @@ class GlobalPortfolio:
             )
 
         # Step 1 — collect per-TF forecast streams (pre-IDM, instrument-weighted)
-        tf_forecast_streams: Dict[TimeFrame, pd.DataFrame] = {}
-        for tf_p in self.tf_portfolios:
-            tf_candles = candles_per_tf.get(tf_p.trading_timeframe)
-            if tf_candles is None:
-                raise ValueError(
-                    f"No candles provided for timeframe {tf_p.trading_timeframe.name}"
-                )
-            vectors = tf_p.predict_base_model_vectors_from_candles(
-                tf_candles,
-                daily_volatility_df=daily_volatility_df,
-            )
-            if vectors.empty:
-                continue
-            tf_forecast_streams[tf_p.trading_timeframe] = vectors
+        tf_forecast_streams = collect_tf_forecast_streams(
+            self.tf_portfolios,
+            candles_per_tf,
+            daily_volatility_df,
+        )
 
         forecast_vectors = list(tf_forecast_streams.values())
         if not forecast_vectors:
@@ -2852,21 +1637,18 @@ class GlobalPortfolio:
                 columns=['ticker', 'datetime', 'forecast_score', 'position_fraction']
             )
 
-        reference_grid: Optional[pd.Index] = None
-        daily_candles = candles_per_tf.get(TimeFrame.D)
-        if isinstance(daily_candles, pd.DataFrame) and "datetime" in daily_candles.columns:
-            reference_grid = pd.to_datetime(daily_candles["datetime"]).dt.normalize().dropna()
-        daily_grid = self._build_daily_grid(
+        reference_grid = build_reference_grid_from_daily_candles(candles_per_tf)
+        daily_grid = build_daily_grid(
             forecast_vectors=forecast_vectors,
             reference_index=reference_grid,
         )
-        forecast_vectors = self._align_forecast_vectors_to_daily_grid(
+        forecast_vectors = align_forecast_vectors_to_daily_grid(
             forecast_vectors=forecast_vectors,
             daily_grid=daily_grid,
         )
 
         encoded_predict_vectors, stream_decode_map = (
-            self._encode_forecast_vectors_for_global_weight_layer(forecast_vectors)
+            encode_forecast_vectors_for_global_weight_layer(forecast_vectors)
         )
         if not encoded_predict_vectors:
             return pd.DataFrame(
@@ -2876,9 +1658,11 @@ class GlobalPortfolio:
         # Step 2 — combine via WeightLayer + adapter decode.
         # Keep the raw synthetic combine call for diagnostics parity.
         _ = self.weight_layer.combine(encoded_predict_vectors)
-        combined = self._decode_global_weight_layer_output(
+        combined = decode_global_weight_layer_output(
             encoded_vectors=encoded_predict_vectors,
             stream_decode_map=stream_decode_map,
+            global_weights=self.weight_layer.weights_.get(_GLOBAL_WEIGHT_LAYER_TICKER),
+            global_fdm=float(self.weight_layer.fdm_.get(_GLOBAL_WEIGHT_LAYER_TICKER, 1.0)),
         )
 
         if combined.empty:
@@ -2886,25 +1670,12 @@ class GlobalPortfolio:
                 columns=['ticker', 'datetime', 'forecast_score', 'position_fraction']
             )
 
-        # Step 3 — apply global instrument weights
-        tickers = combined['ticker'].tolist()
-        weights_by_ticker = self._get_effective_instrument_weights(tickers)
-        result = combined.copy()
-        result['position_weighted'] = (
-            result['forecast_score'] * result['ticker'].map(weights_by_ticker)
-        )
-
-        # Step 4 — apply global IDM
-        result['idm_scaled'] = result['position_weighted'] * self.global_idm_
-
-        # Step 5 — clip to [-max_position_pct, +max_position_pct]
-        result['position_fraction'] = result['idm_scaled'].clip(
-            lower=-self.max_position_pct,
-            upper=self.max_position_pct,
-        )
-
-        return result[['ticker', 'datetime', 'forecast_score', 'position_fraction']].reset_index(
-            drop=True
+        # Step 3 — apply global instrument weights, IDM, and cap
+        return apply_global_position_constraints(
+            combined,
+            instrument_weights=self.instrument_weights,
+            global_idm=self.global_idm_,
+            max_position_pct=self.max_position_pct,
         )
 
     def predict_from_cache(

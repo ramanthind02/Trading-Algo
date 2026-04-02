@@ -1,6 +1,6 @@
-"""Integration tests for the rule-based EDA research pipeline.
+"""Integration tests for the signed-signal EDA research pipeline.
 
-Imports run_rule_based_eda_pipeline directly from feature_research so any
+Imports run_signed_signal_eda_pipeline directly from feature_research so any
 regression in the researcher's script is immediately caught here.
 
 Default config: rsi_signal rsi_period=2, Ticker.ES, 2020-2023.
@@ -29,31 +29,14 @@ from feature_research.pipeline import (
     run_eda_pipeline,
     run_permutation_pipeline,
 )
+from ._support import (
+    skip_if_missing_data_prereq as _skip_if_missing_data_prereq,
+    skip_if_no_data as _skip_if_no_data,
+)
 from utils.core.enums import Direction, Ticker, TimeFrame
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
-
-
-def _skip_if_no_data() -> None:
-    candle_dir = _project_root() / "data" / "ohlc_data"
-    if not candle_dir.exists():
-        pytest.skip(f"Missing persisted candle directory: {candle_dir}")
-
-
-def _skip_if_missing_data_prereq(exc: Exception) -> None:
-    message = str(exc)
-    if isinstance(exc, FileNotFoundError):
-        pytest.skip(f"Missing persisted data prerequisite: {message}")
-    if isinstance(exc, ValueError) and (
-        "Unable to load feature/target data" in message
-        or "Feature extraction returned no data" in message
-    ):
-        pytest.skip(f"Missing data prerequisite for permutation suite: {message}")
-
-
-def _make_rule_based_config(
+def _make_signed_signal_config(
     *,
     tickers: list[Ticker],
     start: datetime,
@@ -63,7 +46,7 @@ def _make_rule_based_config(
     objective_metric_name: str = "t_stat",
     permutation: PermutationResearchConfig | None = None,
 ) -> ResearchConfig:
-    """Build a ResearchConfig suitable for rule-based EDA integration tests."""
+    """Build a ResearchConfig suitable for signed-signal EDA integration tests."""
     presets = build_objective_metric_presets(TimeFrame.D)
     if permutation is None:
         permutation = PermutationResearchConfig(
@@ -72,7 +55,7 @@ def _make_rule_based_config(
         )
     catalog = InSampleDefaultsCatalog(
         continuous=InSampleDefaultsCatalog.default_for().continuous,
-        rule_based=InSamplePhaseDefaultsConfig(
+        signed_signal=InSamplePhaseDefaultsConfig(
             bias_spec=bias_spec,
             target_col="log_return",
             strategy=Direction.LONG,
@@ -88,13 +71,13 @@ def _make_rule_based_config(
         permutation=permutation,
         objective_metric_presets=presets,
         binning_params=BinningAnalysisConfig(),
-        feature_type=FeatureType.RULE_BASED,
+        feature_type=FeatureType.SIGNED_SIGNAL,
         in_sample_defaults=catalog,
     )
 
 
 @pytest.mark.integration
-def test_rule_based_eda_pipeline_smoke(
+def test_signed_signal_eda_pipeline_smoke(
     tickers: list[Ticker] | None = None,
     start: datetime = datetime(2020, 1, 1),
     end: datetime = datetime(2023, 12, 31),
@@ -113,7 +96,7 @@ def test_rule_based_eda_pipeline_smoke(
     _skip_if_no_data()
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = _make_rule_based_config(
+        config = _make_signed_signal_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -131,7 +114,11 @@ def test_rule_based_eda_pipeline_smoke(
             },
             reports_dir=Path(tmpdir),
         )
-        results = run_eda_pipeline(config, Path(tmpdir))
+        try:
+            results = run_eda_pipeline(config, Path(tmpdir))
+        except Exception as exc:  # pragma: no cover - integration environment guard
+            _skip_if_missing_data_prereq(exc)
+            raise
 
         assert len(results) == 1, f"Expected 1 result, got {len(results)}"
 
@@ -152,7 +139,7 @@ def test_rule_based_eda_pipeline_smoke(
 
 
 @pytest.mark.integration
-def test_rule_based_eda_pipeline_multi_combo(
+def test_signed_signal_eda_pipeline_multi_combo(
     tickers: list[Ticker] | None = None,
     start: datetime = datetime(2020, 1, 1),
     end: datetime = datetime(2023, 12, 31),
@@ -170,7 +157,7 @@ def test_rule_based_eda_pipeline_multi_combo(
     rsi_periods = rsi_periods or [2, 3]
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = _make_rule_based_config(
+        config = _make_signed_signal_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -188,7 +175,11 @@ def test_rule_based_eda_pipeline_multi_combo(
             },
             reports_dir=Path(tmpdir),
         )
-        results = run_eda_pipeline(config, Path(tmpdir))
+        try:
+            results = run_eda_pipeline(config, Path(tmpdir))
+        except Exception as exc:  # pragma: no cover - integration environment guard
+            _skip_if_missing_data_prereq(exc)
+            raise
 
         assert len(results) == len(rsi_periods), (
             f"Expected {len(rsi_periods)} results, got {len(results)}"
@@ -196,7 +187,7 @@ def test_rule_based_eda_pipeline_multi_combo(
 
 
 @pytest.mark.integration
-def test_rule_based_pipeline_can_run_permutation_suite_mode(
+def test_signed_signal_pipeline_can_run_permutation_suite_mode(
     tickers: list[Ticker] | None = None,
     start: datetime = datetime(2020, 1, 1),
     end: datetime = datetime(2023, 12, 31),
@@ -209,7 +200,7 @@ def test_rule_based_pipeline_can_run_permutation_suite_mode(
     presets = build_objective_metric_presets(TimeFrame.D)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = _make_rule_based_config(
+        config = _make_signed_signal_config(
             tickers=tickers or [Ticker.ES],
             start=start,
             end=end,
@@ -239,6 +230,6 @@ def test_rule_based_pipeline_can_run_permutation_suite_mode(
             _skip_if_missing_data_prereq(exc)
             raise
 
-        assert suite.feature_type == "rule_based"
+        assert suite.feature_type == "signed_signal"
         assert suite.funnel_stats.total_params == len(rsi_periods)
         assert len(suite.stage1_reports) == len(rsi_periods)
