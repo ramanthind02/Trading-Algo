@@ -9,7 +9,6 @@ import unittest
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 
 from eda.parameter_analysis import (
     ParameterSensitivityReport,
@@ -83,12 +82,11 @@ class Test1DReportGeneration(unittest.TestCase):
         self.assertIn("stability_ratio", report.grid_results.columns)
         self.assertIn("n_neighbors", report.grid_results.columns)
 
-    def test_plot_1d_populated(self):
+    def test_plot_1d_placeholder_is_none(self):
         report = generate_parameter_sensitivity_report(
             self.df, ["lookback"], "sortino",
         )
-        self.assertIsNotNone(report.plot_1d)
-        self.assertIsInstance(report.plot_1d, go.Figure)
+        self.assertIsNone(report.plot_1d)
         self.assertIsNone(report.plot_2d)
         self.assertIsNone(report.plot_3d)
 
@@ -130,12 +128,11 @@ class Test2DReportGeneration(unittest.TestCase):
                 })
         self.df = pd.DataFrame(rows)
 
-    def test_plot_2d_populated(self):
+    def test_plot_2d_placeholder_is_none(self):
         report = generate_parameter_sensitivity_report(
             self.df, ["fast", "slow"], "sortino",
         )
-        self.assertIsNotNone(report.plot_2d)
-        self.assertIsInstance(report.plot_2d, go.Figure)
+        self.assertIsNone(report.plot_2d)
         self.assertIsNone(report.plot_1d)
         self.assertIsNone(report.plot_3d)
 
@@ -231,13 +228,11 @@ class Test3DReportGeneration(unittest.TestCase):
                     })
         self.df = pd.DataFrame(rows)
 
-    def test_plot_3d_surface_mode(self):
+    def test_plot_3d_surface_mode_returns_placeholder(self):
         report = generate_parameter_sensitivity_report(
             self.df, ["a", "b", "c"], "sortino", plot_3d_mode="surface_slices",
         )
-        self.assertIsNotNone(report.plot_3d)
-        self.assertIsInstance(report.plot_3d, go.Figure)
-        self.assertTrue(all(isinstance(t, go.Surface) for t in report.plot_3d.data))
+        self.assertIsNone(report.plot_3d)
 
     def test_invalid_plot_3d_mode_raises(self):
         with self.assertRaises(ValueError):

@@ -11,11 +11,6 @@ This module tests the robustness testing functionality including:
 import unittest
 import pandas as pd
 import numpy as np
-import tempfile
-import os
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for testing
-import matplotlib.pyplot as plt
 
 from utils.evaluation.robustness_test import (
     robustness_test,
@@ -267,17 +262,13 @@ class TestRobustnessTest(unittest.TestCase):
             index=self.dates,
             name='returns'
         )
-        self.temp_dir = tempfile.mkdtemp()
 
     def tearDown(self):
         """Clean up."""
-        import shutil
-        plt.close('all')
-        if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
+        pass
 
     def test_returns_correct_tuple_structure(self):
-        """Test that function returns (Figure, List[Series], Dict)."""
+        """Test that function returns (None, List[Series], Dict)."""
         fig, series_list, stats = robustness_test(
             self.returns,
             n_samples=10,
@@ -285,7 +276,7 @@ class TestRobustnessTest(unittest.TestCase):
             verbose=False
         )
 
-        self.assertIsInstance(fig, plt.Figure)
+        self.assertIsNone(fig)
         self.assertIsInstance(series_list, list)
         self.assertEqual(len(series_list), 10)
         self.assertIsInstance(series_list[0], pd.Series)
@@ -351,8 +342,8 @@ class TestRobustnessTest(unittest.TestCase):
                 **kwargs
             )
 
+            self.assertIsNone(fig)
             self.assertEqual(stats['resampling_method'], method.value)
-            plt.close(fig)
 
     def test_handles_nan_values(self):
         """Test that function handles NaN values by dropping them."""
@@ -394,21 +385,6 @@ class TestRobustnessTest(unittest.TestCase):
             stats1['mean_cumulative_return'],
             stats2['mean_cumulative_return']
         )
-
-    def test_save_path_creates_file(self):
-        """Test that save_path parameter creates a file."""
-        save_path = os.path.join(self.temp_dir, 'test_plot.png')
-
-        fig, _, _ = robustness_test(
-            self.returns,
-            n_samples=10,
-            method=ResamplingMethod.MONTE_CARLO,
-            save_path=save_path,
-            verbose=False
-        )
-
-        self.assertTrue(os.path.exists(save_path))
-        plt.close(fig)
 
     def test_block_bootstrap_requires_block_size(self):
         """Test that block bootstrap raises error without block_size."""
@@ -457,7 +433,7 @@ class TestStatisticalProperties(unittest.TestCase):
 
     def tearDown(self):
         """Clean up."""
-        plt.close('all')
+        pass
 
     def test_bootstrap_p_value_reflects_significance(self):
         """Test that bootstrap p-value is lower for stronger strategies."""

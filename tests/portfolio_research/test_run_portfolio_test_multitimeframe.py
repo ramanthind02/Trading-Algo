@@ -415,7 +415,6 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
     monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", _mock_aggregate_intraday_returns_to_daily)
     monkeypatch.setattr(pipeline, "generate_tearsheet", _mock_generate_tearsheet)
-    monkeypatch.setattr(pipeline, "export_global_weight_layer_report", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "materialize_global_portfolio_predictions", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
 
@@ -474,7 +473,7 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
     )
 
 
-def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_report(
+def test_run_portfolio_test_single_timeframe_still_materializes_global_portfolio(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -527,13 +526,6 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
         idx = pd.to_datetime(candles_df["datetime"]).sort_values().drop_duplicates()
         return pd.Series(0.0005, index=idx, name="baseline_return")
 
-    export_calls: list[tuple[str, Path]] = []
-
-    def _mock_export_global_weight_layer_report(
-        portfolio, phase_name: str, output_dir: Path  # noqa: ANN001
-    ) -> None:
-        export_calls.append((phase_name, output_dir))
-
     def _mock_migrate_legacy_feature_members_schema(ensemble_dir: str) -> None:
         migrate_calls.append(ensemble_dir)
 
@@ -580,15 +572,12 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
     monkeypatch.setattr(pipeline, "calculate_baseline_returns", _mock_calculate_baseline_returns)
     monkeypatch.setattr(pipeline, "aggregate_intraday_returns_to_daily", lambda returns: returns)
     monkeypatch.setattr(pipeline, "generate_tearsheet", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pipeline, "export_global_weight_layer_report", _mock_export_global_weight_layer_report)
     monkeypatch.setattr(pipeline, "materialize_global_portfolio_predictions", lambda *args, **kwargs: None)
     monkeypatch.setattr(pipeline, "_build_instrument_returns", lambda candles: pd.DataFrame())
 
     rpt.run_portfolio_test(config)
 
     assert len(_DummyGlobalPortfolio.created) == 3
-    assert [phase for phase, _ in export_calls] == ["train", "validation", "test"]
-    assert all(output_dir.name == "global_weight_layer" for _, output_dir in export_calls)
     assert migrate_calls == ["vault/D/daily_strategy"]
     assert bootstrap_calls == [
         {
@@ -606,3 +595,6 @@ def test_run_portfolio_test_single_timeframe_still_exports_global_weight_layer_r
             "missing_stale_only",
         )
     ]
+    assert not (config.output_root / "train" / "global_weight_layer").exists()
+    assert not (config.output_root / "validation" / "global_weight_layer").exists()
+    assert not (config.output_root / "test" / "global_weight_layer").exists()

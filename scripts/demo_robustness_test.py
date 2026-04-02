@@ -9,14 +9,12 @@ Usage:
 
 Output:
     - Prints comparison of all three resampling methods
-    - Saves plots to outputs/robustness/ directory
 """
 
 import os
 import sys
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 try:
     from scripts._bootstrap import ensure_project_root_on_path
@@ -81,13 +79,6 @@ def main():
     print(f"  Sharpe Ratio: {returns.mean() / returns.std() * np.sqrt(252):.2f}")
     print(f"  Autocorrelation (lag 1): {returns.autocorr(lag=1):.4f}")
 
-    # Create output directory
-    output_dir = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        'outputs', 'robustness'
-    )
-    os.makedirs(output_dir, exist_ok=True)
-
     # Run all three methods
     n_samples = 500
     results = {}
@@ -98,44 +89,41 @@ def main():
 
     # 1. Monte Carlo (Permutation)
     print("\n[1/3] Monte Carlo Permutation Test")
-    fig_mc, series_mc, stats_mc = robustness_test(
+    _, series_mc, stats_mc = robustness_test(
         returns=returns,
         n_samples=n_samples,
         method=ResamplingMethod.MONTE_CARLO,
         random_seed=42,
-        save_path=os.path.join(output_dir, 'monte_carlo.png'),
         verbose=True
     )
     results['Monte Carlo'] = stats_mc
-    plt.close(fig_mc)
+    print(f"  Generated {len(series_mc)} resampled paths")
 
     # 2. Bootstrap
     print("\n[2/3] Bootstrap Test")
-    fig_bs, series_bs, stats_bs = robustness_test(
+    _, series_bs, stats_bs = robustness_test(
         returns=returns,
         n_samples=n_samples,
         method=ResamplingMethod.BOOTSTRAP,
         random_seed=42,
-        save_path=os.path.join(output_dir, 'bootstrap.png'),
         verbose=True
     )
     results['Bootstrap'] = stats_bs
-    plt.close(fig_bs)
+    print(f"  Generated {len(series_bs)} resampled paths")
 
     # 3. Block Bootstrap
     block_size = int(np.sqrt(len(returns)))  # Rule of thumb: sqrt(n)
     print(f"\n[3/3] Block Bootstrap Test (block_size={block_size})")
-    fig_bb, series_bb, stats_bb = robustness_test(
+    _, series_bb, stats_bb = robustness_test(
         returns=returns,
         n_samples=n_samples,
         method=ResamplingMethod.BLOCK_BOOTSTRAP,
         block_size=block_size,
         random_seed=42,
-        save_path=os.path.join(output_dir, 'block_bootstrap.png'),
         verbose=True
     )
     results['Block Bootstrap'] = stats_bb
-    plt.close(fig_bb)
+    print(f"  Generated {len(series_bb)} resampled paths")
 
     # Print comparison
     print("\n" + "=" * 70)
@@ -164,10 +152,6 @@ def main():
     for method, stats in results.items():
         preserved = "Yes" if stats['preserved_autocorr'] else "No"
         print(f"{method:<20} {stats['original_autocorr_lag1']:>15.4f} {stats['mean_resampled_autocorr']:>15.4f} {preserved:>12}")
-
-    print("\n" + "=" * 70)
-    print(f"Plots saved to: {output_dir}")
-    print("=" * 70)
 
     # Interpretation
     print("\n" + "=" * 70)

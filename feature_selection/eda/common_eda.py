@@ -1,15 +1,11 @@
 """Common EDA infrastructure for both continuous and rule-based features (T001)."""
 from __future__ import annotations
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import pandas as pd
 from scipy import stats
 
 from feature_selection.eda.eda_dataclasses import (
     CorrelationAnalysis,
-    CommonEDAPlots,
     DescriptiveStats,
 )
 
@@ -62,17 +58,3 @@ def compute_correlation_analysis(
         spearman=spearman,
         lagged_correlations=lagged,
     )
-
-
-def create_common_eda_plots(
-    feature: pd.Series,
-    timestamps: pd.DatetimeIndex,
-) -> CommonEDAPlots:
-    """Create the common EDA time-series figure (feature over time)."""
-    fig_ts, ax1 = plt.subplots(1, 1, figsize=(12, 4))
-    ax1.plot(timestamps, feature.values, linewidth=0.8, color="steelblue")
-    ax1.set_title("Feature over time")
-    ax1.set_ylabel("Feature value")
-    fig_ts.tight_layout()
-    plt.close(fig_ts)
-    return CommonEDAPlots(time_series_fig=fig_ts)

@@ -106,7 +106,6 @@ from . import (
     research_data,
     runner,
     top_k_selection,
-    visualization,
 )
 from .config import (
     MemberPredictionMode,
@@ -150,5 +149,4 @@ __all__ = [
     "research_data",
     "runner",
     "top_k_selection",
-    "visualization",
 ]

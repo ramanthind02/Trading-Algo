@@ -1,7 +1,6 @@
-"""Signed-signal feature EDA (T003): per-level stats, bootstrap CI, plots."""
+"""Signed-signal feature EDA (T003): per-level stats and bootstrap CI."""
 from __future__ import annotations
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -10,7 +9,6 @@ from feature_selection.eda.eda_dataclasses import (
     BootstrapCIResults,
     LevelStats,
     PerLevelStats,
-    RuleBasedEDAPlots,
 )
 
 _VOL_THRESHOLD = 1e-10
@@ -130,64 +128,3 @@ def _bootstrap_for_level(
         ci_upper=float(np.quantile(bootstrap_distribution, 1.0 - alpha)),
         bootstrap_distribution=bootstrap_distribution,
     )
-
-
-def create_signed_signal_eda_plots(
-    per_level_stats: PerLevelStats,
-    bootstrap_ci: BootstrapCIResults,
-) -> RuleBasedEDAPlots:
-    """Create the level bar plot showing mean return with bootstrap CI by discrete level."""
-    levels = sorted(per_level_stats.stats_by_level.keys())
-    means = [per_level_stats.stats_by_level[level].mean_return for level in levels]
-
-    lower_errors = [
-        _compute_lower_error(level=level, mean_value=mean_value, bootstrap_ci=bootstrap_ci)
-        for level, mean_value in zip(levels, means)
-    ]
-    upper_errors = [
-        _compute_upper_error(level=level, mean_value=mean_value, bootstrap_ci=bootstrap_ci)
-        for level, mean_value in zip(levels, means)
-    ]
-
-    fig_level, ax = plt.subplots(figsize=(8, 4))
-    ax.bar(
-        levels,
-        np.nan_to_num(np.array(means, dtype=float)),
-        yerr=np.array([lower_errors, upper_errors], dtype=float),
-        capsize=4,
-        color="steelblue",
-    )
-    ax.axhline(0.0, color="black", linewidth=0.7)
-    ax.set_title("Mean return by discrete level")
-    ax.set_xlabel("Level")
-    ax.set_ylabel("Mean return")
-    fig_level.tight_layout()
-    plt.close(fig_level)
-
-    return RuleBasedEDAPlots(
-        level_plot_fig=fig_level,
-    )
-
-
-def _compute_lower_error(
-    level: int,
-    mean_value: float,
-    bootstrap_ci: BootstrapCIResults,
-) -> float:
-    """Return non-negative lower error bar size for a level."""
-    ci = bootstrap_ci.ci_by_level.get(level)
-    if ci is None or np.isnan(mean_value) or np.isnan(ci.ci_lower):
-        return 0.0
-    return float(max(0.0, mean_value - ci.ci_lower))
-
-
-def _compute_upper_error(
-    level: int,
-    mean_value: float,
-    bootstrap_ci: BootstrapCIResults,
-) -> float:
-    """Return non-negative upper error bar size for a level."""
-    ci = bootstrap_ci.ci_by_level.get(level)
-    if ci is None or np.isnan(mean_value) or np.isnan(ci.ci_upper):
-        return 0.0
-    return float(max(0.0, ci.ci_upper - mean_value))

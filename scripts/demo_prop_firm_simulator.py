@@ -9,14 +9,12 @@ Usage:
 
 Output:
     - Prints simulation results and statistics
-    - Saves plots to outputs/prop_firm/ directory
+    - Emits tabular summaries only
 """
 
 import os
-import sys
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
 try:
     from scripts._bootstrap import ensure_project_root_on_path
@@ -32,12 +30,6 @@ from utils.simulation.prop_firm_simulator import (
     ChallengeRules,
     ChallengeCosts,
     print_statistics
-)
-from plotting.prop_firm import (
-    plot_challenge_results,
-    plot_equity_curves_sample,
-    plot_days_to_pass_distribution,
-    plot_cost_analysis
 )
 
 
@@ -136,13 +128,6 @@ def main():
     print(f"  Sharpe Ratio: {returns.mean() / returns.std() * np.sqrt(252):.2f}")
     print(f"  Autocorrelation (lag 1): {returns.autocorr(lag=1):.4f}")
 
-    # Create output directory
-    output_dir = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        'outputs', 'prop_firm'
-    )
-    os.makedirs(output_dir, exist_ok=True)
-
     # Define challenge rules (typical prop firm challenge)
     rules = ChallengeRules(
         max_drawdown_pct=0.10,          # 10% max drawdown
@@ -194,13 +179,7 @@ def main():
     results_all['Historical'] = (results_hist, stats_hist)
 
     print_statistics(stats_hist)
-
-    # Save plots
-    fig_hist = plot_challenge_results(
-        results_hist, stats_hist, config_hist,
-        save_path=os.path.join(output_dir, 'historical_dashboard.png')
-    )
-    plt.close(fig_hist)
+    print(f"  Completed {len(results_hist)} historical simulations")
 
     # =========================================================================
     # 2. Monte Carlo Block Bootstrap
@@ -228,34 +207,7 @@ def main():
     results_all['Monte Carlo'] = (results_mc, stats_mc)
 
     print_statistics(stats_mc)
-
-    # Save plots
-    fig_mc = plot_challenge_results(
-        results_mc, stats_mc, config_mc,
-        save_path=os.path.join(output_dir, 'monte_carlo_dashboard.png')
-    )
-    plt.close(fig_mc)
-
-    # Additional plots for Monte Carlo
-    fig_curves = plot_equity_curves_sample(
-        results_mc, config_mc, n_samples=30,
-        save_path=os.path.join(output_dir, 'monte_carlo_curves.png')
-    )
-    plt.close(fig_curves)
-
-    passes_mc = [r for r in results_mc if r.passed]
-    if passes_mc:
-        fig_days = plot_days_to_pass_distribution(
-            passes_mc, stats_mc,
-            save_path=os.path.join(output_dir, 'monte_carlo_days.png')
-        )
-        plt.close(fig_days)
-
-    fig_cost = plot_cost_analysis(
-        results_mc, stats_mc,
-        save_path=os.path.join(output_dir, 'monte_carlo_cost.png')
-    )
-    plt.close(fig_cost)
+    print(f"  Completed {len(results_mc)} Monte Carlo simulations")
 
     # =========================================================================
     # Comparison
@@ -292,10 +244,6 @@ def main():
             print(f"{method:<20} {d['mean']:>12.1f} {d['median']:>12.1f} {d['p95']:>12.1f}")
         else:
             print(f"{method:<20} {'N/A':>12} {'N/A':>12} {'N/A':>12}")
-
-    print("\n" + "=" * 70)
-    print(f"Plots saved to: {output_dir}")
-    print("=" * 70)
 
     # Interpretation
     print("\n" + "=" * 70)

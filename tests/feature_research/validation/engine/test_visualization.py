@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pandas as pd
 
@@ -24,8 +23,8 @@ def test_plot_fold_timeline_returns_deterministic_plot_frame() -> None:
         }
     )
 
-    _, frame_first = plot_fold_timeline(folds_df)
-    _, frame_second = plot_fold_timeline(folds_df)
+    frame_first = plot_fold_timeline(folds_df)
+    frame_second = plot_fold_timeline(folds_df)
 
     pd.testing.assert_frame_equal(frame_first, frame_second)
     assert frame_first.columns.tolist() == ["fold_id", "segment", "start", "end"]
@@ -48,7 +47,7 @@ def test_plot_selection_stability_returns_expected_columns() -> None:
         }
     )
 
-    _, frame = plot_selection_stability(selection_summary_df, top_k=3)
+    frame = plot_selection_stability(selection_summary_df, top_k=3)
 
     assert frame.columns.tolist() == [
         "fold_id",
@@ -71,7 +70,7 @@ def test_plot_selection_stability_handles_malformed_top_k_features_json() -> Non
         }
     )
 
-    _, frame = plot_selection_stability(selection_summary_df, top_k=2)
+    frame = plot_selection_stability(selection_summary_df, top_k=2)
 
     assert frame["fold_id"].tolist() == [0, 1]
     assert frame["selected_rank"].tolist() == [3, 3]

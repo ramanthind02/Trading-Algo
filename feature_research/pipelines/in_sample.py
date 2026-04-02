@@ -4,8 +4,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import matplotlib
-import matplotlib.pyplot as plt
 import pandas as pd
 
 from feature_research.core_helpers import normalize_timeframe_from_bias_spec
@@ -27,8 +25,6 @@ if TYPE_CHECKING:
     from feature_research.in_sample.config import ResearchConfig
 
 
-matplotlib.use("Agg")
-
 SIGNED_SIGNAL_FEATURE_TYPE_LABEL = "SIGNED_SIGNAL"
 
 
@@ -36,7 +32,7 @@ def _default_rolling_window(feature: pd.Series) -> int:
     return max(20, min(252, len(feature) // 4))
 
 
-def _write_cumsum_plot(
+def _write_cumsum_summary(
     returns: pd.Series,
     output_path: Path,
     *,
@@ -46,16 +42,8 @@ def _write_cumsum_plot(
     if clean_returns.empty:
         return
 
-    cumulative = clean_returns.cumsum()
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(cumulative.index, cumulative.values, linewidth=1.25)
-    ax.axhline(0.0, color="black", linewidth=0.8, alpha=0.6)
-    ax.set_title(title)
-    ax.set_ylabel("Cum sum")
-    ax.grid(alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    cumulative = clean_returns.cumsum().rename("cumulative_return")
+    cumulative.to_frame().assign(report_title=title).to_csv(output_path, index_label="datetime")
 
 
 def run_eda_pipeline(
@@ -197,9 +185,9 @@ def run_eda_pipeline(
         combo_output_dir = output_dir / label
         combo_output_dir.mkdir(parents=True, exist_ok=True)
         saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
-        _write_cumsum_plot(
+        _write_cumsum_summary(
             returns=signal.mul(target),
-            output_path=saved_path / "in_sample_cumsum.png",
+            output_path=saved_path / "in_sample_cumsum.csv",
             title=f"In-sample cumulative sum ({label})",
         )
         results[label] = saved_path

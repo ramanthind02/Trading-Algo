@@ -34,6 +34,11 @@ pytest tests/test_integration.py::TestFormulaVerification -v
 python utils/compute/cython/setup_cython.py build_ext --inplace
 ```
 
+## Visualization Policy
+
+- Prefer tabular or JSON/CSV research outputs over in-repo plotting.
+- Keep QuantStats tearsheets, prop-firm HTML reports, and Norgate migration QA plots unless the task explicitly says otherwise.
+
 ## Testing Boundaries
 
 - Keep a strict separation between **unit** and **integration** tests:

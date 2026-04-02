@@ -2,33 +2,21 @@
 import numpy as np
 import pandas as pd
 import pytest
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 from feature_selection.eda.eda_dataclasses import (
     DescriptiveStats,
     CorrelationAnalysis,
-    CommonEDAPlots,
     CommonEDAStats,
     DecileBinStats,
     DecileAnalysis,
     DistributionDiagnostics,
-    ContinuousEDAPlots,
     ContinuousEDAStats,
     LevelStats,
     PerLevelStats,
     BootstrapCI,
     BootstrapCIResults,
-    RuleBasedEDAPlots,
     RuleBasedEDAStats,
 )
-
-
-def _dummy_fig() -> plt.Figure:
-    fig, _ = plt.subplots()
-    plt.close(fig)
-    return fig
 
 
 def test_descriptive_stats_instantiates() -> None:

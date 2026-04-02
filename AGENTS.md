@@ -95,3 +95,8 @@
 - `docs/api/` - auto-generated API docs guided by `docs/api/_template.md` and `_scope.md`; update relevant module pages whenever you touch public interfaces.
 - `docs/library/`, `docs/methodology/`, `docs/plans/`, `docs/complete/`, and related subfolders hold domain research, validation philosophy, operational playbooks, and project plans—cite them when describing designs or documenting decisions.
 - Keep `docs/to-do/` (existing specs) and `docs/methodology/` in sync with new kanban tasks so implementation artifacts remain traceable.
+
+## Visualization Policy
+
+- Research charts and exploratory dashboards should move to Power BI or other external BI tooling.
+- Keep Python-side QuantStats tearsheets, prop-firm HTML reports, and Norgate migration QA plots unless a task explicitly removes one of those keep-list exceptions.

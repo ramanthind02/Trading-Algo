@@ -14,7 +14,7 @@ Example Usage:
     from utils.evaluation.robustness_test import robustness_test
     from utils.core.enums import ResamplingMethod
 
-    fig, resampled_series, stats = robustness_test(
+    _, resampled_series, stats = robustness_test(
         returns=my_returns,
         n_samples=1000,
         method=ResamplingMethod.MONTE_CARLO,

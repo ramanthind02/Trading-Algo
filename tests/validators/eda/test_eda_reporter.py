@@ -4,9 +4,6 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -214,7 +211,7 @@ def test_directory_structure_created(tmp_path: Path) -> None:
     assert (report_path / "common_stats.json").exists()
     assert (report_path / "feature_stats.json").exists()
     assert (report_path / "diagnostics.json").exists()
-    assert (report_path / "plots").is_dir()
+    assert not (report_path / "plots").exists()
 
 
 def test_overwrite_false_raises(tmp_path: Path) -> None:

@@ -14,14 +14,38 @@ from typing import Dict, List, Tuple, Union, Optional, Any
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 from feature_selection.base_models.continuous_binning import ContinuousBinningModel
 from metrics.performance import SortinoRatio, SharpeRatio
-from metrics.plotting.parameter_plots import (
-    plot_parameter_sensitivity as plot_parameter_sensitivity_pure,
-    plot_2d_parameter_surface as plot_2d_parameter_surface_pure,
-)
 from utils.compute.grid_smoothing import add_smoothed_objective
+
+
+class _MedianThresholdModel:
+    """Data-only fallback model for retired plotting-era sensitivity analysis."""
+
+    def __init__(self, n_bins: int = 5) -> None:
+        del n_bins
+        self.threshold_: float = 0.0
+
+    def fit(self, X: pd.Series, y: pd.Series) -> "_MedianThresholdModel":
+        del y
+        values = pd.Series(X).dropna()
+        self.threshold_ = float(values.median()) if not values.empty else 0.0
+        return self
+
+    def predict(self, X: pd.Series, strategy: str = "long") -> np.ndarray:
+        values = pd.Series(X)
+        if strategy == "short":
+            return (values <= self.threshold_).astype(int).to_numpy()
+        return (values >= self.threshold_).astype(int).to_numpy()
+
+
+def _resolve_base_model(base_model: Optional[Any], n_bins: int) -> Any:
+    if base_model is not None:
+        return base_model
+    try:
+        return ContinuousBinningModel(n_bins=n_bins)
+    except Exception:
+        return _MedianThresholdModel(n_bins=n_bins)
 
 def _get_metric_name_from_object(metric_obj: Any) -> str:
     """
@@ -353,10 +377,10 @@ class ParameterSensitivityReport:
     recommended_combinations: List[Tuple]
     top_k_combinations: List[Tuple]
 
-    # Visualizations
-    plot_1d: Optional[go.Figure] = None
-    plot_2d: Optional[go.Figure] = None
-    plot_3d: Optional[go.Figure] = None
+    # Legacy placeholders kept for API compatibility during the Power BI migration.
+    plot_1d: Optional[Any] = None
+    plot_2d: Optional[Any] = None
+    plot_3d: Optional[Any] = None
 
     # Diagnostic info
     n_parameter_combinations: int = 0
@@ -378,7 +402,7 @@ def generate_parameter_sensitivity_report(
     metric_floor: float | None = 2.0,
 ) -> ParameterSensitivityReport:
     """
-    Orchestrate smoothing and parameter sensitivity plots/recommendations.
+    Orchestrate smoothing and parameter sensitivity recommendations.
 
     Selection recommendations are produced from the smoothed objective surface.
 
@@ -403,12 +427,6 @@ def generate_parameter_sensitivity_report(
     -------
     ParameterSensitivityReport
     """
-    from metrics.plotting.parameter_plots import (
-        plot_parameter_sensitivity_with_stability,
-        plot_2d_stability_heatmap,
-        plot_3d_slices,
-    )
-
     n_dims = len(param_names)
     smoothed_metric_col = f"smoothed_{metric_col}"
 
@@ -432,48 +450,10 @@ def generate_parameter_sensitivity_report(
     mean_ratio = float(ratios.mean()) if len(ratios) > 0 else 0.0
     median_ratio = float(ratios.median()) if len(ratios) > 0 else 0.0
 
-    # Plots
-    plot_1d: Optional[go.Figure] = None
-    plot_2d: Optional[go.Figure] = None
-    plot_3d: Optional[go.Figure] = None
-    plot_threshold = stability_threshold
-    if n_dims == 1:
-        plot_1d = plot_parameter_sensitivity_with_stability(
-            df=smoothed_df,
-            param_name=param_names[0],
-            metric=metric_col,
-            stable_regions=stable_regions,
-            stability_threshold=plot_threshold,
-            metric_floor=metric_floor,
-            show_plot=False,
-        )
-    elif n_dims == 2:
-        plot_2d = plot_2d_stability_heatmap(
-            df=smoothed_df,
-            param1=param_names[0],
-            param2=param_names[1],
-            metric=metric_col,
-            stable_regions=stable_regions,
-            metric_floor=metric_floor,
-            show_plot=False,
-        )
-    else:
-        if plot_3d_mode == "heatmap_slices":
-            plot_type = "heatmap"
-        elif plot_3d_mode == "surface_slices":
-            plot_type = "surface"
-        else:
-            raise ValueError(
-                f"Invalid plot_3d_mode: {plot_3d_mode}. "
-                "Expected one of: ['heatmap_slices', 'surface_slices']."
-            )
-        plot_3d = plot_3d_slices(
-            df=smoothed_df,
-            param_names=param_names,
-            metric=metric_col,
-            plot_type=plot_type,
-            metric_floor=metric_floor,
-            show_plot=False,
+    if n_dims >= 3 and plot_3d_mode not in {"heatmap_slices", "surface_slices"}:
+        raise ValueError(
+            f"Invalid plot_3d_mode: {plot_3d_mode}. "
+            "Expected one of: ['heatmap_slices', 'surface_slices']."
         )
 
     return ParameterSensitivityReport(
@@ -488,9 +468,9 @@ def generate_parameter_sensitivity_report(
         pct_stable_combinations=float(pct_stable),
         recommended_combinations=recommended,
         top_k_combinations=top_k_combos,
-        plot_1d=plot_1d,
-        plot_2d=plot_2d,
-        plot_3d=plot_3d,
+        plot_1d=None,
+        plot_2d=None,
+        plot_3d=None,
         n_parameter_combinations=len(smoothed_df),
         n_stable_regions=len(stable_regions),
         timestamp=datetime.now(timezone.utc).isoformat(),
@@ -608,7 +588,7 @@ class ParameterAnalyzer:
             DataFrame with parameter values and computed metrics
         """
         # Initialize model
-        model = base_model if base_model is not None else ContinuousBinningModel(n_bins=n_bins)
+        model = _resolve_base_model(base_model, n_bins)
         
         # Use provided metric or default to SortinoRatio
         if metric is None:
@@ -712,7 +692,7 @@ class ParameterAnalyzer:
             DataFrame with parameter values and computed metrics
         """
         # Initialize model
-        model = base_model if base_model is not None else ContinuousBinningModel(n_bins=n_bins)
+        model = _resolve_base_model(base_model, n_bins)
         
         # Use provided metric or default to SortinoRatio
         if metric is None:
@@ -821,7 +801,7 @@ class ParameterAnalyzer:
         pd.DataFrame
             DataFrame with paramK_value columns (K=1..N) and computed metrics.
         """
-        model = base_model if base_model is not None else ContinuousBinningModel(n_bins=n_bins)
+        model = _resolve_base_model(base_model, n_bins)
 
         if metric is None:
             metric = SortinoRatio(annualization_factor=252)
@@ -1014,11 +994,8 @@ class ParameterAnalyzer:
         title: Optional[str] = None,
         show_plot: bool = True
     ):
-        """
-        Plot parameter sensitivity for 1D parameter sweep.
-        
-        Delegates to pure function in metrics.plotting.
-        
+        """Return the tabular 1D parameter-sensitivity result.
+
         Parameters
         ----------
         df : pd.DataFrame
@@ -1034,15 +1011,11 @@ class ParameterAnalyzer:
             
         Returns
         -------
-        Plotly figure object
+        Tuple[pd.DataFrame, None]
+            DataFrame with the 1D analysis and a ``None`` placeholder for the removed figure.
         """
-        return plot_parameter_sensitivity_pure(
-            df=df,
-            param_name=param_name,
-            metric=metric,
-            title=title,
-            show_plot=show_plot
-        )
+        del title, show_plot
+        return df, None
 
     def compute_neighbor_smoothed_grid(
         self,
@@ -1107,10 +1080,7 @@ class ParameterAnalyzer:
         show_plot: bool = True,
         plot_type: str = 'surface'
     ):
-        """
-        Create a 3D surface plot of parameter sensitivity.
-        
-        Delegates to pure function in metrics.plotting.
+        """Return the tabular 2D parameter-surface result.
         
         Parameters
         ----------
@@ -1131,14 +1101,8 @@ class ParameterAnalyzer:
             
         Returns
         -------
-        Plotly figure object
+        Tuple[pd.DataFrame, None]
+            DataFrame with the 2D analysis and a ``None`` placeholder for the removed figure.
         """
-        return plot_2d_parameter_surface_pure(
-            df=df,
-            param1=param1,
-            param2=param2,
-            metric=metric,
-            title=title,
-            show_plot=show_plot,
-            plot_type=plot_type
-        )
+        del title, show_plot, plot_type
+        return df, None

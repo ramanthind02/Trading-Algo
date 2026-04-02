@@ -5,9 +5,6 @@ No real market data — no cache required.
 """
 from __future__ import annotations
 
-import matplotlib
-matplotlib.use('Agg')
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,12 +12,10 @@ import pytest
 from feature_selection.eda.common_eda import (
     compute_descriptive_stats,
     compute_correlation_analysis,
-    create_common_eda_plots,
 )
 from feature_selection.eda.eda_dataclasses import (
     DescriptiveStats,
     CorrelationAnalysis,
-    CommonEDAPlots,
 )
 
 
@@ -74,10 +69,3 @@ def test_correlation_analysis_has_all_lags() -> None:
     assert set(result.lagged_correlations.keys()) == {1, 2, 3, 4, 5}
 
 
-def test_common_eda_plots_smoke() -> None:
-    n = 60
-    idx = _daily_index(n)
-    np.random.seed(0)
-    feature = pd.Series(np.random.randn(n), index=idx)
-    plots = create_common_eda_plots(feature, idx)
-    assert plots.time_series_fig is not None

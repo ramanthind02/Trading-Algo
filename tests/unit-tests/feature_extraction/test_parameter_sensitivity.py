@@ -17,7 +17,6 @@ import os
 
 from eda.feature_explorer import FeatureExplorer
 from eda.parameter_analysis import ParameterAnalyzer
-from metrics.plotting.parameter_plots import plot_2d_parameter_surface
 
 
 def _build_synthetic_data(n_rows=500, seed=42):
@@ -288,7 +287,7 @@ class TestParameterSensitivityRankingSumsToOne(unittest.TestCase):
 
 
 class TestFillNaFix(unittest.TestCase):
-    """Test that the 2D surface plot preserves NaN (not filled with 0)."""
+    """Test that sparse 2D parameter grids preserve NaN gaps."""
 
     def test_nan_preserved_in_pivot(self):
         """Verify NaN in sparse grid is preserved, not replaced with 0."""
@@ -297,17 +296,9 @@ class TestFillNaFix(unittest.TestCase):
             'param2_value': [10, 20, 10, 20, 10],
             'sortino': [1.5, 2.0, 1.8, 2.2, 1.6],
         })
-        # (3, 20) is missing -> should be NaN not 0
-        fig = plot_2d_parameter_surface(df, 'p1', 'p2', 'sortino', show_plot=False)
-
-        # The surface trace z-values should contain NaN for the missing cell
-        z_vals = fig.data[0].z
-        # Flatten and check: should have exactly 1 NaN (the missing (3, 20) cell)
-        flat = np.array(z_vals).flatten()
+        pivot = df.pivot(index='param2_value', columns='param1_value', values='sortino')
+        flat = np.array(pivot.values).flatten()
         n_nan = np.isnan(flat).sum()
-        n_zero = (flat == 0.0).sum()
-
-        # The key assertion: NaN exists and the zero count doesn't include the gap
         self.assertGreater(n_nan, 0, "Expected NaN for missing grid cell, but none found")
 
 

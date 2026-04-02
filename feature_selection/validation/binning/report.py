@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from matplotlib.figure import Figure
-
 from feature_selection.validation.binning.diagnostics import BinningSuccessCriteria, RegionMetadata
 
 
@@ -34,7 +32,7 @@ def _raise_legacy_binning_removed() -> None:
     raise RuntimeError(LEGACY_BINNING_REMOVED_ERROR)
 
 
-def generate_binning_report(*_args: object, **_kwargs: object) -> tuple[BinningDiagnosticsReport, dict[str, Figure]]:
+def generate_binning_report(*_args: object, **_kwargs: object) -> tuple[BinningDiagnosticsReport, dict[str, object]]:
     _raise_legacy_binning_removed()
 
 

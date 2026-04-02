@@ -11,10 +11,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-import matplotlib
 import pytest
-
-matplotlib.use("Agg")
 
 from feature_research.config import (
     BinningAnalysisConfig,
@@ -88,7 +85,7 @@ def test_signed_signal_eda_pipeline_smoke(
     Verifies:
     - Pipeline runs without exception
     - Exactly one result entry returned
-    - Output directory contains expected JSON + plot files
+    - Output directory contains expected JSON summaries
 
     All key config inputs are exposed as parameters so researchers can call
     this directly with custom values for interactive validation.
@@ -128,14 +125,7 @@ def test_signed_signal_eda_pipeline_smoke(
         assert (report_path / "common_stats.json").exists()
         assert (report_path / "feature_stats.json").exists()
         assert (report_path / "diagnostics.json").exists()
-        plots_dir = report_path / "plots"
-        assert plots_dir.is_dir()
-        expected_plots = [
-            "time_series_fig.png",
-            "level_plot_fig.png",
-        ]
-        for plot_file in expected_plots:
-            assert (plots_dir / plot_file).exists(), f"Missing plot: {plot_file}"
+        assert not (report_path / "plots").exists()
 
 
 @pytest.mark.integration

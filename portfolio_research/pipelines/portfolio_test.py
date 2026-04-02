@@ -35,7 +35,6 @@ from ensemble.vault_manager import (
 )
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
-from portfolio_research.weight_layer_report import export_global_weight_layer_report
 from utils.cache import (
     CentralCacheStore,
     bootstrap_source_candles,
@@ -534,7 +533,7 @@ def _evaluate_phase(
         per_tf_strategy_returns[timeframe] = aggregate_intraday_returns_to_daily(strategy_returns)
         per_tf_baseline_returns[timeframe] = aggregate_intraday_returns_to_daily(baseline_returns)
 
-    # Always build GlobalPortfolio so the global WeightLayer is fitted and reported
+    # Always build GlobalPortfolio so the global WeightLayer is fitted
     # even for a single-timeframe run.
     tf_portfolios = [testers_by_timeframe[tf].portfolio for tf in unique_timeframes]
     global_portfolio = GlobalPortfolio(
@@ -553,11 +552,6 @@ def _evaluate_phase(
     portfolio_id = global_portfolio.save_to_vault(
         fit_start=fit_start.to_pydatetime(),
         fit_end=fit_end.to_pydatetime(),
-    )
-    export_global_weight_layer_report(
-        global_portfolio,
-        phase_name=output_dir_name,
-        output_dir=phase_out / "global_weight_layer",
     )
     global_positions_raw = global_portfolio.predict_from_cache(predict_query)
     materialize_global_portfolio_predictions(

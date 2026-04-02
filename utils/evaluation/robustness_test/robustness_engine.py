@@ -11,10 +11,10 @@ Architecture follows PermutationEngine pattern from permutation_test/permutation
 Author: Trading Research Team
 """
 
+from typing import Any, Dict, List, Optional, Tuple
+
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Any, Optional, Tuple
-import matplotlib.pyplot as plt
 
 from utils.core.enums import ResamplingMethod
 from utils.evaluation.robustness_test.resampling_strategy import (
@@ -24,7 +24,6 @@ from utils.evaluation.robustness_test.resampling_strategy import (
     BlockBootstrapStrategy
 )
 from metrics.equity import cumulative_returns
-from plotting.robustness import plot_robustness_curves
 
 
 def robustness_test(
@@ -33,12 +32,8 @@ def robustness_test(
     method: ResamplingMethod = ResamplingMethod.MONTE_CARLO,
     block_size: Optional[int] = None,
     random_seed: Optional[int] = None,
-    figsize: Tuple[int, int] = (14, 8),
-    show_original: bool = True,
-    alpha: float = 0.05,
-    save_path: Optional[str] = None,
     verbose: bool = True
-) -> Tuple[plt.Figure, List[pd.Series], Dict[str, Any]]:
+) -> Tuple[None, List[pd.Series], Dict[str, Any]]:
     """
     Perform robustness test on a return series using resampling methods.
 
@@ -61,21 +56,13 @@ def robustness_test(
         Recommended: sqrt(n) or based on autocorrelation decay.
     random_seed : Optional[int], default=None
         Random seed for reproducibility
-    figsize : Tuple[int, int], default=(14, 8)
-        Figure size for the plot
-    show_original : bool, default=True
-        Whether to highlight the original equity curve
-    alpha : float, default=0.05
-        Significance level for confidence intervals
-    save_path : Optional[str], default=None
-        Path to save the figure
     verbose : bool, default=True
         Whether to print progress information
 
     Returns
     -------
-    Tuple[plt.Figure, List[pd.Series], Dict[str, Any]]
-        - fig: Matplotlib figure with equity curves and statistics
+    Tuple[None, List[pd.Series], Dict[str, Any]]
+        - fig: Always ``None`` now that plotting has been removed
         - resampled_series: List of resampled return Series (not cumulative)
         - stats: Dictionary with comprehensive statistics
 
@@ -132,9 +119,8 @@ def robustness_test(
     # Set base random seed
     base_seed = random_seed if random_seed is not None else 42
 
-    # Compute original equity curve and statistics
-    original_curve = cumulative_returns(returns, initial_value=1.0)
-    original_cumulative = original_curve.iloc[-1] - 1.0  # Total return
+    # Compute original equity curve statistics without materializing plots.
+    original_cumulative = cumulative_returns(returns, initial_value=1.0).iloc[-1] - 1.0
     original_autocorr = returns.autocorr(lag=1)
     original_mean = returns.mean()
     original_volatility = returns.std()
@@ -148,7 +134,6 @@ def robustness_test(
 
     # Generate resampled paths
     resampled_series: List[pd.Series] = []
-    resampled_curves: List[pd.Series] = []
     cumulative_returns_list: List[float] = []
     autocorr_list: List[float] = []
 
@@ -166,12 +151,10 @@ def robustness_test(
         # Store resampled returns (not cumulative)
         resampled_series.append(resampled_returns)
 
-        # Compute equity curve for plotting
-        curve = cumulative_returns(resampled_returns, initial_value=1.0)
-        resampled_curves.append(curve)
-
         # Store statistics
-        cumulative_returns_list.append(curve.iloc[-1] - 1.0)
+        cumulative_returns_list.append(
+            cumulative_returns(resampled_returns, initial_value=1.0).iloc[-1] - 1.0
+        )
         autocorr_list.append(resampled_returns.autocorr(lag=1))
 
         # Progress update
@@ -196,19 +179,7 @@ def robustness_test(
     if verbose:
         _print_statistics(stats)
 
-    # Generate plot
-    fig = plot_robustness_curves(
-        original_curve=original_curve,
-        resampled_curves=resampled_curves,
-        stats=stats,
-        figsize=figsize,
-        show_original=show_original,
-        alpha=alpha,
-        method=method,
-        save_path=save_path
-    )
-
-    return fig, resampled_series, stats
+    return None, resampled_series, stats
 
 
 def _get_strategy(method: ResamplingMethod) -> ResamplingStrategy:
