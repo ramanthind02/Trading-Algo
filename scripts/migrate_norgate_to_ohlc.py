@@ -151,7 +151,26 @@ def migrate_ticker(ticker: str, norgate_path: Path, ohlc_dir: Path, backup_dir: 
         kibot_rows = len(kibot_pre)
 
         if kibot_rows > 0:
-            # Splice: Kibot pre-2005 + Norgate 2005+
+            # Scale Kibot prices to match Norgate back-adjusted level at splice.
+            # Kibot is unadjusted; Norgate is back-adjusted. The ratio at the
+            # splice date represents the cumulative roll adjustment.
+            kibot_on_splice = kibot_df[kibot_df["datetime"] == norgate_start]
+            norgate_on_splice = norgate_daily[norgate_daily["datetime"] == norgate_start]
+
+            if not kibot_on_splice.empty and not norgate_on_splice.empty:
+                kibot_close = float(kibot_on_splice["close"].iloc[0])
+                norgate_close = float(norgate_on_splice["close"].iloc[0])
+                if kibot_close > 0:
+                    scale = norgate_close / kibot_close
+                    for col in ("open", "high", "low", "close"):
+                        kibot_pre[col] = kibot_pre[col] * scale
+                    print(f"    Splice scale factor: {scale:.4f}x (Kibot {kibot_close:.2f} -> Norgate {norgate_close:.2f})")
+                else:
+                    print(f"    WARNING: Kibot close is zero on {norgate_start}, skipping scale")
+            else:
+                print(f"    WARNING: No overlap on {norgate_start}, splicing without scaling")
+
+            # Splice: scaled Kibot pre-2005 + Norgate 2005+
             daily = pd.concat([kibot_pre, norgate_daily], ignore_index=True)
         else:
             daily = norgate_daily
