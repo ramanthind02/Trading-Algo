@@ -108,22 +108,6 @@ Cheapest backup. Longest track record ($1.1B+ paid). Daily payouts once unlocked
 - **Webhook:** Leader-follower model. We set up a demo account as leader, execute via Python, followers mirror.
 - **Why:** Good value, sub-100ms execution. Leader model works well with our setup.
 
-### 4. CrossTrade (API-first alternative)
-
-- **URL:** https://crosstrade.io
-- **Price:** $49/mo
-- **Platforms:** NinjaTrader 8 (Rithmic, CQG, Tradovate)
-- **Webhook:** Full REST API, <30ms execution
-- **Why:** Best programmatic control. Requires NinjaTrader 8 running locally/VPS.
-
-### 5. Replikanto (NinjaTrader ecosystem)
-
-- **URL:** https://www.replikanto.com
-- **Price:** $175 one-time, no monthly
-- **Platforms:** NinjaTrader 8
-- **Webhook:** Limited, NinjaScript add-on
-- **Why:** Most popular in NT ecosystem, no recurring cost. Good if we end up on NinjaTrader.
-
 ---
 
 ## Recommended Architecture
@@ -144,13 +128,18 @@ For firms requiring daily close: the pipeline sends a "flatten all" signal at 3:
 
 ---
 
-## Simulation
+## Simulation Results
 
-Prop firm simulators exist in `prop_firms/` for Apex and Lucid. Additional simulators should be built for MFFU, Topstep, and Tradefundrr to evaluate strategy performance against each firm's specific rules before committing real money.
+Monte Carlo backtest across all 5 firms (20 runs, Sharpe 1.5, 10% annual vol):
 
-Key simulation features needed:
-- Daily close/re-enter logic for firms prohibiting overnight holds
-- Trailing drawdown vs EOD drawdown behavior
-- Consistency rule enforcement
-- Payout ladder simulation
-- Multi-account P&L aggregation
+| Firm | Eval Pass Rate | Avg Payouts | Avg Paid Out | Eval Breach Rate |
+|------|---------------|-------------|-------------|-----------------|
+| **Tradefundrr** | **85%** | **9.9** | **$6,352** | 15% |
+| **MFFU** | **85%** | 2.4 | $2,966 | 15% |
+| Topstep | 70% | 1.6 | $1,985 | 30% |
+| Lucid | 65% | 1.1 | $622 | 35% |
+| Apex | 5% | 0.3 | $510 | 95% |
+
+Simulators: `prop_firms/{apex,lucid,mffu,topstep,tradefundrr}/`
+
+Apex's 95% breach rate is due to the 30-day evaluation expiry -- a 10% vol strategy can't reliably hit $3K in 30 days. Tradefundrr wins because drawdown ($3K) exceeds target ($2.5K), giving the most room to operate.
