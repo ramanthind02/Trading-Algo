@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import html
 from pathlib import Path
 
@@ -118,7 +118,7 @@ def _build_markdown_report(result: LucidHyperoptResult) -> str:
 def _build_html_report(result: LucidHyperoptResult, report_stem: str) -> str:
     best_trial = result.best_trial
     stats = best_trial.batch_statistics
-    generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     top_trials = result.trials_frame.head(10).reset_index(drop=True)
     top_seed_runs = result.seed_runs_frame[
         result.seed_runs_frame["trial_number"] == best_trial.trial_number
