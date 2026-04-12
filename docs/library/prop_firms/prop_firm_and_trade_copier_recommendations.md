@@ -47,17 +47,18 @@ Best long-term option. One-time fee is cheap. Full algo support. Path: day-trade
 
 Cheapest entry with discount codes. Best scaling (20 accounts). Daily close/re-enter is manageable for our strategy since we rebalance daily anyway. Controversial payout history but 4.0 rules addressed most issues.
 
-### 4. Tradefundrr
+### 4. TradeDay
 
-- **Fee:** $149 one-time
-- **Profit target:** $2,500 (5%) | **Drawdown:** $3,000 (6%) -- drawdown exceeds target
-- **Consistency rule:** None
-- **Overnight holds:** Verify before committing
-- **Algo/copier:** Verify before committing
-- **Payout:** Bi-weekly
-- **Platform:** Rithmic
+- **Fee:** $99/mo (50K EOD trailing)
+- **Profit target:** $3,000 (6%) | **Drawdown:** $2,000 (4%)
+- **Consistency rule:** 30% in eval only (doesn't breach, just raises target). None in funded.
+- **Overnight holds:** No (must close by 5:00 PM ET). We close and re-enter next day.
+- **Algo/copier:** Allowed (NinjaTrader automation, TradeSyncer supported). No copying between TradeDay accounts.
+- **Payout:** Weekly, 100% on first $10K cumulative, then 80%/90%/92.5%/95%
+- **Platform:** Tradovate
+- **Trustpilot:** 4.6/5 (1,347 reviews)
 
-Best math -- only firm where drawdown > target. No consistency rule. One-time fee. Newer firm, verify overnight and algo policies directly before funding.
+Proven firm (Chicago, since 2020). Best profit split tiers in the industry. No daily loss limit. No consistency rule once funded. Day-one payouts with next-business-day processing.
 
 ### 5. Topstep
 
@@ -134,12 +135,12 @@ Monte Carlo backtest across all 5 firms (20 runs, Sharpe 1.5, 10% annual vol):
 
 | Firm | Eval Pass Rate | Avg Payouts | Avg Paid Out | Eval Breach Rate |
 |------|---------------|-------------|-------------|-----------------|
-| **Tradefundrr** | **85%** | **9.9** | **$6,352** | 15% |
-| **MFFU** | **85%** | 2.4 | $2,966 | 15% |
+| **MFFU** | **85%** | 2.4 | **$2,966** | 15% |
+| **TradeDay** | **70%** | **2.8** | $2,473 | 30% |
 | Topstep | 70% | 1.6 | $1,985 | 30% |
 | Lucid | 65% | 1.1 | $622 | 35% |
 | Apex | 5% | 0.3 | $510 | 95% |
 
-Simulators: `prop_firms/{apex,lucid,mffu,topstep,tradefundrr}/`
+Simulators: `prop_firms/{apex,lucid,mffu,topstep,tradeday}/`
 
-Apex's 95% breach rate is due to the 30-day evaluation expiry -- a 10% vol strategy can't reliably hit $3K in 30 days. Tradefundrr wins because drawdown ($3K) exceeds target ($2.5K), giving the most room to operate.
+MFFU leads with 85% pass rate thanks to the generous 1:1 target-to-drawdown ratio ($3K/$3K). TradeDay has solid payouts despite tighter drawdown. Apex's 95% breach rate is due to the 30-day evaluation expiry -- a 10% vol strategy can't reliably hit $3K in 30 days.
