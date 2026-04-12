@@ -1,0 +1,19 @@
+{
+  "coverage": {
+    "end": "2026-03-27T00:00:00",
+    "start": "1996-01-30T00:00:00"
+  },
+  "depends_on": [],
+  "descriptor": {
+    "artifact_name": null,
+    "family": "candles",
+    "module_name": null,
+    "params": {},
+    "scope": "live",
+    "ticker": "GC",
+    "timeframe": "D"
+  },
+  "lifecycle_state": "fresh",
+  "revision": 1,
+  "source_revision": 0
+}
