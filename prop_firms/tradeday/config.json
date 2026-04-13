@@ -5,7 +5,7 @@
     "50000": {
       "account_size": 50000.0,
       "fees": {
-        "challenge_fee": 99.0,
+        "challenge_fee": 175.0,
         "reset_fee": 0.0,
         "activation_fee": 0.0
       },

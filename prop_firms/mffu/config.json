@@ -5,7 +5,7 @@
     "50000": {
       "account_size": 50000.0,
       "fees": {
-        "challenge_fee": 127.0,
+        "challenge_fee": 77.0,
         "reset_fee": 0.0,
         "activation_fee": 0.0
       },
@@ -26,7 +26,7 @@
           "locked_mll_balance": 50000.0
         },
         "consistency_rule": {
-          "max_ratio": 0.5,
+          "max_ratio": 0.4,
           "cushion_multiplier": 1.0,
           "inclusive_limit": false
         }
@@ -42,7 +42,7 @@
           "locked_mll_balance": 50000.0
         },
         "payout_rule": {
-          "trader_profit_split": 1.0,
+          "trader_profit_split": 0.8,
           "min_request_amount": 500.0,
           "max_profit_share": 1.0,
           "max_payout_amount": 10000.0,

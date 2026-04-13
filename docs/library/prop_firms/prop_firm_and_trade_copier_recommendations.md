@@ -86,31 +86,22 @@ Cheapest monthly. Longest track record ($1.1B+ paid). Tighter drawdown and lower
 
 ---
 
-## Chosen Trade Copiers
+## Chosen Trade Copier: Tradecopia (Primary)
 
-### 1. PickMyTrade
+- **URL:** https://tradecopia.com
+- **Price:** $40/mo (Basic) or $60/mo (Pro with risk management). Flat fee, unlimited accounts.
+- **Platforms:** Tradovate, Rithmic, ProjectX, NinjaTrader
+- **Model:** Leader-follower. IB demo acts as leader, all prop firm accounts are followers.
+- **Local/Cloud:** Local desktop app. Runs on Raman's machine 24/7.
+- **Trustpilot:** 4.7/5 (195 reviews)
+- **Why chosen:** Cheapest for unlimited accounts ($40-60 flat vs $50/login for PickMyTrade). Local execution avoids potential prop firm bans for cloud-based copiers. Supports all major platforms.
+- **Limitation:** No webhook/API. Requires a leader account (IB demo) that our Python script trades on.
 
-- **URL:** https://pickmytrade.trade
-- **Price:** $50/mo **per Tradovate login**. If your prop firm accounts are under one Tradovate login, one subscription covers all sub-accounts. Different prop firms with different Tradovate logins each need a separate $50/mo subscription.
-- **Platforms:** Rithmic, Tradovate, IB, TradeStation, ProjectX
-- **Webhook:** Yes, HTTP POST from Python
-- **Cost for 5 firms with separate logins:** ~$250/mo
+### Alternatives (if needed later)
 
-### 2. TradersPost
-
-- **URL:** https://traderspost.io
-- **Price:** Premium $299/mo (6 live accounts) + $10/mo per extra. ~$339/mo for 10 accounts.
-- **Platforms:** Tradovate, IB, TradeStation (no native Rithmic)
-- **Webhook:** Best API -- supports position-level signals ("set position to +2 ES"), partial exits, sentiment flat for rebalancing
-- **Best for:** Position-aware rebalancing from our Python pipeline.
-
-### 3. Tradesyncer
-
-- **URL:** https://tradesyncer.com
-- **Price:** $49/mo (Basic, 2 connections / 10 accounts each) or $99/mo (Pro, 4 connections / 20 accounts)
-- **Platforms:** NinjaTrader, Tradovate, Rithmic, ProjectX
-- **Model:** Leader-follower. Set up a demo account as leader, execute via Python, followers mirror.
-- **Best for:** Budget option if leader-follower model works.
+- **TradersPost** ($49-339/mo) -- best webhook API, no leader needed. Good for pure automation but expensive at scale and cloud-based.
+- **PickMyTrade** ($50/mo per Tradovate login) -- webhook from Python, but costs add up with multiple prop firms.
+- **Tradesyncer** ($49-99/mo) -- leader-follower, cloud-based, supports Rithmic + Tradovate.
 
 ---
 
@@ -118,19 +109,20 @@ Cheapest monthly. Longest track record ($1.1B+ paid). Tighter drawdown and lower
 
 ```
 Python pipeline (tws_live_forecast.py)
-    ↓ webhook HTTP POST
-PickMyTrade (or TradersPost)
-    ↓ fans out to all accounts
-┌─ MFFU account (Tradovate)
-├─ Lucid account (Tradovate)
-├─ Apex account 1 (Tradovate)
-├─ Apex account 2 (Tradovate)
-└─ Topstep account (Tradovate)
+    ↓ places orders via IB TWS API
+IB demo account (leader)
+    ↓ Tradecopia watches leader
+Tradecopia desktop app (runs 24/7 on Raman's machine)
+    ├─→ Apex account (Tradovate follower)
+    ├─→ MFFU account (Tradovate follower)
+    ├─→ Lucid account (Tradovate follower)
+    ├─→ TradeDay account (Tradovate follower)
+    └─→ Topstep account (Tradovate follower)
 ```
 
-For firms requiring daily close: the pipeline sends a "flatten all" signal at 3:00 PM CT, then re-enters positions the next morning at market open.
+For firms requiring daily close: the pipeline flattens all positions at 3:00 PM CT on the IB leader, Tradecopia mirrors the flatten to all followers, then re-enters positions the next morning.
 
-**Cost note:** If each prop firm has a separate Tradovate login, PickMyTrade costs $50 x N logins. Consider grouping accounts under fewer Tradovate logins where possible, or evaluate TradersPost/Tradesyncer if the per-login cost is too high.
+**Cost:** $40-60/mo total for unlimited prop firm accounts.
 
 ---
 
@@ -142,8 +134,8 @@ Monte Carlo backtest across all 5 firms (20 runs, Sharpe 1.5, 10% annual vol):
 |------|---------------|-------------|-------------|-----------------|
 | **MFFU** | **85%** | 2.4 | **$2,966** | 15% |
 | **TradeDay** | **70%** | **2.8** | $2,473 | 30% |
-| Topstep | 70% | 1.6 | $1,985 | 30% |
-| Lucid | 65% | 1.1 | $622 | 35% |
+| Topstep | 70% | 1.6 | $1,963 | 30% |
+| Lucid | 65% | 1.1 | $728 | 35% |
 | Apex | 5% | 0.3 | $510 | 95% |
 
 Simulators: `prop_firms/{apex,lucid,mffu,topstep,tradeday}/`

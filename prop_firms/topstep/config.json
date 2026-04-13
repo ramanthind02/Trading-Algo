@@ -43,7 +43,7 @@
           "locked_mll_balance": 50000.0
         },
         "payout_rule": {
-          "trader_profit_split": 1.0,
+          "trader_profit_split": 0.9,
           "min_request_amount": 200.0,
           "max_profit_share": 1.0,
           "max_payout_amount": 2000.0,
@@ -63,7 +63,7 @@
           },
           "profit_day_rule": {
             "required_days": 5,
-            "minimum_profit_amount": 200.0
+            "minimum_profit_amount": 150.0
           }
         },
         "scaling_plan": [
