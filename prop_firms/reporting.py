@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 import html
 import io
 from pathlib import Path
@@ -214,7 +214,7 @@ def _build_html_report(
 ) -> str:
     summary = result.summary
     provider_label = _provider_report_label(result)
-    generated_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     date_range = _format_date_range(result.daily_timeline)
     event_counts = _build_count_frame(
         frame=result.events,
