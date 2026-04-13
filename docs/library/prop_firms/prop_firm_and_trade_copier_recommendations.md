@@ -14,15 +14,15 @@
 ### 1. My Funded Futures (MFFU)
 
 - **Fee:** $227 one-time (50K Pro). No activation fee. Also: Rapid 50K at $125.60 one-time.
-- **Profit target:** $3,000 (6%) | **Drawdown:** $3,000 (6%) -- 1:1 ratio, best available
-- **Consistency rule:** 50% (Pro plan). No consistency on Rapid.
+- **Profit target:** $3,000 | **Drawdown:** $2,000 (EOD). Eval: 3 contracts. Funded: 5 contracts.
+- **Consistency rule:** 50% in eval. None in funded.
 - **Overnight holds:** Yes, all plans
 - **Algo/copier:** Semi-automated allowed, trade copier allowed
-- **Payout:** Weekly. Pro: 80/20 split. Rapid: 90/10 split.
+- **Payout:** Every 14 days. Pro: 80/20 split, $1K min, $2.1K buffer. Rapid: 90/10, $500 min, 1-day payout.
 - **Trustpilot:** 4.9/5 (11,000+ reviews)
 - **Platform:** Tradovate, Rithmic
 
-Best overall for our strategy. Overnight holds from day one, generous 1:1 drawdown ratio, highest trust rating. Pro has 50% consistency rule and 3 contract max (30 micros). Rapid has no consistency rule but different split.
+Best overall for our strategy. Overnight holds from day one, highest trust rating. Pro recommended: no consistency in funded phase, EOD drawdown in funded, 5 contracts. Rapid is cheaper ($87-126) with 90/10 split and 1-day payouts, but funded drawdown switches to RealTime (stricter).
 
 ### 2. Lucid Trading
 

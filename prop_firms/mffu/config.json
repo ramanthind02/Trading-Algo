@@ -21,8 +21,8 @@
           "micro_contracts": 30
         },
         "drawdown_rule": {
-          "loss_limit_amount": 3000.0,
-          "initial_trail_balance": 53000.0,
+          "loss_limit_amount": 2000.0,
+          "initial_trail_balance": 52000.0,
           "locked_mll_balance": 50000.0
         },
         "consistency_rule": {
@@ -33,21 +33,21 @@
       },
       "funded": {
         "max_contract_limit": {
-          "mini_contracts": 6,
-          "micro_contracts": 60
+          "mini_contracts": 5,
+          "micro_contracts": 50
         },
         "drawdown_rule": {
-          "loss_limit_amount": 3000.0,
-          "initial_trail_balance": 53000.0,
+          "loss_limit_amount": 2000.0,
+          "initial_trail_balance": 52000.0,
           "locked_mll_balance": 50000.0
         },
         "payout_rule": {
           "trader_profit_split": 0.8,
-          "min_request_amount": 500.0,
+          "min_request_amount": 1000.0,
           "max_profit_share": 1.0,
           "max_payout_amount": 10000.0,
-          "max_requests_per_account": 100,
-          "protected_balance": 50000.0,
+          "max_requests_per_account": 26,
+          "protected_balance": 52100.0,
           "payout_cap_schedule": [
             2000.0,
             2000.0,
