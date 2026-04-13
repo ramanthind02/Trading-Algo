@@ -13,16 +13,16 @@
 
 ### 1. My Funded Futures (MFFU)
 
-- **Fee:** $77/mo (50K Core) or $229 one-time. No activation fee.
+- **Fee:** $227 one-time (50K Pro). No activation fee. Also: Rapid 50K at $125.60 one-time.
 - **Profit target:** $3,000 (6%) | **Drawdown:** $3,000 (6%) -- 1:1 ratio, best available
-- **Consistency rule:** 40% (Core plan)
+- **Consistency rule:** 50% (Pro plan). No consistency on Rapid.
 - **Overnight holds:** Yes, all plans
 - **Algo/copier:** Semi-automated allowed, trade copier allowed
-- **Payout:** Weekly, 80/20 split (Core). First $10K at 100% on some plans.
+- **Payout:** Weekly. Pro: 80/20 split. Rapid: 90/10 split.
 - **Trustpilot:** 4.9/5 (11,000+ reviews)
 - **Platform:** Tradovate, Rithmic
 
-Best overall for our strategy. Overnight holds from day one, generous drawdown, highest trust rating. Also offers Rapid ($129/mo, 90/10 split) and Pro ($229/mo, no consistency rule) tiers.
+Best overall for our strategy. Overnight holds from day one, generous 1:1 drawdown ratio, highest trust rating. Pro has 50% consistency rule and 3 contract max (30 micros). Rapid has no consistency rule but different split.
 
 ### 2. Lucid Trading
 
@@ -51,7 +51,7 @@ Cheapest entry with discount codes. Best scaling (20 accounts). Daily close/re-e
 
 ### 4. TradeDay
 
-- **Fee:** $175/mo (50K EOD) or ~$122 with 30% promo code. No activation fee.
+- **Fee:** $175/mo (50K EOD) or ~$122 with promo. No activation fee. Resets: $104.
 - **Profit target:** $3,000 (6%) | **Drawdown:** $2,000 (4%)
 - **Consistency rule:** 30% in eval only (doesn't breach, just raises target). None in funded.
 - **Overnight holds:** No (must close by 5:00 PM ET). We close and re-enter next day.
@@ -91,11 +91,11 @@ Cheapest monthly. Longest track record ($1.1B+ paid). Tighter drawdown and lower
 - **URL:** https://tradecopia.com
 - **Price:** $40/mo (Basic) or $60/mo (Pro with risk management). Flat fee, unlimited accounts.
 - **Platforms:** Tradovate, Rithmic, ProjectX, NinjaTrader
-- **Model:** Leader-follower. IB demo acts as leader, all prop firm accounts are followers.
-- **Local/Cloud:** Local desktop app. Runs on Raman's machine 24/7.
+- **Model:** Leader-follower. Tradovate demo acts as leader, all prop firm accounts are followers.
+- **Local/Cloud:** Local desktop app (Tradovate only, no IB support). Runs on Raman's machine 24/7.
 - **Trustpilot:** 4.7/5 (195 reviews)
 - **Why chosen:** Cheapest for unlimited accounts ($40-60 flat vs $50/login for PickMyTrade). Local execution avoids potential prop firm bans for cloud-based copiers. Supports all major platforms.
-- **Limitation:** No webhook/API. Requires a leader account (IB demo) that our Python script trades on.
+- **Limitation:** No webhook/API. Tradovate only (no IB). Requires a Tradovate demo/sim as leader that our Python script trades on via Tradovate REST API.
 
 ### Alternatives (if needed later)
 
@@ -109,8 +109,8 @@ Cheapest monthly. Longest track record ($1.1B+ paid). Tighter drawdown and lower
 
 ```
 Python pipeline (tws_live_forecast.py)
-    ↓ places orders via IB TWS API
-IB demo account (leader)
+    ↓ places orders via Tradovate REST API
+Tradovate demo/sim account (leader)
     ↓ Tradecopia watches leader
 Tradecopia desktop app (runs 24/7 on Raman's machine)
     ├─→ Apex account (Tradovate follower)
@@ -120,7 +120,9 @@ Tradecopia desktop app (runs 24/7 on Raman's machine)
     └─→ Topstep account (Tradovate follower)
 ```
 
-For firms requiring daily close: the pipeline flattens all positions at 3:00 PM CT on the IB leader, Tradecopia mirrors the flatten to all followers, then re-enters positions the next morning.
+For firms requiring daily close: the pipeline flattens all positions at 3:00 PM CT on the Tradovate leader, Tradecopia mirrors the flatten to all followers, then re-enters positions the next morning.
+
+**Note:** IB TWS is still used for data fetching (OHLC candles). Only order execution moves to the Tradovate REST API for Tradecopia compatibility.
 
 **Cost:** $40-60/mo total for unlimited prop firm accounts.
 
