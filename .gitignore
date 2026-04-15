@@ -50,6 +50,8 @@ htmlcov/
 # Machine-local trading_algo cache (parquet, materialized, candles). Tracking it makes git add/status very slow on Windows.
 # To commit a curated snapshot: git add -f path/to/file
 .cache/trading_algo/
+# In-sample research run outputs (thousands of small files; kills commit performance if staged).
+feature_research/in_sample/results/
 nosetests.xml
 coverage.xml
 *.cover
