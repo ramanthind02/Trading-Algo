@@ -38,3 +38,16 @@ def test_signed_signal_evaluator_rejects_selected_bin() -> None:
             target,
             {"lookback": 5, "selected_bin": 1},
         )
+
+
+def test_signed_signal_evaluator_uses_precomputed_returns_column() -> None:
+    index = pd.date_range("2020-01-01", periods=4, freq="D")
+    returns = pd.Series([0.01, -0.02, 0.03, 0.04], index=index, name="returns")
+    combo_signal_target = {
+        combo_key({"lookback": 7}): pd.DataFrame({"returns": returns}),
+    }
+
+    evaluator = build_signed_signal_walkforward_evaluator(combo_signal_target)
+    out = evaluator(pd.DataFrame({"close": returns}, index=index), returns, {"lookback": 7})
+
+    pd.testing.assert_series_equal(out, returns)

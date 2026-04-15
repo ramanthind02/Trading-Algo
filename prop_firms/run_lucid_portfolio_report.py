@@ -2,23 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from utils.repo_bootstrap import ensure_repo_root_on_syspath
 
-def _find_repo_root(start: Path) -> Path | None:
-    search_root = start if start.is_dir() else start.parent
-    for parent in (search_root, *search_root.parents):
-        if (parent / "pyproject.toml").exists():
-            return parent
-        if (parent / ".git").exists():
-            return parent
-    return None
-
-
-_repo_root = _find_repo_root(Path(__file__).resolve())
-if _repo_root is not None and str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 from prop_firms import build_return_series, create_lucid_portfolio_simulator
 from prop_firms.report_config import LucidPortfolioReportConfig, load_report_config

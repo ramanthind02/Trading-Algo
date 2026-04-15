@@ -8,12 +8,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-import json
+import logging
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from ensemble.vault import feature_files as _vault_feature_files
 from feature_research.config import OOSWindowConfig
+from utils.cache import extract_cross_ticker_names
 from utils.core.enums import Ticker, TimeFrame
+
+logger = logging.getLogger(__name__)
 
 _PORTFOLIO_RESEARCH_DIR = Path(__file__).resolve().parent
 
@@ -31,6 +35,15 @@ class ResearchWindow:
                 "ResearchWindow: start must be before end "
                 f"(got start={self.start!s}, end={self.end!s})."
             )
+
+
+@dataclass(frozen=True)
+class FeatureVaultCorrelationConfig:
+    """Gate and paths for ``portfolio_research.run_feature_vault_correlation`` exports."""
+
+    enabled: bool = True
+    vault_root: Path | None = None
+    output_subdir: str = "powerbi/feature_vault_correlation"
 
 
 @dataclass(frozen=True)
@@ -69,15 +82,30 @@ class PortfolioResearchConfig:
     target_volatility : float
         Target annual volatility for ensembles/portfolio.
     weight_layer_method : str
-        WeightLayer method (for example ``'equal_signal'`` or ``'hrp_classic'``).
+        WeightLayer method (e.g. ``equal_signal``, ``inverse_avg_pairwise_corr``, ``hrp_classic``).
     weight_layer_kwargs : Mapping[str, Any]
-        Extra kwargs for WeightLayer (e.g. fdm_max, group_weight_cap).
+        Extra kwargs for WeightLayer: ``fdm_max``, ``group_weight_cap``, ``rho_cut``.
     max_position_pct : float
         Max position as fraction of capital (e.g. 3.5).
     baseline_mode : str
         'equal_weight' or 'buy_hold' for PortfolioTester.
     output_root : Path
         Root directory for tearsheets and artifacts.
+    export_per_timeframe_tearsheets : bool
+        If True, write ``{daily|weekly|monthly}_Portfolio_<phase>_window_tearsheet.html`` when
+        multiple trading timeframes are present. Set False to skip (faster runs).
+    export_per_ensemble_tearsheets : bool
+        If True, write per-ensemble and per-base-model tearsheets under each timeframe
+        subfolder. Set False to skip (faster runs). Combined portfolio tearsheets for each
+        phase and under ``combined/`` are always written.
+    feature_vault_correlation : FeatureVaultCorrelationConfig
+        Optional export: after running the feature-research OOS pipeline, correlate selected
+        research returns with every vault feature JSON on the same timeframe. Writes CSV under
+        ``output_root / feature_vault_correlation.output_subdir`` when enabled.
+    strict_cache_preflight : bool
+        If True, abort the portfolio test when vault bias/EWSD cache refresh reports any
+        failure. If False (default), print failures and continue (research may still fail
+        later if required data is missing).
     """
 
     tickers: list[Ticker]
@@ -100,6 +128,12 @@ class PortfolioResearchConfig:
     max_position_pct: float = 3.5
     baseline_mode: str = "equal_weight"
     output_root: Path = field(default_factory=lambda: _PORTFOLIO_RESEARCH_DIR / "results")
+    export_per_timeframe_tearsheets: bool = True
+    export_per_ensemble_tearsheets: bool = True
+    feature_vault_correlation: FeatureVaultCorrelationConfig = field(
+        default_factory=FeatureVaultCorrelationConfig
+    )
+    strict_cache_preflight: bool = False
 
     def __post_init__(self) -> None:
         if self.baseline_mode not in ("equal_weight", "buy_hold"):
@@ -174,6 +208,83 @@ def _discover_ensemble_dirs(
     return ensembles
 
 
+def _single_feature_instrument_tickers(feature_config: Mapping[str, object]) -> list[str]:
+    """Normalize feature ``tickers`` to non-empty uppercase symbols."""
+    raw = feature_config.get("tickers", [])
+    if not isinstance(raw, list):
+        return []
+    return [
+        item.strip().upper()
+        for item in raw
+        if isinstance(item, str) and item.strip()
+    ]
+
+
+def required_tickers_for_ensemble_dir(ensemble_repo_relative_path: str) -> frozenset[Ticker]:
+    """Return tickers this ensemble *must* have in the portfolio to run correctly.
+
+    - ``cross_tickers`` in each feature's ``bias_node_spec.params`` (e.g. ES vs TLT legs).
+    - If that feature's ``tickers`` has **exactly one** symbol, that instrument is
+      required (single-instrument features: ``seasonal_bonds_month`` on TLT,
+      ``seasonal_indices_eof`` on ES, primary leg of rebalancing with one ticker row).
+    - If ``tickers`` lists multiple symbols, it is treated as an authoring universe
+      (e.g. buy/hold, multi-index); the portfolio subset can omit some of them.
+    """
+    features_dir = _PORTFOLIO_RESEARCH_DIR.parent / ensemble_repo_relative_path / "features"
+    if not features_dir.is_dir():
+        return frozenset()
+
+    required: set[Ticker] = set()
+    for _path, feature_config in _vault_feature_files.iter_validated_feature_configs(
+        features_dir
+    ):
+        spec = feature_config.get("bias_node_spec")
+        if not isinstance(spec, Mapping):
+            continue
+        params = spec.get("params")
+        if isinstance(params, Mapping):
+            for name in extract_cross_ticker_names(params):
+                required.add(Ticker[name])
+        symbols = _single_feature_instrument_tickers(feature_config)
+        if len(symbols) == 1:
+            required.add(Ticker[symbols[0]])
+    return frozenset(required)
+
+
+def filter_ensemble_dirs_for_portfolio_tickers(
+    ensemble_dirs: Mapping[str, str],
+    portfolio_tickers: Iterable[Ticker],
+) -> dict[str, str]:
+    """Drop vault ensembles that need symbols outside the portfolio (see ``required_tickers_for_ensemble_dir``).
+
+    Preflight may bootstrap extra symbols, but ``PortfolioCacheQuery`` only loads
+    candles for ``config.tickers``; incompatible ensembles cause ``fit_from_candles``
+    failures and unfitted ensemble slots.
+    """
+    allowed = frozenset(portfolio_tickers)
+    kept: dict[str, str] = {}
+    skipped: list[str] = []
+    for name, path in ensemble_dirs.items():
+        need = required_tickers_for_ensemble_dir(path)
+        if need <= allowed:
+            kept[name] = path
+        else:
+            missing = sorted(t.name for t in (need - allowed))
+            skipped.append(f"{name} (needs {', '.join(missing)} not in portfolio tickers)")
+    if skipped:
+        logger.warning(
+            "Skipping %d vault ensemble(s) incompatible with portfolio tickers: %s",
+            len(skipped),
+            "; ".join(skipped),
+        )
+    if not kept:
+        raise ValueError(
+            "No ensembles remain after filtering to portfolio tickers. "
+            "Add the missing symbols to config.tickers or set ensemble_dirs explicitly."
+        )
+    return kept
+
+
 def load_config() -> PortfolioResearchConfig:
     """Single source of truth for portfolio research. Edit the block below."""
     # ==========================================================================
@@ -182,12 +293,10 @@ def load_config() -> PortfolioResearchConfig:
     tickers = [
         Ticker.ES,
         Ticker.NQ,
-        Ticker.RTY,
-        Ticker.TLT,
-        Ticker.GC,
+        Ticker.GC
     ]
     timeframe = TimeFrame.D
-    start = datetime(2006, 1, 1)
+    start = datetime(2000, 1, 1)
     end = datetime(2026, 2, 20)
     use_cache = True
     populate_cache = False
@@ -217,20 +326,25 @@ def load_config() -> PortfolioResearchConfig:
         test_end=datetime(2026, 2, 20),
     )
 
-    # By default, use daily + monthly ensembles.
-    ensemble_dirs = _discover_ensemble_dirs(
-        allowed_timeframes=(TimeFrame.D, TimeFrame.M),
+    # By default, use daily + monthly ensembles that only need configured tickers.
+    ensemble_dirs = filter_ensemble_dirs_for_portfolio_tickers(
+        _discover_ensemble_dirs(allowed_timeframes=(TimeFrame.D, TimeFrame.M)),
+        tickers,
     )
 
     target_volatility = 0.15
-    weight_layer_method = "equal_signal"
+    weight_layer_method = "hrp_classic"
     weight_layer_kwargs = {
         "fdm_max": 2.0,
-        "group_weight_cap": 1.0,
+        "rho_cut": 0.05
     }
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"
+    export_per_timeframe_tearsheets = False
+    export_per_ensemble_tearsheets = False
+    feature_vault_correlation = FeatureVaultCorrelationConfig(enabled=False)
+    strict_cache_preflight = False
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -256,4 +370,8 @@ def load_config() -> PortfolioResearchConfig:
         max_position_pct=max_position_pct,
         baseline_mode=baseline_mode,
         output_root=output_root,
+        export_per_timeframe_tearsheets=export_per_timeframe_tearsheets,
+        export_per_ensemble_tearsheets=export_per_ensemble_tearsheets,
+        feature_vault_correlation=feature_vault_correlation,
+        strict_cache_preflight=strict_cache_preflight,
     )

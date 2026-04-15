@@ -84,7 +84,8 @@ class EWSDNode(BiasNode):
             Weight for long-run estimate in blend
         """
         super().__init__(ticker, tf)
-        
+        self.module_name = "ewsd"
+
         # EWMA parameters
         self.lambda_short = lambda_short
         self.long_run_window = long_run_window

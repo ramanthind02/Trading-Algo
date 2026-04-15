@@ -317,7 +317,7 @@ def _run_live_cache_refresh_cycle(
         PortfolioWorld,
         load_global_portfolio_snapshot,
     )
-    from utils.cache.portfolio_materialization import materialize_global_portfolio_predictions
+    from utils.cache.runtime.portfolio_materialization import materialize_global_portfolio_predictions
 
     started_at = _utc_now_iso()
     resolved_manifest_path = str(

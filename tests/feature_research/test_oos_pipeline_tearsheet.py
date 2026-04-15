@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from feature_research.config import FeatureType, OOSWindowConfig
-from feature_research.in_sample.config import load_config
+from feature_research.config import load_config
 from feature_research.pipeline import run_oos_pipeline
 from utils.core.enums import Ticker
 
@@ -69,7 +69,16 @@ def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(
         "utils.evaluation.walkforward.research_data.load_features_for_combo",
-        lambda _single_spec, _cfg, **_kwargs: (feature, target, None),
+        lambda _single_spec, _cfg, **_kwargs: (
+            feature,
+            target,
+            "feature",
+            pd.Series(
+                [_cfg.tickers[0].name] * len(feature.index),
+                index=feature.index,
+                name="ticker",
+            ),
+        ),
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.build_fold_rows_from_explicit_specs",
@@ -106,7 +115,7 @@ def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_pa
     assert isinstance(feature_data_by_combo, dict)
     assert len(feature_data_by_combo) == 1
     only_value = next(iter(feature_data_by_combo.values()))
-    assert list(only_value.columns) == ["signal", "target"]
+    assert list(only_value.columns) == ["signal", "target", "returns", "ticker"]
 
 
 def test_oos_pipeline_uses_available_data_when_no_full_coverage(
@@ -186,7 +195,16 @@ def test_oos_pipeline_uses_available_data_when_no_full_coverage(
     )
     monkeypatch.setattr(
         "utils.evaluation.walkforward.research_data.load_features_for_combo",
-        lambda _single_spec, _cfg, **_kwargs: (feature, target, None),
+        lambda _single_spec, _cfg, **_kwargs: (
+            feature,
+            target,
+            "feature",
+            pd.Series(
+                [_cfg.tickers[0].name] * len(feature.index),
+                index=feature.index,
+                name="ticker",
+            ),
+        ),
     )
     monkeypatch.setattr(
         "feature_research.pipelines._shared.build_fold_rows_from_explicit_specs",

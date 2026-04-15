@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.cache.bias_node_cache import BiasNodeCache, CacheMissError
-from utils.cache.cache_paths import default_live_artifact_cache_dir
+from utils.cache.runtime.bias_node_cache import BiasNodeCache, CacheMissError
+from utils.cache.runtime.cache_paths import default_live_artifact_cache_dir
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -189,6 +189,39 @@ class TestBiasNodeCache:
         assert sample_cache.exists()
 
         sample_cache.invalidate()
+        assert not sample_cache.exists()
+
+    def test_invalidate_removes_metadata_sidecar(self, sample_cache, sample_data) -> None:
+        """Central-cache ``*.parquet.meta.json`` is removed with the artifact."""
+        sample_cache.save(sample_data)
+        meta = Path(sample_cache.cache_path).with_suffix(".parquet.meta.json")
+        meta.write_text('{"descriptor": {}}', encoding="utf-8")
+        assert meta.exists()
+
+        sample_cache.invalidate()
+
+        assert not sample_cache.exists()
+        assert not meta.exists()
+
+    def test_load_truncated_parquet_invalidates(self, sample_cache) -> None:
+        """Very small on-disk files are not valid Parquet and are removed."""
+        sample_cache._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        sample_cache._cache_path.write_bytes(b"PAR1")
+
+        with pytest.raises(CacheMissError):
+            sample_cache.load()
+
+        assert not sample_cache.exists()
+
+    def test_load_corrupt_parquet_invalidates(self, sample_cache) -> None:
+        """Unreadable Parquet is removed and surfaced as CacheMissError."""
+        sample_cache._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        sample_cache._cache_path.write_bytes(b"not-a-parquet-file-at-all!!")
+
+        with pytest.raises(CacheMissError) as exc_info:
+            sample_cache.load()
+
+        assert "Corrupt" in exc_info.value.reason or "non-Parquet" in exc_info.value.reason
         assert not sample_cache.exists()
 
     def test_save_dataframe_multi_output(self, sample_cache):

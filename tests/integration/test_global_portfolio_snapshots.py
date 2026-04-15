@@ -25,10 +25,10 @@ from tests.integration._portfolio_cache_helpers import (  # noqa: E402
     instrument_returns_from_cache,
     source_data_available,
 )
-from utils.cache.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
-from utils.cache.central_cache import CentralCacheStore  # noqa: E402
-from utils.cache.central_cache_models import ArtifactScope  # noqa: E402
-from utils.cache.portfolio_materialization import (  # noqa: E402
+from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
+from utils.cache.runtime.central_cache import CentralCacheStore  # noqa: E402
+from utils.cache.runtime.central_cache_models import ArtifactScope  # noqa: E402
+from utils.cache.runtime.portfolio_materialization import (  # noqa: E402
     materialize_global_portfolio_predictions,
 )
 from utils.core.enums import TimeFrame  # noqa: E402
@@ -155,9 +155,6 @@ def test_global_portfolio_snapshot_roundtrip_and_materialization(
     assert test_summary.portfolio_rows_written == len(test_positions)
     assert test_summary.base_model_rows_written > 0
 
-    identity_payload = ensemble.vault_base_model_identities[
-        next(iter(ensemble.vault_base_model_identities))
-    ]
     portfolio_path = (
         Path(cache_root)
         / "materialized"
@@ -165,15 +162,17 @@ def test_global_portfolio_snapshot_roundtrip_and_materialization(
         / "portfolio"
         / f"{portfolio_id}.parquet"
     )
-    base_model_path = (
+    base_models_dir = (
         Path(cache_root)
         / "materialized"
         / "live"
         / "base_models"
         / str(ensemble.vault_timeframe)
         / str(ensemble.vault_ensemble_name)
-        / f"{identity_payload['feature_name']}__{identity_payload['model_id']}.parquet"
     )
+    base_model_parquets = sorted(base_models_dir.glob("*.parquet"))
+    assert len(base_model_parquets) == 1
+    base_model_path = base_model_parquets[0]
 
     portfolio_rows = pd.read_parquet(portfolio_path)
     assert {

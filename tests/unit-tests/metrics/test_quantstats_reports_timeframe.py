@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import math
+
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -7,6 +10,7 @@ from metrics.plotting.graphing import quantstats_reports
 from metrics.plotting.graphing.quantstats_reports import (
     _resample_to_daily_if_needed,
     generate_tearsheet,
+    vol_scale_returns_to_target_annualized_volatility,
 )
 from utils.core.enums import TimeFrame
 
@@ -57,3 +61,52 @@ def test_generate_tearsheet_skips_empty_strategy_returns(monkeypatch: pytest.Mon
         )
 
     assert calls == []
+
+
+def test_vol_scale_returns_to_target_annualized_volatility_matches_target() -> None:
+    rng = np.random.default_rng(42)
+    idx = pd.date_range("2020-01-01", periods=120, freq="D")
+    daily = pd.Series(rng.normal(0.0, 0.012, size=len(idx)), index=idx)
+    scaled = vol_scale_returns_to_target_annualized_volatility(
+        daily,
+        target_annual_volatility=0.10,
+        bars_per_year=252,
+    )
+    realized = float(scaled.std(ddof=1)) * math.sqrt(252.0)
+    assert abs(realized - 0.10) < 0.02
+
+
+def test_generate_tearsheet_applies_target_annual_volatility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[pd.Series] = []
+
+    class _Reports:
+        @staticmethod
+        def html(strategy: pd.Series, **_kwargs: object) -> None:
+            captured.append(strategy)
+
+    monkeypatch.setattr(quantstats_reports, "HAS_QUANTSTATS", True)
+    monkeypatch.setattr(
+        quantstats_reports,
+        "qs",
+        type("_QS", (), {"reports": _Reports})(),
+    )
+
+    idx = pd.date_range("2020-01-01", periods=60, freq="D")
+    rng = np.random.default_rng(7)
+    strategy_returns = pd.Series(rng.normal(0.0, 0.02, size=len(idx)), index=idx)
+
+    generate_tearsheet(
+        strategy_returns=strategy_returns,
+        feature_name="Scaled",
+        output_file="out.html",
+        mode="html",
+        timeframe=TimeFrame.D,
+        target_annual_volatility=0.10,
+    )
+
+    assert len(captured) == 1
+    out = captured[0]
+    realized = float(out.dropna().std(ddof=1)) * math.sqrt(252.0)
+    assert abs(realized - 0.10) < 0.03

@@ -1,9 +1,12 @@
 """Unit tests for portfolio_tester resampling and intraday aggregation helpers."""
 
+import math
+
 import pandas as pd
 
-from ensemble.portfolio_tester import (
+from ensemble.portfolio_impl.portfolio_tester import (
     aggregate_intraday_returns_to_daily,
+    calculate_strategy_returns_from_positions,
     resample_positions_to_daily,
 )
 
@@ -60,3 +63,35 @@ def test_aggregate_intraday_returns_to_daily_noop_for_unique_day_frequencies() -
         returns = pd.Series([0.1, -0.2, 0.05, 0.03], index=idx, name="baseline_return")
         result = aggregate_intraday_returns_to_daily(returns)
         pd.testing.assert_series_equal(result, returns)
+
+
+def test_calculate_strategy_returns_log_vs_simple_differs_on_synthetic_candles() -> None:
+    """Simple returns match pct-change; log uses diff(log(close)); both use same lookahead merge."""
+    candles = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+            "ticker": ["ES", "ES"],
+            "close": [100.0, 110.0],
+        }
+    )
+    positions = pd.DataFrame(
+        {
+            "ticker": ["ES"],
+            "datetime": pd.to_datetime(["2024-01-01"]),
+            "position_fraction": [1.0],
+        }
+    )
+    log_ret = calculate_strategy_returns_from_positions(
+        positions, candles, instrument_return_kind="log"
+    )
+    simple_ret = calculate_strategy_returns_from_positions(
+        positions, candles, instrument_return_kind="simple"
+    )
+
+    assert len(log_ret) == 1
+    assert len(simple_ret) == 1
+    expected_simple = 0.1
+    expected_log = math.log(110.0 / 100.0)
+    assert abs(float(simple_ret.iloc[0]) - expected_simple) < 1e-12
+    assert abs(float(log_ret.iloc[0]) - expected_log) < 1e-12
+    assert abs(float(simple_ret.iloc[0]) - float(log_ret.iloc[0])) > 1e-6

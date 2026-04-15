@@ -1,32 +1,80 @@
 """Unified data loading and cache management for both continuous and rule-based research.
 
-Dispatches on feature_type for validation-specific logic:
-  - CONTINUOUS: no additional validation beyond standard checks
-  - RULE_BASED: skips multi-ticker raw return validation (handled at config level)
+Dispatches on feature_type:
+
+  - **CONTINUOUS:** raw bias-node columns are **quantile-binned per ticker** (same as permutation:
+    ``binning_params.bin_counts[0]``, ``strategy`` → ±1/0). Returned ``feature`` series is that
+    discrete signal, not the raw continuous values.
+  - **SIGNED_SIGNAL:** native discrete output from the node (no binning).
+
+Validation: CONTINUOUS still rejects multi-ticker **raw** return targets (``log_return`` / ``raw_return``).
 """
 from __future__ import annotations
 
-from itertools import product
+import hashlib
+import json
+import re
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
 
 if TYPE_CHECKING:
-    from feature_research.in_sample.config import ResearchConfig
+    from feature_research.config import ResearchConfig
+
+
+class SupportsBiasCachePopulation(Protocol):
+    """Subset of config used by cache bootstrap / bias coverage helpers."""
+
+    tickers: list[Ticker]
+    bias_spec: dict[str, Any]
+    start: datetime
+    end: datetime
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_research.bootstrap import find_repo_root
 from feature_research.config import FeatureType, RAW_TARGET_COLS
-from utils.cache.cache_manager import CacheManager
+from utils.cache import ArtifactScope
+from utils.cache.runtime.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
-from utils.data.cross_ticker_store import SCALAR_LIST_PARAM_KEYS, extract_cross_ticker_names
+from utils.cache.runtime.feature_pipeline_support import expand_param_grid as _expand_bias_param_grid
+from utils.data.cross_ticker_store import extract_cross_ticker_names
 
 
 def _resolve_project_root() -> Path | None:
     this_file = Path(__file__).resolve()
     return find_repo_root(this_file)
+
+
+def _cache_coverage_console_message(summary: dict[str, Any]) -> str:
+    """One-line cache summary for the console; omits per-task ``details`` (can be 100+ rows)."""
+    parts = [
+        f"total_tasks={summary.get('total_tasks')}",
+        f"rebuilt={summary.get('rebuilt')}",
+        f"validated={summary.get('validated')}",
+        f"failed={summary.get('failed')}",
+        f"tickers={summary.get('requested_tickers')}",
+        f"timeframes={summary.get('timeframes')}",
+        f"refresh_mode={summary.get('refresh_mode')}",
+    ]
+    msg = "[data_loader] Cache coverage ensured: " + ", ".join(parts)
+    if int(summary.get("failed") or 0) <= 0:
+        return msg
+    details = summary.get("details")
+    if not isinstance(details, list):
+        return msg
+    fails = [d for d in details if isinstance(d, dict) and d.get("status") == "failed"]
+    if not fails:
+        return msg
+    cap = 12
+    tail = f" ({len(fails)} total)" if len(fails) > cap else ""
+    return f"{msg}; failed_tasks={fails[:cap]!r}{tail}"
+
+
+def _normalize_bias_module_key(module_name: object) -> str:
+    return str(module_name or "").replace("_", "").lower()
 
 
 def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
@@ -43,12 +91,9 @@ def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
         List of fully expanded specs, one per parameter combination.
     """
     params = bias_spec.get("params", {})
-    keys = list(params.keys())
-    values = [
-        v if (isinstance(v, list) and k not in SCALAR_LIST_PARAM_KEYS) else [v]
-        for k, v in zip(keys, params.values())
-    ]
-    combos = [dict(zip(keys, combo)) for combo in product(*values)] if keys else [{}]
+    if not isinstance(params, dict):
+        params = {}
+    combos = _expand_bias_param_grid(params)
     return [
         {
             "module_name": bias_spec["module_name"],
@@ -91,7 +136,7 @@ def _normalize_timeframes(
 
 
 def _cache_requirements_for_bias_spec(
-    config: "ResearchConfig",
+    config: SupportsBiasCachePopulation,
     bias_spec: dict[str, Any] | None = None,
     *,
     include_daily_ewsd: bool = True,
@@ -163,8 +208,28 @@ def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
     return normalized
 
 
+_INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+# Keep final segments short so repo_path + results/.../filter_gate/<label> stays under Windows MAX_PATH.
+_MAX_PARAM_COMBO_LABEL_LEN = 80
+
+
+def _sanitize_path_label(raw: str) -> str:
+    """Strip characters illegal in Windows path segments (and collapse to safe token)."""
+    cleaned = _INVALID_PATH_CHARS.sub("_", raw)
+    cleaned = cleaned.strip(" .")
+    return cleaned if cleaned else "combo"
+
+
 def param_combo_label(combo: dict[str, Any]) -> str:
-    """Return a human-readable folder name for a param combo dict.
+    """Return a filesystem-safe folder name for a param combo dict.
+
+    Nested dicts (e.g. ``filter_params`` / ``signal_params`` on ``filter_gate``) are
+    flattened recursively. Scalar values are never passed through ``repr()`` of a dict
+    (which would inject ``:`` and quotes and break Windows ``mkdir``).
+
+    If the flattened label would exceed ``_MAX_PARAM_COMBO_LABEL_LEN`` characters, it is
+    replaced by ``combo_<sha256>`` so paths stay within Windows ``MAX_PATH`` limits.
 
     Parameters
     ----------
@@ -174,7 +239,7 @@ def param_combo_label(combo: dict[str, Any]) -> str:
     Returns
     -------
     str
-        Folder-safe label, e.g., "lookback_10__other_5" (sorted by key).
+        Folder-safe label, e.g. ``lookback_10__other_5`` (sorted by key).
 
     Examples
     --------
@@ -183,33 +248,82 @@ def param_combo_label(combo: dict[str, Any]) -> str:
     >>> param_combo_label({"lookback": 20, "atr_length": 14})
     'atr_length_14__lookback_20'
     """
-    parts = [f"{k}_{v}" for k, v in sorted(combo.items())]
-    return "__".join(parts)
+    if not combo:
+        return "empty_params"
+    segments: list[str] = []
+    for key, val in sorted(combo.items()):
+        if isinstance(val, dict):
+            nested = param_combo_label(val)
+            segments.append(f"{key}__{nested}")
+        elif isinstance(val, (list, tuple)):
+            flat = "_".join(str(x) for x in val)
+            segments.append(f"{key}_{flat}")
+        else:
+            segments.append(f"{key}_{val}")
+    joined = "__".join(segments)
+    sanitized = _sanitize_path_label(joined)
+    if len(sanitized) <= _MAX_PARAM_COMBO_LABEL_LEN:
+        return sanitized
+    digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:32]
+    return _sanitize_path_label(f"combo_{digest}")
+
+
+def permutation_combo_display_name(params: dict[str, Any] | None) -> str:
+    """Human-readable label for permutation / validation tables.
+
+    Nested research payloads may embed parent bias-node params; surface those
+    instead of stringifying deeply nested dicts.
+    """
+    if not params:
+        return "unknown"
+    scalar_like = all(
+        v is None or isinstance(v, (bool, int, float, str)) for v in params.values()
+    )
+    if scalar_like:
+        return param_combo_label(params)
+    digest = hashlib.sha256(
+        json.dumps(params, sort_keys=True, default=str).encode()
+    ).hexdigest()[:12]
+    return f"complex_spec · id_{digest}"
 
 
 def populate_cache_if_needed(
-    config: "ResearchConfig",
+    config: SupportsBiasCachePopulation,
     *,
     bias_spec: dict[str, Any] | None = None,
+    artifact_scope: ArtifactScope = ArtifactScope.LIVE,
+    bias_cache_max_workers: int = 6,
 ) -> None:
-    """Ensure feature-research cache coverage if config.populate_cache is True.
+    """Bootstrap OHLC into the central cache, then ensure bias (+EWSD) artifact coverage.
+
+    Feature-research pipelines call this before cache-backed extraction so reads
+    hit ``CentralCacheStore`` with missing/stale artifacts refreshed first.
 
     The helper bootstraps the required source candles into the runtime cache,
-    then refreshes bias artifacts from that cache. Candle bootstrap uses the
-    full common available source range across the requested tickers,
-    cross-ticker dependencies, and required timeframes.
+    then refreshes bias artifacts from that cache. Date span is the
+    **intersection** of ``[config.start, config.end]`` with the common available
+    OHLC range across the requested tickers, dependencies, and timeframes.
+
+    For in-sample pipelines, pass a config whose ``start``/``end`` cover the **full**
+    research span you want cached; narrow to ``training_window_bounds`` only *after*
+    calling this helper so validation/OOS can reuse the same artifacts.
 
     Safe to call even if cache already exists. Missing, stale, and out-of-range
     artifacts are refreshed; fresh artifacts are left untouched.
 
     Parameters
     ----------
-    config : ResearchConfig
-        Research configuration with populate_cache flag and bias_spec.
+    config : SupportsBiasCachePopulation
+        Any config with ``tickers``, ``bias_spec``, ``start``, ``end``
+        (e.g. ``ResearchConfig`` or ``BinningResearchConfig``).
+    artifact_scope :
+        Namespace for bias-node parquet (default live). Use ``RESEARCH`` for
+        binning-phase runs that should not write under ``artifacts/live``.
+    bias_cache_max_workers :
+        Thread count for parallel bias-node **rebuilds** in
+        ``CacheManager.ensure_bias_cache_coverage`` (default ``6``). Set to ``1`` for
+        fully sequential rebuilds.
     """
-    if not config.populate_cache:
-        return
-
     project_root = _resolve_project_root()
     if project_root is None:
         project_root = Path(__file__).resolve().parents[3]
@@ -237,16 +351,26 @@ def populate_cache_if_needed(
         tickers=bootstrap_tickers,
         timeframes=timeframes,
     )
+    req_start = pd.Timestamp(config.start).to_pydatetime()
+    req_end = pd.Timestamp(config.end).to_pydatetime()
     if all(ticker in ranges for ticker in bootstrap_tickers):
-        start_date = max(ranges[ticker][0] for ticker in bootstrap_tickers)
-        end_date = min(ranges[ticker][1] for ticker in bootstrap_tickers)
+        common_start = max(ranges[ticker][0] for ticker in bootstrap_tickers)
+        common_end = min(ranges[ticker][1] for ticker in bootstrap_tickers)
+        start_date = max(common_start, req_start)
+        end_date = min(common_end, req_end)
+        if start_date > end_date:
+            raise ValueError(
+                "Config date window does not overlap available OHLC common range: "
+                f"requested [{req_start.date()} .. {req_end.date()}], "
+                f"common [{common_start.date()} .. {common_end.date()}]."
+            )
         print(
-            "[data_loader] Populating cache with full common OHLC range: "
+            "[data_loader] Populating cache (clipped to config window & common OHLC): "
             f"{start_date.date()} -> {end_date.date()}"
         )
     else:
-        start_date = config.start
-        end_date = config.end
+        start_date = req_start
+        end_date = req_end
         print(
             "[data_loader] Could not discover common OHLC date range; "
             f"using config: {start_date.date()} -> {end_date.date()}"
@@ -268,10 +392,12 @@ def populate_cache_if_needed(
         end_date=end_date,
         refresh_mode="missing_stale_only",
         include_daily_ewsd=True,
+        artifact_scope=artifact_scope,
+        max_workers=bias_cache_max_workers,
     )
     if summary["failed"] > 0:
         raise ValueError(f"Failed to ensure feature cache coverage: {summary}")
-    print(f"[data_loader] Cache coverage ensured: {summary}")
+    print(_cache_coverage_console_message(summary))
 
 
 def get_tickers_with_coverage_for_config(
@@ -442,7 +568,7 @@ def load_features_for_combo(
     single_combo_spec: dict[str, Any],
     config: "ResearchConfig",
     candles_override: pd.DataFrame | None = None,
-) -> tuple[pd.Series, pd.Series, str] | None:
+) -> tuple[pd.Series, pd.Series, str, pd.Series] | None:
     """Extract feature + target Series for a single param combo across all config tickers.
 
     Dispatches on feature_type for validation logic.
@@ -460,9 +586,10 @@ def load_features_for_combo(
 
     Returns
     -------
-    (feature, target, feature_col) or None
-        Aligned (feature, target) Series and feature column name.
-        Returns None if extraction fails or returns empty data.
+    (feature, target, feature_col, ticker) or None
+        Aligned (feature, target) Series, bias-node column name, and per-row ``ticker``.
+        For ``feature_type=CONTINUOUS``, ``feature`` values are **quantile-binned** ±1/0
+        (permutation-equivalent), not raw continuous levels.
 
     Raises
     ------
@@ -475,7 +602,7 @@ def load_features_for_combo(
         start=config.start,
         end=config.end,
         target_col=config.target_col,
-        use_cache=config.use_cache,
+        use_cache=True,
         candles_override=candles_override,
     )
 
@@ -501,16 +628,23 @@ def load_features_for_combo(
         )
     target_col_name = config.target_col
 
-    aligned = pd.DataFrame(
-        {"feature": features_df[feature_col], "target": targets_df[target_col_name]}
-    ).dropna()
+    # concat (not DataFrame(dict)) so duplicate (datetime,) rows for multi-ticker do not
+    # trigger pandas homogenize/reindex, which fails on duplicate index labels.
+    # Include ticker in the same concat — never ``.reindex(aligned.index)`` when the index
+    # has duplicates (pandas raises ValueError).
+    feat_s = features_df[feature_col].rename("feature")
+    targ_s = targets_df[target_col_name].rename("target")
+    if "ticker" in features_df.columns:
+        tick_part = features_df["ticker"].astype(str).rename("ticker")
+    else:
+        first_ticker = config.tickers[0]
+        ticker_label = first_ticker.name if hasattr(first_ticker, "name") else str(first_ticker)
+        tick_part = pd.Series(ticker_label, index=feat_s.index, dtype=str).rename("ticker")
+    aligned = pd.concat([feat_s, targ_s, tick_part], axis=1).dropna(how="any")
 
     if aligned.empty:
         return None
 
-    # DISPATCH: Feature-type-specific validation
-    # For CONTINUOUS: all validations are ok
-    # For RULE_BASED: skip multi-ticker raw return check (already checked at config level)
     if config.feature_type == FeatureType.CONTINUOUS:
         if target_col_name in RAW_TARGET_COLS:
             unique_tickers = (
@@ -525,9 +659,11 @@ def load_features_for_combo(
                     "across tickers. Use 'log_return_ewsd'."
                 )
 
-    feature_series = aligned["feature"].copy()
-    feature_series.name = feature_col
     target_series = aligned["target"].copy()
     target_series.name = target_col_name
+    ticker_series = aligned["ticker"].copy()
+    ticker_series.name = "ticker"
+    feature_series = aligned["feature"].copy()
+    feature_series.name = feature_col
 
-    return feature_series, target_series, feature_col
+    return feature_series, target_series, feature_col, ticker_series

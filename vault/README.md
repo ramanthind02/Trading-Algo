@@ -37,8 +37,8 @@ See:
 
 ### Saving from feature research
 
-To save a research model to the vault after you are satisfied with results, set `vault_save` in `feature_research.config.load_config()` (ensemble name, direction, and optional `params_to_save`), then run:
+To save a research model to the vault after you are satisfied with results, set `vault_save` (`VaultSaveConfig`: direction, ensemble target, optional tickers override, `dry_run`; the feature always uses `eval_bias_spec` from the same config) in `feature_research.config.load_config()`, then run:
 
 ```bash
-python -m feature_research.save_to_vault
+python -m feature_research.save_feature_to_vault
 ```

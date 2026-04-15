@@ -64,11 +64,13 @@ def load_report_config() -> LucidPortfolioReportConfig:
     # ==========================================================================
     # EDIT BELOW
     # ==========================================================================
+    # Purchase caps: max 5 funded and 5 challenge slots (portfolio research alignment).
+    # Return-engine window spans portfolio validation + test (see portfolio_research.config).
     simulation = PortfolioSimulationConfig(
         account_code="25000",
         purchase_policy=PurchasePolicyConfig(
             funded_account_cap=5,
-            challenge_account_cap=8,
+            challenge_account_cap=5,
             challenges_per_purchase_window=1,
         ),
         payout_policy=PortfolioPayoutPolicyConfig(
@@ -80,9 +82,9 @@ def load_report_config() -> LucidPortfolioReportConfig:
             target_annual_volatility=0.10,
             target_sharpe=2,
             annualization_factor=252.0,
-            start_date="2021-01-01",
-            end_date="2025-12-31",
-            random_seed=42 ,
+            start_date="2018-01-01",
+            end_date="2026-02-20",
+            random_seed=42,
         ),
         challenge_vol_multiplier=2,
         funded_vol_multiplier=0.5,

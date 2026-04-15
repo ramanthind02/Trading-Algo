@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 import utils.core.helpers as helpers
-from eda.feature_explorer import FeatureExplorer
+from research.feature_explorer import FeatureExplorer
 from feature_extraction.feature_extractor import extract_features_for_bias_node
 from feature_selection.base_models import (
     BinningModelBase,
@@ -264,7 +264,7 @@ def generate_node_tearsheet(
     -------
     tearsheet_path : str or None
     """
-    from ensemble.portfolio_tester import (
+    from ensemble.portfolio_impl.portfolio_tester import (
         calculate_baseline_returns,
         calculate_strategy_returns_from_positions,
     )

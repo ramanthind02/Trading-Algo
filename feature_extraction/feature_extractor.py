@@ -50,14 +50,19 @@ import numpy as np
 import pandas as pd
 
 import utils.core.helpers as helpers
-from utils.cache.central_cache import CentralCacheStore
-from utils.cache.central_cache_errors import ArtifactMissingError, CacheCoverageError
-from utils.cache.central_cache_models import (
+from utils.cache.runtime.central_cache import CentralCacheStore
+from utils.cache.runtime.central_cache_errors import (
+    ArtifactLifecycleError,
+    ArtifactMissingError,
+    CacheCoverageError,
+    SourceRevisionConflictError,
+)
+from utils.cache.runtime.central_cache_models import (
     ArtifactDescriptor,
     ArtifactScope,
     CacheRequest,
 )
-from utils.cache.feature_pipeline_support import (
+from utils.cache.runtime.feature_pipeline_support import (
     assign_cached_feature_values as _assign_cached_feature_values,
     build_bias_node_descriptor as _build_bias_node_descriptor,
     ensure_utc_datetime_index as _ensure_utc_datetime_index,
@@ -72,6 +77,15 @@ from utils.cache.feature_pipeline_support import (
 )
 from utils.core.enums import TimeFrame, Ticker
 from utils.core.models import Candle
+
+# Metadata keys that may appear in persisted bias_spec JSON but are not bias-node params.
+_RESERVED_BIAS_PARAM_KEYS: frozenset[str] = frozenset({"filter_specs"})
+
+
+def _strip_reserved_bias_params(params: Dict[str, Any]) -> Dict[str, Any]:
+    if not params or not _RESERVED_BIAS_PARAM_KEYS.intersection(params.keys()):
+        return params
+    return {k: v for k, v in params.items() if k not in _RESERVED_BIAS_PARAM_KEYS}
 
 
 def _safe_log_return(close: pd.Series, open_: pd.Series) -> pd.Series:
@@ -290,7 +304,6 @@ def _extract_features_single_ticker(
     populate_on_miss: bool = False,
     cache_scope: ArtifactScope = ArtifactScope.LIVE,
     price_df_override: pd.DataFrame | None = None,
-    filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single ticker.
@@ -337,9 +350,8 @@ def _extract_features_single_ticker(
     
     for param_combo in param_combos:
         for tf in timeframes:
-            bias_node = helpers.create_filtered_bias_node(
+            bias_node = helpers.create_fresh_bias_node(
                 module_name, ticker, tf, param_combo,
-                filter_specs=filter_specs if filter_specs else [],
             )
             bias_nodes.append(bias_node)
             bias_node_info.append((bias_node, param_combo, tf))
@@ -372,7 +384,7 @@ def _extract_features_single_ticker(
     if use_cache:
         cache_requests: list[tuple[Any, ArtifactDescriptor, CacheRequest]] = []
         for bias_node, orig_params, orig_tf in bias_node_info:
-            node_module = getattr(bias_node, "module_name", module_name)
+            node_module = getattr(bias_node, "module_name", module_name) or module_name
             node_params = getattr(bias_node, "params", orig_params)
             node_tf = getattr(bias_node, "tf", orig_tf)
             descriptor = _build_bias_node_descriptor(
@@ -406,7 +418,7 @@ def _extract_features_single_ticker(
                     start_col,
                     end_col,
                 )
-            except (ArtifactMissingError, CacheCoverageError):
+            except (ArtifactMissingError, CacheCoverageError, ArtifactLifecycleError):
                 if not populate_on_miss:
                     raise
                 missing_requests.append((bias_node, descriptor, request))
@@ -451,8 +463,9 @@ def _extract_features_single_ticker(
                     feature_data[idx, start_col + i] = float(val) if val is not None else np.nan
 
         if populate_on_miss:
+            cache_request = CacheRequest(start=start, end=end)
             for bias_node, orig_params, orig_tf in bias_node_info:
-                node_module = getattr(bias_node, "module_name", module_name)
+                node_module = getattr(bias_node, "module_name", module_name) or module_name
                 node_params = getattr(bias_node, "params", orig_params)
                 node_tf = getattr(bias_node, "tf", orig_tf)
                 descriptor = _build_bias_node_descriptor(
@@ -468,12 +481,28 @@ def _extract_features_single_ticker(
                     index=price_df.index,
                     columns=column_names[start_col:end_col],
                 )
-                _write_feature_artifact(
-                    cache_store,
-                    descriptor,
-                    cached_slice,
-                    source_dependencies,
-                )
+                try:
+                    _write_feature_artifact(
+                        cache_store,
+                        descriptor,
+                        cached_slice,
+                        source_dependencies,
+                    )
+                except SourceRevisionConflictError:
+                    # Another refresh (e.g. ensure_bias_cache_coverage) already wrote a newer
+                    # artifact; load that revision instead of clobbering.
+                    cached_aligned = _read_aligned_feature_artifact(
+                        cache_store,
+                        descriptor,
+                        cache_request,
+                        price_df.index,
+                    )
+                    _assign_cached_feature_values(
+                        feature_data,
+                        cached_aligned,
+                        start_col,
+                        end_col,
+                    )
 
     # Create features DataFrame
     features_df = pd.DataFrame(feature_data, index=price_df.index, columns=column_names)
@@ -548,7 +577,6 @@ def extract_features(
     populate_on_miss: bool = False,
     cache_scope: ArtifactScope = ArtifactScope.LIVE,
     candles_override: pd.DataFrame | None = None,
-    filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features for a single bias node with parameter grid exploration.
@@ -622,8 +650,7 @@ def extract_features(
     if end is None:
         end = datetime.now()
     timeframes = _normalize_timeframes(timeframes)
-    if filter_specs is None:
-        filter_specs = []
+    params = _strip_reserved_bias_params(params)
 
     # Normalize ticker to list
     if isinstance(ticker, Ticker):
@@ -657,7 +684,6 @@ def extract_features(
             populate_on_miss=populate_on_miss,
             cache_scope=cache_scope,
             price_df_override=override_by_ticker.get(tickers[0]),
-            filter_specs=filter_specs,
         )
         
         # Add ticker column for identification
@@ -682,7 +708,6 @@ def extract_features(
             populate_on_miss=populate_on_miss,
             cache_scope=cache_scope,
             price_df_override=override_by_ticker.get(single_ticker),
-            filter_specs=filter_specs,
         )
         
         # Primary key is (datetime, ticker); no millisecond offset
@@ -714,7 +739,6 @@ def extract_features_with_forward_returns(
     populate_on_miss: bool = False,
     cache_scope: ArtifactScope = ArtifactScope.LIVE,
     candles_override: pd.DataFrame | None = None,
-    filter_specs: list = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Extract features and compute intraday returns (shifted forward) automatically.
@@ -799,8 +823,7 @@ def extract_features_with_forward_returns(
     if end is None:
         end = datetime.now()
     timeframes = _normalize_timeframes(timeframes)
-    if filter_specs is None:
-        filter_specs = []
+    params = _strip_reserved_bias_params(params)
 
     # Normalize ticker to list
     if isinstance(ticker, Ticker):
@@ -840,12 +863,20 @@ def extract_features_with_forward_returns(
     }
 
     # STEP 1: Extract features - ALWAYS include EWSD for volatility scaling
-    # Extract main module features (filters apply only to the user's signal node)
+    # Extract main module features (pass explicit kwargs so stray keys on extract_kw
+    # cannot reach extract_features — e.g. legacy filter_specs on a shared dict).
     main_features_df, _ = extract_features(
         module_name=module_name,
         params=params,
-        filter_specs=filter_specs,
-        **extract_kw,
+        ticker=extract_kw["ticker"],
+        start=extract_kw["start"],
+        end=extract_kw["end"],
+        timeframes=extract_kw["timeframes"],
+        use_millisecond_offset=extract_kw["use_millisecond_offset"],
+        use_cache=extract_kw["use_cache"],
+        populate_on_miss=extract_kw["populate_on_miss"],
+        cache_scope=extract_kw["cache_scope"],
+        candles_override=extract_kw["candles_override"],
     )
 
     # Extract EWSD features (mandatory for volatility scaling)
@@ -853,7 +884,15 @@ def extract_features_with_forward_returns(
     ewsd_features_df, _ = extract_features(
         module_name='ewsd',
         params={'long_run_window': 10 * bars_per_year},
-        **extract_kw,
+        ticker=extract_kw["ticker"],
+        start=extract_kw["start"],
+        end=extract_kw["end"],
+        timeframes=extract_kw["timeframes"],
+        use_millisecond_offset=extract_kw["use_millisecond_offset"],
+        use_cache=extract_kw["use_cache"],
+        populate_on_miss=extract_kw["populate_on_miss"],
+        cache_scope=extract_kw["cache_scope"],
+        candles_override=extract_kw["candles_override"],
     )
 
     # Combine all features: main + EWSD
@@ -1267,8 +1306,7 @@ def extract_features_for_bias_node(
     if not isinstance(timeframes, list):
         timeframes = [timeframes]
     
-    params = bias_spec.get('params', {})
-    filter_specs = list(bias_spec.get('filters', ()))
+    params = _strip_reserved_bias_params(bias_spec.get('params', {}))
     
     # Use extract_features_with_forward_returns
     return extract_features_with_forward_returns(
@@ -1284,5 +1322,4 @@ def extract_features_for_bias_node(
         populate_on_miss=populate_on_miss,
         cache_scope=cache_scope,
         candles_override=candles_override,
-        filter_specs=filter_specs,
     )

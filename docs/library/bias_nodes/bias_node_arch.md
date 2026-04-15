@@ -1,5 +1,5 @@
-# Creating Bias Nodes (moved)
+# Bias node architecture (moved)
 
-This page has been consolidated into [[creating_nodes]].
+Implementation detail and checklists live in [[bias_nodes/creating_nodes]].
 
-Use that document for required attributes, templates, Cython notes, multi-ticker and future multi-timeframe side channels, the implemented max-lookback metadata API, and checklists.
+**Hub:** [[bias_nodes/index]] — all bias-node docs (creating nodes, composition patterns, production signed-signal contract).

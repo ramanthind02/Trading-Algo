@@ -1,22 +1,21 @@
-"""Continuous feature EDA (T002): decile analysis, distribution diagnostics, plots."""
+"""Continuous feature EDA (T002): decile analysis and distribution diagnostics."""
 from __future__ import annotations
 
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy import stats
 
+from feature_selection.eda.common_eda import (
+    EDA_VOL_EPS,
+    align_feature_target,
+    sharpe_from_mean_vol,
+)
 from feature_selection.eda.eda_dataclasses import (
-    ContinuousEDAPlots,
     DecileAnalysis,
     DecileBinStats,
     DistributionDiagnostics,
     QuintileSpread,
 )
-
-_VOL_THRESHOLD = 1e-10  # volatility below this is treated as zero
 
 
 def compute_decile_analysis(
@@ -24,18 +23,8 @@ def compute_decile_analysis(
     target: pd.Series,
     n_bins: int = 15,
 ) -> DecileAnalysis:
-    """Bin feature into n_bins quantile bins and compute per-bin target statistics.
-
-    Args:
-        feature: Continuous feature series (DatetimeIndex).
-        target: Aligned target return series.
-        n_bins: Number of quantile bins (default 15). Must satisfy n_bins <= len/10.
-
-    Raises:
-        ValueError: If n_bins > len(feature.dropna()) / 10.
-        ValueError: If actual distinct quantile bins formed != n_bins.
-    """
-    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
+    """Bin feature into n_bins quantile bins and compute per-bin target statistics."""
+    aligned = align_feature_target(feature, target)
     max_bins = len(aligned) // 10
     if n_bins > max_bins:
         raise ValueError(
@@ -70,10 +59,9 @@ def compute_decile_analysis(
         mean_return[idx_i] = m
         volatility[idx_i] = v
         sample_count[idx_i] = n
-        if v > _VOL_THRESHOLD:
-            sharpe[idx_i] = m / v
-            if n >= 2:
-                t_stat[idx_i] = m / (v / np.sqrt(n))
+        sharpe[idx_i] = sharpe_from_mean_vol(m, v)
+        if v > EDA_VOL_EPS and n >= 2:
+            t_stat[idx_i] = m / (v / np.sqrt(n))
 
     valid_means = mean_return[~np.isnan(mean_return)]
     tau, p = stats.kendalltau(np.arange(len(valid_means)), valid_means)
@@ -96,10 +84,7 @@ def compute_decile_analysis(
 
 
 def compute_distribution_diagnostics(feature: pd.Series) -> DistributionDiagnostics:
-    """Compute normality diagnostics for a feature series.
-
-    Uses Shapiro-Wilk for n <= 5000, D'Agostino K^2 test otherwise.
-    """
+    """Compute normality diagnostics for a feature series."""
     clean = feature.dropna().values
     skewness = float(stats.skew(clean))
     kurtosis = float(stats.kurtosis(clean))
@@ -122,12 +107,8 @@ def compute_quintile_spread(
     feature: pd.Series,
     target: pd.Series,
 ) -> QuintileSpread:
-    """Bin feature into 5 quantiles and compute per-quintile mean return.
-
-    spread = mean_return(Q5) - mean_return(Q1).
-    """
-    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
-    aligned = aligned.copy()
+    """Bin feature into 5 quantiles and compute per-quintile mean return."""
+    aligned = align_feature_target(feature, target).copy()
     aligned["quintile"] = pd.qcut(aligned["f"], q=5, labels=False, duplicates="drop")
     quintile_means = (
         aligned.groupby("quintile")["t"]
@@ -137,55 +118,3 @@ def compute_quintile_spread(
     )
     spread = float(quintile_means[4] - quintile_means[0])
     return QuintileSpread(quintile_means=quintile_means, spread=spread)
-
-
-def create_continuous_eda_plots(
-    feature: pd.Series,
-    target: pd.Series,
-    decile_analysis: DecileAnalysis,
-    quintile_spread: QuintileSpread,
-) -> ContinuousEDAPlots:
-    """Create the three standard continuous EDA figures: decile plot, histogram, quintile spread."""
-    bs = decile_analysis.bin_stats
-    bins = np.arange(len(bs.mean_return))
-
-    # 1. Decile plot — 3 subplots
-    fig_d, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
-    ax1.bar(bins, np.nan_to_num(bs.mean_return), color="steelblue")
-    ax1.axhline(0, color="black", linewidth=0.5)
-    ax1.set_title("Mean return per bin")
-    ax2.bar(bins, np.nan_to_num(bs.sharpe), color="green")
-    ax2.set_title("Sharpe per bin")
-    ax3.bar(bins, np.nan_to_num(bs.t_stat), color="darkorange")
-    ax3.set_title("t-statistic per bin")
-    ax3.set_xlabel("Bin")
-    fig_d.tight_layout()
-    plt.close(fig_d)
-
-    # 2. Histogram with bin-edge overlay
-    fig_h, ax = plt.subplots(figsize=(10, 4))
-    clean = feature.dropna().values
-    ax.hist(clean, bins=50, color="steelblue", alpha=0.7, density=True)
-    for edge in bs.bin_edges[1:-1]:
-        ax.axvline(edge, color="red", alpha=0.4, linewidth=0.8)
-    ax.set_title("Feature distribution with quantile bin edges")
-    fig_h.tight_layout()
-    plt.close(fig_h)
-
-    # 3. Quintile spread figure
-    fig_qs, ax = plt.subplots(figsize=(8, 4))
-    quintile_labels = ["Q1", "Q2", "Q3", "Q4", "Q5"]
-    colors = ["#d73027" if v < 0 else "#1a9850" for v in quintile_spread.quintile_means]
-    ax.bar(quintile_labels, np.nan_to_num(quintile_spread.quintile_means), color=colors)
-    ax.axhline(0, color="black", linewidth=0.5)
-    ax.set_title(f"Mean return by quintile  |  spread = {quintile_spread.spread:.4f}")
-    ax.set_xlabel("Quintile")
-    ax.set_ylabel("Mean return")
-    fig_qs.tight_layout()
-    plt.close(fig_qs)
-
-    return ContinuousEDAPlots(
-        decile_plot_fig=fig_d,
-        histogram_fig=fig_h,
-        quintile_spread_fig=fig_qs,
-    )

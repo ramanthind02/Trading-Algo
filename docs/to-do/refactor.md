@@ -1,81 +1,74 @@
 
-Here is a consolidated report from four parallel **read-only** codebase explorations (ensemble/execution, cache/vault/utils, nodes/feature_selection, deployment/scripts/tests). No files were changed.
+Here is a consolidated **approval brief** from four parallel subagent passes (ensemble, feature_research vs engines, cache/vault/nodes, bootstrap/config/JSON). Nothing was changed in the repo.
 
 ---
 
-## Executive summary (Occam’s razor)
+## 1. Ensemble / portfolio (highest “duplicate product” signal)
 
-The biggest wins come from **fewer parallel “ways to do the same thing”**: duplicate correlation→multiplier math, two portfolio orchestrators, cache shims + singletons, **70+ node import shims**, and **pervasive `sys.path` glue** instead of one installable package. Second tier is **god-modules** (`portfolio.py`, `vault_manager.py`, `feature_base_model.py`) that mix pure math, I/O, and orchestration—splitting by responsibility reduces complexity without changing behavior.
+| Proposal | Idea | Effort | Risk | LOC / complexity |
+|----------|------|--------|------|------------------|
+| **A1 — Retire or fold `PortfolioManager`** | `GlobalPortfolio` is the real multi-TF path; `PortfolioManager` looks like a **second** orchestrator (concat per-TF, no cross-TF weighting), used mainly from `ensemble/__init__.py` + `tests/integration/test_portfolio_manager.py`. | **L** | **M–H** if anything external imports it; **L** if truly internal | **~300 LOC** + clearer single entrypoint |
+| **A2 — Split `ensemble/portfolio.py` monolith** | `TFPortfolio` + `GlobalPortfolio` + vault/materialization glue in one file → submodules + stable `ensemble.portfolio` re-exports. | **L** | **M** | Mostly **navigation**, modest raw LOC |
+| **A3 — “Global combination” subpackage** | Group `global_weight_layer_adapter`, `global_portfolio_runtime`, `global_portfolio_diagnostics`, `portfolio_global_streams` under one package. | **M** | **M** | **Clarity** > LOC; move-only if disciplined |
+| **A4 — Single portfolio persistence boundary** | Unify mental model for `portfolio_vault` vs `utils/cache/.../portfolio_materialization` (who owns serialize/load of `GlobalPortfolio`). | **L** | **H** (deployment/cache paths) | **Clarity**; modest LOC if not a big rewrite |
+| **A5 — Typed JSON for control + vault** | Overlap with cross-cutting proposal **C4** below. | **L** | **M–H** | Large validator LOC in `ensemble_utils` / `vault_feature_files` |
 
----
+**Note:** Subagent confirmed **FDM/IDM math is already shared** (`weight_layer`); don’t “merge layers” for that reason alone.
 
-## Tier 1 — Highest impact
-
-### 1. Ensemble: one primitive for “diversification multiplier from correlation”
-**FDM** (`weight_layer.py`) and **IDM** (`portfolio.py` for TF and global) repeat the same pattern: mean off-diagonal correlation → `sqrt(1/(mean + ε))` → cap, with slightly different matrix handling and caps.  
-**Direction:** One parameterized pure function (signals vs returns, cap) removes drift and duplicated comments.
-
-### 2. `ensemble/portfolio.py` as a single huge module
-Roughly ~3k lines mixing `TFPortfolio`, `GlobalPortfolio`, cache queries, global `__GLOBAL__` encode/decode for `WeightLayer`, and vault delegation.  
-**Direction:** Split **pure math**, **cache I/O**, **global adapter machinery**, and **public orchestration** so each change has a smaller blast radius.
-
-### 3. Global combination via synthetic ticker `__GLOBAL__`
-`ClusteredWeightLayer` is reused, but encode/decode/stream-id logic is a **second API** on top of ticker-oriented `WeightLayer`.  
-**Direction:** Either isolate that in a small module with a clear name, or replace with an explicit “global combiner” type so `GlobalPortfolio` reads as fit → combine → apply IDM without adapter noise.
-
-### 4. Two portfolio stories: `PortfolioManager` vs `GlobalPortfolio`
-`PortfolioManager` appears thin and test/integration-oriented; production-style flows use `GlobalPortfolio`.  
-**Direction:** One orchestrator with an explicit mode (TF-only vs global), or deprecate/document the legacy path so there is one mental model.
-
-### 5. Nodes: flat import shims + `sys.modules` hacks
-Many files under `nodes/` re-export canonical implementations (often via `sys.modules` replacement); `nodes/_taxonomy.py` already maps logical names to implementations.  
-**Direction:** Long-term, **one import surface** (taxonomy + canonical paths) and removing shims deletes a large file count and duplicate “module identity.” High migration cost for external `from nodes.rsi import …` style imports.
-
-### 6. Package install vs `sys.path` everywhere
-Deployment modules, scripts, and tests repeat `sys.path` bootstrapping with **inconsistent** `parents[N]` depth.  
-**Direction:** Editable install (`pip install -e .`) + optional `console_scripts` removes the most duplicated glue and class of path bugs.
-
-### 7. Cache: shims + singleton `CentralCacheStore`
-`utils/cache/*.py` often re-exports `runtime/`; `CacheManager` mutates `CentralCacheStore._instance` and `live_artifact_cache_dir`.  
-**Direction:** Fewer shim modules (or exports only from `__init__.py`), and **injected** store/factory instead of global mutation + tests patching `_instance`.
+**Approval question:** Do you want to **investigate deprecating `PortfolioManager`** (usage audit + migration plan) as phase 1?
 
 ---
 
-## Tier 2 — Medium impact
+## 2. Feature research vs engines (biggest “phase glue” duplication)
 
-| Area | Issue | Simpler direction |
-|------|--------|-------------------|
-| **Vault** | `vault_manager.py` very large; overlaps with `portfolio_vault.py` on JSON paths and snapshots | Submodules or named facets (`ensembles`, `snapshots`); shared path/JSON helpers |
-| **Cache API** | `ensure_vault_cache_coverage` in `CacheManager` and again wrapped in `vault_manager` | One public entry; other internal/deprecated |
-| **Paths** | `project_root()` in cache vs multi-strategy search in `vault_manager` | One repo-root resolver used everywhere |
-| **Aliases** | `CentralCache` = `CentralCacheStore`; `Portfolio` = `TFPortfolio` | One public name each, long-term |
-| **Cross-import** | `utils/data/cross_ticker_store.py` re-exports cache | Single import path |
-| **`WeightLayer`** | Factory function named like a class | `make_weight_layer` or a thin real class |
-| **`DiversifiedEnsemble`** | Many `__init__` paths (control file vs inline models) | Single builder or explicit source type |
-| **RSI family** | Repeated rolling RSI state across several `nodes/mean_reversion/rsi/*.py` | One RSI rolling core; nodes only map to outputs |
-| **`BaseModel`** | Large orchestrator in `feature_base_model.py` | Split cache vs extraction vs binning vs alignment |
-| **Permutation tests** | Parallel continuous vs rule-based runners | One batch runner parameterized by strategy/protocol |
-| **Deployment vs scripts** | `forecast_server` and `tws_live_forecast` both orchestrate full flows | Shared “live forecast runtime” library; deployment = thin HTTP/schedule/TWS adapters |
+| Proposal | Idea | Effort | Risk | LOC / complexity |
+|----------|------|--------|------|------------------|
+| **B1 — One CLI: `python -m feature_research <phase>`** | Replace many `run_*.py` / `run_phase.py` thin scripts with one dispatcher (argparse/Typer). | **M** | **M** (docs, muscle memory) | Drops **repeated bootstrap/argparse**; not much engine LOC |
+| **B2 — One “signed-signal phase runner” in `utils.evaluation`** | Merge overlap between `feature_research/pipelines/_shared.py` and `feature_research/validation/permutation_helpers.py` (load, windows, walkforward wiring). | **L–M** | **M** (layering, cycles) | **Large** if done fully; needs **`Protocol`** to avoid `feature_selection` ↔ `feature_research` cycles |
+| **B3 — One permutation config model** | Fold `PermutationResearchConfig` (`feature_research/config.py`) into `PermutationTestConfig` tree (`feature_selection/validation/config.py`) or one shared module. | **M** | **H** (blast radius) | **High** conceptual + LOC win; touches many call sites |
+| **B4 — One objective-metric registry** | Unify `feature_selection/validation/objective_metrics.py` vs `utils/evaluation/walkforward/metrics.py` (Sharpe/t-stat etc.). | **M** | **H** (**numeric / test golden** churn) | **Medium–high** LOC; big correctness review |
+| **B5 — Thin `feature_research`** | Policy: `feature_research` = config + CLI; engines live in `feature_selection` + `utils` (combine B2–B4). | **L** | **H** | **Largest** long-term simplification if you commit to layering rules |
+| **B6 — Rename duplicate `permutation_helpers`** | `walkforward/permutation_helpers.py` vs `feature_research/validation/permutation_helpers.py` → names that encode role. | **S** | **L** | **Clarity**; small LOC |
+
+**Approval question:** Which sequence do you prefer: **(B1 only)** quick win, **(B6 + B2)** structural clarity, or **(B3 + B4)** deep unification (highest risk)?
 
 ---
 
-## Tier 3 — Cleanup and clarity
+## 3. Cache, vault, nodes (infrastructure sprawl)
 
-- **Nodes:** `nodes/archive/`, monkeypatched shims (e.g. Casey C wrapper mutating canonical class)—delete or fold metadata into canonical modules.  
-- **Tests:** Duplicated helpers (`_source_data_available`, etc.) across integration files; heavy `sys.modules` stubs in deployment tests—central `tests.support` or `conftest`.  
-- **`tests/integration/test_integration.py`:** Formula/synthetic checks vs repo-backed integration—rename/move so “integration” matches your AGENTS policy.  
-- **Scripts:** `run_manual_forecast` reportedly importing a missing `deployment.test_forecast_server`—fix drift between scripts and tree.  
-- **`feature_selection/base_models/__init__.py`:** Stale mentions of non-existent model names—docs-only fix.  
-- **EDA:** Shared matplotlib/`Agg` and constants in `feature_selection/eda/`.
+| Proposal | Idea | Effort | Risk | LOC / complexity |
+|----------|------|--------|------|------------------|
+| **C1 — One public cache import tree** | Drop `utils/cache/*.py` shims after codemod to `utils.cache` / `utils.cache.runtime` only. | **M** | **L–M** (mechanical) | **Moderate** file + import churn |
+| **C2 — `BiasNodeCache` as façade of central store** | One place for path/exists/load semantics. | **M** | **M** | **Correctness clarity**; moderate LOC |
+| **C3 — Single vault module boundary** | Merge or colocate `vault_manager.py` + `vault_feature_files.py` (or `ensemble/vault/` package). | **M** | **L–M** | **Navigation + some LOC** |
+| **C4 — Explicit vault root** | Replace cwd walking with repo-anchored default + env override. | **S–M** | **M** (CI/deploy assumptions) | Simpler mental model |
+| **C5 — Nodes: registry only, drop `rglob` fallback** | Every `module_name` in `CANONICAL_MODULE_IMPORTS`; remove ambiguous filesystem search in `helpers._resolve_bias_node_import_path`. | **M** | **M** (breaks ad-hoc experiments) | **Safety**; optional later: remove root `nodes/*.py` shims |
+| **C6 — Optional: class registry vs `inspect.getmembers`** | Map `module_name → BiasNode` class explicitly. | **M** | **M** | Less fragility; medium churn |
 
----
-
-## How to sequence (pragmatic)
-
-1. **Low-risk extractions first:** shared FDM/IDM helper, dedupe integration test helpers, one `project_root`/path resolver.  
-2. **Structural:** split `portfolio.py` and trim cache shims once tests pin behavior.  
-3. **High-churn:** node shim removal and `pip install -e .` need a migration plan (grep-based codemod, deprecation window).
+**Approval question:** Are you willing to **mandate taxonomy registration** (C5) for all nodes, or keep the rglob escape hatch?
 
 ---
 
-If you want this turned into a tracked refactor backlog (issues or ADRs), switch to **Agent mode** and we can add a short doc or tickets; in **Ask mode** I can only analyze and recommend, not edit the repo.
+## 4. Bootstrap + config + JSON (cross-cutting, good LOC-per-effort)
+
+| Proposal | Idea | Effort | Risk | LOC / complexity |
+|----------|------|--------|------|------------------|
+| **D1 — `utils/repo_bootstrap.py` (single `find_repo_root` / `ensure_repo_root_on_syspath`)** | Replace `feature_research/bootstrap`, `scripts/_bootstrap`, `deployment/_bootstrap`, and inlined copies in `portfolio_research`, `prop_firms`, double-bootstrap in `binning/run_phase.py`, etc. | **M** (many small files) | **L** | **High aggregate** small-line deletion |
+| **D2 — Unified research settings (e.g. Pydantic)** | One tree for `ResearchConfig`, windows, permutation, walkforward slice, binning; shrink `build_runtime_walkforward_config` and `runner` `getattr` protocols. | **L** | **H** | **Large** over time |
+| **D3 — Delete `feature_research/in_sample/config.py` shim** | Import `feature_research.config` everywhere; remove re-export file. | **S** | **L** | Small but removes indirection |
+| **D4 — Pydantic (or similar) for ensemble + vault JSON** | Replace imperative validators in `ensemble_utils` / `vault_feature_files` / parts of `vault_manager`. | **L** | **M–H** (on-disk compatibility) | **Very large** potential shrink in validator LOC |
+| **D5 — Script policy: one-line bootstrap** | All entrypoints call shared `ensure_repo_root_on_syspath` only. | **S** (policy + pass) | **L** | Stacks with **D1** |
+| **D6 — Generated JSON Schema for docs** | Optional; reduces doc/schema drift. | **S–M** | **L** | More **docs** than `.py` LOC |
+
+**Approval question:** Do you want **D1 + D5** approved as a **first milestone** (low behavioral risk), with **D4** as a **second** milestone after schema inventory?
+
+---
+
+## Suggested approval packages (pick one or mix)
+
+1. **Quick wins, low behavior risk:** **D1, D5, D3, B6, C1** (bootstrap + shims + rename + cache imports).  
+2. **Portfolio clarity:** **A1** (audit + deprecate `PortfolioManager`) + optionally **A2**.  
+3. **Research stack simplification (medium risk):** **B1 + B2** (after Protocol design).  
+4. **Deep unification (high risk):** **B3 + B4 + D2 + D4** — schedule explicit numeric regression / test baselines.
+
+Reply with which **IDs** (e.g. “approve D1, D5, A1 audit only”) or a **package number**, and we can turn that into a sequenced plan in Agent mode.

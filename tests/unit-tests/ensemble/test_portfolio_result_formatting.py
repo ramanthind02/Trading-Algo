@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from ensemble.portfolio_result_formatting import deep_copy_result, format_portfolio_result
+from ensemble.portfolio_impl.portfolio_result_formatting import (
+    deep_copy_result,
+    format_portfolio_result,
+)
 
 
 def test_deep_copy_result_copies_nested_dataframes() -> None:

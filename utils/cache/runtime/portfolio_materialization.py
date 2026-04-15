@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Optional
+from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
 import pandas as pd
 
@@ -12,11 +14,21 @@ from .cache_paths import (
     default_live_materialized_cache_dir,
     default_research_materialized_cache_dir,
     resolve_relative_path,
+    win32_extended_path,
 )
 from .central_cache_models import ArtifactScope
 from utils.core.enums import TimeFrame
 
 logger = logging.getLogger(__name__)
+
+
+def _read_utf8_text(path: Path) -> str:
+    """Read file as UTF-8. On Windows, long vault paths need ``\\\\?\\`` to open reliably."""
+    if os.name == "nt":
+        with open(win32_extended_path(path), encoding="utf-8") as handle:
+            return handle.read()
+    return path.read_text(encoding="utf-8")
+
 
 if TYPE_CHECKING:
     from ensemble.portfolio import GlobalPortfolio, PortfolioCacheQuery, PortfolioWorld
@@ -108,6 +120,19 @@ def _portfolio_materialization_path(
     return _materialized_root(scope, cache_root=cache_root) / "portfolio" / f"{portfolio_id}.parquet"
 
 
+def _identity_hash(identity: BaseModelMaterializationIdentity) -> str:
+    """Stable short id for on-disk filenames (avoids Windows path-length limits)."""
+    payload = (
+        f"{identity.timeframe}\0{identity.ensemble_name}\0"
+        f"{identity.feature_name}\0{identity.model_id}"
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _is_materialization_hash_stem(stem: str) -> bool:
+    return len(stem) == 64 and all(c in "0123456789abcdef" for c in stem.lower())
+
+
 def _base_model_materialization_path(
     identity: BaseModelMaterializationIdentity,
     scope: ArtifactScope,
@@ -118,8 +143,29 @@ def _base_model_materialization_path(
         / "base_models"
         / identity.timeframe
         / identity.ensemble_name
-        / f"{identity.feature_name}__{identity.model_id}.parquet"
+        / f"{_identity_hash(identity)}.parquet"
     )
+
+
+def _unlink_legacy_duplicate_for_identity(
+    identity: BaseModelMaterializationIdentity,
+    scope: ArtifactScope,
+    cache_root: Optional[str] = None,
+) -> None:
+    """Remove pre-hash ``feature__model.parquet`` files after migrating to hashed names."""
+    base_models_root = _materialized_root(scope, cache_root=cache_root) / "base_models"
+    ensemble_dir = base_models_root / identity.timeframe / identity.ensemble_name
+    if not ensemble_dir.is_dir():
+        return
+    for path in ensemble_dir.glob("*.parquet"):
+        stem = path.stem
+        if _is_materialization_hash_stem(stem):
+            continue
+        if "__" not in stem:
+            continue
+        parsed = _parse_base_model_materialization_path(path, base_models_root)
+        if parsed == identity:
+            _unlink_materialized_file(path)
 
 
 def _normalize_datetime_column(frame: pd.DataFrame) -> pd.DataFrame:
@@ -197,19 +243,32 @@ def _deduplicate_nullable_rows(
     return deduped
 
 
+def _parquet_path_for_io(path: Path) -> Union[Path, str]:
+    """Windows: use ``\\\\?\\`` paths so materialized filenames can exceed ``MAX_PATH``."""
+    return win32_extended_path(path) if os.name == "nt" else path
+
+
 def _upsert_frame(
     path: Path,
     frame: pd.DataFrame,
     dedup_subset: list[str],
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    io_path = _parquet_path_for_io(path)
     combined = frame.copy()
-    if path.exists():
-        existing = pd.read_parquet(path)
+    if Path(io_path).exists():
+        existing = pd.read_parquet(io_path)
         combined = pd.concat([existing, frame], ignore_index=True)
     combined = _deduplicate_nullable_rows(combined, dedup_subset)
     combined = combined.sort_values("datetime").reset_index(drop=True)
-    combined.to_parquet(path, index=False)
+    combined.to_parquet(io_path, index=False)
+
+
+def _unlink_materialized_file(path: Path) -> None:
+    if os.name == "nt":
+        os.remove(win32_extended_path(path))
+    else:
+        path.unlink()
 
 
 def _remove_empty_parent_dirs(path: Path, stop_at: Path) -> None:
@@ -265,7 +324,7 @@ def _scan_active_live_base_model_identities(
         timeframe = ensemble_dir.parent.name
         ensemble_name = ensemble_dir.name
         for feature_path in sorted(features_dir.glob("*.json")):
-            payload = json.loads(feature_path.read_text(encoding="utf-8"))
+            payload = json.loads(_read_utf8_text(feature_path))
             feature_name = _feature_name_from_payload(feature_path, payload)
             for model_payload in payload.get("base_models", []):
                 model_id = str(model_payload.get("model_id"))
@@ -404,7 +463,17 @@ def prune_inactive_base_model_materializations(
 
     deleted_paths: list[str] = []
     kept_files = 0
+    active_hashes = {_identity_hash(i) for i in active_identities}
     for path in sorted(base_models_root.rglob("*.parquet")):
+        stem = path.stem
+        if _is_materialization_hash_stem(stem):
+            if stem in active_hashes:
+                kept_files += 1
+            else:
+                _unlink_materialized_file(path)
+                deleted_paths.append(str(path))
+                _remove_empty_parent_dirs(path, stop_at=base_models_root)
+            continue
         identity = _parse_base_model_materialization_path(path, base_models_root)
         if identity is None:
             kept_files += 1
@@ -412,7 +481,7 @@ def prune_inactive_base_model_materializations(
         if identity in active_identities:
             kept_files += 1
             continue
-        path.unlink()
+        _unlink_materialized_file(path)
         deleted_paths.append(str(path))
         _remove_empty_parent_dirs(path, stop_at=base_models_root)
 
@@ -494,6 +563,7 @@ def materialize_global_portfolio_predictions(
                 "datetime",
             ],
         )
+        _unlink_legacy_duplicate_for_identity(identity, scope=scope, cache_root=cache_root)
         base_model_files_written += 1
         base_model_rows_written += len(normalized_base_model_frame)
 

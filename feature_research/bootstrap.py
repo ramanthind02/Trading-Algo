@@ -1,22 +1,12 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from utils.repo_bootstrap import ensure_repo_root_on_syspath, find_repo_root
 
-def find_repo_root(start: Path) -> Path | None:
-    """Search up from start path to find repository root."""
-    search_root = start if start.is_dir() else start.parent
-    for parent in (search_root, *search_root.parents):
-        if (parent / "pyproject.toml").exists():
-            return parent
-        if (parent / ".git").exists():
-            return parent
-    return None
+__all__ = ["ensure_repo_root_on_syspath", "find_repo_root"]
 
 
-def ensure_repo_root_on_syspath(start: Path) -> None:
-    """Ensure repository root is on sys.path for direct script execution."""
-    repo_root = find_repo_root(start)
-    if repo_root is not None and str(repo_root) not in sys.path:
-        sys.path.insert(0, str(repo_root))
+def ensure_feature_research_repo_root(start: Path) -> Path:
+    """Compatibility wrapper for callers expecting a returned root path."""
+    return ensure_repo_root_on_syspath(start)

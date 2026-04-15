@@ -72,7 +72,10 @@ def test_invalid_callable_path_format_raises() -> None:
 
 def test_invalid_builtin_name_raises_with_supported_names() -> None:
     """Invalid builtin names return an explicit supported-name error."""
-    with pytest.raises(ValueError, match='Supported builtins: always_zero, calmar, profit_factor, sharpe, sortino, t_stat'):
+    with pytest.raises(
+        ValueError,
+        match='Supported builtins: always_zero, calmar, mean_return, profit_factor, sharpe, sortino, t_stat',
+    ):
         ObjectiveMetricSpec(builtin=cast(BuiltinMetricName, 'not_a_metric'))
 
 

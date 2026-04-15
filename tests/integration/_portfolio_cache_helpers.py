@@ -7,7 +7,7 @@ from typing import Sequence
 import pandas as pd
 
 from ensemble.vault_manager import get_ensemble_tickers
-from utils.cache.central_cache import CentralCacheStore
+from utils.cache.runtime.central_cache import CentralCacheStore
 from utils.core.enums import TimeFrame
 
 

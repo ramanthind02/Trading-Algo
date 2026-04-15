@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from feature_research.pipelines._shared import _run_evaluation_pipeline
 
 if TYPE_CHECKING:
-    from feature_research.in_sample.config import ResearchConfig
+    from feature_research.config import ResearchConfig
     from utils.evaluation.walkforward.runner import WalkforwardRunReport
 
 
@@ -31,8 +31,9 @@ def run_validation_pipeline(
     WalkforwardRunReport
         Walkforward research report with folds, selection summary, and stability plots.
     """
-    return _run_evaluation_pipeline(
+    report, _bundle = _run_evaluation_pipeline(
         phase="validation",
         config=config,
         output_dir=str(output_dir) if output_dir is not None else None,
     )
+    return report

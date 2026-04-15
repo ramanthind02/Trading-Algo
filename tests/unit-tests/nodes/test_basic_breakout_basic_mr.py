@@ -176,10 +176,10 @@ class TestBasicMR(unittest.TestCase):
 
     def test_mr_params_and_columns(self) -> None:
         node = BasicMR(Ticker.ES, TimeFrame.D, max_positions=5)
-        self.assertEqual(node.module_name, "basicmr")
+        self.assertEqual(node.module_name, "basic_mr")
         self.assertEqual(node.params["max_positions"], 5)
         names = node.get_column_names()
-        self.assertIn("basicmr", names[0])
+        self.assertIn("basic_mr", names[0])
 
 
 if __name__ == "__main__":

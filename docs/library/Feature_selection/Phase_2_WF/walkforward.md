@@ -10,7 +10,7 @@
 Sequential walk-forward validation: always trains on past data, tests on future data. The only CV scheme that accurately emulates production behavior.
 
 > [!important] Key principle
-> Every fold trains only on data available before the test period. No future information ever enters the training set. This is not true of [[kfold]] or [[cpcv]] paths.
+> Every fold trains only on data available before the test period. No future information ever enters the training set. Non-sequential schemes (e.g. classic k-fold or combinatorial purged CV) do not emulate production timing the same way.
 
 ---
 
@@ -113,7 +113,7 @@ A feature passes Phase 3 if its **stable region** (neighborhood-consistent param
 **Procedure:**
 1. Run full WF on real data → observe `S_obs` (same as sub-stage 1)
 2. Repeat N = 500 times:
-   - Shuffle the full WF candle series using [[candle_permutation]] algorithm
+   - Shuffle the full WF candle series (bar/candle permutation — **not** wired in standard `feature_research` today; see [[Feature_selection/Phase_1_IS/candle_permutation]])
    - Fold boundaries are preserved **by position** (bar count), not calendar date
    - Feature recomputed from scratch on the shuffled stream
    - Full Phase 3 WF runs on shuffled data → stability algorithm → OOS eval → `S_perm_i`
@@ -188,4 +188,4 @@ class FeatureValidator:
 
 - [[pipeline]] — master pipeline; where Phase 3 and 4 sit in the full sequence
 - [[param_stability]] — neighbor smoothing and stable region selection used inside each WF fold
-- [[cpcv]] — supplementary distributional view of OOS Sharpe across 28 paths; complements but does not replace sequential WF
+- Combinatorial purged CV and similar multi-path schemes are **not** documented in this library index; sequential WF remains the primary gate.

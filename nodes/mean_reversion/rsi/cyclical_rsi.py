@@ -4,7 +4,7 @@ Cyclical RSI Bias Node
 DSP-based cycle analysis RSI. Uses a bandpass filter to extract the
 dominant cycle from price data, then applies RSI to the cyclical component.
 
-Output: Continuous 0-100 (RSI of cyclical component)
+Output: Continuous roughly -50 to +50 (RSI of cyclical component, centered at 0)
 """
 
 from typing import ClassVar, List
@@ -29,8 +29,8 @@ class CyclicalRSI(BiasNode):
 
     Then RSI is calculated on the cycle values.
 
-    Output Range: 0.0 to 100.0 (continuous)
-    Neutral Value: 50.0 (during warmup)
+    Output Range: approximately -50.0 to +50.0 (continuous; classic RSI minus 50)
+    Neutral Value: 0.0 (during warmup and uninitialized RSI)
 
     Parameters:
     - short_period: Short SMA period for bandpass (default: 5)
@@ -94,7 +94,7 @@ class CyclicalRSI(BiasNode):
         - candle: The candle to process
 
         Returns:
-        - List containing the Cyclical RSI value (0.0-100.0)
+        - List containing the centered Cyclical RSI value (approximately -50.0 to +50.0)
         """
         self.n_candles += 1
         curr_close = candle.close
@@ -112,8 +112,8 @@ class CyclicalRSI(BiasNode):
         if self.n_candles < self.front_bad:
             if len(self.cycle_buffer) > 0:
                 self.prev_cycle = self.cycle_buffer[-1]
-            self.output.append(50.0)
-            return [50.0]
+            self.output.append(0.0)
+            return [0.0]
 
         # Initialize RSI on first valid computation
         if not self.rsi_initialized and len(self.cycle_buffer) >= self.rsi_period:
@@ -133,18 +133,19 @@ class CyclicalRSI(BiasNode):
                 self.dnsum = ((self.rsi_period - 1) * self.dnsum - diff) / self.rsi_period
                 self.upsum *= (self.rsi_period - 1.0) / self.rsi_period
 
-            rsi = 100.0 * self.upsum / (self.upsum + self.dnsum)
+            rsi_raw = 100.0 * self.upsum / (self.upsum + self.dnsum)
             self.prev_cycle = curr_cycle
         else:
-            rsi = 50.0
+            rsi_raw = 50.0
             if len(self.cycle_buffer) > 0:
                 self.prev_cycle = self.cycle_buffer[-1]
 
-        # Ensure RSI is within bounds
-        rsi = max(0.0, min(100.0, rsi))
+        # Center classic RSI (0–100) on zero: neutral 50 → 0
+        signal = rsi_raw - 50.0
+        signal = max(-50.0, min(50.0, signal))
 
-        self.output.append(rsi)
-        return [rsi]
+        self.output.append(signal)
+        return [signal]
 
     def _compute_rsi_initial(self, values: np.ndarray) -> tuple:
         """

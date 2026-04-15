@@ -1,8 +1,6 @@
 from datetime import datetime
 
-from feature_research.config import FeatureType
-from feature_research.in_sample.config import ResearchConfig, load_config
-from utils.core.enums import Ticker
+from feature_research.config import FeatureType, ResearchConfig, load_config
 
 
 def test_load_config_returns_signed_signal_research_config() -> None:
@@ -13,11 +11,12 @@ def test_load_config_returns_signed_signal_research_config() -> None:
 
 def test_load_config_defaults() -> None:
     config = load_config()
-    assert Ticker.ES in config.tickers
+    assert config.tickers
     assert config.start == datetime(2000, 1, 1)
-    assert config.feature_type is FeatureType.CONTINUOUS
+    assert config.feature_type is FeatureType.SIGNED_SIGNAL
 
 
 def test_reports_dir_includes_feature_type() -> None:
     config = load_config()
-    assert "continuous" in str(config.reports_dir)
+    assert "signed_signal" in str(config.reports_dir)
+    assert "cyclical_rsi_signal" in str(config.reports_dir)

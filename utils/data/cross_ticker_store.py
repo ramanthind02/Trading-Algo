@@ -1,6 +1,6 @@
 """Compatibility wrapper for the centralized cache-owned cross-ticker store."""
 
-from utils.cache.cross_ticker_store import (
+from utils.cache.runtime.cross_ticker_store import (
     CROSS_TICKERS_PARAM_KEY,
     CrossTickerDataStore,
     SCALAR_LIST_PARAM_KEYS,

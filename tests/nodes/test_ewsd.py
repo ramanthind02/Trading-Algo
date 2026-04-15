@@ -28,6 +28,7 @@ def _make_candle(close: float, day_index: int) -> Candle:
 
 def test_ewsd_long_run_window_defaults_to_2520() -> None:
     node = EWSDNode(ticker=Ticker.ES, tf=TimeFrame.D)
+    assert node.module_name == "ewsd"
     assert node.long_run_window == 2520
     assert node.returns_history.maxlen == 2520
 
@@ -97,7 +98,7 @@ def test_log_return_ewsd_coverage_is_close_to_log_return_when_cache_available() 
     if not data_dir.exists():
         pytest.skip(f"Skipping coverage check, dataset missing at {data_dir}")
 
-    from feature_research.in_sample.config import load_config
+    from feature_research.config import load_config
     from feature_research.in_sample.data_loader import (
         expand_bias_specs,
         load_features_for_combo,
@@ -122,8 +123,8 @@ def test_log_return_ewsd_coverage_is_close_to_log_return_when_cache_available() 
         catalog_ewsd = replace(config.in_sample_defaults, rule_based=defaults_ewsd)
         catalog_log = replace(config.in_sample_defaults, rule_based=defaults_log)
 
-    config_ewsd = replace(config, in_sample_defaults=catalog_ewsd, populate_cache=False)
-    config_log = replace(config, in_sample_defaults=catalog_log, populate_cache=False)
+    config_ewsd = replace(config, in_sample_defaults=catalog_ewsd)
+    config_log = replace(config, in_sample_defaults=catalog_log)
 
     single_spec = expand_bias_specs(config.bias_spec)[0]
     data_ewsd = None
@@ -138,8 +139,8 @@ def test_log_return_ewsd_coverage_is_close_to_log_return_when_cache_available() 
     assert data_ewsd is not None
     assert data_log is not None
 
-    _, target_ewsd, _ = data_ewsd
-    _, target_log, _ = data_log
+    _, target_ewsd, _, _ = data_ewsd
+    _, target_log, _, _ = data_log
 
     n_ewsd = len(target_ewsd)
     n_log = len(target_log)

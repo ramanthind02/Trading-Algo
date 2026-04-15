@@ -4,13 +4,15 @@ import json
 import logging
 import shutil
 from collections import defaultdict
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 
-from .bias_node_cache import BiasNodeCache
+from .bias_node_cache import BiasNodeCache, CacheMissError
 from .cache_paths import (
     default_candle_cache_dir,
     default_central_cache_dir,
@@ -108,6 +110,52 @@ def _normalize_candle_frame(
     normalized["ticker"] = ticker.name
     normalized["timeframe"] = timeframe
     return normalized
+
+
+def _datetime_index_values_equal(left: pd.Index, right: pd.Index) -> bool:
+    """True when datetimes match, ignoring stored resolution (ns vs us, etc.).
+
+    Parquet / pyarrow may restore a coarser ``datetime64`` unit than the in-memory
+    frame from ``load_source_candles``. Plain ``Index.equals`` then returns False,
+    ``set_candles`` rewrites, and ``mark_dependents_stale`` forces a full bias refresh.
+    """
+    if len(left) != len(right):
+        return False
+    left_dti = pd.DatetimeIndex(left)
+    right_dti = pd.DatetimeIndex(right)
+    try:
+        left_ns = left_dti.as_unit("ns")
+        right_ns = right_dti.as_unit("ns")
+    except (AttributeError, TypeError, ValueError):
+        left_ns, right_ns = left_dti, right_dti
+    return bool(left_ns.equals(right_ns))
+
+
+def _candle_frame_semantically_equal(left: pd.DataFrame, right: pd.DataFrame) -> bool:
+    """Compare normalized candle frames without strict pandas dtype identity.
+
+    ``DataFrame.equals`` is often false after a parquet round-trip (float32 vs float64,
+    tiny float noise). Treating those as unchanged avoids rewriting candles and calling
+    ``mark_dependents_stale``, which would otherwise force a full bias-artifact rebuild
+    on every ``bootstrap_source_candles`` + ``set_candles`` cycle.
+    """
+    if len(left) != len(right):
+        return False
+    if not _datetime_index_values_equal(left.index, right.index):
+        return False
+    numeric_cols = [
+        c
+        for c in ("open", "high", "low", "close", "volume")
+        if c in left.columns and c in right.columns
+    ]
+    if not numeric_cols:
+        return False
+    for col in numeric_cols:
+        l64 = np.asarray(left[col], dtype=np.float64)
+        r64 = np.asarray(right[col], dtype=np.float64)
+        if not np.allclose(l64, r64, rtol=1e-9, atol=1e-12, equal_nan=True):
+            return False
+    return True
 
 
 class CentralCacheStore:
@@ -440,7 +488,7 @@ class CentralCacheStore:
         existing = self._candle_frames.get(key)
         if existing is None:
             existing = self._read_candles_from_disk(ticker, timeframe)
-        if existing is not None and existing.equals(normalized):
+        if existing is not None and _candle_frame_semantically_equal(existing, normalized):
             return
 
         revision = 1 if key not in self._candle_records else self._candle_records[key].revision + 1
@@ -483,7 +531,7 @@ class CentralCacheStore:
             merged = pd.concat([existing, normalized], axis=0)
             merged = merged[~merged.index.duplicated(keep="last")].sort_index()
 
-        if existing is not None and existing.equals(merged):
+        if existing is not None and _candle_frame_semantically_equal(existing, merged):
             return
 
         revision = 1 if key not in self._candle_records else self._candle_records[key].revision + 1
@@ -695,16 +743,28 @@ class CentralCacheStore:
     def _read_artifact_from_disk(self, descriptor: ArtifactDescriptor) -> Optional[pd.DataFrame]:
         if descriptor.module_name is None or descriptor.ticker is None or descriptor.timeframe is None:
             return None
+        existing_frame = self._artifact_frames.get(descriptor)
+        if existing_frame is not None:
+            return existing_frame
         cache = self._node_cache(descriptor)
         if not cache.exists():
             return None
-        loaded = _normalize_datetime_index(cache.load())
+        try:
+            loaded = _normalize_datetime_index(cache.load())
+        except CacheMissError:
+            # Unreadable or truncated artifact was removed by BiasNodeCache.load().
+            return None
         descriptor_path = Path(cache.cache_path)
-        record = self._load_record(descriptor_path)
-        if record is None:
+        disk_meta = self._load_record(descriptor_path)
+        coverage = _frame_coverage(loaded)
+        if disk_meta is not None:
+            record = replace(disk_meta, descriptor=descriptor, coverage=coverage)
+        elif (mem_rec := self._artifact_records.get(descriptor)) is not None:
+            record = replace(mem_rec, descriptor=descriptor, coverage=coverage)
+        else:
             record = ArtifactRecord(
                 descriptor=descriptor,
-                coverage=_frame_coverage(loaded),
+                coverage=coverage,
                 lifecycle_state=ArtifactLifecycleState.FRESH,
                 revision=1,
             )
@@ -899,11 +959,26 @@ class CentralCacheStore:
         return record
 
     def describe_artifact(self, descriptor: ArtifactDescriptor) -> ArtifactRecord | None:
-        record = self._artifact_records.get(descriptor)
-        if record is None:
+        cached = self._artifact_records.get(descriptor)
+        if cached is not None:
+            return cached
+        if descriptor.module_name is None or descriptor.ticker is None or descriptor.timeframe is None:
             self._read_artifact_from_disk(descriptor)
-            record = self._artifact_records.get(descriptor)
-        return record
+            return self._artifact_records.get(descriptor)
+        cache = self._node_cache(descriptor)
+        if not cache.exists():
+            return None
+        descriptor_path = Path(cache.cache_path)
+        meta = self._load_record(descriptor_path)
+        if meta is not None:
+            # Fast path for coverage checks (e.g. ensure_bias_cache_coverage): sidecar JSON
+            # has lifecycle + coverage; avoid reading the full Parquet until read_artifact.
+            record = replace(meta, descriptor=descriptor)
+            self._artifact_records[descriptor] = record
+            self._register_dependencies(descriptor, record.depends_on)
+            return record
+        self._read_artifact_from_disk(descriptor)
+        return self._artifact_records.get(descriptor)
 
     def list_artifacts(self, scope: ArtifactScope | None = None) -> list[ArtifactRecord]:
         records = list(self._artifact_records.values())

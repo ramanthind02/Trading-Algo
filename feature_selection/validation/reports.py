@@ -28,7 +28,7 @@ class PipelinePermutationReport:
     """Results from T014: Pipeline Permutation test."""
 
     param_combo: str
-    feature_type: Literal['signed_signal']
+    feature_type: Literal['continuous', 'signed_signal']
     permutation_mode: str
     original_metric: float
     null_distribution: np.ndarray = field(compare=False, hash=False)
@@ -78,7 +78,7 @@ class WalkforwardStabilityReport:
     """T015: Walk-forward stability analysis report."""
 
     feature_name: str
-    feature_type: Literal['signed_signal']
+    feature_type: Literal['continuous', 'signed_signal']
     fold_results: List[FoldResult]
     consistency_metrics: Dict[str, float]
     is_stable: bool
@@ -103,7 +103,7 @@ class PermutationTestSuite:
     """T013-T017: Complete permutation test suite for a single feature."""
 
     feature_name: str
-    feature_type: Literal['signed_signal']
+    feature_type: Literal['continuous', 'signed_signal']
     stage1_reports: Dict[str, VectorShuffleReport]
     stage2_reports: Dict[str, PipelinePermutationReport]
     stage3_report: WalkforwardStabilityReport
@@ -125,4 +125,10 @@ class ReportBundle:
     stage2_plots: Dict[str, Path]
     stage3_plot: Path
     funnel_plot: Path
+    stage1_summary: Path
+    stage2_summary: Path
+    stage3_summary: Path
+    funnel_summary: Path
+    oos_summary: Path
+    combo_decision_table: Path
     timestamp: datetime

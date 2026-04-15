@@ -7,7 +7,6 @@ from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
-from matplotlib.figure import Figure
 
 from utils.core.enums import Ticker, TimeFrame
 
@@ -35,12 +34,6 @@ class CorrelationAnalysis:
     pearson: float
     spearman: float
     lagged_correlations: dict[int, float]    # lag → correlation (lags 1..max_lag)
-
-
-@dataclass(frozen=True)
-class CommonEDAPlots:
-    """Matplotlib Figure objects for common EDA."""
-    time_series_fig: Figure      # feature over time (single subplot)
 
 
 @dataclass(frozen=True)
@@ -89,14 +82,6 @@ class DistributionDiagnostics:
 
 
 @dataclass(frozen=True)
-class ContinuousEDAPlots:
-    """Matplotlib Figures for continuous feature EDA."""
-    decile_plot_fig: Figure       # 3 subplots: mean return, Sharpe, t-stat
-    histogram_fig: Figure         # histogram + quantile overlay lines
-    quintile_spread_fig: Figure   # mean return per quintile with spread
-
-
-@dataclass(frozen=True)
 class ContinuousEDAStats:
     """Aggregated continuous feature EDA statistics."""
     decile_analysis: DecileAnalysis
@@ -138,12 +123,6 @@ class BootstrapCI:
 class BootstrapCIResults:
     """Bootstrap CIs for all levels."""
     ci_by_level: dict[int, BootstrapCI]
-
-
-@dataclass(frozen=True)
-class RuleBasedEDAPlots:
-    """Matplotlib Figures for rule-based feature EDA."""
-    level_plot_fig: Figure            # bar chart per level with bootstrap CI error bars
 
 
 @dataclass(frozen=True)
@@ -192,8 +171,6 @@ class ContinuousEDAReport:
     metadata: EDAMetadata
     common_stats: CommonEDAStats
     continuous_stats: ContinuousEDAStats
-    common_plots: CommonEDAPlots
-    continuous_plots: ContinuousEDAPlots
     diagnostics: DiagnosticFlags
 
 
@@ -203,6 +180,4 @@ class RuleBasedEDAReport:
     metadata: EDAMetadata
     common_stats: CommonEDAStats
     rule_stats: RuleBasedEDAStats
-    common_plots: CommonEDAPlots
-    rule_plots: RuleBasedEDAPlots
     diagnostics: DiagnosticFlags

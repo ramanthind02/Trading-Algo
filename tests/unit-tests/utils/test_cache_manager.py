@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.cache.cache_manager import CacheManager, get_auxiliary_specs_for_timeframe
-from utils.cache.cache_paths import default_source_candle_dir
+from utils.cache.runtime.cache_manager import CacheManager, get_auxiliary_specs_for_timeframe
+from utils.cache.runtime.cache_paths import default_source_candle_dir
 from utils.core.enums import Ticker, TimeFrame
 
 

@@ -1,5 +1,5 @@
 """Compatibility wrapper for the centralized backtest runtime."""
 
-from utils.cache.backtest import Backtest
+from utils.cache.runtime.backtest import Backtest
 
 __all__ = ["Backtest"]

@@ -8,23 +8,52 @@ remains in this module.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional
+from typing import Callable, Literal, Optional, cast
 
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
+from feature_selection.validation.objective_metrics import (
+    ObjectiveMetricSpec,
+    apply_objective_metric,
+)
 from feature_selection.validation.reports import (
     OutOfSamplePermutationReport,
     PipelinePermutationReport,
     VectorShuffleReport,
 )
+from utils.core.signal_alignment import align_signal_to_target
 
 logger = logging.getLogger(__name__)
 
 PermutationMode = Literal["feature_shuffle", "candle_shuffle"]
+
+
+def _permutation_tail_stats(
+    original_metric: float,
+    null_metrics: np.ndarray,
+    nreps: int,
+    alpha: float,
+) -> tuple[float, float, bool]:
+    p_value = float(1 + int((null_metrics >= original_metric).sum())) / float(nreps + 1)
+    critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
+    return p_value, critical_value, bool(original_metric > critical_value)
+
+
+def _shuffle_feature_values(original_feature: pd.Series, seed: int) -> pd.Series:
+    return pd.Series(
+        np.random.default_rng(seed).permutation(original_feature.values.copy()),
+        index=original_feature.index,
+        name=original_feature.name,
+    )
+
+_FAST_BATCH_BUILTINS: frozenset[str] = frozenset(
+    {"mean_return", "sharpe", "sortino", "calmar", "t_stat", "profit_factor"},
+)
 
 
 @dataclass(frozen=True)
@@ -35,11 +64,122 @@ class _SignedSignalPermutationBatchItem:
     signal_extractor: Callable[[pd.DataFrame], pd.Series]
 
 
-def _align_signal_to_target(signal: pd.Series, target: pd.Series) -> tuple[pd.Series, pd.Series]:
-    aligned_signal = signal.reindex(target.index).dropna()
-    aligned_target = target.reindex(aligned_signal.index).dropna()
-    aligned_signal = aligned_signal.reindex(aligned_target.index)
-    return aligned_signal, aligned_target
+def _vectorized_ratio(
+    numerator: np.ndarray,
+    denominator: np.ndarray,
+) -> np.ndarray:
+    out = np.zeros_like(numerator, dtype=np.float64)
+    valid = np.isfinite(denominator) & (denominator > 0.0)
+    np.divide(numerator, denominator, out=out, where=valid)
+    out = np.where(valid, out, np.where(numerator > 0.0, math.inf, np.where(numerator < 0.0, -math.inf, 0.0)))
+    return out
+
+
+def _builtin_metric_name(spec: ObjectiveMetricSpec) -> str | None:
+    return spec.builtin if spec.callable_path is None else None
+
+
+def _compute_builtin_metric_matrix(
+    spec: ObjectiveMetricSpec,
+    returns_matrix: np.ndarray,
+) -> np.ndarray:
+    builtin = _builtin_metric_name(spec)
+    if builtin not in _FAST_BATCH_BUILTINS:
+        raise ValueError(f"Unsupported builtin fast path: {builtin!r}")
+
+    if returns_matrix.ndim != 2:
+        raise ValueError("returns_matrix must be 2D")
+    n_rows, n_obs = returns_matrix.shape
+    if n_rows == 0:
+        return np.zeros(0, dtype=np.float64)
+    if n_obs == 0:
+        return np.zeros(n_rows, dtype=np.float64)
+
+    kwargs = dict(spec.kwargs)
+
+    if builtin == "mean_return":
+        return returns_matrix.mean(axis=1, dtype=np.float64)
+
+    if builtin == "sharpe":
+        risk_free_rate = float(kwargs.get("risk_free_rate", 0.0))
+        annualization_factor = float(kwargs.get("annualization_factor", 1.0))
+        excess = returns_matrix - risk_free_rate
+        means = excess.mean(axis=1, dtype=np.float64) * math.sqrt(max(annualization_factor, 0.0))
+        volatility = excess.std(axis=1, ddof=0, dtype=np.float64)
+        return _vectorized_ratio(means, volatility)
+
+    if builtin == "sortino":
+        target_return = float(kwargs.get("target_return", 0.0))
+        annualization_factor = float(kwargs.get("annualization_factor", 1.0))
+        excess = returns_matrix - target_return
+        numerator = excess.mean(axis=1, dtype=np.float64) * math.sqrt(max(annualization_factor, 0.0))
+        downside_mask = excess < 0.0
+        downside_count = downside_mask.sum(axis=1)
+        downside_values = np.where(downside_mask, excess, 0.0)
+        downside_sum = downside_values.sum(axis=1, dtype=np.float64)
+        downside_mean = np.divide(
+            downside_sum,
+            downside_count,
+            out=np.zeros(n_rows, dtype=np.float64),
+            where=downside_count > 0,
+        )
+        centered = np.where(downside_mask, downside_values - downside_mean[:, np.newaxis], 0.0)
+        downside_var = np.divide(
+            np.square(centered, dtype=np.float64).sum(axis=1, dtype=np.float64),
+            downside_count,
+            out=np.zeros(n_rows, dtype=np.float64),
+            where=downside_count > 0,
+        )
+        downside_risk = np.sqrt(downside_var)
+        return _vectorized_ratio(numerator, downside_risk)
+
+    if builtin == "calmar":
+        annualization_factor = float(kwargs.get("annualization_factor", 1.0))
+        equity_curve = np.cumprod(1.0 + returns_matrix, axis=1, dtype=np.float64)
+        drawdown = equity_curve / np.maximum.accumulate(equity_curve, axis=1) - 1.0
+        max_drawdown = np.abs(drawdown.min(axis=1))
+        annualized_return = returns_matrix.mean(axis=1, dtype=np.float64) * annualization_factor
+        return _vectorized_ratio(annualized_return, max_drawdown)
+
+    if builtin == "t_stat":
+        if n_obs < 2:
+            return np.zeros(n_rows, dtype=np.float64)
+        mean_return = returns_matrix.mean(axis=1, dtype=np.float64)
+        sample_std = returns_matrix.std(axis=1, ddof=1, dtype=np.float64)
+        standard_error = sample_std / math.sqrt(float(n_obs))
+        return _vectorized_ratio(mean_return, standard_error)
+
+    if builtin == "profit_factor":
+        gross_gain = np.where(returns_matrix > 0.0, returns_matrix, 0.0).sum(axis=1, dtype=np.float64)
+        gross_loss = np.abs(np.where(returns_matrix < 0.0, returns_matrix, 0.0).sum(axis=1, dtype=np.float64))
+        return _vectorized_ratio(gross_gain, gross_loss)
+
+    raise ValueError(f"Unsupported builtin fast path: {builtin!r}")
+
+
+def _compute_metric_vectorized_for_feature(
+    spec: ObjectiveMetricSpec,
+    feature_values: np.ndarray,
+    target_values: np.ndarray,
+    permuted_targets: np.ndarray,
+) -> tuple[float, np.ndarray]:
+    valid_mask = (feature_values != 0.0) & np.isfinite(feature_values) & np.isfinite(target_values)
+    if not valid_mask.any():
+        return (0.0, np.zeros(permuted_targets.shape[0], dtype=np.float64))
+
+    active_feature = feature_values[valid_mask]
+    active_target = target_values[valid_mask]
+    active_permuted_targets = permuted_targets[:, valid_mask]
+
+    observed = _compute_builtin_metric_matrix(
+        spec,
+        (active_target * active_feature)[np.newaxis, :],
+    )[0]
+    nulls = _compute_builtin_metric_matrix(
+        spec,
+        active_permuted_targets * active_feature[np.newaxis, :],
+    )
+    return (float(observed), nulls)
 
 
 def run_vector_shuffle_test(
@@ -51,39 +191,139 @@ def run_vector_shuffle_test(
     random_seed: Optional[int] = None,
     param_combo: str = "default",
 ) -> VectorShuffleReport:
-    """Stage 1: shuffle a frozen signed-signal vector."""
-    rng = np.random.default_rng(random_seed)
-    aligned_target = target.reindex(fitted_feature.index)
-
+    """Stage 1: shuffle a frozen signed-signal vector (sequential NumPy loop)."""
+    aligned_target = cast(pd.Series, target.reindex(fitted_feature.index))
     active_mask = fitted_feature != 0.0
     original_returns = aligned_target * fitted_feature
-    original_metric = objective_func(original_returns[active_mask]) if active_mask.any() else 0.0
+    original_metric = (
+        float(objective_func(original_returns[active_mask])) if active_mask.any() else 0.0
+    )
 
-    feature_values = fitted_feature.values.copy()
+    fv = np.asarray(fitted_feature.to_numpy(dtype=float, copy=True), dtype=np.float64)
+    tv = np.asarray(aligned_target.to_numpy(dtype=float, copy=False), dtype=np.float64)
+
+    rng = np.random.default_rng(random_seed)
     null_metrics = np.empty(nreps, dtype=float)
     for i in range(nreps):
-        shuffled_series = pd.Series(
-            rng.permutation(feature_values),
-            index=fitted_feature.index,
-        )
-        shuffled_active = shuffled_series != 0.0
-        shuffled_returns = aligned_target * shuffled_series
-        null_metrics[i] = (
-            objective_func(shuffled_returns[shuffled_active]) if shuffled_active.any() else 0.0
-        )
+        permuted = fv[rng.permutation(len(fv))]
+        act = permuted != 0.0
+        if not act.any():
+            null_metrics[i] = 0.0
+        else:
+            ret = tv * permuted
+            null_metrics[i] = float(objective_func(pd.Series(ret[act], dtype=np.float64)))
 
-    p_value = float(1 + int((null_metrics >= original_metric).sum())) / float(nreps + 1)
-    critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
+    p_value, critical_value, passed = _permutation_tail_stats(
+        original_metric, null_metrics, nreps, alpha
+    )
     return VectorShuffleReport(
         param_combo=param_combo,
         original_metric=original_metric,
         null_distribution=null_metrics,
         critical_value=critical_value,
         p_value=p_value,
-        passed=bool(original_metric > critical_value),
+        passed=passed,
         alpha=alpha,
         nreps=nreps,
     )
+
+
+def run_vector_shuffle_target_perm_batch(
+    *,
+    ordered_combo_names: list[str],
+    features_by_combo: dict[str, pd.Series],
+    target: pd.Series,
+    metric_spec: ObjectiveMetricSpec,
+    nreps: int,
+    alpha: float,
+    random_seed: Optional[int],
+) -> dict[str, VectorShuffleReport]:
+    """Many param combos: one shared target ``t``, feature matrix ``F``; each null rep permutes ``t`` once.
+
+    For rep ``r``: ``t_perm = t[perm_r]``; combo ``c`` uses returns ``t_perm * F[:, c]`` on active bars.
+    All sequential NumPy / small pandas slices — no threading.
+    """
+    if not ordered_combo_names:
+        return {}
+    feature_columns: list[np.ndarray] = []
+    index_ref: pd.Index | None = None
+    for name in ordered_combo_names:
+        if name not in features_by_combo:
+            raise KeyError(f"Missing feature series for combo {name!r}")
+        feat = features_by_combo[name]
+        if index_ref is None:
+            index_ref = feat.index
+        elif not feat.index.equals(index_ref):
+            raise ValueError(f"Feature index mismatch for combo {name!r}")
+        feature_columns.append(np.asarray(feat.to_numpy(dtype=float, copy=False), dtype=np.float64))
+
+    assert index_ref is not None
+    aligned_target = target.reindex(index_ref)
+    t = np.asarray(aligned_target.to_numpy(dtype=float, copy=False), dtype=np.float64)
+    F = np.column_stack(feature_columns)
+    n, k = F.shape
+    builtin = _builtin_metric_name(metric_spec)
+
+    if builtin in _FAST_BATCH_BUILTINS:
+        rng = np.random.default_rng(random_seed)
+        perm = (
+            np.vstack([rng.permutation(n) for _ in range(nreps)])
+            if n > 1
+            else np.zeros((nreps, n), dtype=np.int64)
+        )
+        permuted_targets = t[perm] if n > 0 else np.zeros((nreps, 0), dtype=np.float64)
+        observed = np.zeros(k, dtype=np.float64)
+        null_m = np.zeros((k, nreps), dtype=np.float64)
+        for c in range(k):
+            observed[c], null_m[c] = _compute_metric_vectorized_for_feature(
+                metric_spec,
+                F[:, c],
+                t,
+                permuted_targets,
+            )
+    else:
+        actives = [F[:, c] != 0.0 for c in range(k)]
+        observed = np.zeros(k, dtype=np.float64)
+        for c in range(k):
+            active = actives[c]
+            if not active.any():
+                observed[c] = 0.0
+            else:
+                observed[c] = apply_objective_metric(
+                    metric_spec,
+                    pd.Series((t * F[:, c])[active], dtype=np.float64),
+                )
+
+        rng = np.random.default_rng(random_seed)
+        null_m = np.zeros((k, nreps), dtype=np.float64)
+        for r in range(nreps):
+            t_perm = t[rng.permutation(n)]
+            for c in range(k):
+                active = actives[c]
+                if not active.any():
+                    null_m[c, r] = 0.0
+                else:
+                    null_m[c, r] = apply_objective_metric(
+                        metric_spec,
+                        pd.Series((t_perm * F[:, c])[active], dtype=np.float64),
+                    )
+
+    reports: dict[str, VectorShuffleReport] = {}
+    for c, name in enumerate(ordered_combo_names):
+        orig = float(observed[c])
+        nulls = null_m[c]
+        p_value, critical_value, passed = _permutation_tail_stats(orig, nulls, nreps, alpha)
+        reports[name] = VectorShuffleReport(
+            param_combo=name,
+            original_metric=orig,
+            null_distribution=nulls,
+            critical_value=critical_value,
+            p_value=p_value,
+            passed=passed,
+            alpha=alpha,
+            nreps=nreps,
+        )
+    return reports
 
 
 def _compute_metric_from_signals(
@@ -190,12 +430,7 @@ def _run_one_rep_signed_signal(
     for combo_name, item in items_by_combo.items():
         try:
             if permutation_mode == "feature_shuffle":
-                original_feature = original_features[combo_name]
-                shuffled_feature = pd.Series(
-                    np.random.default_rng(seed).permutation(original_feature.values.copy()),
-                    index=original_feature.index,
-                    name=original_feature.name,
-                )
+                shuffled_feature = _shuffle_feature_values(original_features[combo_name], seed)
             else:
                 if shuffled_candles is None:
                     raise ValueError("shuffled_candles must exist for candle_shuffle.")
@@ -218,8 +453,9 @@ def _build_pipeline_report(
     nreps: int,
     no_trade_permutations: int,
 ) -> PipelinePermutationReport:
-    p_value = float(1 + int((null_metrics >= original_metric).sum())) / float(nreps + 1)
-    critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
+    p_value, critical_value, passed = _permutation_tail_stats(
+        original_metric, null_metrics, nreps, alpha
+    )
     return PipelinePermutationReport(
         param_combo=param_combo,
         feature_type="signed_signal",  # collapsed contract
@@ -228,7 +464,7 @@ def _build_pipeline_report(
         null_distribution=null_metrics,
         critical_value=critical_value,
         p_value=p_value,
-        passed=bool(original_metric > critical_value),
+        passed=passed,
         alpha=alpha,
         nreps=nreps,
         no_trade_permutations=no_trade_permutations,
@@ -267,7 +503,7 @@ def _run_pipeline_permutation_batch(
 
     for item in items:
         original_feature = item.signal_extractor(candles_df)
-        aligned_feature, aligned_target = _align_signal_to_target(original_feature, target)
+        aligned_feature, aligned_target = align_signal_to_target(original_feature, target)
         original_features[item.param_combo] = aligned_feature
         original_metrics[item.param_combo], _ = _compute_metric_from_signals(
             aligned_feature, aligned_target, objective_func
@@ -324,11 +560,8 @@ def _run_pipeline_permutation_batch(
             for combo_name, item in items_by_combo.items():
                 try:
                     if permutation_mode == "feature_shuffle":
-                        original_feature = original_features[combo_name]
-                        shuffled_feature = pd.Series(
-                            np.random.default_rng(int(seeds[i])).permutation(original_feature.values.copy()),
-                            index=original_feature.index,
-                            name=original_feature.name,
+                        shuffled_feature = _shuffle_feature_values(
+                            original_features[combo_name], int(seeds[i])
                         )
                     else:
                         if shuffled_candles is None:
@@ -401,7 +634,12 @@ def run_oos_permutation_for_param(
     alpha: float = 0.10,
     random_seed: Optional[int] = None,
 ) -> OutOfSamplePermutationReport:
-    """Run the vector-first OOS gate for one parameter combo."""
+    """Vector-shuffle OOS gate for one parameter combo (pipeline second stage removed).
+
+    ``candles_df``, ``signal_extractor``, ``permutation_mode``, and ``metric_threshold`` are
+    accepted for call-site compatibility but are not used.
+    """
+    _ = candles_df, signal_extractor, permutation_mode, metric_threshold
     vector_report = run_vector_shuffle_test(
         fitted_feature=fitted_feature,
         target=target,
@@ -411,29 +649,9 @@ def run_oos_permutation_for_param(
         random_seed=random_seed,
         param_combo=param_combo,
     )
-    if not vector_report.passed:
-        return OutOfSamplePermutationReport(
-            param_combo=param_combo,
-            vector_report=vector_report,
-            candle_report=None,
-            passed=False,
-        )
-
-    candle_report = run_pipeline_permutation(
-        candles_df=candles_df,
-        signal_extractor=signal_extractor,
-        target=target,
-        objective_func=objective_func,
-        permutation_mode=permutation_mode,
-        metric_threshold=metric_threshold,
-        nreps=nreps,
-        alpha=alpha,
-        random_seed=random_seed,
-        param_combo=param_combo,
-    )
     return OutOfSamplePermutationReport(
         param_combo=param_combo,
         vector_report=vector_report,
-        candle_report=candle_report,
-        passed=bool(vector_report.passed and candle_report.passed),
+        candle_report=None,
+        passed=bool(vector_report.passed),
     )

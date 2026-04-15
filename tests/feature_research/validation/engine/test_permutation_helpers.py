@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.evaluation.walkforward.permutation_helpers import (
+from utils.evaluation.permutation_test.permutation_nulls import (
     aggregate_oos_metric_from_report,
     permute_target_in_two_units,
     two_unit_masks_from_fold_rows,

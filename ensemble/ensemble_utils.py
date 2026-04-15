@@ -13,18 +13,14 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 import utils.core.helpers as helpers
-from ensemble.vault_feature_files import validate_domain_discrete_bias_node_spec
+from utils.core.ticker_key import normalize_ticker_key
+from ensemble.vault.feature_files import validate_signed_signal_bias_node_spec
 from feature_selection.base_models import BaseModel
-from feature_selection.domain_discrete import (
-    build_domain_discrete_bias_node_spec,
-    load_domain_discrete_spec,
-    raise_legacy_feature_artifact,
-)
 from utils.core.enums import Direction, Ticker, TimeFrame, coerce_direction
 
 
 def _reject_legacy_feature_artifact(message: str) -> None:
-    raise_legacy_feature_artifact(message)
+    raise ValueError(message)
 
 
 def normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
@@ -46,17 +42,6 @@ def normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
         if df.columns.duplicated().any():
             df = df.loc[:, ~df.columns.duplicated(keep="first")]
     return df
-
-
-def normalize_ticker_key(ticker_val: object) -> str:
-    """Normalize ticker identifiers (enum, string, or object with name/value) to a string key."""
-    if hasattr(ticker_val, "name"):
-        return str(getattr(ticker_val, "name"))
-    if hasattr(ticker_val, "value"):
-        return str(getattr(ticker_val, "value"))
-    if isinstance(ticker_val, str):
-        return ticker_val.replace("Ticker.", "")
-    return str(ticker_val)
 
 
 def parse_control_file(filepath: str) -> Dict[str, Any]:
@@ -94,7 +79,7 @@ def parse_control_file(filepath: str) -> Dict[str, Any]:
     return control_file
 
 
-def _validate_domain_discrete_model_config(
+def _validate_signed_signal_model_config(
     config: Dict[str, Any],
     *,
     index: Optional[int] = None,
@@ -106,9 +91,9 @@ def _validate_domain_discrete_model_config(
     if missing_keys:
         raise ValueError(f"{prefix}Missing required keys: {missing_keys}")
 
-    if config["model_type"] != "domain_discrete":
+    if config["model_type"] != "signed_signal":
         _reject_legacy_feature_artifact(
-            f"{prefix}model_type must be 'domain_discrete' (got {config['model_type']!r})."
+            f"{prefix}model_type must be 'signed_signal' (got {config['model_type']!r})."
         )
 
     try:
@@ -120,7 +105,7 @@ def _validate_domain_discrete_model_config(
         ) from exc
     config["strategy"] = strategy.value
 
-    validate_domain_discrete_bias_node_spec(config["bias_node_spec"], prefix=prefix)
+    validate_signed_signal_bias_node_spec(config["bias_node_spec"], prefix=prefix)
 
 
 def validate_control_file(control_file: Dict[str, Any]) -> None:
@@ -158,7 +143,7 @@ def validate_control_file(control_file: Dict[str, Any]) -> None:
         raise ValueError("base_models must be a list")
     
     for i, model_config in enumerate(control_file['base_models']):
-        _validate_domain_discrete_model_config(model_config, index=i)
+        _validate_signed_signal_model_config(model_config, index=i)
     
     # If is_fit=True, validate fitted ensemble is present
     if is_fit:
@@ -359,7 +344,7 @@ def validate_base_model_config(config: Dict[str, Any], index: Optional[int] = No
     ValueError
         If configuration is invalid
     """
-    _validate_domain_discrete_model_config(config, index=index)
+    _validate_signed_signal_model_config(config, index=index)
 
 
 def create_base_model_from_config(
@@ -371,16 +356,16 @@ def create_base_model_from_config(
     """
     Factory function to create base model instances from configuration.
     
-    Creates thin BaseModel instances backed by frozen domain-discrete node specs.
+    Creates thin BaseModel instances backed by native signed-signal node specs.
     
     Parameters
     ----------
     config : Dict[str, Any]
-        Base model configuration with 'model_type' and frozen 'bias_node_spec'
+        Base model configuration with 'model_type' and native 'bias_node_spec'
     ticker : Ticker, optional
         Ticker symbol for the base model. If None, will try to extract from feature_column or use default.
     fitted_params : Dict[str, Any], optional
-        Unsupported after the domain-discrete cutover.
+        Unsupported for signed-signal base models.
     use_cache : bool, default=True
         If True, BaseModel will use vectorized cached data when available.
         If False, uses streaming candle-by-candle processing.
@@ -400,14 +385,13 @@ def create_base_model_from_config(
             "create_base_model_from_config no longer accepts fitted_params."
         )
 
-    _validate_domain_discrete_model_config(config)
+    _validate_signed_signal_model_config(config)
 
-    bias_node_spec = config["bias_node_spec"].copy()
-    domain_spec = load_domain_discrete_spec(bias_node_spec["params"])
+    bias_node_spec = dict(config["bias_node_spec"])
     feature_config = {
-        "model_type": "domain_discrete",
+        "model_type": "signed_signal",
         "feature_column": config["feature_column"],
-        "bias_node_spec": build_domain_discrete_bias_node_spec(domain_spec),
+        "bias_node_spec": bias_node_spec,
         "strategy": config["strategy"],
     }
 
@@ -423,7 +407,7 @@ def create_base_model_from_config(
     elif ticker is not None:
         tickers_list = [ticker]
     else:
-        tickers_list = list(domain_spec.ticker_scope.tickers)
+        tickers_list = [Ticker.ES]
 
     try:
         return BaseModel(
@@ -432,7 +416,7 @@ def create_base_model_from_config(
             use_cache=use_cache,
         )
     except ValueError as exc:
-        raise ValueError(f"Unable to create domain_discrete BaseModel: {exc}") from exc
+        raise ValueError(f"Unable to create signed_signal BaseModel: {exc}") from exc
 
 
 def add_feature_to_control_file(filepath: str, feature_config: Dict[str, Any], tickers: Optional[List[str]] = None) -> None:
@@ -554,7 +538,7 @@ def extract_bias_node_specs_from_control_file(filepath: str) -> List[Dict[str, A
     seen_specs: set[tuple[str, tuple[str, ...], str]] = set()
 
     for i, model_config in enumerate(control_file["base_models"]):
-        _validate_domain_discrete_model_config(model_config, index=i)
+        _validate_signed_signal_model_config(model_config, index=i)
         bias_node_spec = dict(model_config["bias_node_spec"])
         spec_key = (
             bias_node_spec["module_name"],

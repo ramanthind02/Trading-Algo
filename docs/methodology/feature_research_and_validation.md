@@ -24,7 +24,7 @@ This is an Occam's razor workflow:
 - lock what works,
 - avoid unnecessary adaptation.
 
-For a concrete **target pattern** for frozen, interpretable discrete signals (domain-meaningful absolute cutpoints, research-time design only, no production-time bin-edge fit, explicit ticker scope), see the library note [Domain discrete signals](../library/Feature_selection/domain_discrete_signals.md).
+The target production contract is simple: research can inspect both continuous and discrete bias nodes, but production only ships native discrete bias nodes that emit `-1/0/+1`.
 
 ## Data Split Policy
 
@@ -48,7 +48,7 @@ The expected sequence is:
 3. Explore the parameter landscape on the training set.
 4. Run robustness checks on the training set.
 5. Manually select a strong and stable parameter region or parameter combo.
-6. Freeze the feature definition (see [Domain discrete signals](../library/Feature_selection/domain_discrete_signals.md) when the frozen artifact is hand-crafted discretization rather than learned binning).
+6. Freeze the feature definition as a native signed-signal bias node.
 7. Evaluate it on the validation set.
 8. If validation behavior is acceptable, run the final test-set check.
 9. If the test-set result is acceptable, move to production unchanged.

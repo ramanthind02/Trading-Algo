@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
-from ensemble.portfolio_tester import (
+from ensemble.portfolio_impl.portfolio_tester import (
     calculate_log_returns_from_candles,
     calculate_strategy_returns_from_positions,
     calculate_baseline_returns,

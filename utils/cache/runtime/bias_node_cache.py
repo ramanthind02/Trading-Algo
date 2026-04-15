@@ -27,6 +27,9 @@ from utils.core.enums import Ticker, TimeFrame
 
 logger = logging.getLogger(__name__)
 
+# Parquet needs at least a footer; pyarrow rejects files smaller than 8 bytes.
+_MIN_PARQUET_FILE_BYTES = 8
+
 
 class CacheMissError(Exception):
     """
@@ -262,6 +265,11 @@ class BiasNodeCache:
 
         return cache_path
 
+    def _metadata_path(self) -> Path:
+        """Sidecar path used by CentralCacheStore (``*.parquet.meta.json``)."""
+        path = self._cache_path
+        return path.with_suffix(f"{path.suffix}.meta.json")
+
     @property
     def cache_path(self) -> str:
         """Get the cache file path as string."""
@@ -290,9 +298,8 @@ class BiasNodeCache:
         Raises
         ------
         CacheMissError
-            If cache file does not exist or is invalid
-        FileNotFoundError
-            If cache file cannot be read
+            If cache file does not exist, is empty, too small to be Parquet,
+            or cannot be read (file is removed so the next run can rebuild).
         """
         if not self.exists():
             raise CacheMissError(
@@ -304,13 +311,12 @@ class BiasNodeCache:
                 reason="Cache file does not exist"
             )
 
-        # Treat zero-byte parquet files as cache misses
-        # These typically result from interrupted writes or disk issues.
+        # Treat zero-byte or truncated parquet as cache misses (interrupted writes, sync issues).
         file_size = self._cache_path.stat().st_size
         if file_size == 0:
             logger.warning(
-                f"Cache file {self.cache_path} is empty (0 bytes). "
-                f"Invalidating and treating as cache miss."
+                "Cache file %s is empty (0 bytes). Invalidating and treating as cache miss.",
+                self.cache_path,
             )
             self.invalidate()
             raise CacheMissError(
@@ -324,29 +330,62 @@ class BiasNodeCache:
                     "Likely from an interrupted write; rerun cache_manager.populate_cache()."
                 )
             )
+        if file_size < _MIN_PARQUET_FILE_BYTES:
+            logger.warning(
+                "Cache file %s is %s bytes (< %s min for Parquet). Invalidating.",
+                self.cache_path,
+                file_size,
+                _MIN_PARQUET_FILE_BYTES,
+            )
+            self.invalidate()
+            raise CacheMissError(
+                module_name=self.module_name,
+                params=self.params,
+                ticker=self.ticker,
+                tf=self.tf,
+                cache_path=self.cache_path,
+                reason=(
+                    f"Cache file was truncated ({file_size} bytes) and has been invalidated."
+                ),
+            )
 
         try:
             self._data = pd.read_parquet(self._cache_path)
-
-            # Ensure datetime index
-            if 'datetime' in self._data.columns:
-                self._data = self._data.set_index('datetime')
-
-            # Ensure index is datetime type
-            if not isinstance(self._data.index, pd.DatetimeIndex):
-                self._data.index = pd.to_datetime(self._data.index)
-
-            logger.debug(
-                f"Loaded cache for {self.module_name} ({self.ticker_str}, {self.tf_str}): "
-                f"{len(self._data)} rows, {self._data.index.min()} to {self._data.index.max()}"
+        except Exception as exc:
+            logger.warning(
+                "Cache file %s is unreadable (%s). Invalidating and treating as cache miss.",
+                self.cache_path,
+                exc,
             )
+            self.invalidate()
+            raise CacheMissError(
+                module_name=self.module_name,
+                params=self.params,
+                ticker=self.ticker,
+                tf=self.tf,
+                cache_path=self.cache_path,
+                reason=f"Corrupt or non-Parquet cache removed: {exc}",
+            ) from exc
 
-            return self._data
+        # Ensure datetime index
+        if "datetime" in self._data.columns:
+            self._data = self._data.set_index("datetime")
 
-        except Exception as e:
-            raise FileNotFoundError(
-                f"Failed to read cache file {self.cache_path}: {e}"
-            )
+        # Ensure index is datetime type
+        if not isinstance(self._data.index, pd.DatetimeIndex):
+            self._data.index = pd.to_datetime(self._data.index)
+
+        logger.debug(
+            "Loaded cache for %s (%s, %s): %s rows, %s to %s",
+            self.module_name,
+            self.ticker_str,
+            self.tf_str,
+            len(self._data),
+            self._data.index.min(),
+            self._data.index.max(),
+        )
+
+        return self._data
 
     def save(self, data: Union[pd.Series, pd.DataFrame]) -> None:
         """
@@ -554,19 +593,25 @@ class BiasNodeCache:
 
     def invalidate(self) -> bool:
         """
-        Delete the cache file.
+        Delete the cache file and central-cache metadata sidecar if present.
 
         Returns
         -------
         bool
-            True if file was deleted, False if it didn't exist
+            True if any file was removed, False if nothing was on disk
         """
+        removed = False
+        meta = self._metadata_path()
+        if meta.exists():
+            meta.unlink()
+            removed = True
         if self.exists():
             self._cache_path.unlink()
+            removed = True
+        if removed:
             self._data = None
-            logger.info(f"Invalidated cache: {self.cache_path}")
-            return True
-        return False
+            logger.info("Invalidated cache: %s", self.cache_path)
+        return removed
 
     def get_metadata(self) -> Dict[str, Any]:
         """

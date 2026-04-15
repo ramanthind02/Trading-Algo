@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ensemble.global_portfolio_runtime import (
+from ensemble.portfolio_impl.global_portfolio_runtime import (
     apply_global_position_constraints,
     build_global_returns_proxy,
     build_reference_grid_from_daily_candles,

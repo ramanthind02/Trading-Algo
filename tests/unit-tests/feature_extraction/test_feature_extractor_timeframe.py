@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 
 import feature_extraction.feature_extractor as feature_extractor
-from utils.cache.central_cache import CentralCacheStore
-from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
+from utils.cache.runtime.central_cache import CentralCacheStore
+from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -70,24 +70,22 @@ def test_extract_features_single_ticker_uses_requested_timeframe_for_loading_and
         captured["loaded_timeframe"] = timeframe
         return _sample_price_df()
 
-    def _fake_create_filtered_bias_node(
+    def _fake_create_fresh_bias_node(
         module_name: str,
         ticker: Ticker,
         tf: TimeFrame,
         params: dict[str, Any],
-        filter_specs: list[Any] | None = None,
     ) -> _DummyNode:
         _ = module_name
         _ = ticker
         _ = params
-        _ = filter_specs
         return _DummyNode(tf)
 
     monkeypatch.setattr(feature_extractor.helpers, "load_data", _fake_load_data)
     monkeypatch.setattr(
         feature_extractor.helpers,
-        "create_filtered_bias_node",
-        _fake_create_filtered_bias_node,
+        "create_fresh_bias_node",
+        _fake_create_fresh_bias_node,
     )
 
     features_df, targets_df = feature_extractor._extract_features_single_ticker(
@@ -227,21 +225,19 @@ def test_extract_features_single_ticker_populate_on_miss_writes_cache(
         _ = end
         return _sample_price_df()
 
-    def _fake_create_filtered_bias_node(
+    def _fake_create_fresh_bias_node(
         module_name: str,
         ticker: Ticker,
         tf: TimeFrame,
         params: dict[str, Any],
-        filter_specs: list[Any] | None = None,
     ) -> _DummyNode:
         _ = module_name
         _ = ticker
         _ = params
-        _ = filter_specs
         return _DummyNode(tf)
 
     monkeypatch.setattr(feature_extractor.helpers, "load_data", _fake_load_data)
-    monkeypatch.setattr(feature_extractor.helpers, "create_filtered_bias_node", _fake_create_filtered_bias_node)
+    monkeypatch.setattr(feature_extractor.helpers, "create_fresh_bias_node", _fake_create_fresh_bias_node)
 
     features_df, targets_df = feature_extractor._extract_features_single_ticker(
         module_name="dummy",

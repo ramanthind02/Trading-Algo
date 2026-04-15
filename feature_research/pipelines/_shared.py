@@ -7,7 +7,15 @@ from typing import TYPE_CHECKING, Literal
 import pandas as pd
 
 from feature_research.config import OOSWindowConfig
-from feature_research.core_helpers import build_runtime_walkforward_config
+from feature_research.core_helpers import (
+    build_runtime_walkforward_config,
+    normalize_timeframe_from_bias_spec,
+)
+from feature_research.pipelines.types import OosCorrelationBundle
+from feature_research.research_table_exports import (
+    write_walkforward_equity_powerbi_csvs,
+    walkforward_power_bi_dir,
+)
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     get_effective_range_and_tickers,
@@ -28,8 +36,10 @@ from utils.evaluation.walkforward.runner import (
 )
 
 if TYPE_CHECKING:
-    from feature_research.in_sample.config import ResearchConfig
+    from feature_research.config import ResearchConfig
     from utils.evaluation.walkforward.runner import WalkforwardRunReport
+
+EvaluationPipelineResult = tuple["WalkforwardRunReport", OosCorrelationBundle | None]
 
 
 SIGNED_SIGNAL_FEATURE_TYPE = "signed_signal"
@@ -56,7 +66,7 @@ def _run_evaluation_pipeline(
     phase: Literal["oos", "validation"],
     config: "ResearchConfig",
     output_dir: str | None = None,
-) -> "WalkforwardRunReport":
+) -> EvaluationPipelineResult:
     if phase == "oos":
         window = _effective_oos_window(config)
         phase_label = "OOS"
@@ -187,11 +197,72 @@ def _run_evaluation_pipeline(
         fold_rows_override=fold_rows,
         phase_label=phase_label,
     )
+    eval_tf = normalize_timeframe_from_bias_spec(
+        config.eval_bias_spec,
+        fallback=config.timeframe,
+    )
+    powerbi_dir = walkforward_power_bi_dir(config.output_root, phase_subdir)
+    oos_correlation_bundle: OosCorrelationBundle | None = None
+    if phase == "oos" and config.oos_window is not None:
+        ow_bundle = config.oos_window
+        ew_bundle = _effective_oos_window(config)
+        oos_correlation_bundle = OosCorrelationBundle(
+            combo_signal_target=data.combo_signal_target,
+            selection_summary_df=report.selection_summary_df,
+            eval_tf=eval_tf,
+            research_eval_bias_spec=dict(config.eval_bias_spec),
+            target_col=config.target_col,
+            extended_start=ew_bundle.train_start,
+            extended_end=ow_bundle.test_end,
+            module_name=str(config.eval_bias_spec["module_name"]),
+        )
+    if not report.selection_summary_df.empty:
+        if phase == "validation" and config.validation_window is not None:
+            vw = config.validation_window
+            pbi_paths = write_walkforward_equity_powerbi_csvs(
+                combo_signal_target=data.combo_signal_target,
+                selection_summary_df=report.selection_summary_df,
+                module_name=str(config.eval_bias_spec["module_name"]),
+                timeframe=eval_tf,
+                holdout_start=vw.test_start,
+                holdout_end=vw.test_end,
+                extended_start=vw.train_start,
+                extended_end=vw.test_end,
+                output_powerbi_dir=powerbi_dir,
+                holdout_csv_stem="equity_curve_validation_only",
+                extended_csv_stem="equity_curve_train_and_validation",
+                portfolio_candles=portfolio_candles,
+            )
+            print(
+                f"[{phase_label}] Power BI equity: {pbi_paths['holdout'].name}, "
+                f"{pbi_paths['extended'].name} -> {powerbi_dir}"
+            )
+        elif phase == "oos" and config.oos_window is not None:
+            ow = config.oos_window
+            ew = _effective_oos_window(config)
+            pbi_paths = write_walkforward_equity_powerbi_csvs(
+                combo_signal_target=data.combo_signal_target,
+                selection_summary_df=report.selection_summary_df,
+                module_name=str(config.eval_bias_spec["module_name"]),
+                timeframe=eval_tf,
+                holdout_start=ow.test_start,
+                holdout_end=ow.test_end,
+                extended_start=ew.train_start,
+                extended_end=ow.test_end,
+                output_powerbi_dir=powerbi_dir,
+                holdout_csv_stem="equity_curve_oos_test_only",
+                extended_csv_stem="equity_curve_train_val_and_test",
+                portfolio_candles=portfolio_candles,
+            )
+            print(
+                f"[{phase_label}] Power BI equity: {pbi_paths['holdout'].name}, "
+                f"{pbi_paths['extended'].name} -> {powerbi_dir}"
+            )
     write_walkforward_artifacts(
         report=report,
         feature_type=SIGNED_SIGNAL_FEATURE_TYPE,
         module_name=str(config.eval_bias_spec["module_name"]),
-        root_dir=output_dir_path,
+        root_dir=config.output_root,
         output_subdir=phase_subdir,
     )
-    return report
+    return report, oos_correlation_bundle

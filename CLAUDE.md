@@ -12,7 +12,10 @@ Systematic trading framework implementing Robert Carver's methodology. Generates
 
 - The venv is shared across all git worktrees
 - **NEVER** create new virtual environments in worktrees or subdirectories
-- Always use the absolute path to activate: `source /home/raman/repos/Trading-Algo/venv/bin/activate`
+- **Linux/macOS**: activate with an absolute path, e.g. `source /home/raman/repos/Trading-Algo/venv/bin/activate`
+- **Windows PowerShell**: do not use `source venv/bin/activate` (that is a Unix shell pattern). Prefer invoking the venv interpreter directly so you never rely on PATH or activation:
+  - `.\.venv\Scripts\python.exe` or `.\venv\Scripts\python.exe` (use whichever folder exists at the repo root)
+- **Agents / IDE**: if `pytest` appears missing, the wrong interpreter is selected (often system Python). Use the venv’s `python.exe` with `python -m pytest`, not `pytest` on PATH.
 
 ## Commands
 
@@ -33,6 +36,28 @@ pytest tests/test_integration.py::TestFormulaVerification -v
 # Compile Cython extensions (optional, for performance)
 python utils/compute/cython/setup_cython.py build_ext --inplace
 ```
+
+## Commands (Windows PowerShell, repo root)
+
+Prefer the venv interpreter explicitly; `python -m pytest` avoids needing `pytest` on PATH.
+
+```powershell
+# Example: one file
+.\.venv\Scripts\python.exe -m pytest tests\unit-tests\feature_research\test_permutation_pipeline.py -v
+
+# In-sample research (same as: python -m feature_research.in_sample.run_is)
+.\.venv\Scripts\python.exe -m feature_research.in_sample.run_is
+
+# Feature–vault correlation CSV (runs feature_research OOS once; enable FeatureVaultCorrelationConfig in portfolio_research.config.load_config)
+.\.venv\Scripts\python.exe -m portfolio_research.run_feature_vault_correlation
+```
+
+If your venv directory is named `venv` instead of `.venv`, use `.\venv\Scripts\python.exe` in place of `.\.venv\Scripts\python.exe`.
+
+## Visualization Policy
+
+- Prefer tabular or JSON/CSV research outputs over in-repo plotting.
+- Keep QuantStats tearsheets, prop-firm HTML reports, and Norgate migration QA plots unless the task explicitly says otherwise.
 
 ## Testing Boundaries
 

@@ -48,7 +48,7 @@ from feature_selection.validation.stability_analysis import (
     _param_combo_name,
     run_walkforward_stability,
 )
-from utils.cache.cache_manager import CacheManager
+from utils.cache.runtime.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.evaluation.permutation_test.candle_shuffle import CandleShuffler
 from ._support import project_root as _project_root
@@ -371,7 +371,6 @@ def _run_signed_signal_permutation_suite(
         metric_threshold=metric_threshold,
         top_k=3,
         random_seed=42,
-        permutation_mode_stage2='feature_shuffle',
         min_folds_stable=1,
         out_of_sample=OutOfSamplePermutationConfig(
             objective_metric=oos_objective_metric or ObjectiveMetricSpec(builtin='sortino'),
@@ -477,6 +476,7 @@ def test_vector_shuffle_stage1(
 
 
 @pytest.mark.integration
+@pytest.mark.skip(reason="Orchestration is vector-shuffle-only; pipeline permutation deferred.")
 def test_pipeline_permutation_stage2(
     bias_module: str = DEFAULT_BIAS_MODULE,
     param_name: str = DEFAULT_PARAM_NAME,
@@ -710,7 +710,7 @@ def test_permutation_suite_runs_in_sample_walkforward_oos(
     ticker: Ticker = DEFAULT_TICKER,
     timeframe: TimeFrame = DEFAULT_TIMEFRAME,
 ) -> None:
-    """Integration test for in-sample (Stage 1 + 2) and OOS permutation; Stage 3 removed."""
+    """Integration test for in-sample vector shuffle + OOS permutation; Stage 3 removed."""
     print('\n' + '=' * 60)
     print('Integration Test: In-Sample + OOS Permutation Suite Coverage')
     print('=' * 60)
@@ -727,23 +727,24 @@ def test_permutation_suite_runs_in_sample_walkforward_oos(
 
     assert isinstance(suite, PermutationTestSuite)
     assert len(suite.stage1_reports) == len(param_grid)
-    assert len(suite.stage2_reports) <= len(suite.stage1_reports)
+    assert suite.stage2_reports == {}
     # Stage 3 (walkforward permutation) removed: stub report, no fold results.
     assert len(suite.stage3_report.fold_results) == 0
     assert "removed" in suite.stage3_report.stability_verdict.lower()
     assert isinstance(suite.phase3_oos_reports, dict)
 
+    stage1_pass_names = {k for k, r in suite.stage1_reports.items() if r.passed}
     if len(suite.phase3_oos_reports) == 0:
         pytest.skip(
-            'Stage 2 produced zero passers for this dataset/config; OOS phase configured but had no candidates.',
+            "Vector shuffle produced zero passers for this dataset/config; OOS had no candidates.",
         )
 
-    assert set(suite.phase3_oos_reports).issubset(set(suite.stage2_reports))
+    assert set(suite.phase3_oos_reports).issubset(stage1_pass_names)
     assert len(suite.combo_decisions) == len(param_grid)
 
     print(f'Feature: {feature_col}')
     print(f'Stage 1 reports: {len(suite.stage1_reports)}')
-    print(f'Stage 2 reports: {len(suite.stage2_reports)}')
+    print(f'Stage 2 reports (unused): {len(suite.stage2_reports)}')
     print(f'Stage 3: {suite.stage3_report.stability_verdict}')
     print(f'OOS reports: {len(suite.phase3_oos_reports)}')
 
@@ -755,10 +756,10 @@ def test_permutation_suite_respects_vector_first_gate_in_oos(
     ticker: Ticker = DEFAULT_TICKER,
     timeframe: TimeFrame = DEFAULT_TIMEFRAME,
 ) -> None:
-    """Integration test: OOS candle permutation runs only after vector pass.
+    """Integration test: OOS uses vector shuffle only; strict OOS objective forces failures.
 
     Uses strict OOS ObjectiveMetricSpec to force vector failures while keeping
-    in-sample Stage 2 passers likely so the vector-first gate path is exercised.
+    in-sample vector passers so the OOS path is exercised.
     """
     print('\n' + '=' * 60)
     print('Integration Test: OOS Vector-First Gate')
@@ -786,11 +787,7 @@ def test_permutation_suite_respects_vector_first_gate_in_oos(
     ]
     assert vector_failures, 'Expected vector failures from deterministic zero OOS objective metric.'
 
-    assert all(report.candle_report is None for report in vector_failures)
-    assert all(
-        (report.candle_report is None) == (not report.vector_report.passed)
-        for report in suite.phase3_oos_reports.values()
-    )
+    assert all(report.candle_report is None for report in suite.phase3_oos_reports.values())
 
     print(f'Feature: {feature_col}')
     print(f'OOS reports: {len(suite.phase3_oos_reports)}')
@@ -807,16 +804,12 @@ def test_early_stopping_orchestration(
     nreps: int = NREPS_FAST,
     alpha: float = 0.10,
 ) -> None:
-    """Integration test for T016: Early Stopping Orchestration + T017: Report Generation.
+    """Integration test for T016: orchestration + T017: report generation (vector shuffle + optional OOS).
 
-    Runs the full three-stage permutation testing funnel on RSI lookback grid
-    [3, 5, 10, 14] and generates all reports + plots.
-
-    Customizable for any bias node/param/ticker for researcher exploration.
+    Runs vector shuffle on RSI lookback grid [3, 5, 10, 14] and generates reports + plots.
 
     Researcher manual verification:
-    - Inspect terminal output for full funnel summary
-    - Confirm Stage 2 count <= Stage 1 pass count (early stopping enforced)
+    - Inspect terminal output for funnel summary
     - Review ensemble_candidates list
     - Open generated plots and markdown summary for full report
     """
@@ -839,13 +832,14 @@ def test_early_stopping_orchestration(
     # Assertions
     assert isinstance(suite, PermutationTestSuite)
     assert len(suite.stage1_reports) == len(param_grid)
-    assert len(suite.stage2_reports) <= suite.funnel_stats.stage1_pass
+    assert suite.stage2_reports == {}
     assert suite.funnel_stats.total_params == len(param_grid)
     assert suite.funnel_stats.computational_savings_pct >= 0.0
     assert isinstance(suite.ensemble_candidates, list)
-    assert set(suite.ensemble_candidates).issubset(set(suite.stage2_reports.keys()))
+    stage1_pass_names = {k for k, r in suite.stage1_reports.items() if r.passed}
+    assert set(suite.ensemble_candidates).issubset(stage1_pass_names)
     assert isinstance(suite.phase3_oos_reports, dict)
-    assert set(suite.phase3_oos_reports).issubset(set(suite.stage2_reports.keys()))
+    assert set(suite.phase3_oos_reports).issubset(stage1_pass_names)
     assert len(suite.combo_decisions) == len(param_grid)
 
     # --- T017: Generate reports ---
@@ -873,11 +867,7 @@ def test_early_stopping_orchestration(
     vector_plot_paths = list(oos_vector_dir.glob('null_dist_*.png'))
     candle_plot_paths = list(oos_candle_dir.glob('null_dist_*.png'))
     assert len(vector_plot_paths) == len(suite.phase3_oos_reports)
-    expected_candle_count = sum(
-        1
-        for report in suite.phase3_oos_reports.values()
-        if report.candle_report is not None
-    )
+    expected_candle_count = 0
     assert len(candle_plot_paths) == expected_candle_count
 
     # Terminal summary
@@ -885,7 +875,7 @@ def test_early_stopping_orchestration(
     print('FUNNEL SUMMARY')
     print(f'{"="*60}')
     print(f'Stage 1 (Vector Shuffle): {suite.funnel_stats.total_params} -> {suite.funnel_stats.stage1_pass} passed')
-    print(f'Stage 2 (Pipeline Perm):  {suite.funnel_stats.stage1_pass} -> {suite.funnel_stats.stage2_pass} passed')
+    print(f'Pipeline permutation: removed (stage2_pass mirrors vector passers: {suite.funnel_stats.stage2_pass})')
     print(f'Stage 3 (Walkforward):    {suite.funnel_stats.total_params} evaluated -> {suite.funnel_stats.stable_params} stable')
     print(f'Ensemble candidates: {suite.ensemble_candidates}')
     print(f'Computational savings: {suite.funnel_stats.computational_savings_pct:.1f}%')

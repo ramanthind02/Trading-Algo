@@ -30,10 +30,45 @@ def is_grid_axis(key: str, value: object) -> bool:
     return isinstance(value, list) and key not in SCALAR_LIST_PARAM_KEYS
 
 
+# Inner param blobs for composite nodes (dual_signal, filter_gate, filter_and_signal).
+NESTED_GRID_PARAM_KEYS: frozenset[str] = frozenset(
+    {"paramsA", "paramsB", "filter_params", "signal_params"}
+)
+
+
+def _composite_nested_side_has_grid(params: Dict[str, Any]) -> bool:
+    return any(
+        k in NESTED_GRID_PARAM_KEYS
+        and isinstance(params[k], dict)
+        and any(is_grid_axis(ik, iv) for ik, iv in params[k].items())
+        for k in params
+    )
+
+
 def expand_param_grid(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Expand parameter grid to a list of parameter dicts."""
+    """Expand parameter grid to a list of parameter dicts.
+
+    Supports nested grids under ``paramsA`` / ``paramsB`` (``dual_signal``) and
+    ``filter_params`` / ``signal_params`` (``filter_gate``, ``filter_and_signal``):
+    each nested dict is expanded independently, then combined by Cartesian product.
+    """
     if not isinstance(params, dict):
         return [{}]
+
+    nested_keys = sorted(
+        k for k in params if k in NESTED_GRID_PARAM_KEYS and isinstance(params[k], dict)
+    )
+    if nested_keys and _composite_nested_side_has_grid(params):
+        rest = {k: v for k, v in params.items() if k not in nested_keys}
+        inner_seqs = [expand_param_grid(params[k]) for k in nested_keys]
+        merged_nested = [
+            dict(zip(nested_keys, combo)) for combo in product(*inner_seqs)
+        ]
+        return [
+            expanded
+            for piece in merged_nested
+            for expanded in expand_param_grid({**rest, **piece})
+        ]
 
     has_grid = any(is_grid_axis(k, v) for k, v in params.items())
     if not has_grid:
@@ -280,6 +315,7 @@ def write_feature_artifact(
 
 
 __all__ = [
+    "NESTED_GRID_PARAM_KEYS",
     "SCALAR_LIST_PARAM_KEYS",
     "assign_cached_feature_values",
     "build_bias_node_descriptor",

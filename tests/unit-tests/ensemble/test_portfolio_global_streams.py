@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ensemble.portfolio_global_streams import (
+from ensemble.portfolio_impl.portfolio_global_streams import (
     align_forecast_vectors_to_daily_grid,
     build_daily_grid,
     normalize_global_signals_by_downside_vol,

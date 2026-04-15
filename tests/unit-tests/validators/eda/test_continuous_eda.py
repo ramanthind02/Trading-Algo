@@ -4,9 +4,6 @@ All synthetic data — no real market data, no cache required.
 """
 from __future__ import annotations
 
-import matplotlib
-matplotlib.use('Agg')
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -14,10 +11,9 @@ import pytest
 from feature_selection.eda.continuous_eda import (
     compute_decile_analysis,
     compute_distribution_diagnostics,
-    create_continuous_eda_plots,
 )
 from feature_selection.eda.eda_dataclasses import (
-    DecileAnalysis, DistributionDiagnostics, ContinuousEDAPlots,
+    DecileAnalysis, DistributionDiagnostics,
 )
 
 
@@ -85,17 +81,6 @@ def test_n_bins_2_minimum() -> None:
     target = pd.Series(np.random.randn(n), index=idx)
     result = compute_decile_analysis(feature, target, n_bins=2)
     assert len(result.bin_stats.sample_count) == 2
-
-
-def test_continuous_eda_plots_smoke() -> None:
-    """All three Figure objects created without error."""
-    feature, target = _series(500)
-    da = compute_decile_analysis(feature, target, n_bins=15)
-    qs = compute_quintile_spread(feature, target)
-    plots = create_continuous_eda_plots(feature, target, da, qs)
-    assert plots.decile_plot_fig is not None
-    assert plots.histogram_fig is not None
-    assert plots.quintile_spread_fig is not None
 
 
 from feature_selection.eda.continuous_eda import compute_quintile_spread

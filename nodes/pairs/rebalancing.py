@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 
 from nodes import BiasNode
-from utils.cache.central_cache_errors import ArtifactMissingError
+from utils.cache.runtime.central_cache_errors import ArtifactMissingError
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.models import Candle
 from utils.data.cross_ticker_store import CrossTickerDataStore

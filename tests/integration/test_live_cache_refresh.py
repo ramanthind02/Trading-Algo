@@ -20,9 +20,9 @@ from tests.integration._portfolio_cache_helpers import (  # noqa: E402
     instrument_returns_from_cache,
     source_data_available,
 )
-from utils.cache.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
-from utils.cache.central_cache import CentralCacheStore  # noqa: E402
-from utils.cache.central_cache_models import (  # noqa: E402
+from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
+from utils.cache.runtime.central_cache import CentralCacheStore  # noqa: E402
+from utils.cache.runtime.central_cache_models import (  # noqa: E402
     ArtifactLifecycleState,
     ArtifactScope,
 )

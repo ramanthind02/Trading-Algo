@@ -12,9 +12,8 @@ from tqdm import tqdm
 from feature_selection.validation.config import PermutationTestConfig
 from feature_selection.validation.objective_metrics import resolve_objective_metric
 from feature_selection.validation.permutation_tests import (
-    _SignedSignalPermutationBatchItem,
-    _run_pipeline_permutation_batch,
     run_oos_permutation_for_param,
+    run_vector_shuffle_target_perm_batch,
     run_vector_shuffle_test,
 )
 from feature_selection.validation.reports import (
@@ -27,13 +26,20 @@ from feature_selection.validation.reports import (
     WalkforwardStabilityReport,
 )
 from feature_selection.validation.stability_analysis import _param_combo_name
+from utils.core.signal_alignment import align_signal_to_target
 
 
-def _align_signal_to_target(signal: pd.Series, target: pd.Series) -> tuple[pd.Series, pd.Series]:
-    aligned_signal = signal.reindex(target.index).dropna()
-    aligned_target = target.reindex(aligned_signal.index).dropna()
-    aligned_signal = aligned_signal.reindex(aligned_target.index)
-    return aligned_signal, aligned_target
+def _failed_vector_shuffle_report(combo_name: str, nreps: int, alpha: float) -> VectorShuffleReport:
+    return VectorShuffleReport(
+        param_combo=combo_name,
+        original_metric=0.0,
+        null_distribution=np.zeros(nreps),
+        critical_value=0.0,
+        p_value=1.0,
+        passed=False,
+        alpha=alpha,
+        nreps=nreps,
+    )
 
 
 def _build_summary(
@@ -49,7 +55,6 @@ def _build_summary(
 ) -> str:
     n_total = funnel_stats.total_params
     n1 = funnel_stats.stage1_pass
-    n2 = funnel_stats.stage2_pass
     savings = funnel_stats.computational_savings_pct
     oos_line = (
         f"OOS Permutation: {len(phase3_oos_reports)} tested -> {sum(r.passed for r in phase3_oos_reports.values())} passed"
@@ -61,9 +66,9 @@ def _build_summary(
             f"Feature: {feature_name}",
             f"Parameter grid: {n_total} combinations",
             "",
-            f"Stage 1 (Vector Shuffle): {n_total} tested -> {n1} passed ({100*n1//max(n_total,1)}%)",
-            f"Stage 2 (Pipeline Permutation): {n1} tested -> {n2} passed",
-            "Stage 3 (Walkforward Stability): removed",
+            f"Vector shuffle: {n_total} tested -> {n1} passed ({100*n1//max(n_total,1)}%)",
+            "Pipeline permutation: removed",
+            "Walkforward stability (Stage 3): removed",
             oos_line,
             "",
             f"Ensemble candidates: {ensemble_candidates}",
@@ -77,16 +82,7 @@ def _build_summary(
 def _build_failed_oos_report(combo_name: str, nreps: int, alpha: float) -> OutOfSamplePermutationReport:
     return OutOfSamplePermutationReport(
         param_combo=combo_name,
-        vector_report=VectorShuffleReport(
-            param_combo=combo_name,
-            original_metric=0.0,
-            null_distribution=np.zeros(nreps),
-            critical_value=0.0,
-            p_value=1.0,
-            passed=False,
-            alpha=alpha,
-            nreps=nreps,
-        ),
+        vector_report=_failed_vector_shuffle_report(combo_name, nreps, alpha),
         candle_report=None,
         passed=False,
     )
@@ -102,105 +98,86 @@ def run_permutation_test_suite(
     extractor_func: Callable[[pd.DataFrame, Dict], pd.Series],
     feature_name: str = "unknown",
     fold_structure: Optional[List[Tuple[pd.Timestamp, pd.Timestamp]]] = None,
+    *,
+    aligned_signals_by_combo: Optional[Dict[str, Tuple[pd.Series, pd.Series]]] = None,
 ) -> PermutationTestSuite:
-    """Run the signed-signal permutation funnel."""
+    """Run the signed-signal permutation funnel.
+
+    aligned_signals_by_combo
+        When provided, each combo's ``(feature, target)`` is already aligned; stage 1 runs
+        ``run_vector_shuffle_target_perm_batch``: a **batched target-permutation** null
+        (one random reorder of ``target`` per rep, shared across combos). This is **not**
+        the same null as ``run_vector_shuffle_test`` (permute **feature** values, fixed
+        target). Prefer omitting this for standard "vector shuffle" signal alignment.
+    """
     _ = feature_spec
     fold_structure = fold_structure or []
 
     def _signal_for_params(df: pd.DataFrame, params: Dict) -> pd.Series:
         return extractor_func(df, params)
 
-    stage1_reports: Dict[str, VectorShuffleReport] = {}
-    if config.run_stage1:
-        print(f"\n{'='*60}")
-        print(f"Stage 1: Vector Shuffle — testing {len(param_grid)} param combos")
-        print(f"{'='*60}")
-        for params in tqdm(param_grid, desc="Stage 1 (vector shuffle)", unit="combo"):
-            combo_name = _param_combo_name(params)
-            try:
-                fitted_feature, aligned_target = _align_signal_to_target(
-                    _signal_for_params(candles_df, params),
-                    target,
-                )
-                stage1_reports[combo_name] = run_vector_shuffle_test(
-                    fitted_feature=fitted_feature,
-                    target=aligned_target,
-                    objective_func=objective_func,
-                    nreps=config.nreps,
-                    alpha=config.alpha,
-                    random_seed=config.random_seed,
-                    param_combo=combo_name,
-                )
-            except Exception:
-                stage1_reports[combo_name] = VectorShuffleReport(
-                    param_combo=combo_name,
-                    original_metric=0.0,
-                    null_distribution=np.zeros(config.nreps),
-                    critical_value=0.0,
-                    p_value=1.0,
-                    passed=False,
-                    alpha=config.alpha,
-                    nreps=config.nreps,
-                )
-        stage1_passers: Set[str] = {k for k, r in stage1_reports.items() if r.passed}
-        print(f"Stage 1: {len(stage1_passers)}/{len(param_grid)} passed")
-    else:
-        stage1_passers = {_param_combo_name(params) for params in param_grid}
-        print("\nStage 1: skipped (disabled in config)")
-
-    stage2_reports: Dict[str, PipelinePermutationReport] = {}
-    params_to_run_stage2 = [p for p in param_grid if _param_combo_name(p) in stage1_passers]
-    if not config.run_stage2:
-        print("\nStage 2: skipped (disabled in config)")
-        stage2_passers = set(stage1_passers)
-    elif params_to_run_stage2:
-        print(f"\n{'='*60}")
-        print(f"Stage 2: Pipeline Permutation (signed signal) — {len(params_to_run_stage2)} passers")
-        print(f"{'='*60}")
+    def _stage1_report_for_params(params: Dict) -> Tuple[str, VectorShuffleReport]:
+        combo_name = _param_combo_name(params)
         try:
-            batch_items = [
-                _SignedSignalPermutationBatchItem(
-                    param_combo=_param_combo_name(params),
-                    signal_extractor=lambda df, _params=params: _signal_for_params(df, _params),
-                )
-                for params in params_to_run_stage2
-            ]
-            stage2_reports = _run_pipeline_permutation_batch(
-                candles_df=candles_df,
-                items=batch_items,
-                target=target,
+            fitted_feature, aligned_target = align_signal_to_target(
+                _signal_for_params(candles_df, params),
+                target,
+            )
+            report = run_vector_shuffle_test(
+                fitted_feature=fitted_feature,
+                target=aligned_target,
                 objective_func=objective_func,
-                permutation_mode=config.permutation_mode_stage2,
-                metric_threshold=config.metric_threshold,
                 nreps=config.nreps,
                 alpha=config.alpha,
                 random_seed=config.random_seed,
-                n_jobs_reps=config.n_jobs_stage2_reps,
+                param_combo=combo_name,
             )
+            return combo_name, report
         except Exception:
-            for params in params_to_run_stage2:
-                combo_name = _param_combo_name(params)
-                stage2_reports[combo_name] = PipelinePermutationReport(
-                    param_combo=combo_name,
-                    feature_type="signed_signal",
-                    permutation_mode=config.permutation_mode_stage2,
-                    original_metric=0.0,
-                    null_distribution=np.zeros(config.nreps),
-                    critical_value=0.0,
-                    p_value=1.0,
-                    passed=False,
-                    alpha=config.alpha,
-                    nreps=config.nreps,
-                    no_trade_permutations=config.nreps,
-                )
+            return combo_name, _failed_vector_shuffle_report(
+                combo_name, config.nreps, config.alpha
+            )
 
-        print(
-            f"Stage 2: {len([r for r in stage2_reports.values() if r.passed])}/{len(params_to_run_stage2)} passed"
-        )
-        stage2_passers = {k for k, r in stage2_reports.items() if r.passed}
+    stage1_reports: Dict[str, VectorShuffleReport] = {}
+    if config.run_stage1:
+        print(f"\n{'='*60}")
+        print(f"Vector shuffle — testing {len(param_grid)} param combos")
+        print(f"{'='*60}")
+        if aligned_signals_by_combo is not None:
+            ordered = [_param_combo_name(params) for params in param_grid]
+            features_by_combo = {cn: aligned_signals_by_combo[cn][0] for cn in ordered}
+            ref_index = features_by_combo[ordered[0]].index
+            for cn in ordered:
+                if not features_by_combo[cn].index.equals(ref_index):
+                    raise ValueError(
+                        f"Permutation batch requires identical index for all combos; mismatch at {cn!r}",
+                    )
+            shared_target = target.reindex(ref_index)
+            print(
+                "Vector shuffle: batched target permutation — "
+                f"{len(ordered)} combos × {config.nreps} reps (one target shuffle per rep)",
+            )
+            stage1_reports = run_vector_shuffle_target_perm_batch(
+                ordered_combo_names=ordered,
+                features_by_combo=features_by_combo,
+                target=shared_target,
+                metric_spec=config.objective_metric,
+                nreps=config.nreps,
+                alpha=config.alpha,
+                random_seed=config.random_seed,
+            )
+        else:
+            for params in tqdm(param_grid, desc="Vector shuffle", unit="combo"):
+                combo_name, report = _stage1_report_for_params(params)
+                stage1_reports[combo_name] = report
+        stage1_passers: Set[str] = {k for k, r in stage1_reports.items() if r.passed}
+        print(f"Vector shuffle: {len(stage1_passers)}/{len(param_grid)} passed")
     else:
-        print("\nStage 2: skipped (0 Stage 1 passers)")
-        stage2_passers = set()
+        stage1_passers = {_param_combo_name(params) for params in param_grid}
+        print("\nVector shuffle: skipped (disabled in config)")
+
+    stage2_reports: Dict[str, PipelinePermutationReport] = {}
+    stage2_passers: Set[str] = set(stage1_passers)
 
     stable_params: Set[str] = set()
     ensemble_candidates = sorted(stage2_passers)
@@ -213,7 +190,7 @@ def run_permutation_test_suite(
         stability_verdict="Stage 3 (walkforward permutation) removed.",
         top_k=0,
     )
-    print("\nStage 3: removed (walkforward permutation no longer run)")
+    print("\nWalkforward stability stage: removed")
 
     phase3_oos_reports: Dict[str, OutOfSamplePermutationReport] = {}
     oos_passers: Set[str] = set()
@@ -229,7 +206,7 @@ def run_permutation_test_suite(
             if params is None:
                 continue
             try:
-                fitted_feature, aligned_target = _align_signal_to_target(
+                fitted_feature, aligned_target = align_signal_to_target(
                     _signal_for_params(candles_df, params),
                     target,
                 )
@@ -240,8 +217,6 @@ def run_permutation_test_suite(
                     target=aligned_target,
                     objective_func=oos_objective_func,
                     signal_extractor=lambda df, _params=params: _signal_for_params(df, _params),
-                    permutation_mode=config.permutation_mode_stage2,
-                    metric_threshold=config.metric_threshold,
                     nreps=config.nreps,
                     alpha=config.alpha,
                     random_seed=config.random_seed,
@@ -284,10 +259,7 @@ def run_permutation_test_suite(
     n2 = len(stage2_passers)
     n_stable = len(stable_params)
     n_cand = len(final_candidates)
-    total_without = n_total * config.nreps * 2
-    actual_stage1_cost = (n_total * config.nreps) if config.run_stage1 else 0
-    actual_stage2_cost = (n1 * config.nreps) if config.run_stage2 else 0
-    savings_pct = max(0.0, (total_without - (actual_stage1_cost + actual_stage2_cost)) / max(total_without, 1) * 100.0)
+    savings_pct = 0.0
 
     funnel_stats = FunnelStatistics(
         total_params=n_total,
