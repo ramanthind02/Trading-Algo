@@ -60,18 +60,10 @@ def _build_selected_params_detailed(
         "smoothed_objective",
         "rank",
         "trade_frequency",
-        "selected_in_top_k",
         "selected_long_bin",
     ]
     available_cols = [col for col in selected_cols if col in report.fold_scores_df.columns]
-    # Include rows selected as top-k (selected_in_top_k) or as single rank-1 (selected_feature)
-    sel_top_k = (
-        report.fold_scores_df["selected_in_top_k"].astype(bool)
-        if "selected_in_top_k" in report.fold_scores_df.columns
-        else False
-    )
-    sel_feature = report.fold_scores_df["selected_feature"].astype(bool)
-    selection_mask = sel_top_k | sel_feature if isinstance(sel_top_k, pd.Series) else sel_feature
+    selection_mask = report.fold_scores_df["selected_feature"].astype(bool)
     selected_rows = report.fold_scores_df.loc[selection_mask, available_cols].copy()
     if selected_rows.empty:
         return pd.DataFrame()

@@ -17,8 +17,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.cache.bias_node_cache import BiasNodeCache
-from utils.cache.cache_manager import CacheManager
+from utils.cache.runtime.bias_node_cache import BiasNodeCache
+from utils.cache.runtime.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.models import Candle
 from nodes.rsi import RSI
@@ -440,63 +440,9 @@ class TestEndToEnd:
         assert len(cached_values) > 0
 
     def test_cache_with_base_model(self, sample_candles_df, temp_cache_dir):
-        """Test that BaseModel can use cached features."""
-        from feature_selection.base_models.feature_base_model import BaseModel
-        from feature_selection.base_models.continuous_binning import ContinuousBinningModel
-
-        # Create and populate cache
-        rsi_node = RSI(
-            ticker=Ticker.ES,
-            tf=TimeFrame.D,
-            lookback=14
-        )
-
-        output = []
-        for _, row in sample_candles_df.iterrows():
-            candle = Candle.from_row(row)
-            result = rsi_node.add_candle(candle)
-            if result:
-                output.append(result[0])
-
-        dates = sample_candles_df['datetime'].values[:len(output)]
-        series = pd.Series(output, index=pd.DatetimeIndex(dates))
-
-        cache = BiasNodeCache(
-            module_name='rsi',
-            params={'lookback': 14},
-            ticker=Ticker.ES,
-            tf=TimeFrame.D,
-            cache_dir=temp_cache_dir
-        )
-        cache.save(series)
-
-        # Create BaseModel with use_cache=False (for comparison)
-        feature_config = {
-            'bias_node_spec': {
-                'module_name': 'rsi',
-                'timeframes': [TimeFrame.D],
-                'params': {'lookback': 14}
-            },
-            'model_type': 'ContinuousBinningModel',
-            'constructor_params': {'n_bins': 5}
-        }
-
-        base_model = BaseModel(
-            feature_config=feature_config,
-            tickers=[Ticker.ES],
-            use_cache=False  # Use streaming for this test
-        )
-
-        # Create target data
-        returns = sample_candles_df['close'].pct_change().shift(-1)
-        returns.index = sample_candles_df['datetime']
-        returns = returns.dropna()
-
-        # Fit model (streaming mode)
-        base_model.stream_fit(sample_candles_df, returns)
-
-        # Verify model is fitted
-        assert base_model.binning_model.is_fitted_
+        """Retired: legacy RSI + learned binning BaseModel path."""
+        del sample_candles_df, temp_cache_dir
+        pytest.skip("Legacy RSI + binning BaseModel path removed.")
 
 
 class TestCacheManagerIntegration:

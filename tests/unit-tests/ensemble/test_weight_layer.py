@@ -1,4 +1,4 @@
-"""Unit tests for the four-mode WeightLayer."""
+"""Unit tests for WeightLayer allocation modes."""
 
 from __future__ import annotations
 
@@ -48,6 +48,11 @@ def test_weight_layer_config_accepts_new_modes_and_rejects_legacy_ones() -> None
 
     with pytest.raises(ValueError, match="weighting_method must be one of"):
         WeightLayerConfig(weighting_method="cluster_equal")
+
+
+def test_weight_layer_config_rejects_invalid_optimize_sortino_weighting_method() -> None:
+    with pytest.raises(ValueError, match="weighting_method must be one of"):
+        WeightLayerConfig(weighting_method="optimize_sortino_capped")
 
 
 def test_weight_layer_rejects_removed_risk_tilt_alpha_kwarg() -> None:
@@ -271,3 +276,5 @@ def test_combine_returns_datetime_level_forecasts() -> None:
 
     assert list(combined.columns) == ["ticker", "datetime", "forecast_score"]
     assert len(combined) == 3
+
+

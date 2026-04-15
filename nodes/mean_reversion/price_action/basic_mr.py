@@ -40,7 +40,7 @@ class BasicMR(BiasNode):
             ticker, tf, mode=PositionMode.LONG_SHORT, max_positions=max_positions
         )
 
-        self.module_name = "basicmr"
+        self.module_name = "basic_mr"
         self.output_features = ["signal"]
         self.params = {"mode": mode, "max_positions": max_positions}
         self.front_bad = 2

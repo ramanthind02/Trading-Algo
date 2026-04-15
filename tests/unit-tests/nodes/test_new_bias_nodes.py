@@ -23,13 +23,17 @@ from nodes.casey_c import CaseyC
 from nodes.cyclical_rsi import CyclicalRSI
 from nodes.detrended_rsi import DetrendedRSI
 from nodes.double7s import Double7s
+from nodes.five_day_washout_mr import FiveDayWashoutMR
 from nodes.demark_rei import DemarkREI
 from nodes.rsi_percentile import RSIPercentile
+from nodes.cyclical_rsi_signal import CyclicalRSISignal
 from nodes.rsi_signal import RSISignal
+from nodes.williamsr_signal import WilliamsRSignal
 from nodes.stochastic_rsi import StochasticRSI
 from nodes.supertrend_cross import SuperTrendCross
 from nodes.tsi import TSI
 from nodes.zscore_rsi import ZScoreRSI
+from nodes.zscore_rsi_signal import ZScoreRSISignal
 
 
 def generate_candles(n: int, start_price: float = 100.0,
@@ -179,17 +183,17 @@ class TestCyclicalRSI(unittest.TestCase):
 
         for i in range(node.front_bad - 1):
             result = node.add_candle(candles[i])
-            self.assertEqual(result[0], 50.0)
+            self.assertEqual(result[0], 0.0)
 
     def test_output_range(self):
-        """Verify output is 0-100."""
+        """Verify output is centered RSI (approximately -50 to +50)."""
         node = CyclicalRSI(Ticker.ES, TimeFrame.D)
         candles = generate_candles(200)
 
         for candle in candles:
             result = node.add_candle(candle)
-            self.assertGreaterEqual(result[0], 0.0)
-            self.assertLessEqual(result[0], 100.0)
+            self.assertGreaterEqual(result[0], -50.0)
+            self.assertLessEqual(result[0], 50.0)
 
 
 class TestDetrendedRSI(unittest.TestCase):
@@ -213,6 +217,69 @@ class TestDetrendedRSI(unittest.TestCase):
             result = node.add_candle(candle)
             self.assertGreaterEqual(result[0], 0.0)
             self.assertLessEqual(result[0], 100.0)
+
+
+def _washout_path_candles(
+    *,
+    cascade_length: int = 2,
+    ticker: Ticker = Ticker.NQ,
+) -> list:
+    """Hand-built path: lower-low cascade then prior-high recovery exit."""
+    base = datetime(2020, 1, 1)
+    tf = TimeFrame.D
+    lows = [100.0 - float(i) for i in range(cascade_length + 1)]
+    candles = []
+    for i, low in enumerate(lows[:-1]):
+        c = low + 0.5
+        h = max(c, low) + 1.0
+        o = (h + low) / 2.0
+        candles.append(
+            Candle(
+                id=uuid4(),
+                datetime=base + timedelta(days=len(candles)),
+                open=o,
+                high=h,
+                low=low,
+                close=c,
+                volume=1,
+                ticker=ticker,
+                tf=tf,
+            )
+        )
+    i = cascade_length
+    low = lows[-1]
+    c = low + 0.5
+    h = max(c, low) + 1.0
+    o = (h + low) / 2.0
+    candles.append(
+        Candle(
+            id=uuid4(),
+            datetime=base + timedelta(days=len(candles)),
+            open=o,
+            high=h,
+            low=low,
+            close=c,
+            volume=1,
+            ticker=ticker,
+            tf=tf,
+        )
+    )
+    last_high = candles[-1].high
+    recovery_close = last_high + 2.0
+    candles.append(
+        Candle(
+            id=uuid4(),
+            datetime=base + timedelta(days=len(candles)),
+            open=c,
+            high=recovery_close + 0.5,
+            low=c - 0.5,
+            close=recovery_close,
+            volume=1,
+            ticker=ticker,
+            tf=tf,
+        )
+    )
+    return candles
 
 
 class TestDouble7s(unittest.TestCase):
@@ -251,6 +318,93 @@ class TestDouble7s(unittest.TestCase):
         # In strong downtrend, should have fewer long signals
         long_count = sum(1 for s in signals[-100:] if s == 1.0)
         self.assertLess(long_count, 50)  # Less than 50% of time
+
+
+class TestFiveDayWashoutMR(unittest.TestCase):
+    """Tests for five-day washout mean-reversion node."""
+
+    def test_warmup_period(self) -> None:
+        node = FiveDayWashoutMR(Ticker.NQ, TimeFrame.D, cascade_length=2, ma_period=0)
+        candles = _washout_path_candles(cascade_length=2)
+        for i in range(node.front_bad - 1):
+            self.assertEqual(node.add_candle(candles[i])[0], 0.0)
+
+    def test_cascade_entry_and_prior_high_exit(self) -> None:
+        node = FiveDayWashoutMR(
+            Ticker.NQ,
+            TimeFrame.D,
+            cascade_length=2,
+            ma_period=0,
+            max_hold_bars=10,
+        )
+        candles = _washout_path_candles(cascade_length=2)
+        signals = [node.add_candle(c)[0] for c in candles]
+        self.assertEqual(signals[node.front_bad - 1], 1.0)
+        self.assertEqual(signals[-1], 0.0)
+
+    def test_time_stop_exits(self) -> None:
+        node = FiveDayWashoutMR(
+            Ticker.NQ,
+            TimeFrame.D,
+            cascade_length=1,
+            ma_period=0,
+            max_hold_bars=2,
+        )
+        base = datetime(2021, 6, 1)
+        tf = TimeFrame.D
+        seq = [
+            (50.0, 52.0, 50.0, 51.0),
+            (51.0, 52.0, 48.0, 49.0),
+            (49.0, 51.0, 49.5, 50.0),
+        ]
+        candles = [
+            Candle(
+                id=uuid4(),
+                datetime=base + timedelta(days=i),
+                open=o,
+                high=h,
+                low=lo,
+                close=c,
+                volume=1,
+                ticker=Ticker.NQ,
+                tf=tf,
+            )
+            for i, (o, h, lo, c) in enumerate(seq)
+        ]
+        signals = [node.add_candle(c)[0] for c in candles]
+        self.assertEqual(signals, [0.0, 1.0, 0.0])
+
+    def test_ma_filter_blocks_when_below_ma(self) -> None:
+        node = FiveDayWashoutMR(
+            Ticker.NQ,
+            TimeFrame.D,
+            cascade_length=1,
+            ma_period=3,
+            max_hold_bars=5,
+        )
+        base = datetime(2022, 3, 1)
+        tf = TimeFrame.D
+        seq = [
+            (200.0, 201.0, 199.0, 200.0),
+            (200.0, 200.5, 198.0, 198.5),
+            (198.5, 199.0, 180.0, 182.0),
+        ]
+        candles = [
+            Candle(
+                id=uuid4(),
+                datetime=base + timedelta(days=i),
+                open=o,
+                high=h,
+                low=lo,
+                close=c,
+                volume=1,
+                ticker=Ticker.NQ,
+                tf=tf,
+            )
+            for i, (o, h, lo, c) in enumerate(seq)
+        ]
+        signals = [node.add_candle(c)[0] for c in candles]
+        self.assertTrue(all(s == 0.0 for s in signals))
 
 
 class TestDemarkREI(unittest.TestCase):
@@ -410,6 +564,101 @@ class TestRSISignal(unittest.TestCase):
             self.assertEqual(signals, [0.0, 0.0, 1.0, 0.0, -1.0, 0.0])
 
 
+def _wr_candle(
+    i: int,
+    o: float,
+    h: float,
+    l: float,
+    c: float,
+    ticker: Ticker = Ticker.ES,
+    tf: TimeFrame = TimeFrame.D,
+) -> Candle:
+    base_time = datetime(2020, 1, 1)
+    return Candle(
+        id=uuid4(),
+        datetime=base_time + timedelta(days=i),
+        open=o,
+        high=h,
+        low=l,
+        close=c,
+        volume=1_000_000,
+        ticker=ticker,
+        tf=tf,
+    )
+
+
+class TestWilliamsRSignal(unittest.TestCase):
+    """Tests for Williams %R Signal node."""
+
+    def test_warmup_period(self) -> None:
+        node = WilliamsRSignal(Ticker.ES, TimeFrame.D, lookback=3)
+        c0 = _wr_candle(0, 100.0, 100.0, 90.0, 95.0)
+        c1 = _wr_candle(1, 100.0, 100.0, 90.0, 95.0)
+        self.assertEqual(node.add_candle(c0)[0], 0.0)
+        self.assertEqual(node.add_candle(c1)[0], 0.0)
+
+    def test_output_discrete(self) -> None:
+        node = WilliamsRSignal(Ticker.ES, TimeFrame.D, lookback=14)
+        candles = generate_candles(200)
+        for candle in candles:
+            result = node.add_candle(candle)
+            self.assertIn(result[0], [-1.0, 0.0, 1.0])
+
+    def test_strategy_mode_validation(self) -> None:
+        with self.assertRaises(ValueError):
+            WilliamsRSignal(Ticker.ES, TimeFrame.D, strategy_mode="invalid")
+
+    def test_invalid_oversold_overbought(self) -> None:
+        with self.assertRaises(ValueError):
+            WilliamsRSignal(
+                Ticker.ES, TimeFrame.D, oversold=-20.0, overbought=-80.0
+            )
+
+    def test_long_cross_into_oversold(self) -> None:
+        """%R moves from above -80 to at/below -80 -> long entry on next applicable bar."""
+        node = WilliamsRSignal(
+            Ticker.ES,
+            TimeFrame.D,
+            lookback=3,
+            oversold=-80.0,
+            overbought=-20.0,
+            strategy_mode="long",
+            exit_policy="threshold",
+        )
+        seq = [
+            _wr_candle(0, 100.0, 100.0, 90.0, 95.0),
+            _wr_candle(1, 100.0, 100.0, 90.0, 95.0),
+            _wr_candle(2, 100.0, 100.0, 90.0, 95.0),
+            _wr_candle(3, 100.0, 100.0, 90.0, 91.0),
+        ]
+        out = [node.add_candle(c)[0] for c in seq]
+        self.assertEqual(out, [0.0, 0.0, 0.0, 1.0])
+
+
+class TestCyclicalRSISignal(unittest.TestCase):
+    """Tests for Cyclical RSI Signal node."""
+
+    def test_warmup_period(self) -> None:
+        node = CyclicalRSISignal(Ticker.ES, TimeFrame.D)
+        candles = generate_candles(node.front_bad + 10)
+
+        for i in range(node.front_bad - 1):
+            result = node.add_candle(candles[i])
+            self.assertEqual(result[0], 0.0)
+
+    def test_output_discrete(self) -> None:
+        node = CyclicalRSISignal(Ticker.ES, TimeFrame.D)
+        candles = generate_candles(300)
+
+        for candle in candles:
+            result = node.add_candle(candle)
+            self.assertIn(result[0], [-1.0, 0.0, 1.0])
+
+    def test_strategy_mode_validation(self) -> None:
+        with self.assertRaises(ValueError):
+            CyclicalRSISignal(Ticker.ES, TimeFrame.D, strategy_mode="invalid")
+
+
 class TestStochasticRSI(unittest.TestCase):
     """Tests for Stochastic RSI node."""
 
@@ -537,6 +786,29 @@ class TestZScoreRSI(unittest.TestCase):
             self.assertLessEqual(result[0], 4.0)
 
 
+class TestZScoreRSISignal(unittest.TestCase):
+    """Tests for Z-Score RSI signal node."""
+
+    def test_warmup_period(self) -> None:
+        """Verify flat signal during warmup."""
+        node = ZScoreRSISignal(Ticker.ES, TimeFrame.D)
+        candles = generate_candles(node.front_bad + 10)
+
+        for i in range(node.front_bad - 1):
+            result = node.add_candle(candles[i])
+            self.assertEqual(result[0], 0.0)
+
+    def test_discrete_output(self) -> None:
+        """Signal values are -1, 0, or 1 after sufficient history."""
+        node = ZScoreRSISignal(Ticker.ES, TimeFrame.D, zscore_period=20)
+        candles = generate_candles(200)
+
+        for candle in candles:
+            result = node.add_candle(candle)
+            v = result[0]
+            self.assertIn(v, (-1.0, 0.0, 1.0))
+
+
 class TestAllNodesModuleNaming(unittest.TestCase):
     """Test standardized module naming for all nodes."""
 
@@ -549,6 +821,7 @@ class TestAllNodesModuleNaming(unittest.TestCase):
             CyclicalRSI(Ticker.ES, TimeFrame.D),
             DetrendedRSI(Ticker.ES, TimeFrame.D),
             Double7s(Ticker.ES, TimeFrame.D),
+            FiveDayWashoutMR(Ticker.ES, TimeFrame.D),
             DemarkREI(Ticker.ES, TimeFrame.D),
             RSIPercentile(Ticker.ES, TimeFrame.D),
             RSISignal(Ticker.ES, TimeFrame.D),
@@ -556,6 +829,7 @@ class TestAllNodesModuleNaming(unittest.TestCase):
             SuperTrendCross(Ticker.ES, TimeFrame.D),
             TSI(Ticker.ES, TimeFrame.D),
             ZScoreRSI(Ticker.ES, TimeFrame.D),
+            ZScoreRSISignal(Ticker.ES, TimeFrame.D),
         ]
 
         for node in nodes:
@@ -573,6 +847,7 @@ class TestAllNodesModuleNaming(unittest.TestCase):
             CyclicalRSI(Ticker.ES, TimeFrame.D),
             DetrendedRSI(Ticker.ES, TimeFrame.D),
             Double7s(Ticker.ES, TimeFrame.D),
+            FiveDayWashoutMR(Ticker.ES, TimeFrame.D),
             DemarkREI(Ticker.ES, TimeFrame.D),
             RSIPercentile(Ticker.ES, TimeFrame.D),
             RSISignal(Ticker.ES, TimeFrame.D),
@@ -580,6 +855,7 @@ class TestAllNodesModuleNaming(unittest.TestCase):
             SuperTrendCross(Ticker.ES, TimeFrame.D),
             TSI(Ticker.ES, TimeFrame.D),
             ZScoreRSI(Ticker.ES, TimeFrame.D),
+            ZScoreRSISignal(Ticker.ES, TimeFrame.D),
         ]
 
         for node in nodes:

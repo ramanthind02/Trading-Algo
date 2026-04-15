@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
@@ -13,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from feature_selection.eda.common_eda import (
+    align_feature_target,
     compute_correlation_analysis,
     compute_descriptive_stats,
 )
@@ -92,9 +94,10 @@ def run_eda_for_signed_signal_feature(
     )
 
     per_level_stats = compute_per_level_stats(feature=feature, target=target)
-    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
+    aligned = align_feature_target(feature, target)
+    strategy_returns = aligned["f"].astype(float) * aligned["t"].astype(float)
     returns_by_level = {
-        int(level): aligned.loc[aligned["f"] == level, "t"]
+        int(level): strategy_returns.loc[aligned["f"].astype(float) == float(level)]
         for level in sorted(per_level_stats.stats_by_level.keys())
     }
     bootstrap_ci = compute_bootstrap_ci(
@@ -141,6 +144,28 @@ def compute_diagnostic_flags(
     return DiagnosticFlags(warnings=warnings, red_flags=red_flags, is_viable=len(red_flags) == 0)
 
 
+def _windows_eda_max_path_chars() -> int | None:
+    if os.name != "nt":
+        return None
+    return int(os.environ.get("TRADING_ALGO_EDA_MAX_PATH", "230"))
+
+
+def _eda_report_leaf_dir(output_dir: Path, feature_name: str, param_hash: str) -> Path:
+    """``output_dir / <feature segment> / param_hash``; shortens *feature_name* on Windows if needed."""
+    leaf = output_dir / feature_name / param_hash
+    budget = _windows_eda_max_path_chars()
+    if budget is None or len(str(leaf.resolve())) <= budget:
+        return leaf
+
+    digest = hashlib.md5(feature_name.encode("utf-8")).hexdigest()[:12]
+    short_seg = f"feat_{digest}"
+    short_leaf = output_dir / short_seg / param_hash
+    if len(str(short_leaf.resolve())) <= budget:
+        return short_leaf
+
+    return output_dir / digest[:8] / param_hash
+
+
 def save_eda_report(
     report: Union[ContinuousEDAReport, RuleBasedEDAReport],
     output_dir: Path,
@@ -148,12 +173,14 @@ def save_eda_report(
 ) -> Path:
     """Persist EDA report artifacts to {output_dir}/{feature_name}/{param_hash}."""
     param_hash = _param_combo_hash(report.metadata.param_combo)
-    report_dir = output_dir / report.metadata.feature_name / param_hash
+    report_dir = _eda_report_leaf_dir(output_dir, report.metadata.feature_name, param_hash)
 
     if report_dir.exists() and not overwrite:
         raise FileExistsError(f"EDA report already exists at {report_dir}")
     if report_dir.exists() and overwrite:
         shutil.rmtree(report_dir)
+
+    report_dir.mkdir(parents=True, exist_ok=True)
 
     report_type = "continuous" if isinstance(report, ContinuousEDAReport) else "signed_signal"
     metadata_payload = {

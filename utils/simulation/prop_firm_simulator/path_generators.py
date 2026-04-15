@@ -12,7 +12,35 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 
-from utils.evaluation.robustness_test.resampling_strategy import BlockBootstrapStrategy
+
+def _block_bootstrap_resample(
+    returns: pd.Series,
+    random_seed: int,
+    block_size: int,
+) -> pd.Series:
+    """
+    Circular block bootstrap: sample contiguous blocks with replacement,
+    same length and index as ``returns``.
+    """
+    if block_size < 1 or block_size > len(returns):
+        raise ValueError(
+            f"block_size must be in [1, len(returns)]; got {block_size} for n={len(returns)}"
+        )
+    rng = np.random.default_rng(random_seed)
+    n = len(returns)
+    values = returns.values
+    n_blocks = int(np.ceil(n / block_size))
+    block_starts = rng.integers(0, n, size=n_blocks)
+    resampled_values: list[float] = []
+    for start in block_starts:
+        for j in range(block_size):
+            resampled_values.append(values[(start + j) % n])
+            if len(resampled_values) >= n:
+                break
+        if len(resampled_values) >= n:
+            break
+    out = np.array(resampled_values[:n], dtype=float)
+    return pd.Series(out, index=returns.index, name=returns.name)
 
 
 class PathGenerator(ABC):
@@ -115,9 +143,8 @@ class MonteCarloBlockGenerator(PathGenerator):
     """
     Generate synthetic paths using block bootstrap resampling.
 
-    This generator reuses the BlockBootstrapStrategy from the robustness
-    testing module to create synthetic return paths that preserve
-    autocorrelation structure.
+    Uses circular block bootstrap so short-term autocorrelation is partially
+    preserved within blocks.
     """
 
     def __init__(self, block_length: int):
@@ -130,7 +157,6 @@ class MonteCarloBlockGenerator(PathGenerator):
             Block length for block bootstrap resampling
         """
         self._block_length = block_length
-        self._strategy = BlockBootstrapStrategy()
 
     def generate(
         self,
@@ -161,10 +187,10 @@ class MonteCarloBlockGenerator(PathGenerator):
         seed = random_seed + iteration
 
         # Generate resampled path
-        resampled = self._strategy.resample(
+        resampled = _block_bootstrap_resample(
             returns,
             random_seed=seed,
-            block_size=self._block_length
+            block_size=self._block_length,
         )
 
         # If path_length specified and different from resampled length,
@@ -177,10 +203,10 @@ class MonteCarloBlockGenerator(PathGenerator):
                 all_values = []
                 current_seed = seed
                 while len(all_values) < path_length:
-                    resampled = self._strategy.resample(
+                    resampled = _block_bootstrap_resample(
                         returns,
                         random_seed=current_seed,
-                        block_size=self._block_length
+                        block_size=self._block_length,
                     )
                     all_values.extend(resampled.values.tolist())
                     current_seed += 1000  # Increment seed for next chunk

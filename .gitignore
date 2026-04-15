@@ -47,7 +47,9 @@ htmlcov/
 .nox/
 .coverage
 .coverage.*
-# .cache/ is not ignored: teams may commit .cache/trading_algo/central_cache for shared snapshots.
+# Machine-local trading_algo cache (parquet, materialized, candles). Tracking it makes git add/status very slow on Windows.
+# To commit a curated snapshot: git add -f path/to/file
+.cache/trading_algo/
 nosetests.xml
 coverage.xml
 *.cover
@@ -205,9 +207,11 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-# Explicitly track .cursor/rules/ files
+# Explicitly track .cursor/rules/ and project skills
 !.cursor/rules/
 !.cursor/rules/**
+!.cursor/skills/
+!.cursor/skills/**
 
 # Marimo
 marimo/_static/

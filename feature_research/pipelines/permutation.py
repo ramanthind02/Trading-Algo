@@ -6,44 +6,60 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from feature_research.config import FeatureType, ResearchConfig
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     load_candles_for_config,
-    load_features_for_combo,
     populate_cache_if_needed,
 )
-from feature_selection.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
-from feature_selection.validation.objective_metrics import resolve_objective_metric
+from feature_research.research_table_exports import (
+    canonical_in_sample_power_bi_dir,
+    objective_metric_display_label,
+    permutation_vector_shuffle_records,
+    write_permutation_vector_shuffle_exports,
+)
+from feature_selection.validation.objective_metrics import ObjectiveMetricSpec, resolve_objective_metric
 from feature_selection.validation.orchestration import run_permutation_test_suite
+from feature_selection.validation.stability_analysis import _param_combo_name
+from feature_research.core_helpers import combo_key
+from utils.evaluation.walkforward.research_data import (
+    build_reference_target,
+    load_signed_signal_research_data,
+)
 
 if TYPE_CHECKING:
-    from feature_research.in_sample.config import ResearchConfig
     from feature_selection.validation.reports import PermutationTestSuite
 
 
-def write_permutation_summary(suite: "PermutationTestSuite", output_dir: Path) -> tuple[Path, Path]:
+def _require_permutation_enabled(config: ResearchConfig) -> None:
+    if not config.permutation.enabled:
+        raise ValueError("Permutation is disabled.")
+    if config.feature_type == FeatureType.CONTINUOUS:
+        raise ValueError(
+            "Permutation is only supported for native signed-signal bias nodes. "
+            "Continuous features remain research-only and do not enter permutation testing."
+        )
+
+
+def write_permutation_summary(
+    suite: "PermutationTestSuite",
+    output_dir: Path,
+    *,
+    objective_metric: ObjectiveMetricSpec | None = None,
+    param_grid: list[dict[str, Any]] | None = None,
+) -> tuple[Path, Path]:
+    """Write vector-shuffle permutation tables and root ``permutation_summary`` artifacts.
+
+    ``feature_research`` runs vector shuffle only (no pipeline second phase). Detailed
+    CSV for Power BI uses the fixed in-sample ``results/powerbi`` folder (see
+    ``canonical_in_sample_power_bi_dir``); flat CSV/MD stay under ``output_dir``.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
-    rows: list[dict[str, object]] = []
-    for combo_name, s1 in suite.stage1_reports.items():
-        s2 = suite.stage2_reports.get(combo_name)
-        row: dict[str, object] = {
-            "param_combo": combo_name,
-            "stage1_metric": s1.original_metric,
-            "stage1_pval": s1.p_value,
-            "stage1_passed": s1.passed,
-            "stage1_alpha": s1.alpha,
-        }
-        if s2 is not None:
-            row["stage2_metric"] = s2.original_metric
-            row["stage2_pval"] = s2.p_value
-            row["stage2_passed"] = s2.passed
-            row["stage2_mode"] = s2.permutation_mode
-        else:
-            row["stage2_metric"] = None
-            row["stage2_pval"] = None
-            row["stage2_passed"] = False
-            row["stage2_mode"] = "skipped"
-        rows.append(row)
+    label = objective_metric_display_label(objective_metric)
+    pbi = write_permutation_vector_shuffle_exports(
+        suite, objective_metric_label=label, param_grid=param_grid
+    )
+    rows = permutation_vector_shuffle_records(suite, label, param_grid=param_grid)
 
     csv_path = output_dir / "permutation_summary.csv"
     pd.DataFrame(rows).to_csv(csv_path, index=False)
@@ -52,35 +68,48 @@ def write_permutation_summary(suite: "PermutationTestSuite", output_dir: Path) -
     md_lines = [
         "# In-Sample Permutation Summary",
         "",
-        f"**Feature:** {suite.feature_name}  |  **Type:** {suite.feature_type}",
+        f"**Feature:** {suite.feature_name}  |  **Type:** {suite.feature_type}  |  **Objective:** `{label}`",
         "",
-        "## Funnel (vector shuffle → pipeline permutation)",
+        "## Vector shuffle",
         "",
-        "| Stage | Tested | Passed |",
-        "|-------|--------|--------|",
-        f"| Stage 1 (vector shuffle) | {fs.total_params} | {fs.stage1_pass} |",
-        f"| Stage 2 (pipeline/candle) | {fs.stage1_pass} | {fs.stage2_pass} |",
+        "| Tested | Passed |",
+        "|--------|--------|",
+        f"| {fs.total_params} | {fs.stage1_pass} |",
         "",
-        f"**Computational savings (Stage 1 gate):** {fs.computational_savings_pct:.1f}%",
-        "",
-        "## Per-combo metrics and p-values",
-        "",
-        "| param_combo | S1 metric | S1 p-val | S1 pass | S2 metric | S2 p-val | S2 pass |",
-        "|-------------|-----------|----------|--------|-----------|----------|--------|",
     ]
+    md_lines.extend(
+        [
+            "## Scope",
+            "",
+            "Each row is one **expanded** param combo from the same grid as in-sample EDA. "
+            "For ``feature_type=CONTINUOUS``, each combo is "
+            "**quantile-binned** per ticker (``binning_params.bin_counts[0]``) then mapped to "
+            "±1/0 from ``strategy`` (LONG: lowest bin long; SHORT: highest bin short; "
+            "LONG_SHORT: both tails). Signed-signal nodes use native discrete output.",
+            "",
+            "## Per-combo results",
+            "",
+            "| param_combo (readable) | observed_metric | p-value | pass | alpha | n_reps |",
+            "|------------------------|-----------------|--------|------|-------|--------|",
+        ]
+    )
     for row in rows:
-        s1_metric = row["stage1_metric"]
-        s1_pvalue = row["stage1_pval"]
-        s1_pass = "✓" if row["stage1_passed"] else "✗"
-        s2_metric = row.get("stage2_metric")
-        s2_pvalue = row.get("stage2_pval")
-        s2_pass_cell = "✓" if row.get("stage2_passed") else ("—" if s2_metric is None and s2_pvalue is None else "✗")
-        s2_metric_text = f"{s2_metric:.4f}" if s2_metric is not None else "—"
-        s2_pvalue_text = f"{s2_pvalue:.4f}" if s2_pvalue is not None else "—"
+        obs = row["observed_metric"]
+        pv = row["p_value"]
+        ok = "✓" if row["passed"] else "✗"
+        readable = str(row.get("param_combo_label") or row["param_combo"]).replace("|", "·")
         md_lines.append(
-            f"| {row['param_combo']} | {s1_metric:.4f} | {s1_pvalue:.4f} | {s1_pass} | {s2_metric_text} | {s2_pvalue_text} | {s2_pass_cell} |"
+            f"| {readable} | {float(obs):.4f} | {float(pv):.4f} | {ok} | {row['alpha']} | {row['n_reps']} |"
         )
-    md_lines.extend(["", "Full data: `permutation_summary.csv`", ""])
+    md_lines.extend(
+        [
+            "",
+            f"Power BI: `{pbi['permutation_vector_shuffle_csv'].name}` in `{canonical_in_sample_power_bi_dir()}`",
+            f"Flat summary: `permutation_summary.csv` (columns include `param_combo` = stable key, "
+            "`param_combo_label` = readable).",
+            "",
+        ]
+    )
 
     md_path = output_dir / "permutation_summary.md"
     md_path.write_text("\n".join(md_lines), encoding="utf-8")
@@ -88,75 +117,99 @@ def write_permutation_summary(suite: "PermutationTestSuite", output_dir: Path) -
 
 
 def run_permutation_pipeline(
-    config: "ResearchConfig",
+    config: ResearchConfig,
     output_dir: Path,
-) -> "PermutationTestSuite":
-    if not config.permutation.enabled:
-        raise ValueError("Permutation suite is disabled; set config.permutation.enabled=True.")
+) -> tuple["PermutationTestSuite", list[dict[str, Any]]]:
+    """Run vector-shuffle permutation on the expanded research param grid.
+
+    Uses the same ``bias_spec`` / ``feature_type`` as in-sample EDA (full grid).
+
+    Returns
+    -------
+    tuple
+        ``(suite, param_grid)`` for ``write_permutation_summary(..., param_grid=...)``.
+    """
+    _require_permutation_enabled(config)
+    tr_start, tr_end = config.training_window_bounds
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Full-span cache warmup (same as EDA); permutation loads use training slice below.
     populate_cache_if_needed(config)
-    expanded = expand_bias_specs(config.bias_spec)
+
+    config = replace(config, start=tr_start, end=tr_end)
+    perm_load_config = config
+    expanded = expand_bias_specs(perm_load_config.bias_spec)
     if not expanded:
         raise ValueError("No parameter combinations available for permutation suite.")
 
-    candles_df = load_candles_for_config(config)
-    seed_spec = expanded[0]
+    use_binned_continuous = config.feature_type == FeatureType.CONTINUOUS
+    load_mode = (
+        "quantile-binned ±1/0 (per ticker, same n_bins as binning_params)"
+        if use_binned_continuous
+        else "native signed signal"
+    )
+    print(
+        f"Permutation: preloading signals for {len(expanded)} combos ({load_mode}) "
+        f"(n_jobs={getattr(config, 'n_jobs', 1)})..."
+    )
     try:
-        seed_feature_data = load_features_for_combo(seed_spec, config, candles_override=candles_df)
+        data = (
+            load_quantile_binned_permutation_research_data(perm_load_config, expanded, print_loaded=False)
+            if use_binned_continuous
+            else load_signed_signal_research_data(perm_load_config, expanded, print_loaded=False)
+        )
     except ValueError as exc:
         err_msg = str(exc)
         if "Tickers dropped" in err_msg or "Missing tickers" in err_msg or "missing ticker data" in err_msg:
-            single_ticker_config = replace(config, tickers=[config.tickers[0]])
+            single_ticker_config = replace(perm_load_config, tickers=[perm_load_config.tickers[0]])
             print(
                 f"  [permutation] Multi-ticker alignment failed; using single ticker: {single_ticker_config.tickers[0].name}"
             )
-            candles_df = load_candles_for_config(single_ticker_config)
-            config = single_ticker_config
-            seed_feature_data = load_features_for_combo(seed_spec, config, candles_override=candles_df)
+            perm_load_config = single_ticker_config
+            print(
+                f"Permutation: retry preloading ({load_mode}) "
+                f"(n_jobs={getattr(config, 'n_jobs', 1)})..."
+            )
+            data = (
+                load_quantile_binned_permutation_research_data(perm_load_config, expanded, print_loaded=False)
+                if use_binned_continuous
+                else load_signed_signal_research_data(perm_load_config, expanded, print_loaded=False)
+            )
         else:
             raise
-    if seed_feature_data is None:
+    if not data.successful_param_grid or data.reference_index is None:
         raise ValueError("Unable to load feature/target data. Ensure cache and candles are available.")
 
-    _, target, feature_col = seed_feature_data
-    module_name = config.bias_spec["module_name"]
+    candles_df = load_candles_for_config(perm_load_config)
+    target = build_reference_target(data.reference_index, data.reference_target_series)
+    first_combo_key = next(iter(data.combo_signal_target))
+    first_combo_frame = data.combo_signal_target[first_combo_key]
+    signal_column = "signal" if "signal" in first_combo_frame.columns else "feature"
+    feature_col = str(first_combo_frame[signal_column].name or "signal")
+    param_grid = data.successful_param_grid
+    cached_signals_by_combo: dict[str, pd.Series] = {
+        _param_combo_name(params): combo_frame["signal"]
+        for params in data.successful_param_grid
+        for combo_frame in [data.combo_signal_target[combo_key(params)]]
+    }
 
-    param_grid = [single_spec["params"] for single_spec in expanded]
-    bias_only_keys = frozenset(config.bias_spec.get("params", {}).keys())
+    def extractor_func(_df: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
+        combo_name = _param_combo_name(params)
+        cached_signal = cached_signals_by_combo.get(combo_name)
+        if cached_signal is not None:
+            return cached_signal
+        raise KeyError(f"Missing preloaded permutation signal for params={params}.")
 
-    def extractor_func(df: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
-        bias_params = {k: v for k, v in params.items() if k in bias_only_keys}
-        single_spec = {
-            "module_name": module_name,
-            "timeframes": config.bias_spec.get("timeframes", []),
-            "params": bias_params,
-        }
-        loaded = load_features_for_combo(single_spec, config, candles_override=df)
-        if loaded is None:
-            raise ValueError(f"Feature extraction returned no data for params={params}.")
-        feature, _, feature_name = loaded
-        return feature.rename(feature_name)
-
-    permutation_config = PermutationTestConfig(
-        nreps=config.permutation.nreps_stage2,
-        alpha=config.permutation.alpha,
-        metric_threshold=config.permutation.metric_threshold,
-        random_seed=config.permutation.random_seed,
-        permutation_mode_stage2=config.permutation.permutation_mode_stage2,
-        n_jobs_stage2_reps=config.permutation.n_jobs_stage2_reps,
-        run_stage1=config.permutation.run_stage1,
-        run_stage2=config.permutation.run_stage2,
-        out_of_sample=OutOfSamplePermutationConfig(
-            objective_metric=config.permutation.objective_metric,
-            run_oos_permutation=False,
-        ),
-    )
+    permutation_config = config.permutation.to_permutation_test_config()
     objective_func = resolve_objective_metric(config.permutation.objective_metric)
 
-    return run_permutation_test_suite(
+    # Do not pass ``aligned_signals_by_combo``: the batched path permutes the **target**
+    # (``run_vector_shuffle_target_perm_batch``), which is a different null than
+    # ``run_vector_shuffle_test`` (permute feature values on the timeline, fixed target).
+    # Feature shuffle is the intended "vector shuffle" for signal alignment.
+    suite = run_permutation_test_suite(
         candles_df=candles_df,
-        feature_spec=config.bias_spec,
+        feature_spec=perm_load_config.bias_spec,
         target=target,
         param_grid=param_grid,
         objective_func=objective_func,
@@ -164,3 +217,4 @@ def run_permutation_pipeline(
         extractor_func=extractor_func,
         feature_name=feature_col,
     )
+    return suite, param_grid

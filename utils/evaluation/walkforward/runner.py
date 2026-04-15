@@ -4,7 +4,6 @@ import dataclasses
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import inspect
-import json
 from pathlib import Path
 import warnings
 from typing import Any, Callable, Mapping, Protocol, Sequence, cast
@@ -16,8 +15,12 @@ from feature_research.config import BinningAnalysisConfig, FeatureType
 from feature_research.core_helpers import normalize_timeframe_from_bias_spec
 from utils.evaluation.walkforward.config import WalkforwardResearchConfig
 from utils.evaluation.walkforward.metrics import resolve_objective_metric
-from utils.core.enums import DirectionInput, Ticker, TimeFrame
-from utils.compute.grid_smoothing import add_smoothed_objective
+from utils.evaluation.walkforward.selected_params_codec import (
+    decode_selected_params_list,
+    serialize_selected_params,
+)
+from utils.evaluation.walkforward.walkforward_labels import canonical_param_label
+from utils.core.enums import Ticker, TimeFrame
 
 
 @dataclass(frozen=True)
@@ -72,43 +75,6 @@ def _resolve_feature_type(research_config: object) -> FeatureType:
     if isinstance(raw, str) and raw.strip():
         return FeatureType(raw.strip().lower())
     return FeatureType.CONTINUOUS
-
-
-def _coerce_param_value(value: str) -> object:
-    for caster in (int, float):
-        try:
-            return caster(value)
-        except ValueError:
-            continue
-    return value
-
-
-def _parse_top_k_param_labels(top_k_features: str) -> list[dict[str, object]]:
-    try:
-        raw_labels = json.loads(top_k_features)
-    except (TypeError, json.JSONDecodeError):
-        return []
-    if not isinstance(raw_labels, list):
-        return []
-
-    parsed: list[dict[str, object]] = []
-    for label in raw_labels:
-        if not isinstance(label, str) or not label:
-            continue
-        parts = [part for part in label.split("|") if "=" in part]
-        parsed_label = {
-            key.strip(): _coerce_param_value(value.strip())
-            for key, value in (part.split("=", 1) for part in parts)
-            if key.strip()
-        }
-        if parsed_label:
-            parsed.append(parsed_label)
-    # Special-case: research pipeline with a single no-param combo
-    # encodes top_k_features as [""] (empty string). Treat this as
-    # a single empty-params dict so portfolio simulation still runs.
-    if not parsed and isinstance(raw_labels, list) and len(raw_labels) == 1 and raw_labels[0] == "":
-        return [{}]
-    return parsed
 
 
 def _resolve_weight_layer_config(wf_cfg: object | None) -> WeightLayerConfig | None:
@@ -183,13 +149,16 @@ def run_portfolio_simulation(
 
     typed_research_config = cast(_ResearchConfigLike, research_config)
     feature_type = _resolve_feature_type(research_config)
+    bias_spec_pf = getattr(typed_research_config, "eval_bias_spec", None)
+    if not isinstance(bias_spec_pf, Mapping):
+        bias_spec_pf = typed_research_config.bias_spec
     trading_timeframes = cast(
         Sequence[object],
-        typed_research_config.bias_spec.get("timeframes", [None]),
+        bias_spec_pf.get("timeframes", [None]),
     )
     trading_timeframe = trading_timeframes[0] if trading_timeframes else None
     tearsheet_timeframe = normalize_timeframe_from_bias_spec(
-        typed_research_config.bias_spec,
+        bias_spec_pf,
         fallback=TimeFrame.D,
     )
     objective_metric_name = getattr(
@@ -198,6 +167,16 @@ def run_portfolio_simulation(
     generate_ticker_tearsheets = bool(
         getattr(typed_research_config, "generate_ticker_tearsheets", False)
     )
+    tearsheet_vol_target: float | None = None
+    _raw_tearsheet_vol = getattr(
+        typed_research_config, "tearsheet_target_annual_volatility", None
+    )
+    if _raw_tearsheet_vol is not None:
+        try:
+            _tv = float(_raw_tearsheet_vol)
+        except (TypeError, ValueError):
+            _tv = 0.0
+        tearsheet_vol_target = _tv if _tv > 0.0 else None
 
     rows: list[dict[str, object]] = []
     signal_rows: list[dict[str, object]] = []
@@ -207,7 +186,7 @@ def run_portfolio_simulation(
     _tearsheet_available = False
     if tearsheets_dir is not None:
         try:
-            from ensemble.portfolio_tester import calculate_baseline_returns
+            from ensemble.portfolio_impl.portfolio_tester import calculate_baseline_returns
             from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
             _tearsheet_available = True
         except ImportError as e:
@@ -253,7 +232,9 @@ def run_portfolio_simulation(
             )
             continue
 
-        selected_params = _parse_top_k_param_labels(str(summary.iloc[0]["top_k_features"]))
+        selected_params = decode_selected_params_list(
+            str(summary.iloc[0]["selected_params_json"])
+        )
         if not selected_params:
             rows.append(
                 {
@@ -293,7 +274,7 @@ def run_portfolio_simulation(
                 binning_config=binning_config,
                 tickers=typed_research_config.tickers,
                 trading_timeframe=trading_timeframe,
-                module_name=str(typed_research_config.bias_spec.get("module_name", "rsi")),
+                module_name=str(bias_spec_pf.get("module_name", "rsi")),
                 objective_metric_name=objective_metric_name,
                 weight_layer_config=weight_layer_config,
                 member_prediction_mode=member_prediction_mode,
@@ -344,7 +325,7 @@ def run_portfolio_simulation(
                             binning_config=binning_config,
                             tickers=typed_research_config.tickers,
                             trading_timeframe=trading_timeframe,
-                            module_name=str(typed_research_config.bias_spec.get("module_name", "rsi")),
+                            module_name=str(bias_spec_pf.get("module_name", "rsi")),
                             objective_metric_name=objective_metric_name,
                             weight_layer_config=weight_layer_config,
                             member_prediction_mode=member_prediction_mode,
@@ -363,6 +344,7 @@ def run_portfolio_simulation(
                             output_file=str(train_file),
                             mode="html",
                             timeframe=tearsheet_timeframe,
+                            target_annual_volatility=tearsheet_vol_target,
                         )
                     fold_baseline = calculate_baseline_returns(test_candles)
                     validation_file = (
@@ -377,6 +359,7 @@ def run_portfolio_simulation(
                         output_file=str(validation_file),
                         mode="html",
                         timeframe=tearsheet_timeframe,
+                        target_annual_volatility=tearsheet_vol_target,
                     )
                     if train_result is not None:
                         full_candles = pd.concat([train_candles, test_candles], axis=0)
@@ -402,6 +385,7 @@ def run_portfolio_simulation(
                             output_file=str(combined_file),
                             mode="html",
                             timeframe=tearsheet_timeframe,
+                            target_annual_volatility=tearsheet_vol_target,
                         )
                     skip_per_signal = single_fold and (
                         result.per_signal_oos_returns is None
@@ -422,6 +406,7 @@ def run_portfolio_simulation(
                                 output_file=str(signal_file),
                                 mode="html",
                                 timeframe=tearsheet_timeframe,
+                                target_annual_volatility=tearsheet_vol_target,
                             )
                     if generate_ticker_tearsheets and result.per_ticker_oos_returns:
                         ticker_labels = test_candles["ticker"].map(_normalize_ticker_label)
@@ -446,6 +431,7 @@ def run_portfolio_simulation(
                                 output_file=str(ticker_file),
                                 mode="html",
                                 timeframe=tearsheet_timeframe,
+                                target_annual_volatility=tearsheet_vol_target,
                             )
                 except ValueError as te:
                     if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
@@ -494,6 +480,7 @@ def run_portfolio_simulation(
                     output_file=str(tearsheets_dir / "walkforward_ensemble_tearsheet.html"),
                     mode="html",
                     timeframe=tearsheet_timeframe,
+                    target_annual_volatility=tearsheet_vol_target,
                 )
                 if (
                     generate_ticker_tearsheets
@@ -524,6 +511,7 @@ def run_portfolio_simulation(
                                 ),
                                 mode="html",
                                 timeframe=tearsheet_timeframe,
+                                target_annual_volatility=tearsheet_vol_target,
                             )
                         except ValueError as te:
                             if "linear regression" in str(te).lower() or "all x values are identical" in str(te).lower():
@@ -553,12 +541,6 @@ def run_portfolio_simulation(
         else pd.DataFrame(columns=["fold_id", "signal_name", "oos_sharpe"])
     )
     return portfolio_results_df, fold_signal_metrics_df, aggregate_oos_returns
-
-
-def _canonical_param_label(params: dict[str, object]) -> str:
-    return "|".join(
-        f"{key}={params[key]}" for key in sorted(params)
-    )
 
 
 def _score_one_param_for_fold(
@@ -622,7 +604,7 @@ def _score_one_param_for_fold(
 
     return {
         **{column: _hashable(params.get(column)) for column in param_columns},
-        "param_label": _canonical_param_label(params),
+        "param_label": canonical_param_label(params),
         "raw_objective": train_objective,
         "oos_objective": oos_objective,
         "trade_frequency": trade_frequency,
@@ -731,11 +713,7 @@ def _build_fold_scores(
     param_grid: list[dict[str, object]],
     evaluate_param_combo: Callable[..., pd.Series | tuple[pd.Series, dict[str, object]]],
     objective_metric: Callable[[pd.Series], float],
-    top_k: int,
-    config: WalkforwardResearchConfig,
-    strategy: DirectionInput | None = None,
     n_jobs: int = 1,
-    research_config: object | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     train_mask = cast(pd.Series, fold_row["_train_mask"])
     test_mask = cast(pd.Series, fold_row["_test_mask"])
@@ -832,7 +810,7 @@ def _build_fold_scores(
             raw_rows.append(
                 {
                     **{column: _hashable_param(params.get(column)) for column in param_columns},
-                    "param_label": _canonical_param_label(params),
+                    "param_label": canonical_param_label(params),
                     "raw_objective": train_objective,
                     "oos_objective": oos_objective,
                     "trade_frequency": trade_frequency,
@@ -860,17 +838,8 @@ def _build_fold_scores(
         )
 
     raw_df = pd.DataFrame(raw_rows)
-    if param_columns:
-        smoothed_df = add_smoothed_objective(
-            raw_df,
-            param_columns=param_columns,
-            objective_column="raw_objective",
-            output_column="smoothed_objective",
-            self_weight=config.smoothing_self_weight,
-        )
-    else:
-        smoothed_df = raw_df.copy()
-        smoothed_df["smoothed_objective"] = raw_df["raw_objective"].values
+    smoothed_df = raw_df.copy()
+    smoothed_df["smoothed_objective"] = raw_df["raw_objective"].values
 
     ranked_df = (
         smoothed_df.sort_values(
@@ -919,96 +888,16 @@ def _build_fold_scores(
         ]
     )
 
-    effective_selection_method = config._effective_selection_method()
-
-    if effective_selection_method == "enhanced":
-        from utils.evaluation.walkforward.top_k_selection import (
-            compute_all_trade_frequencies,
-            run_enhanced_selection,
-        )
-
-        train_candles = candles_df.loc[train_mask]
-        train_target = target.loc[train_mask]
-        fold_train_end = cast(pd.Timestamp, fold_row["train_end"])
-
-        def evaluate_training_param_combo(
-            training_data: pd.DataFrame,
-            training_target: pd.Series,
-            params: dict[str, object],
-        ) -> pd.Series:
-            return _call_evaluator(
-                fold_data=training_data,
-                fold_targets=training_target,
-                params=params,
-                train_end=fold_train_end,
-            )
-
-        trade_frequencies = compute_all_trade_frequencies(
-            training_data=train_candles,
-            training_target=train_target,
-            param_grid=param_grid,
-            evaluate_param_combo=evaluate_training_param_combo,
-        )
-        smoothed_obj_map = {
-            str(row.param_label): float(row.smoothed_objective)
-            for row in smoothed_df.itertuples(index=False)
-        }
-        raw_obj_map = {
-            str(row.param_label): float(row.raw_objective)
-            for row in raw_df.itertuples(index=False)
-        }
-        enhanced_result = run_enhanced_selection(
-            training_data=train_candles,
-            training_target=train_target,
-            param_grid=param_grid,
-            evaluate_param_combo=evaluate_training_param_combo,
-            smoothed_objectives=smoothed_obj_map,
-            config=config,
-            precomputed_trade_frequencies=trade_frequencies,
-            strategy=strategy,
-        )
-        top_k_features = enhanced_result.selected_labels
-        selected_in_top_k = fold_scores_df["param_label"].isin(enhanced_result.selected_labels)
-        fold_scores_df = fold_scores_df.assign(
-            selected_feature=selected_in_top_k,
-            trade_frequency=fold_scores_df["param_label"].map(trade_frequencies),
-            selected_in_top_k=selected_in_top_k,
-        )
-        # Summary row: use first selected (by rank) for display
-        selected_mask = fold_scores_df["selected_in_top_k"].astype(bool)
-        first_selected = (
-            fold_scores_df.loc[selected_mask].sort_values("rank").iloc[0]
-            if selected_mask.any()
-            else None
-        )
-        if first_selected is not None:
-            selected_summary_feature = str(first_selected["param_label"])
-            selected_summary_raw = float(first_selected["raw_objective"])
-            selected_summary_smoothed = float(first_selected["smoothed_objective"])
-        else:
-            selected_summary_feature = float("nan")
-            selected_summary_raw = float("nan")
-            selected_summary_smoothed = float("nan")
-    else:
-        # TOP_K selection: mark all top_k params in fold_scores_df so downstream
-        # tables (e.g. selected_params_detailed) can show every selected member,
-        # not just the single rank-1 feature.
-        top_k_features = ranked_df["param_label"].head(top_k).tolist()
-        selected_in_top_k = fold_scores_df["param_label"].isin(top_k_features)
-        fold_scores_df = fold_scores_df.assign(
-            selected_in_top_k=selected_in_top_k,
-            selected_feature=fold_scores_df["param_label"] == selected_feature,
-        )
-        selected_summary_feature = selected_feature
-        selected_summary_raw = selected_row.raw_objective
-        selected_summary_smoothed = selected_row.smoothed_objective
+    win_row = ranked_df.iloc[0]
+    winning_params = {col: win_row[col] for col in param_columns}
+    selected_params_json = serialize_selected_params(winning_params)
 
     summary_row = {
         "fold_id": int(cast(int, fold_row["fold_id"])),
-        "selected_feature": selected_summary_feature,
-        "selected_raw_objective": selected_summary_raw,
-        "selected_smoothed_objective": selected_summary_smoothed,
-        "top_k_features": json.dumps(top_k_features, separators=(",", ":"), ensure_ascii=True),
+        "selected_feature": selected_feature,
+        "selected_raw_objective": selected_row.raw_objective,
+        "selected_smoothed_objective": selected_row.smoothed_objective,
+        "selected_params_json": selected_params_json,
     }
     return fold_scores_df, summary_row
 
@@ -1075,21 +964,10 @@ def run_walkforward_research(
 
     fold_score_parts: list[pd.DataFrame] = []
     selection_rows: list[dict[str, object]] = []
-    strategy: DirectionInput | None = None
-    if research_config is not None:
-        bp = getattr(research_config, "binning_params", None)
-        strategy = getattr(bp, "strategy", None) if bp is not None else None
 
     n_folds = len(fold_rows)
     n_params = len(param_grid)
     run_label = (phase_label.strip() if phase_label and phase_label.strip() else None) or "walkforward"
-    # #region agent log
-    try:
-        import json
-        _log = {"sessionId": "1a52b7", "hypothesisId": "H3", "location": "runner.py:run_walkforward_research", "message": "Running walkforward print", "data": {"n_folds": n_folds, "n_params": n_params, "run_label": run_label}, "timestamp": int(__import__("time").time() * 1000)}
-        open("/home/raman/repos/Trading-Algo/.cursor/debug-1a52b7.log", "a").write(json.dumps(_log) + "\n")
-    except Exception: pass
-    # #endregion
     print(f"Running {run_label}: {n_folds} folds, {n_params} param combos.", flush=True)
     for fold_idx, fold_row in enumerate(fold_rows):
         print(f"  Fold {fold_idx + 1}/{n_folds} ({n_params} params)...", flush=True)
@@ -1101,11 +979,7 @@ def run_walkforward_research(
             param_grid=param_grid,
             evaluate_param_combo=evaluate_param_combo,
             objective_metric=objective_metric,
-            top_k=config.top_k,
-            config=config,
-            strategy=strategy,
             n_jobs=n_jobs,
-            research_config=research_config,
         )
         fold_score_parts.append(fold_scores_df)
         selection_rows.append(summary_row)
@@ -1124,7 +998,6 @@ def run_walkforward_research(
                 "rank",
                 "selected_feature",
                 "trade_frequency",
-                "selected_in_top_k",
                 "selected_long_bin",
             ]
         )
@@ -1136,7 +1009,7 @@ def run_walkforward_research(
             "selected_feature",
             "selected_raw_objective",
             "selected_smoothed_objective",
-            "top_k_features",
+            "selected_params_json",
         ],
     )
 

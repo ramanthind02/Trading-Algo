@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from ensemble.portfolio_allocation import (
+from ensemble.portfolio_impl.portfolio_allocation import (
     effective_instrument_weights,
     load_sector_allocation_config,
     resolve_sector_allocation,

@@ -20,7 +20,7 @@ Usage:
     )
 
     # CLI
-    python -m utils.cache.cache_manager --vault vault/D/buy_hold_long --start 2010-01-01 --end 2024-12-31
+    python -m utils.cache.runtime.cache_manager --vault vault/D/buy_hold_long --start 2010-01-01 --end 2024-12-31
 
 Author: Trading Research Team
 Date: 2025-01-07
@@ -29,12 +29,14 @@ Date: 2025-01-07
 import argparse
 import logging
 import math
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
+from tqdm import tqdm
 
 from .bias_node_cache import BiasNodeCache
 from .cache_paths import (
@@ -351,38 +353,48 @@ class CacheManager:
         success = 0
         failed = 0
 
+        series_pairs: list[tuple[Ticker, TimeFrame]] = [
+            (ticker, timeframe)
+            for ticker in requested_tickers
+            for timeframe in requested_timeframes
+        ]
+
         try:
-            for ticker in requested_tickers:
-                for timeframe in requested_timeframes:
-                    try:
-                        candles_df = self.load_source_candles(
-                            ticker,
-                            timeframe,
-                            start_date=start_date,
-                            end_date=end_date,
-                        )
-                        if candles_df.empty:
-                            raise ValueError("No source candles found in requested range")
-                        store.set_candles(ticker, timeframe, candles_df)
-                        details.append(
-                            {
-                                "ticker": ticker.name,
-                                "tf": timeframe.name,
-                                "status": "success",
-                                "rows": len(candles_df),
-                            }
-                        )
-                        success += 1
-                    except Exception as exc:
-                        details.append(
-                            {
-                                "ticker": ticker.name,
-                                "tf": timeframe.name,
-                                "status": "failed",
-                                "message": str(exc),
-                            }
-                        )
-                        failed += 1
+            bar = tqdm(
+                series_pairs,
+                desc="Bootstrap OHLC → cache",
+                unit="series",
+            )
+            for ticker, timeframe in bar:
+                try:
+                    candles_df = self.load_source_candles(
+                        ticker,
+                        timeframe,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                    if candles_df.empty:
+                        raise ValueError("No source candles found in requested range")
+                    store.set_candles(ticker, timeframe, candles_df)
+                    details.append(
+                        {
+                            "ticker": ticker.name,
+                            "tf": timeframe.name,
+                            "status": "success",
+                            "rows": len(candles_df),
+                        }
+                    )
+                    success += 1
+                except Exception as exc:
+                    details.append(
+                        {
+                            "ticker": ticker.name,
+                            "tf": timeframe.name,
+                            "status": "failed",
+                            "message": str(exc),
+                        }
+                    )
+                    failed += 1
         finally:
             refresh_orchestrator.end_batch()
 
@@ -967,10 +979,13 @@ class CacheManager:
         params: Dict[str, Any],
         ticker: Ticker,
         tf: TimeFrame,
+        *,
+        scope: Optional["ArtifactScope"] = None,
     ) -> "ArtifactDescriptor":
         from .central_cache_models import ArtifactDescriptor, ArtifactScope
         from utils.core.helpers import create_bias_node
 
+        resolved_scope = ArtifactScope.LIVE if scope is None else scope
         resolved_module_name = module_name
         resolved_params = dict(params)
         if module_name and module_name != "ewsd":
@@ -985,7 +1000,7 @@ class CacheManager:
             timeframe=tf,
             module_name=resolved_module_name,
             params=resolved_params,
-            scope=ArtifactScope.LIVE,
+            scope=resolved_scope,
             artifact_name=resolved_module_name,
         )
 
@@ -1067,50 +1082,23 @@ class CacheManager:
         start_date: datetime,
         end_date: datetime,
     ) -> tuple[datetime, datetime]:
-        from .central_cache import CentralCacheStore
+        """Intersect ``[start_date, end_date]`` with candle coverage for each dependency.
+
+        Earlier implementations required candle coverage edges to match requested boundaries
+        within a small tolerance, which failed when OHLC history starts later for one ticker
+        (e.g. RTY from 2005 while config asks from 2000). We now clip to the **overlap** of
+        all dependency coverages so bias artifacts can build on available data.
+        """
         from .central_cache_errors import ArtifactMissingError, CacheCoverageError
 
         store = self._central_cache_store()
         if not depends_on:
             return start_date, end_date
 
-        anchor_ticker, anchor_tf = depends_on[0]
-        anchor_record = store.describe_candle(anchor_ticker, anchor_tf)
-        if (
-            anchor_record is None
-            or anchor_record.coverage.start is None
-            or anchor_record.coverage.end is None
-        ):
-            raise ArtifactMissingError(
-                module_name="candles",
-                ticker=anchor_ticker,
-                timeframe=anchor_tf,
-                reason="Dependency candles are not loaded",
-            )
-
-        if not self._coverage_supports_requested_boundary(
-            anchor_tf,
-            start_date,
-            anchor_record.coverage.start,
-            boundary="start",
-        ) or not self._coverage_supports_requested_boundary(
-            anchor_tf,
-            end_date,
-            anchor_record.coverage.end,
-            boundary="end",
-        ):
-            raise CacheCoverageError(
-                module_name="candles",
-                ticker=anchor_ticker,
-                timeframe=anchor_tf,
-                start=start_date,
-                end=end_date,
-                coverage_start=anchor_record.coverage.start,
-                coverage_end=anchor_record.coverage.end,
-            )
-
-        effective_start = max(pd.Timestamp(start_date), pd.Timestamp(anchor_record.coverage.start))
-        effective_end = min(pd.Timestamp(end_date), pd.Timestamp(anchor_record.coverage.end))
+        requested_start = pd.Timestamp(start_date)
+        requested_end = pd.Timestamp(end_date)
+        effective_start = requested_start
+        effective_end = requested_end
 
         for dep_ticker, dep_tf in depends_on:
             record = store.describe_candle(dep_ticker, dep_tf)
@@ -1121,18 +1109,26 @@ class CacheManager:
                     timeframe=dep_tf,
                     reason="Dependency candles are not loaded",
                 )
-            coverage_start = pd.Timestamp(record.coverage.start)
-            coverage_end = pd.Timestamp(record.coverage.end)
-            if coverage_start > effective_start or coverage_end < effective_end:
-                raise CacheCoverageError(
-                    module_name="candles",
-                    ticker=dep_ticker,
-                    timeframe=dep_tf,
-                    start=effective_start.to_pydatetime(),
-                    end=effective_end.to_pydatetime(),
-                    coverage_start=record.coverage.start,
-                    coverage_end=record.coverage.end,
-                )
+            cov_s = pd.Timestamp(record.coverage.start)
+            cov_e = pd.Timestamp(record.coverage.end)
+            effective_start = max(effective_start, cov_s)
+            effective_end = min(effective_end, cov_e)
+
+        if effective_start > effective_end:
+            first_ticker, first_tf = depends_on[0]
+            raise CacheCoverageError(
+                module_name="candles",
+                ticker=first_ticker,
+                timeframe=first_tf,
+                start=start_date,
+                end=end_date,
+                requested_range=(start_date, end_date),
+                available_range=(
+                    effective_start.to_pydatetime(),
+                    effective_end.to_pydatetime(),
+                ),
+                message="No overlapping candle coverage for requested window across dependencies",
+            )
 
         return effective_start.to_pydatetime(), effective_end.to_pydatetime()
 
@@ -1290,8 +1286,27 @@ class CacheManager:
         end_date: datetime,
         refresh_mode: str = "missing_stale_only",
         include_daily_ewsd: bool = True,
+        artifact_scope: Optional["ArtifactScope"] = None,
+        *,
+        max_workers: int = 4,
     ) -> Dict[str, Any]:
-        """Ensure central-cache coverage for explicit bias-node specs and tickers."""
+        """Ensure central-cache coverage for explicit bias-node specs and tickers.
+
+        Parameters
+        ----------
+        artifact_scope :
+            When set (e.g. ``ArtifactScope.RESEARCH``), read/write artifacts under the
+            research subtree instead of ``artifacts/live``. Defaults to live scope.
+        max_workers :
+            Parallel threads used to **compute** artifacts that need a rebuild (each
+            task streams candles through the bias node). Writes remain sequential.
+            Set to ``1`` to disable parallelism (matches legacy single-thread behavior).
+        """
+        from .central_cache_models import ArtifactScope as _ArtifactScope
+
+        resolved_scope: _ArtifactScope = (
+            _ArtifactScope.LIVE if artifact_scope is None else artifact_scope
+        )
         allowed_refresh_modes = {"missing_stale_only", "always_rebuild", "validate_only"}
         if refresh_mode not in allowed_refresh_modes:
             raise ValueError(
@@ -1340,6 +1355,7 @@ class CacheManager:
                             params,
                             ticker,
                             tf,
+                            scope=resolved_scope,
                         ),
                     }
                     if existing_task is None:
@@ -1368,6 +1384,7 @@ class CacheManager:
                         {"long_run_window": 2520},
                         ticker,
                         TimeFrame.D,
+                        scope=resolved_scope,
                     ),
                 }
 
@@ -1389,7 +1406,22 @@ class CacheManager:
         validated = 0
         failed = 0
 
-        for task in artifact_tasks.values():
+        task_list = list(artifact_tasks.values())
+        rebuild_queue: list[
+            tuple[
+                dict[str, Any],
+                datetime,
+                datetime,
+                datetime,
+                str,
+            ]
+        ] = []
+
+        for task in tqdm(
+            task_list,
+            desc="Bias / EWSD cache (check)",
+            unit="task",
+        ):
             descriptor = task["descriptor"]
             try:
                 effective_start, effective_end = self._require_exact_window_for_dependencies(
@@ -1464,64 +1496,155 @@ class CacheManager:
                 failed += 1
                 continue
 
-            try:
-                artifact_df = self._compute_artifact_from_central_cache(
-                    task["module_name"],
-                    task["params"],
-                    task["ticker"],
-                    task["tf"],
-                    effective_start,
-                    effective_end,
-                    task["cold_rebuild_candle_count"],
-                )
-                store.write_artifact(
-                    descriptor,
-                    artifact_df,
-                    depends_on=task["depends_on"],
-                    source_revision=self._resolved_source_revision(
+            rebuild_queue.append(
+                (task, effective_start, effective_end, cold_rebuild_start, reason)
+            )
+
+        workers = max(1, min(max_workers, len(rebuild_queue), (os.cpu_count() or 4)))
+
+        def _run_rebuild(
+            item: tuple[
+                dict[str, Any],
+                datetime,
+                datetime,
+                datetime,
+                str,
+            ],
+        ) -> tuple[dict[str, Any], pd.DataFrame]:
+            t, eff_s, eff_e, _cold_s, _reason = item
+            df = self._compute_artifact_from_central_cache(
+                t["module_name"],
+                t["params"],
+                t["ticker"],
+                t["tf"],
+                eff_s,
+                eff_e,
+                t["cold_rebuild_candle_count"],
+            )
+            return (t, df)
+
+        if workers == 1:
+            for item in tqdm(
+                rebuild_queue,
+                desc="Bias / EWSD artifacts (rebuild)",
+                unit="task",
+            ):
+                task, effective_start, effective_end, cold_rebuild_start, reason = item
+                descriptor = task["descriptor"]
+                try:
+                    _, artifact_df = _run_rebuild(item)
+                    store.write_artifact(
                         descriptor,
-                        task["depends_on"],
-                    ),
-                )
-                details.append(
-                    {
-                        "module_name": task["module_name"],
-                        "ticker": task["ticker"].name,
-                        "tf": task["tf"].name,
-                        "status": "rebuilt",
-                        "reason": reason,
-                        "rows": len(artifact_df),
-                        "cold_rebuild_start": cold_rebuild_start.isoformat(),
-                        "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
-                        "effective_start": effective_start.isoformat(),
-                        "effective_end": effective_end.isoformat(),
-                    }
-                )
-                rebuilt += 1
-            except Exception as exc:
-                logger.error(
-                    "Failed to refresh artifact %s/%s/%s: %s",
-                    task["module_name"],
-                    task["ticker"].name,
-                    task["tf"].name,
-                    exc,
-                    exc_info=True,
-                )
-                details.append(
-                    {
-                        "module_name": task["module_name"],
-                        "ticker": task["ticker"].name,
-                        "tf": task["tf"].name,
-                        "status": "failed",
-                        "reason": reason,
-                        "message": str(exc),
-                        "cold_rebuild_start": cold_rebuild_start.isoformat(),
-                        "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
-                        "effective_start": effective_start.isoformat(),
-                        "effective_end": effective_end.isoformat(),
-                    }
-                )
-                failed += 1
+                        artifact_df,
+                        depends_on=task["depends_on"],
+                        source_revision=self._resolved_source_revision(
+                            descriptor,
+                            task["depends_on"],
+                        ),
+                    )
+                    details.append(
+                        {
+                            "module_name": task["module_name"],
+                            "ticker": task["ticker"].name,
+                            "tf": task["tf"].name,
+                            "status": "rebuilt",
+                            "reason": reason,
+                            "rows": len(artifact_df),
+                            "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                            "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                            "effective_start": effective_start.isoformat(),
+                            "effective_end": effective_end.isoformat(),
+                        }
+                    )
+                    rebuilt += 1
+                except Exception as exc:
+                    logger.error(
+                        "Failed to refresh artifact %s/%s/%s: %s",
+                        task["module_name"],
+                        task["ticker"].name,
+                        task["tf"].name,
+                        exc,
+                        exc_info=True,
+                    )
+                    details.append(
+                        {
+                            "module_name": task["module_name"],
+                            "ticker": task["ticker"].name,
+                            "tf": task["tf"].name,
+                            "status": "failed",
+                            "reason": reason,
+                            "message": str(exc),
+                            "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                            "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                            "effective_start": effective_start.isoformat(),
+                            "effective_end": effective_end.isoformat(),
+                        }
+                    )
+                    failed += 1
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                future_to_item = {
+                    executor.submit(_run_rebuild, item): item for item in rebuild_queue
+                }
+                for future in tqdm(
+                    as_completed(future_to_item),
+                    total=len(rebuild_queue),
+                    desc="Bias / EWSD artifacts (rebuild)",
+                    unit="task",
+                ):
+                    item = future_to_item[future]
+                    task, effective_start, effective_end, cold_rebuild_start, reason = item
+                    descriptor = task["descriptor"]
+                    try:
+                        _, artifact_df = future.result()
+                        store.write_artifact(
+                            descriptor,
+                            artifact_df,
+                            depends_on=task["depends_on"],
+                            source_revision=self._resolved_source_revision(
+                                descriptor,
+                                task["depends_on"],
+                            ),
+                        )
+                        details.append(
+                            {
+                                "module_name": task["module_name"],
+                                "ticker": task["ticker"].name,
+                                "tf": task["tf"].name,
+                                "status": "rebuilt",
+                                "reason": reason,
+                                "rows": len(artifact_df),
+                                "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                                "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                                "effective_start": effective_start.isoformat(),
+                                "effective_end": effective_end.isoformat(),
+                            }
+                        )
+                        rebuilt += 1
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to refresh artifact %s/%s/%s: %s",
+                            task["module_name"],
+                            task["ticker"].name,
+                            task["tf"].name,
+                            exc,
+                            exc_info=True,
+                        )
+                        details.append(
+                            {
+                                "module_name": task["module_name"],
+                                "ticker": task["ticker"].name,
+                                "tf": task["tf"].name,
+                                "status": "failed",
+                                "reason": reason,
+                                "message": str(exc),
+                                "cold_rebuild_start": cold_rebuild_start.isoformat(),
+                                "cold_rebuild_candle_count": task["cold_rebuild_candle_count"],
+                                "effective_start": effective_start.isoformat(),
+                                "effective_end": effective_end.isoformat(),
+                            }
+                        )
+                        failed += 1
 
         return {
             "refresh_mode": refresh_mode,

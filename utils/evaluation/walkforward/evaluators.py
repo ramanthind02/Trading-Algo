@@ -11,12 +11,27 @@ from feature_research.core_helpers import (
 )
 
 if TYPE_CHECKING:
-    from feature_research.in_sample.config import ResearchConfig
+    from feature_research.config import ResearchConfig
 
 
 def build_signed_signal_walkforward_evaluator(
     combo_signal_target: dict[tuple[tuple[str, object], ...], pd.DataFrame],
 ) -> Callable[..., pd.Series]:
+    combo_returns: dict[tuple[tuple[str, object], ...], pd.Series] = {}
+    combo_indices: dict[tuple[tuple[str, object], ...], pd.DatetimeIndex] = {}
+    for combo, combo_data in combo_signal_target.items():
+        if combo_data.empty:
+            continue
+        if "returns" in combo_data.columns:
+            returns = combo_data["returns"]
+        else:
+            signal = normalize_series_datetime_index(combo_data["signal"])
+            target = normalize_series_datetime_index(combo_data["target"])
+            returns = signal.mul(target)
+        normalized_returns = normalize_series_datetime_index(returns)
+        combo_returns[combo] = normalized_returns
+        combo_indices[combo] = normalize_datetime_index(normalized_returns.index)
+
     def evaluate_param_combo(
         fold_candles: pd.DataFrame,
         _fold_target: pd.Series,
@@ -28,18 +43,15 @@ def build_signed_signal_walkforward_evaluator(
         if "selected_bin" in params:
             raise ValueError("selected_bin expansion is unsupported in frozen-signal research.")
         combo = combo_key(params)
-        combo_data = combo_signal_target.get(combo)
-        if combo_data is None:
+        returns = combo_returns.get(combo)
+        combo_index_norm = combo_indices.get(combo)
+        if returns is None or combo_index_norm is None:
             return pd.Series(dtype=float)
 
         fold_index_norm = normalize_datetime_index(fold_candles.index)
-        combo_index_norm = normalize_datetime_index(combo_data.index)
-        fold_data = combo_data.loc[combo_index_norm.isin(fold_index_norm)].dropna()
-        if fold_data.empty:
+        fold_mask = combo_index_norm.isin(fold_index_norm)
+        if not fold_mask.any():
             return pd.Series(dtype=float)
-
-        signal = normalize_series_datetime_index(fold_data["signal"])
-        target = normalize_series_datetime_index(fold_data["target"])
-        return signal.mul(target)
+        return returns.loc[fold_mask]
 
     return evaluate_param_combo

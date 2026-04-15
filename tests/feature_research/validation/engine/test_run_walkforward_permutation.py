@@ -9,19 +9,19 @@ import pandas as pd
 import pytest
 
 from utils.evaluation.walkforward.config import WalkforwardResearchConfig
-from utils.evaluation.walkforward.permutation_helpers import (
+from utils.evaluation.permutation_test.permutation_nulls import (
     aggregate_oos_metric_from_report,
     two_unit_masks_from_fold_rows,
 )
 from utils.evaluation.walkforward.runner import _build_fold_rows
-from utils.evaluation.walkforward.permutation_core import (
+from utils.evaluation.permutation_test.permutation_core import (
     _one_vector_shuffle_rep_fixed_signal,
     aggregate_per_ticker_metrics,
     aggregate_per_ticker_nulls,
     run_vector_shuffle_null,
     run_vector_shuffle_null_vectorized,
 )
-from feature_research.validation.permutation_helpers import _two_unit_train_windows
+from feature_research.validation.phase_permutation import _two_unit_train_windows
 
 
 def _minimal_candles_and_target() -> tuple[pd.DataFrame, pd.Series]:
@@ -49,7 +49,7 @@ def _minimal_initial_report(fold_rows: list) -> object:
                 "selected_feature": "",
                 "selected_raw_objective": 0.0,
                 "selected_smoothed_objective": 0.0,
-                "top_k_features": "[]",
+                "selected_params_json": "null",
             }
             for f in fold_rows
         ],
@@ -58,7 +58,7 @@ def _minimal_initial_report(fold_rows: list) -> object:
             "selected_feature",
             "selected_raw_objective",
             "selected_smoothed_objective",
-            "top_k_features",
+            "selected_params_json",
         ],
     )
     return types.SimpleNamespace(selection_summary_df=selection_summary_df)
@@ -90,7 +90,6 @@ def test_run_vector_shuffle_null_returns_correct_shape() -> None:
         train_end=datetime(2020, 4, 1),
         test_step=30,
         num_steps=3,
-        top_k=2,
         objective_metric_name="mean_return",
         min_fold_samples=10,
     )
@@ -125,7 +124,6 @@ def test_run_vector_shuffle_null_n_jobs_2_returns_correct_shape() -> None:
         train_end=datetime(2020, 4, 1),
         test_step=30,
         num_steps=3,
-        top_k=2,
         objective_metric_name="mean_return",
         min_fold_samples=10,
     )
@@ -159,7 +157,6 @@ def test_one_vector_shuffle_rep_fixed_signal_returns_finite_and_reproducible() -
         train_end=datetime(2020, 4, 1),
         test_step=30,
         num_steps=3,
-        top_k=2,
         objective_metric_name="mean_return",
         min_fold_samples=10,
     )
@@ -203,7 +200,6 @@ def test_run_vector_shuffle_null_with_fixed_signal_returns_correct_shape() -> No
         train_end=datetime(2020, 4, 1),
         test_step=30,
         num_steps=3,
-        top_k=2,
         objective_metric_name="mean_return",
         min_fold_samples=10,
     )
@@ -243,7 +239,6 @@ def test_run_vector_shuffle_null_reproducible_with_n_jobs() -> None:
         train_end=datetime(2020, 4, 1),
         test_step=30,
         num_steps=3,
-        top_k=2,
         objective_metric_name="mean_return",
         min_fold_samples=10,
     )
@@ -309,7 +304,7 @@ def test_aggregate_per_ticker_nulls_mismatched_lengths() -> None:
 
 def test_return_shuffle_null_vectorized_raises_for_order_invariant_metrics() -> None:
     """Return-shuffle null is degenerate for our supported metrics (order-invariant)."""
-    from utils.evaluation.walkforward.permutation_core import run_return_shuffle_null_vectorized
+    from utils.evaluation.permutation_test.permutation_core import run_return_shuffle_null_vectorized
 
     idx = pd.date_range("2022-01-01", periods=10, freq="D")
     oos_returns = pd.Series(np.arange(len(idx), dtype=float), index=idx)

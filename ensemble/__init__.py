@@ -19,7 +19,6 @@ from .portfolio import (
     materialize_global_portfolio_predictions,
     prune_inactive_base_model_materializations,
 )
-from .portfolio_manager import PortfolioManager
 from .weight_layer import (
     BaseWeightLayer,
     ClusteredWeightLayer,
@@ -34,7 +33,6 @@ __all__ = [
     'TFPortfolio',
     'load_global_portfolio_snapshot',
     'materialize_global_portfolio_predictions',
-    'PortfolioManager',
     'prune_inactive_base_model_materializations',
     'WeightLayer',
     'BaseWeightLayer',

@@ -1,6 +1,7 @@
 
 import os
 import gc
+from enum import Enum
 import numpy as np
 import pandas as pd
 import re
@@ -11,6 +12,32 @@ from datetime import datetime, timezone
 from utils.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+# In-process cache for OHLC parquet reads (same ticker, timeframe, range, file).
+# Feature research and permutation call ``load_data`` / ``load_data_multi_ticker`` many
+# times per run with identical arguments; the bias-node parquet cache is separate.
+_LOAD_DATA_CACHE: dict[tuple[str, int, int, int], pd.DataFrame] = {}
+
+
+def _load_data_cache_key(
+    file_path: Path,
+    start: datetime,
+    end: datetime,
+    *,
+    mtime_ns: int,
+) -> tuple[str, int, int, int]:
+    resolved = str(file_path.resolve())
+    return (
+        resolved,
+        int(pd.Timestamp(start).value),
+        int(pd.Timestamp(end).value),
+        mtime_ns,
+    )
+
+
+def clear_load_data_cache() -> None:
+    """Drop cached OHLC frames returned by :func:`load_data` (for tests or long runs)."""
+    _LOAD_DATA_CACHE.clear()
 
 
 def is_dst(dt: datetime) -> bool:
@@ -112,24 +139,31 @@ def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1
     file_path = base_dir / ticker.name / f"{timeframe.name}_{ticker.name}.parquet"
 
     if file_path.exists():
+        mtime_ns = file_path.stat().st_mtime_ns
+        cache_key = _load_data_cache_key(file_path, start, end, mtime_ns=mtime_ns)
+        cached = _LOAD_DATA_CACHE.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+
         # Read parquet file with pandas (fastparquet engine for PyPy compatibility)
         df = pd.read_parquet(file_path, engine='fastparquet')
-        
+
         # Convert datetime column to proper datetime type
         df['datetime'] = pd.to_datetime(df['datetime'])
-        
+
         # Filter by date range
         mask = (df['datetime'] >= start) & (df['datetime'] <= end)
         df = df[mask]
-        
+
         # Create proper timestamp index
         df['timestamp'] = df['datetime'].astype('int64') // 10**9
         df.set_index('timestamp', inplace=True)
-        
+
         # Sort by timestamp index
         df.sort_index(inplace=True)
-        
-        return df
+
+        _LOAD_DATA_CACHE[cache_key] = df.copy()
+        return df.copy()
     raise FileNotFoundError(f"File {file_path} does not exist")
 
 
@@ -247,64 +281,48 @@ def _normalize_module_base_name(module_name: str) -> str:
 
 
 def _resolve_bias_node_import_path(base_module_name: str) -> str:
-    """Resolve module import path using taxonomy map, then recursive search."""
+    """Resolve module import path using the explicit taxonomy registry."""
     from nodes._taxonomy import CANONICAL_MODULE_IMPORTS
 
     canonical_path = CANONICAL_MODULE_IMPORTS.get(base_module_name)
     if canonical_path:
         return canonical_path
 
-    nodes_root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) / "nodes"
-    matches = [
-        candidate
-        for candidate in nodes_root.rglob(f"{base_module_name}.py")
-        if candidate.name != "__init__.py" and "archive" not in candidate.parts
-    ]
-
-    if not matches:
-        raise ValueError(f"Could not find module file recursively for: {base_module_name}")
-
-    if len(matches) > 1:
-        candidate_paths = sorted(str(candidate.relative_to(nodes_root)) for candidate in matches)
-        raise ValueError(
-            f"Ambiguous module resolution for '{base_module_name}'. Candidates: {candidate_paths}"
-        )
-
-    relative_module_path = matches[0].relative_to(nodes_root).with_suffix("")
-    return f"nodes.{'.'.join(relative_module_path.parts)}"
+    known_modules = ", ".join(sorted(CANONICAL_MODULE_IMPORTS))
+    raise ValueError(
+        f"Bias node '{base_module_name}' is not registered in nodes._taxonomy.CANONICAL_MODULE_IMPORTS. "
+        f"Known modules: {known_modules}"
+    )
 
 
 
 def _resolve_bias_node_class(module_name: str) -> type[Any]:
     """Resolve the concrete bias-node class for *module_name*."""
     import importlib
-    import inspect
 
     base_module_name = _normalize_module_base_name(module_name)
     full_module_name = _resolve_bias_node_import_path(base_module_name)
+    from nodes._taxonomy import CANONICAL_MODULE_CLASSES
+
+    class_name = CANONICAL_MODULE_CLASSES.get(base_module_name)
+    if class_name is None:
+        known_modules = ", ".join(sorted(CANONICAL_MODULE_CLASSES))
+        raise ValueError(
+            f"Bias node '{base_module_name}' does not have a registered class in "
+            f"nodes._taxonomy.CANONICAL_MODULE_CLASSES. Known modules: {known_modules}"
+        )
 
     # Import the resolved module path
     try:
         module = importlib.import_module(full_module_name)
     except ImportError as e:
         raise ImportError(f"Error importing module {full_module_name}: {e}")
-    
-    # Find the main class in the module
-    # Strategy: Look for classes that are DEFINED in this module (not imported)
-    # This prevents finding imported classes like RSI when we want RSISignalNode
-    main_class = None
-    for name, obj in inspect.getmembers(module):
-        # Skip the abstract BiasNode class
-        if name == 'BiasNode':
-            continue
-        # Only consider classes that are actually defined in this module
-        if inspect.isclass(obj) and obj.__module__ == full_module_name:
-            if hasattr(obj, 'get_instance') and callable(getattr(obj, 'get_instance')):
-                main_class = obj
-                break
-    
+
+    main_class = getattr(module, class_name, None)
     if main_class is None:
-        raise ValueError(f"Could not find a suitable class in module {module_name}")
+        raise ValueError(
+            f"Could not find registered class '{class_name}' in module {full_module_name}"
+        )
 
     return main_class
 
@@ -402,42 +420,6 @@ def create_fresh_bias_node(module_name: str, ticker: Ticker, tf: TimeFrame, para
     )
 
 
-def create_filtered_bias_node(
-    module_name: str,
-    ticker: 'Ticker',
-    tf: 'TimeFrame',
-    params: Dict,
-    filter_specs: 'Sequence',
-    *,
-    neutral_value: float = 0.0,
-) -> Any:
-    """Create a bias node optionally wrapped with a filter chain.
-
-    If *filter_specs* is empty the raw node is returned unchanged.
-    Mirrors :func:`create_bias_node` but adds filter support.
-
-    Parameters
-    ----------
-    module_name, ticker, tf, params
-        Forwarded to :func:`create_bias_node`.
-    filter_specs
-        Zero or more :class:`filters.FilterSpec` instances defining the
-        filter chain.
-    neutral_value
-        Value emitted when a filter blocks (default ``0.0``).
-    """
-    base_node = create_bias_node(module_name, ticker, tf, params)
-    if not filter_specs:
-        return base_node
-    from filters import create_filter
-    from nodes.filtered import FilteredBiasNode
-    filters = [create_filter(spec) for spec in filter_specs]
-    return FilteredBiasNode.get_instance(
-        base_node, tuple(filters), neutral_value=neutral_value,
-    )
-
-
-
 
 # ============================================================================
 # Standardized Feature Column Naming Utilities
@@ -483,6 +465,21 @@ def _to_camel_case(token: str) -> str:
     return head + tail
 
 
+def _format_param_value_for_feature_name(val: object) -> str:
+    """Flatten param values for column/file stem names (no nested repr / OS-invalid chars)."""
+    if isinstance(val, Enum):
+        return str(val.value)
+    if isinstance(val, dict):
+        parts: List[str] = []
+        for k in sorted(val.keys()):
+            parts.append(_to_camel_case(str(k)))
+            parts.append(_format_param_value_for_feature_name(val[k]))
+        return "_".join(parts)
+    if isinstance(val, (list, tuple)):
+        return "_".join(_format_param_value_for_feature_name(v) for v in val)
+    return str(val)
+
+
 def build_feature_column_name(
     module: str,
     feature: str,
@@ -514,10 +511,7 @@ def build_feature_column_name(
         for key in sorted(params.keys()):
             name_parts.append(_to_camel_case(str(key)))
             val = params[key]
-            if isinstance(val, (list, tuple)):
-                name_parts.append("_".join(str(v) for v in val))
-            else:
-                name_parts.append(str(val))
+            name_parts.append(_format_param_value_for_feature_name(val))
     return '_'.join(name_parts)
 
 
@@ -594,7 +588,7 @@ def _get_functime_function(function_name: str):
         f"Tried modules: {possible_modules}"
     )
 
-
+
 def _parse_filter_suffix(segment: str) -> Dict[str, Any]:
     """Parse a single filter suffix segment like ``vol_atrPeriod_14_regime_high``.
 
@@ -660,7 +654,10 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     # Known multi-word module names (in order of length, longest first to match greedily)
     # All use snake_case to match Python file names
     known_modules = [
-        'domain_discrete',
+        'envelope_reversion_signal',
+        'casey_percent_c_signal',
+        'cumulative_rsi_signal',
+        'zscore_rsi_signal',
         'cumulative_rsi',
         'consec_momentum',
         'ts_feature',

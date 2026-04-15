@@ -23,10 +23,11 @@
 - `load_global_portfolio_snapshot(portfolio_id, vault_root="vault")`
 - `materialize_global_portfolio_predictions(portfolio, query, portfolio_id, world, research_run_id=None, scope=ArtifactScope.LIVE)`
 - `prune_inactive_base_model_materializations(vault_root="vault", scope=ArtifactScope.LIVE, ensemble_dirs=None)`
-- `PortfolioManager.fit_from_cache(query, target_data=None)`
-- `PortfolioManager.predict_from_cache(query)`
 - `PortfolioTester.fit_from_cache(query)`
 - `PortfolioTester.predict_from_cache(query, ...)`
+
+## Deprecated compatibility entrypoints
+- `PortfolioManager.fit_from_cache(query, target_data=None)` and `PortfolioManager.predict_from_cache(query)` remain available through `ensemble.portfolio_manager` as compatibility shims, but they are no longer re-exported from `ensemble`.
 
 ## Volatility contract
 - Cache-native portfolio methods resolve EWSD volatility via central cache artifacts.

@@ -1,150 +1,219 @@
-# Out-of-Sample (OOS) Validation
+# Validation & OOS Phases
 
-> [!note] Status: Library reference — OOS phase implementation (Phases 6–8)
-> Last updated: 2026-02-23
+> [!note] Status: Library reference — Phases 3 & 4 of [[Feature_selection/pipeline]]  
+> Last updated: 2026-04-07
 
 ---
 
 ## Overview
 
-After a feature passes all in-sample (IS) and walkforward (WF) gates (Phases 1–5), it enters the OOS period (2024–2025) for final validation. This period was untouched during all prior analysis.
+After IS EDA and permutation (Phases 1–2), a single researcher-selected param combo is handed off to two sequential single-fold evaluation phases:
 
-**Three OOS phases:**
-- **Phase 6: OOS Walk-Forward Validation** — confirm param stability on fresh OOS folds (same algorithm as Phase 4 WF Validation)
-- **Phase 7: OOS Permutation Test** — confirm feature significance on OOS data (same threshold as Phase 5 WF Permutation)
-- **Phase 8: Graduation** — apply pre-committed param selection rule, persist to vault
+| Phase | Split | Train window | Hold-out window | Entrypoint |
+|-------|-------|-------------|----------------|------------|
+| **3 — Validation** | 2019-01 → 2022-12 | 2000-01 → 2018-12 | 2019-01 → 2022-12 | `python -m feature_research validation` |
+| **4 — OOS** | 2023-01 → 2025-09 | 2000-01 → 2022-12 | 2023-01 → 2025-09 | `python -m feature_research oos` |
 
----
+The OOS train window **includes the validation period** (2019–2022). When both `validation_window` and `oos_window` are set in config, `_effective_oos_window()` extends the OOS train start to `validation_window.train_start` automatically.
 
-## Phase 6: OOS Walk-Forward Validation
-
-Replicate Phase 4 (WF Validation) on out-of-sample folds.
-
-### Fold Structure
-
-Same expanding or rolling window logic as Phase 4, but applied to OOS data (2024–2025):
-
-- Initial training window: last IS fold (e.g., 2022–2024)
-- Test folds: rolling or expanding on OOS period
-- Rolling window step: typical 1 year or user-specified
-
-### Algorithm
-
-Per fold:
-1. Fit ALL param combos on training candles (up to `train_end`)
-2. Compute raw objective metric (e.g., Sharpe) for each param
-3. Apply **axis-aligned 1-step neighbor smoothing** → `smoothed_objective(P) = mean(obj(P), obj(neighbors))`
-4. Identify stable region: contiguous params where `stability_ratio > threshold` (default 0.8)
-5. Form ensemble from stable region params
-6. Evaluate portfolio on test fold candles
-
-### Pass Criterion
-
-- Stable region reproducible in ≥ `min_folds_stable` of OOS folds (typical 2–3 folds out of 2–3 total OOS folds)
-- If < 2 params selected globally → no position (insufficient evidence)
-
-> [!important] Param Stability
-> Phase 6 uses the same neighbor smoothing + stable region algorithm as Phase 4. See [[param_stability]] for algorithm details, quadrant interpretation, and configuration.
-
-### Why Phase 6?
-
-- IS/WF gates confirm theoretical signal + temporal stability within training data
-- OOS validation confirms generalization to fresh data not touched during any prior analysis
-- If param region becomes unstable or disappears in OOS, feature is rejected (overfitting detected)
+Dates are config-driven via `ResearchConfig.validation_window` and `ResearchConfig.oos_window` in `feature_research/config.py`.
 
 ---
 
-## Phase 7: OOS Permutation Test
+## Param combo handoff: `eval_bias_spec`
 
-Replicate Phase 5 (WF Permutation) on out-of-sample data.
+Both phases evaluate a **single fixed combo** rather than the full EDA grid. The researcher pins this combo after IS review by setting `eval_bias_spec` in `InSamplePhaseDefaultsConfig`:
 
-### Test Procedure
+```python
+# feature_research/config.py  (inside load_config)
+_defaults = InSampleDefaultsCatalog.default_for(timeframe)
+in_sample_defaults = replace(
+    _defaults,
+    continuous=replace(
+        _defaults.continuous,
+        eval_bias_spec={
+            "module_name": "cyclical_rsi",
+            "timeframes": [timeframe],
+            "params": {
+                "long_period": [100],   # ← single values from IS selection
+                "rsi_period":  [2],
+                "short_period": [4],
+            },
+        },
+    ),
+)
+```
 
-For each feature/param combo that passed Phase 6:
-
-1. **Fit on original OOS data** → compute objective metric (`Sharpe`, `Sortino`, etc.)
-2. **Shuffle** N times (default N=500) → recompute metric per replicate
-3. **Null distribution** → metrics from all shuffled runs
-4. **p-value** = fraction of shuffled metrics ≥ original
-5. **Gate**: p ≤ α (default α=0.05)
-
-The shuffle method differs by feature type:
-
-**Continuous features — candle shuffle (default):**
-- Shuffle only the OOS candles (params are fixed; IS data is not re-shuffled)
-- Feature recomputed from shuffled OOS stream
-- Preserves first/last OHLC anchors + intra-bar structure; destroys temporal order
-
-**Rule-based features — target return shuffle:**
-- Keep the feature vector intact (rule outputs are serially correlated; shuffling them is unnatural)
-- Shuffle the OOS return column; apply fixed params to produce strategy returns
-- Score = 0 if the metric falls below the absolute minimum threshold
-- Cheaper than candle shuffle; preserves the feature's natural serial structure
-
-**Key constraint:** params are already fixed (selected during IS/WF phases). Shuffling IS data is a no-op here — only the OOS evaluation period is shuffled. See [[permutation_testing]] "What to Shuffle" section for the general principle.
-
-### Pass Criterion
-
-If p ≤ 0.05, feature passes Phase 7 and is eligible for graduation.
-
-> [!warning] Reduced power on OOS
-> OOS permutation test has ~1/10 the sample size of IS permutation test. A feature that passes IS + WF + OOS permutation is highly robust (three independent gates).
+`ResearchConfig.eval_bias_spec` falls back to the full `bias_spec` (EDA grid) when not set — safe to leave unset during early IS exploration. Once set, every downstream phase (validation, OOS, permutation scripts) uses this spec exclusively.
 
 ---
 
-## Phase 8: Graduation
+## Portfolio simulation for equity curves
 
-Once all gates pass, apply the pre-committed param selection rule to choose final parameters.
+Equity curves in both phases are generated using the Portfolio class rather than the IS EDA metric (`signal × EWSD-target`). This gives realistic simulated P&L:
 
-### Param Selection Rule
+### Signal → position fraction
 
-Fit ALL param combos on full IS data (2000–2023):
+```
+signal (0 or 1, one row per bar per ticker from bias node)
+    │
+    ▼  TFPortfolio(ensembles=[])
+    │  .fit(calculate_returns_from_candles(train_candles))
+    │    → IDM = √(1 / (mean_corr + 0.01)),  capped at 2.5
+    │    → instrument_weight = 1 / N_tickers  (equal weight)
+    ▼
+  TFPortfolio.predict(combined_forecasts)   [forecast_score = signal]
+    │  position_fraction = signal × instrument_weight × IDM
+    ▼
+  calculate_strategy_returns_from_positions(positions_df, candles)
+    │  • position at bar t applied to return of bar t+1  (1-bar lookahead-free shift)
+    │  • daily_return_t = position_fraction_{t−1} × log(close_t / close_{t−1})
+    │  • returns summed across tickers per date
+    ▼
+  cumsum per ticker  →  equity_curve_*.csv
+```
 
-1. Compute objective metric (Sharpe) for each param
-2. Apply neighbor smoothing → `smoothed_objective(P)`
-3. Hard filters: `bin_count ≥ bin_count_min` (default 5), `trade_frequency ≥ min_freq` (default 0.05)
-4. Relative floor: `floor = best - δ * σ` (default δ=0.20) or adaptive
-5. Select stable region: contiguous params where `smoothed(P) > floor`
-6. From valid region, select top-K params by smoothed objective (default K=3)
+**Key**: `TFPortfolio` is used purely for IDM and instrument weights — no base models, no DiversifiedEnsemble. The signal is passed directly as the `forecast_score`. This gives position sizing consistent with how the combo would be sized in production (single-signal Carver allocation with diversification).
 
-### Selection Criteria
+### Training candles for IDM
 
-- **0 params selected** → no position (feature exists but not deployable)
-- **1 param selected** → questionable, marginal confidence
-- **2–6 params selected** → solid ensemble (typical case)
-- **>6 params selected** → broad region, high stability
+The IDM fit uses candles **strictly before the holdout window start** (`extended_start → holdout_start − 1 day`). This prevents information leakage from the holdout period into the IDM estimate.
 
-If fewer than 2 params selected, the feature is kept in the vault but marked "no_position" — it passed all gates but has insufficient param-level evidence for ensemble formation.
+| Phase | IDM training candles | Holdout candles |
+|-------|---------------------|----------------|
+| Validation | 2000-01 → 2018-12 | 2019-01 → 2022-12 |
+| OOS | 2000-01 → 2022-12 | 2023-01 → 2025-09 |
 
-### Vault Storage
+### Implementation
 
-Persist to [[vault]] with metadata:
-- Feature name, ticker, timeframe, bias node + parameter
-- Selected param list (or "no_position" if < 2 params)
-- Permutation test results (p-values from Phases 3, 5, 7)
-- IS + WF + OOS performance metrics
+`feature_research.research_table_exports`:
 
-Feature is now approved for live deployment.
+- `_build_portfolio_positions_df(signal, ticker, train_candles, timeframe)` — fits `TFPortfolio`, calls `predict()`, returns `{ticker, datetime, position_fraction}` DataFrame
+- `_portfolio_equity_frames_for_selection(...)` — computes per-ticker `calculate_strategy_returns_from_positions`, formats equity curve rows
+- `write_walkforward_equity_powerbi_csvs(..., portfolio_candles=candles)` — orchestrates holdout and extended slices; falls back to `signal × target` when `portfolio_candles=None`
+
+Called from `feature_research.pipelines._shared._run_evaluation_pipeline` after `run_walkforward_research`.
 
 ---
 
-## Summary: OOS vs IS vs WF
+## Validation phase (Phase 3)
 
-| Aspect | IS (Phase 3) | WF (Phase 5) | OOS (Phase 7) |
-|--------|------|-----|-----|
-| Data | 20–23 years (2000–2023) | Full IS period, rolling folds | 1–2 years (2024–2025) |
-| Sample size | Large (high power) | Medium (per-fold) | Small (low power) |
-| Gate | p ≤ 0.10 (coarse filter) | p ≤ 0.05 (strict filter) | p ≤ 0.05 (out-of-sample validation) |
-| Shuffle method (continuous) | Vector shuffle (S1) + candle shuffle (S2, stable region only) | S1: OOS return shuffle → S2: IS return shuffle (full grid) → S3: candle shuffle (stable region) | Candle (OOS only; params fixed) |
-| Shuffle method (rule-based) | Vector shuffle (S1) + target return shuffle (S2, IS_val holdout) | Same 3 sub-stages as continuous | Target return shuffle (OOS returns; params fixed) |
-| Purpose | Screen for basic signal | Confirm temporal stability | Confirm generalization |
+### What runs
 
-**All three gates must pass** for graduation.
+`python -m feature_research validation`  
+→ `feature_research.validation.run_validation.main`  
+→ `run_validation_pipeline(config)` → `_run_evaluation_pipeline(phase="validation", config)`
+
+1. Loads cache-backed signal and target for `eval_bias_spec` combo over full date range
+2. Builds a single fold row: train = `[validation_window.train_start, train_end]`, test = `[test_start, test_end]`
+3. Runs `run_walkforward_research` → `WalkforwardRunReport` (fold scores, selection summary, tearsheets)
+4. Writes Power BI equity CSVs via `write_walkforward_equity_powerbi_csvs`
+
+### Power BI artifacts
+
+Written to **`output_root / powerbi / validation /`** (fixed path; `module_name` and internal `feature_type` are **not** in the folder name so Power BI data sources stay valid when you change feature).
+
+| File | Contents |
+|------|----------|
+| `equity_curve_validation_only.csv` | Portfolio simulation returns, **validation window only** (2019–2022). Columns: `datetime`, `param_combo_label`, `feature_name`, `ticker`, `strategy_return`, `cumulative_strategy_return`, `fold_id`, **`rolling_sharpe_annualized`** (rolling mean/std × √`bars_per_year`, default **126** daily bars), **`rolling_sharpe_window_bars`** (the window used). |
+| `equity_curve_train_and_validation.csv` | Same schema, **train + validation combined** (2000–2022); rolling Sharpe is computed **within** each ticker/fold/combo after sorting by date (so the validation-only file does not use pre-validation bars in the rolling window). |
+
+Both files have one row per trading bar per ticker. Import both into Power BI and use `fold_id` to filter (single fold = fold_id 0).
+
+### Tearsheets
+
+HTML reports stay under the feature-specific run folder:  
+`output_root / signed_signal / <module_name> / validation / tearsheets /`
+
+- `validation_ensemble_tearsheet.html` — validation period QuantStats report  
+- `train_ensemble_tearsheet.html` — training period QuantStats report  
+- `train_and_validation_ensemble_tearsheet.html` — combined period  
+
+---
+
+## OOS phase (Phase 4)
+
+### What runs
+
+`python -m feature_research oos`  
+→ `feature_research.oos.run_oos.main`  
+→ `run_oos_pipeline(config)` → `_run_evaluation_pipeline(phase="oos", config)`
+
+Structurally identical to validation; differences:
+
+- Window: `_effective_oos_window(config)` — train start = `validation_window.train_start` when validation is configured (so OOS train covers 2000–2022)
+- Test period: `oos_window.test_start → test_end` (2023–2025)
+
+### Power BI artifacts
+
+Written to **`output_root / powerbi / oos /`** (same stable-path rule as validation).
+
+| File | Contents |
+|------|----------|
+| `equity_curve_oos_test_only.csv` | Portfolio simulation returns, **OOS test window only** (2023–2025); includes the same **rolling Sharpe** columns as validation exports. |
+| `equity_curve_train_val_and_test.csv` | Same schema, **full period** (2000–2025); rolling window uses only bars present in this file (test-only file does not borrow train/val history for the roll). |
+
+### Power BI usage
+
+Load all four equity CSVs (2 validation + 2 OOS) in a single dataset. Relate on `param_combo_label` + `feature_name`. Use a slicer on a `phase` column (add as a calculated column or combine with a `phase` literal before import) to compare:
+
+- Validation only vs. train+val
+- OOS only vs. full history
+
+This lets you visually check whether the hold-out performance is consistent with in-sample build-up.
+
+---
+
+## Permutation scripts (optional)
+
+After visual review, a vector-shuffle permutation null can be run on the validation or OOS window:
+
+```
+python -m feature_research validation-permutation [--nreps N --seed S]
+python -m feature_research oos-permutation        [--nreps N --seed S]
+```
+
+These use the same `eval_bias_spec` combo and the same window definitions as the main validation/OOS pipelines. Results are written alongside the equity CSVs.
+
+---
+
+## Configuration reference
+
+All window definitions live in `feature_research/config.py` → `load_config()`:
+
+```python
+validation_window = OOSWindowConfig(
+    train_start=datetime(2000, 1, 1),
+    train_end=datetime(2018, 12, 31),
+    test_start=datetime(2019, 1, 1),
+    test_end=datetime(2022, 12, 31),
+)
+
+oos_window = OOSWindowConfig(
+    train_start=datetime(2000, 1, 1),
+    train_end=datetime(2022, 12, 31),
+    test_start=datetime(2023, 1, 1),
+    test_end=datetime(2025, 9, 18),
+)
+```
+
+`OOSWindowConfig` enforces `train_end < test_start < test_end` at construction.
+
+---
+
+## Relationship to IS equity curve
+
+| Phase | Equity curve source | Return metric | Per-ticker? |
+|-------|--------------------|--------------------|-------------|
+| IS EDA (`equity_curve.csv`) | `signal × log_return_ewsd` (EWSD-normalised) | Signal quality metric (not P&L) | Yes |
+| Validation / OOS | `position_fraction × actual_log_return` via `TFPortfolio` | Realistic % P&L | Yes |
+
+The IS equity curve is optimised for param screening (vol-normalised, comparable across instruments). The validation/OOS curves are optimised for realistic assessment of the selected combo's profitability.
 
 ---
 
 > [!info] See also
-> - [[pipeline]] — full validation pipeline overview (Phases 1–8)
-> - [[param_stability]] — neighbor smoothing, stable region selection, param selection rule
-> - [[walkforward]] — Phase 4–5 walkforward (replicated in Phase 6)
-> - [[vault]] — feature storage and deployment
+> - [[Feature_selection/pipeline]] — full pipeline overview (Phases 0–5)
+> - [[Feature_selection/Phase_2_WF/param_stability]] — selection rule applied at graduation
+> - [[Feature_selection/Phase_2_WF/walkforward]] — multi-fold walk-forward (reference)
+> - [[Ensemble/portfolio]] — TFPortfolio, IDM, instrument weights

@@ -81,7 +81,7 @@ from ensemble.monitoring_store import initialize_monitoring
 path = initialize_monitoring(
     ensemble_dir='vault/D/mr_indices_long',
     feature_name='rsi_signal_D',
-    model_id='continuous_binning_3_lookback_14',
+    model_id='signed_signal_<model_id>',
     signals=signal_series,   # pd.Series with DatetimeIndex
     targets=target_series,
     period='IS',             # default
@@ -98,7 +98,7 @@ from ensemble.monitoring_store import append_monitoring_data
 append_monitoring_data(
     ensemble_dir='vault/D/mr_indices_long',
     feature_name='rsi_signal_D',
-    model_id='continuous_binning_3_lookback_14',
+    model_id='signed_signal_<model_id>',
     signals=live_signals,
     targets=live_targets,
     period='LIVE',           # default

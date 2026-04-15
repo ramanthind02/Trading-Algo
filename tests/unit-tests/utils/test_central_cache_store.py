@@ -3,18 +3,19 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 import utils.cache.runtime.central_cache as central_cache_module
-from utils.cache.central_cache import CentralCacheStore
-from utils.cache.central_cache_errors import (
+from utils.cache.runtime.central_cache import CentralCacheStore, _candle_frame_semantically_equal
+from utils.cache.runtime.central_cache_errors import (
     ArtifactLifecycleError,
     ArtifactMissingError,
     CacheCoverageError,
     SourceRevisionConflictError,
 )
-from utils.cache.central_cache_models import (
+from utils.cache.runtime.central_cache_models import (
     ArtifactDescriptor,
     ArtifactLifecycleState,
     ArtifactRecord,
@@ -232,6 +233,38 @@ def test_artifact_read_as_of_and_lifecycle_state(central_cache: CentralCacheStor
         central_cache.read_artifact(descriptor)
 
 
+def test_describe_artifact_uses_sidecar_without_loading_parquet(
+    central_cache: CentralCacheStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Coverage validation should not read full Parquet when ``*.parquet.meta.json`` exists."""
+    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 6, 1), 3, timedelta(days=1)))
+    descriptor = ArtifactDescriptor(
+        family="signals",
+        ticker=Ticker.ES,
+        timeframe=TimeFrame.D,
+        module_name="rsi",
+        params={"lookback": 14},
+        scope=ArtifactScope.RESEARCH,
+        artifact_name="signal",
+    )
+    central_cache.write_artifact(
+        descriptor,
+        _frame(datetime(2024, 6, 1), 3, timedelta(days=1)),
+        depends_on=[(Ticker.ES, TimeFrame.D)],
+    )
+    central_cache.clear()
+    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 6, 1), 3, timedelta(days=1)))
+
+    def _no_parquet_load(self) -> pd.DataFrame:
+        raise AssertionError("BiasNodeCache.load() should not run when sidecar metadata exists")
+
+    monkeypatch.setattr("utils.cache.runtime.central_cache.BiasNodeCache.load", _no_parquet_load)
+    record = central_cache.describe_artifact(descriptor)
+    assert record is not None
+    assert record.lifecycle_state is ArtifactLifecycleState.FRESH
+
+
 def test_artifact_dependency_metadata_survives_memory_clear(central_cache: CentralCacheStore) -> None:
     central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 4, 1), 3, timedelta(days=1)))
 
@@ -345,3 +378,62 @@ def test_exact_lookup_miss_on_artifact(central_cache: CentralCacheStore) -> None
 
     with pytest.raises(ArtifactMissingError):
         central_cache.read_artifact(descriptor, CacheRequest(exact_dt=datetime(2024, 7, 5)))
+
+
+def test_candle_frame_semantically_equal_accepts_datetime64_unit_mismatch() -> None:
+    idx_ns = pd.DatetimeIndex([pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02")])
+    idx_us = idx_ns.astype("datetime64[us]")
+    left = pd.DataFrame(
+        {
+            "open": [100.0, 101.0],
+            "high": [102.0, 103.0],
+            "low": [99.0, 100.0],
+            "close": [101.5, 102.5],
+            "volume": [1000, 1100],
+        },
+        index=idx_ns,
+    )
+    right = pd.DataFrame(left, copy=True)
+    right.index = idx_us
+    assert not left.index.equals(right.index)
+    assert _candle_frame_semantically_equal(left, right)
+
+
+def test_candle_frame_semantically_equal_accepts_float_dtype_mismatch() -> None:
+    idx = pd.DatetimeIndex([pd.Timestamp("2024-01-01"), pd.Timestamp("2024-01-02")])
+    left = pd.DataFrame(
+        {
+            "open": [100.0, 101.0],
+            "high": [102.0, 103.0],
+            "low": [99.0, 100.0],
+            "close": [101.5, 102.5],
+            "volume": [1000, 1100],
+        },
+        index=idx,
+    )
+    right = left.astype(
+        {"open": np.float32, "high": np.float32, "low": np.float32, "close": np.float32, "volume": np.float32}
+    )
+    assert _candle_frame_semantically_equal(left, right)
+    assert not left.equals(right)
+
+
+def test_set_candles_skips_rewrite_when_semantically_equal_to_disk(
+    central_cache: CentralCacheStore,
+) -> None:
+    """Parquet round-trip must not force candle revision + dependent artifact staleness."""
+    df = _frame(datetime(2024, 1, 1), 3, timedelta(days=1))
+    central_cache.set_candles(Ticker.ES, TimeFrame.D, df)
+    rev_after_first = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
+    assert rev_after_first is not None
+    r1 = rev_after_first.revision
+
+    central_cache._candle_frames.clear()
+    central_cache._candle_records.clear()
+    loaded = central_cache._read_candles_from_disk(Ticker.ES, TimeFrame.D)
+    assert loaded is not None
+
+    central_cache.set_candles(Ticker.ES, TimeFrame.D, df)
+    rev_after_second = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
+    assert rev_after_second is not None
+    assert rev_after_second.revision == r1

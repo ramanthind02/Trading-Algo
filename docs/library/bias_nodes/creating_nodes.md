@@ -1,15 +1,15 @@
 # Creating Bias Nodes
 
-A **bias node** is a stateful, streaming component that processes one candle at a time and produces a feature column used by downstream [[base_model|base models]].
+A **bias node** is a stateful, streaming component that processes one candle at a time and produces **feature columns** for the trading stack. **Features are bias nodes** (or compositions of them). Production ensembles only consume **native discrete signed signals** (`-1` / `0` / `+1`) from those nodes — see [[bias_nodes/index]].
 
 ## Required Attributes (set in `__init__`)
 
-| Attribute | Purpose | Example |
-|---|---|---|
-| `module_name` | Lowercase, no underscores | `'rsi'`, `'ewmac'` |
-| `output_features` | List of feature names | `['signal']`, `['atr', 'atrPct']` |
-| `params` | All constructor params (except ticker/tf) | `{'lookback': 14}` |
-| `front_bad` | Warmup candles before valid output | `14` |
+| Attribute         | Purpose                                   | Example                           |
+| -------------------| -------------------------------------------| -----------------------------------|
+| `module_name`     | Lowercase, no underscores                 | `'rsi'`, `'ewmac'`                |
+| `output_features` | List of feature names                     | `['signal']`, `['atr', 'atrPct']` |
+| `params`          | All constructor params (except ticker/tf) | `{'lookback': 14}`                |
+| `front_bad`       | Warmup candles before valid output        | `14`                              |
 
 ### Max lookback metadata
 
@@ -64,17 +64,26 @@ Example: `rsi_signal_D_lookback_14`
 5. `self.output.append(result)`
 6. `return [result]` — one value per `output_feature`
 
-## Feature Types
+## Feature types
 
-| Type | Output | Binning | Use when |
+| Type | Output | Next step | Use when |
 |---|---|---|---|
-| **Rule-based** | `-1`, `0`, `1` | Not required | Clear entry/exit rules (breakout, crossover) |
-| **Continuous** | Any float | Required | Signal strength matters (RSI, momentum) |
+| **Native discrete** | `-1`, `0`, `1` | Go straight to feature research ([[Feature_selection/pipeline]]) | Clear entry/exit rules (breakout, crossover) |
+| **Continuous** | Real-valued float | Research only: inspect distributions, parameter stability, and cross-asset normalization in the feature-research pipeline | Signal strength matters (RSI, momentum, ratios) |
+
+> [!warning] Production contract
+> Runtime-fitted **continuous binning models** and frozen bin-wrapper nodes are not part of the production path. If a feature is intended for production, implement it as a native signed-signal bias node that emits `-1/0/+1` directly.
 
 > [!note] Normalization
-> Continuous features with asset-dependent ranges **must** be normalized.
-> - Fixed-range (RSI 0-100): output raw value directly
+> Continuous features with asset-dependent ranges **must** be normalized before cross-asset research comparisons.
+> - Fixed-range (RSI 0–100): output raw value directly
 > - Dynamic-range (MA diff, momentum): divide by price or ATR to make cross-asset comparable
+
+## Continuous Features
+
+1. Implement the source node as a normal continuous bias node.
+2. Use the feature-research pipeline to study the raw series and decide whether the idea should become a separate native signed-signal node.
+3. Only save native signed-signal nodes to the vault.
 
 ## Minimal Template
 
@@ -156,7 +165,7 @@ if other is None:
 
 #### Where cross data is loaded
 
-- **Research/EDA/training/permutation**: preloaded during feature extraction/base-model setup
+- **Research/EDA/training/permutation**: preloaded during feature extraction / cache coverage
 - **Forecast server (MT5)**: preloaded from historical buffers, then updated every loop
 - **TWS one-shot script**: loaded from fetched candles or IB fallback fetch
 
@@ -205,6 +214,22 @@ flowchart LR
   AsOf --> Node
 ```
 
+## Composing existing nodes
+
+Rather than building a new indicator from scratch, you can **wrap existing bias nodes**:
+
+| Wrapper | Location | What it does |
+|---------|----------|--------------|
+| `DualSignalNode` | `nodes/composite/dual_signal.py` | Emits a direction only when two nodes agree (`+1/+1` or `-1/-1`). Useful for confirmation logic. |
+| `FilterGateNode` | `nodes/composite/filter_gate.py` | If the filter's first output is non-zero, passes the signal's first output through; otherwise emits `0`. |
+| `FilterAndSignalNode` | `nodes/composite/filter_and_signal.py` | Same signed agreement as `DualSignalNode`, with `filter_module` / `signal_module` naming for research specs. |
+
+It is fully compatible with the standard `bias_spec` / `extract_features_for_bias_node` / vault paths — no infrastructure changes needed.
+
+For feature research, edit **`load_config()`** in `feature_research.config` where all continuous and signed-signal specs are assembled. Use **`build_filter_gate_bias_spec`** only in tests or helpers when you need the composite dict shape without duplicating keys.
+
+Full reference: [[bias_nodes/composed_nodes]].
+
 ## Common Mistakes Checklist
 
 - [ ] Forgot `ensure_standardized_columns()` at end of `__init__`
@@ -221,9 +246,10 @@ flowchart LR
 
 ## Related
 
-- [[base_model]] — consumes node output, applies binning
-- [[pipeline]] — feature extraction pipeline
-- [[eda]] — parameter sensitivity analysis for node params
+- [[bias_nodes/index]] — bias-node doc hub
+- [[Feature_selection/pipeline]] — EDA, permutation, walkforward after the feature is discrete
+- [[Feature_selection/Phase_1_IS/eda]] — in-sample EDA detail
+- [[Ensemble/base_model]] — historical ensemble “member” wording (schema may still say base model; conceptually frozen discrete bindings)
 - [[multi_timeframe]] — portfolio orchestration and lookback across timeframes
 - [[live_multi_timeframe]] — live fetch schedule and rebalance loop
 - [[Cache/architecture]] — central candle/bias cache design and datetime-driven portfolio API

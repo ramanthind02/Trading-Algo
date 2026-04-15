@@ -1,3 +1,1 @@
-from feature_research.validation.run_validation import main
-
-__all__ = ["main"]
+"""Validation-phase research package; import submodules (e.g. ``run_validation``) directly."""

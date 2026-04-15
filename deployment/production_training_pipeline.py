@@ -24,9 +24,8 @@ from utils.core.enums import TimeFrame, Ticker
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from ensemble.ensemble_utils import save_control_file
 from feature_extraction.ml_manager import MLManager
-from feature_selection.domain_discrete import build_domain_discrete_bias_node_spec
-from utils.cache.central_cache import CentralCacheStore
-from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
+from utils.cache.runtime.central_cache import CentralCacheStore
+from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
 from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 
 
@@ -231,14 +230,13 @@ class ProductionTrainingPipeline:
         
         # Use bias nodes directly instead of MLManager for batch feature extraction
         # This avoids the complexity of MLManager's multi-timeframe architecture
-        from utils.core.helpers import create_filtered_bias_node
         from utils.core.models import Candle
         import utils.core.helpers as helpers
         
         # Create bias nodes for feature extraction
-        rsi_node = create_filtered_bias_node('rsi', ticker, timeframe, {'lookback': 14}, filter_specs=[])
-        momentum_node = create_filtered_bias_node('momentum', ticker, timeframe, {'lookback': 20}, filter_specs=[])
-        ma_diff_node = create_filtered_bias_node('ma_diff', ticker, timeframe, {'lookback': 50}, filter_specs=[])
+        rsi_node = helpers.create_fresh_bias_node('rsi', ticker, timeframe, {'lookback': 14})
+        momentum_node = helpers.create_fresh_bias_node('momentum', ticker, timeframe, {'lookback': 20})
+        ma_diff_node = helpers.create_fresh_bias_node('ma_diff', ticker, timeframe, {'lookback': 50})
         
         # Process all candles through nodes
         rsi_values = []
@@ -413,27 +411,17 @@ class ProductionTrainingPipeline:
                 'timeframes': [tf_name],
                 'params': parsed.get('params', {}),
             }
-            domain_spec = build_domain_discrete_bias_node_spec({
-                'source_bias_node_spec': source_spec,
-                'ticker_scope': {'tickers': [ticker.name], 'scope_name': ticker.name},
-                'edges': [-0.5, 0.5],
-                'n_bins': 3,
-                'long_bins': [2],
-                'short_bins': [0],
-                'direction': 'long_short',
-                'spec_version': 'v1',
-            })
             base_model_configs.append({
                 'name': model_name,
-                'model_type': 'domain_discrete',
+                'model_type': 'signed_signal',
                 'feature_column': feature,
                 'strategy': 'long_short',
-                'bias_node_spec': domain_spec,
+                'bias_node_spec': source_spec,
             })
             logger.info(f"   ✅ Frozen {model_name} on {feature}")
 
         if not base_model_configs:
-            raise ValueError("No domain-discrete base models were created")
+            raise ValueError("No signed-signal base models were created")
         
         # Create ensemble metadata
         metadata = {

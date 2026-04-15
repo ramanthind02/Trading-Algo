@@ -57,6 +57,8 @@ Notes:
 
 Use the bootstrap helper when you want a one-time write from `data/ohlc_data` into the runtime cache.
 
+`CacheManager.bootstrap_source_candles` (and the module wrapper) show a **tqdm** bar over each `(ticker, timeframe)` series. `ensure_bias_cache_coverage` shows a **Bias / EWSD artifacts** bar over refresh tasks.
+
 ```python
 summary = bootstrap_source_candles(
     tickers=[Ticker.ES, Ticker.NQ],
@@ -498,7 +500,7 @@ This is enough for most cases because the runner now performs the cache prefligh
 
 ### Feature research after new data
 
-`feature_research` uses the same central-cache lifecycle now. Its cache helper ensures the runtime candles are bootstrapped first, then refreshes missing or stale artifacts before loading features.
+`feature_research` uses the same central-cache lifecycle. Each pipeline calls `populate_cache_if_needed` up front (bootstrap candles, refresh missing/stale bias artifacts and EWSD), then loads features with cache-backed reads. `ResearchConfig` does not expose `use_cache` / `populate_cache` toggles—that behavior is fixed.
 
 Typical sequence:
 

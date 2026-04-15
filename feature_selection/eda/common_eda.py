@@ -1,6 +1,7 @@
 """Common EDA infrastructure for both continuous and rule-based features (T001)."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 from scipy import stats
 
@@ -8,6 +9,26 @@ from feature_selection.eda.eda_dataclasses import (
     CorrelationAnalysis,
     DescriptiveStats,
 )
+
+EDA_VOL_EPS = 1e-10
+
+
+def align_feature_target(feature: pd.Series, target: pd.Series) -> pd.DataFrame:
+    """Rows where either feature or target is NaN are dropped."""
+    return pd.DataFrame({"f": feature, "t": target}).dropna()
+
+
+def sharpe_from_mean_vol(
+    mean: float,
+    volatility: float,
+    eps: float = EDA_VOL_EPS,
+) -> float:
+    """Mean/vol ratio, or NaN when volatility is non-positive or non-finite."""
+    if not np.isfinite(volatility) or abs(volatility) <= eps:
+        return float("nan")
+    if not np.isfinite(mean):
+        return float("nan")
+    return float(mean / volatility)
 
 
 def compute_descriptive_stats(series: pd.Series) -> DescriptiveStats:
@@ -42,7 +63,7 @@ def compute_correlation_analysis(
 
     Lags 1..max_lag are stored in lagged_correlations dict.
     """
-    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
+    aligned = align_feature_target(feature, target)
     f, t = aligned["f"], aligned["t"]
 
     pearson = float(f.corr(t, method="pearson"))

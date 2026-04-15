@@ -1,7 +1,21 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
+
+
+def win32_extended_path(path: Path) -> str:
+    """Return an absolute path string usable with Win32 APIs beyond ``MAX_PATH`` (``\\\\?\\`` prefix)."""
+    if os.name != "nt":
+        return str(path)
+    resolved = path.resolve()
+    s = str(resolved)
+    if s.startswith("\\\\?\\"):
+        return s
+    if s.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + s[2:]
+    return "\\\\?\\" + s
 
 
 def project_root() -> Path:

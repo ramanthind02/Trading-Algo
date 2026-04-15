@@ -1,0 +1,33 @@
+{
+  "feature_name": "buy_hold_signal_M",
+  "created_at": "2026-03-05T06:58:27.371992+00:00",
+  "updated_at": "2026-04-10T10:55:56.715274+00:00",
+  "bias_node_spec": {
+    "module_name": "buy_hold",
+    "timeframes": [
+      "M"
+    ]
+  },
+  "tickers": [
+    "ES",
+    "GC",
+    "NQ",
+    "RTY",
+    "TLT"
+  ],
+  "base_models": [
+    {
+      "model_id": "rule_based_3",
+      "model_name": "buy_hold_signal_M::rule_based_3",
+      "strategy": "long",
+      "model_type": "signed_signal",
+      "feature_column": "buy_hold_signal_M",
+      "bias_node_spec": {
+        "module_name": "buy_hold",
+        "timeframes": [
+          "M"
+        ]
+      }
+    }
+  ]
+}

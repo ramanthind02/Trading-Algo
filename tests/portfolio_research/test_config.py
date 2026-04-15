@@ -6,6 +6,7 @@ import pytest
 from portfolio_research.config import (
     PortfolioResearchConfig,
     ResearchWindow,
+    filter_ensemble_dirs_for_portfolio_tickers,
     load_config,
 )
 from utils.core.enums import Ticker, TimeFrame
@@ -73,6 +74,133 @@ def test_discover_ensemble_dirs_uses_vault_relative_paths(tmp_path: Path, monkey
     assert discovered["example_ensemble_long"].startswith(expected)
 
 
+def _patch_feature_iter(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: object,
+) -> None:
+    import portfolio_research.config as cfg
+
+    monkeypatch.setattr(
+        cfg._vault_feature_files,
+        "iter_validated_feature_configs",
+        handler,
+    )
+
+
+def test_filter_ensemble_dirs_for_portfolio_tickers_drops_cross_ticker_deps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drop when cross_tickers reference symbols outside the portfolio."""
+
+    def _iter(features_dir: Path):
+        path_s = str(features_dir).replace("\\", "/")
+        if "rebalancing_es_tlt_long" in path_s:
+            yield Path("x.json"), {
+                "bias_node_spec": {
+                    "module_name": "rebalancing",
+                    "params": {"cross_tickers": ["TLT"]},
+                },
+                "tickers": ["ES"],
+            }
+        else:
+            yield Path("y.json"), {
+                "bias_node_spec": {"module_name": "turnaround", "params": {}},
+                "tickers": ["ES"],
+            }
+
+    _patch_feature_iter(monkeypatch, _iter)
+    out = filter_ensemble_dirs_for_portfolio_tickers(
+        {
+            "tlt_cross": "vault/D/rebalancing_es_tlt_long",
+            "es_local": "vault/D/mr_indices_long",
+        },
+        [Ticker.ES],
+    )
+    assert list(out.keys()) == ["es_local"]
+
+
+def test_filter_drops_rebalancing_when_primary_ticker_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """rebalancing_cross primary leg is in feature tickers, not only cross_tickers."""
+
+    def _iter(features_dir: Path):
+        path_s = str(features_dir).replace("\\", "/")
+        if "rebalancing_tlt_es_long" in path_s:
+            yield Path("x.json"), {
+                "bias_node_spec": {
+                    "module_name": "rebalancing_cross",
+                    "params": {"cross_tickers": ["ES"]},
+                },
+                "tickers": ["TLT"],
+            }
+        else:
+            yield Path("y.json"), {
+                "bias_node_spec": {"module_name": "turnaround", "params": {}},
+                "tickers": ["ES", "NQ"],
+            }
+
+    _patch_feature_iter(monkeypatch, _iter)
+    out = filter_ensemble_dirs_for_portfolio_tickers(
+        {
+            "tlt_primary": "vault/D/rebalancing_tlt_es_long",
+            "es_only": "vault/D/mr_indices_long",
+        },
+        [Ticker.ES, Ticker.NQ],
+    )
+    assert list(out.keys()) == ["es_only"]
+
+
+def test_filter_keeps_ensemble_when_extra_tickers_only_in_config_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """buy_hold lists many tickers; portfolio subset is still allowed."""
+
+    def _iter(_features_dir: Path):
+        yield Path("x.json"), {
+            "bias_node_spec": {"module_name": "buy_hold", "params": {}},
+            "tickers": ["ES", "GC", "NQ", "RTY", "TLT"],
+        }
+
+    _patch_feature_iter(monkeypatch, _iter)
+    out = filter_ensemble_dirs_for_portfolio_tickers(
+        {
+            "wide_universe": "vault/M/buy_hold_long",
+        },
+        [Ticker.ES, Ticker.NQ],
+    )
+    assert list(out.keys()) == ["wide_universe"]
+
+
+def test_filter_drops_single_instrument_feature_without_that_ticker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bonds/TLT-only features must not pass when TLT is absent (no cross_tickers)."""
+
+    def _iter(features_dir: Path):
+        path_s = str(features_dir).replace("\\", "/")
+        if "seasonal_bonds" in path_s:
+            yield Path("x.json"), {
+                "bias_node_spec": {"module_name": "seasonal_bonds_month", "params": {}},
+                "tickers": ["TLT"],
+            }
+        else:
+            yield Path("y.json"), {
+                "bias_node_spec": {"module_name": "turnaround", "params": {}},
+                "tickers": ["ES"],
+            }
+
+    _patch_feature_iter(monkeypatch, _iter)
+    out = filter_ensemble_dirs_for_portfolio_tickers(
+        {
+            "bonds": "vault/D/seasonal_bonds_long_short",
+            "es_feat": "vault/D/mr_indices_long",
+        },
+        [Ticker.ES],
+    )
+    assert list(out.keys()) == ["es_feat"]
+
+
 def test_load_config_returns_portfolio_research_config() -> None:
     config = load_config()
     assert len(config.tickers) >= 1
@@ -81,6 +209,27 @@ def test_load_config_returns_portfolio_research_config() -> None:
     assert config.start < config.end
     assert config.train_window.start >= config.start
     assert config.test_window.end <= config.end
+    assert isinstance(config.export_per_timeframe_tearsheets, bool)
+    assert isinstance(config.export_per_ensemble_tearsheets, bool)
+
+
+def test_portfolio_research_config_tearsheet_export_defaults_enabled() -> None:
+    train = ResearchWindow(start=datetime(2000, 1, 1), end=datetime(2005, 12, 31))
+    validation = ResearchWindow(start=datetime(2006, 1, 1), end=datetime(2010, 12, 31))
+    test = ResearchWindow(start=datetime(2011, 1, 1), end=datetime(2015, 12, 31))
+    cfg = PortfolioResearchConfig(
+        tickers=[Ticker.ES],
+        timeframe=TimeFrame.D,
+        start=datetime(2000, 1, 1),
+        end=datetime(2015, 12, 31),
+        use_cache=True,
+        train_window=train,
+        validation_window=validation,
+        test_window=test,
+        ensemble_dirs={"dummy": "vault/D/dummy"},
+    )
+    assert cfg.export_per_timeframe_tearsheets is True
+    assert cfg.export_per_ensemble_tearsheets is True
 
 
 def test_portfolio_research_config_empty_ensemble_dirs_raises() -> None:

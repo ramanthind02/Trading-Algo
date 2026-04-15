@@ -1,81 +1,74 @@
 # Trading-Algo Library Index
 
-> [!note] Pipeline
-> `Candles (OHLCV)` → `Bias Nodes` → `Base Models` → `DiversifiedEnsemble` → `WeightLayer` → `Portfolio` → `PositionSizer`
+> [!note]
+> Pipeline (conceptual):
+> `Candles (OHLCV)` -> `Bias nodes` -> `DiversifiedEnsemble` -> `WeightLayer` -> `Portfolio` -> `PositionSizer`
 
-## Core Docs
+Production uses native signed-signal bias nodes that emit `-1/0/+1`. Continuous nodes are for research unless they are later reimplemented as native discrete nodes.
 
-| Doc | Purpose |
-|-----|---------|
-| [[workflow]] | Daily research loop and agent presets |
-| [[cursor_sub_bridge]] | Use ChatGPT Pro / Claude Max in Cursor via Sub Bridge (MCP) |
+## Core docs
 
-## Pipeline Components
+- [[workflow]] - Daily research loop and agent presets
+- [[cursor_sub_bridge]] - Use ChatGPT Pro / Claude Max in Cursor via Sub Bridge
 
-### Cache
-- [[Cache/architecture]] — Central-cache design, ownership, coverage, lifecycle, and invalidation rules
-- [[Cache/user_guide]] — Quick-start usage for candles, artifacts, cross-ticker reads, and portfolio queries
+## Cache
 
-### Bias Nodes
-- [[bias_nodes/creating_nodes]] — How to implement a new technical indicator node
-- [[bias_nodes/norgate]] — Norgate data integration and OHLCV sourcing
+- [[Cache/architecture]] - Central-cache design and lifecycle
+- [[Cache/user_guide]] - Practical cache usage
 
-### Feature Selection
-- [[Feature_selection/pipeline]] — End-to-end feature selection pipeline overview
-- [[Feature_selection/domain_discrete_signals]] — Frozen domain cutpoints, ticker scope, two-stage research → production (target architecture)
+## Bias nodes
 
-**Feature Types**
-- [[Feature_selection/Features/base_feature]] — Base feature contracts and naming conventions
-- [[Feature_selection/Features/continuous_binning]] — Quantile / decision-tree binning strategies
-- [[Feature_selection/Features/rule_based]] — Rule-based binary signal models
+- [[bias_nodes/index]] - Hub for node authoring and composition
+- [[bias_nodes/creating_nodes]] - How to implement a node
+- [[bias_nodes/bias_node_arch]] - Bias-node architecture notes
 
-**Phase 1 — EDA**
-- [[Feature_selection/Phase_1_EDA/eda]] — Exploratory data analysis for features
+## Feature selection
 
-**Phase 2 — IS Screening**
-- [[Feature_selection/Phase_2_IS_Screening/permutation_testing]] — Permutation tests (T013–T016)
-- [[Feature_selection/Phase_2_IS_Screening/candle_permutation]] — Candle-level permutation for signal validation
-- [[Feature_selection/Phase_2_IS_Screening/kfold]] — K-fold cross-validation setup
-- [[Feature_selection/Phase_2_IS_Screening/cpcv]] — Combinatorial purged cross-validation
+- [[Feature_selection/pipeline]] - End-to-end research flow
+- [[Feature_selection/Features/base_feature]] - Base feature contract
+- [[Feature_selection/Features/feature_model]] - Feature model overview
+- [[Feature_selection/Features/rule_based]] - Native discrete feature notes
+- [[Feature_selection/Phase_1_IS/eda]] - In-sample EDA
+- [[Feature_selection/Phase_1_IS/permutation_testing]] - In-sample permutation
+- [[Feature_selection/Phase_2_WF/walkforward]] - Walk-forward reference
+- [[Feature_selection/Phase_3_OOS/oos_validation]] - OOS validation
 
-**Phase 3–4 — Walkforward**
-- [[Feature_selection/Phase_3_4_Walkforward/walkforward]] — Walk-forward validation and stability
-- [[Feature_selection/Phase_3_4_Walkforward/param_stability]] — Parameter sensitivity and stability analysis
+## Data
 
-### Ensemble
-- [[Ensemble/base_model]] — `BinningModelBase` ABC, `get_fitted_vector()`
-- [[Ensemble/weight_layer]] — Inverse-correlation weights + FDM formula
-- [[Ensemble/portfolio]] — Instrument weights + IDM formula
+- [[Data/norgate]] - Norgate data integration and OHLCV sourcing
 
-### Vault
-- [[Vault/architecture]] — In-depth vault architecture, working-vault invariants, and snapshot/deployment boundaries
-- [[Vault/user_guide]] — Practical guide for saving models, loading ensembles, and using portfolio snapshots
-- [[Vault/vault]] — Validated feature storage, JSON control files, `is_fit` flag
-- [[Vault/monitoring]] — Strategy decay monitoring store: `(signal, target)` vectors, CUSUM, rolling Sharpe
-- [[Vault/portfolio_snapshots_and_predictions]] — Immutable portfolio snapshot files, materialized predictions, `world` column (train/val/test/live)
-- [[Vault/portfolio_snapshot_usage]] — Workflow examples for saving, reloading, materializing, and pruning portfolio snapshots
+## Ensemble
 
-### Deployment
-- [[Deployment/production]] — REST forecast server, production training pipeline
-- [[Deployment/live_cache_refresh]] — Automatic live inference refresh after LIVE candle-cache writes
-- [[Deployment/cython]] — Compiling Cython extensions for performance
+- [[Ensemble/base_model]] - Base-model concepts
+- [[Ensemble/weight_layer]] - Weighting layer
+- [[Ensemble/portfolio]] - Portfolio layer
 
-## Research Reading Order
+## Vault
 
-> [!tip] New Researcher Start Here
-> 1. [[workflow]] — understand tooling and daily loop
-> 2. [[Feature_selection/pipeline]] — understand data flow
-> 3. [[bias_nodes/creating_nodes]] — implement your first node
-> 4. [[Ensemble/base_model]] → [[Ensemble/weight_layer]] → [[Ensemble/portfolio]]
-> 5. [[Feature_selection/Phase_3_4_Walkforward/param_stability]] + [[Feature_selection/Phase_2_IS_Screening/permutation_testing]]
-> 6. [[Vault/user_guide]] → [[Vault/architecture]] — understand how validated features, snapshots, and deployment boundaries are stored
+- [[Vault/architecture]] - Vault ownership and invariants
+- [[Vault/user_guide]] - Saving and loading features and ensembles
+- [[Vault/vault]] - Quick reference
+- [[Vault/monitoring]] - Monitoring store
+- [[Vault/portfolio_snapshots_and_predictions]] - Snapshot and prediction materialization
+- [[Vault/portfolio_snapshot_usage]] - Snapshot workflows
 
-## Key Naming Convention
+## Deployment
 
-`{module}_{feature}_{timeframe}_{param}_{value}` — e.g. `rsi_signal_D_lookback_14`
+- [[Deployment/production]] - Forecast server and production training
+- [[Deployment/live_cache_refresh]] - Live cache refresh
+- [[Deployment/cython]] - Cython build notes
 
-## Key Formulas
+## Research reading order
 
-- Forecast: `F_i = (τ / (σ × √h_i)) × X_i`
-- FDM / IDM: `min(√(1 / (mean_corr + 0.01)), cap)`
-- Position: `contracts = (position_fraction × capital) / (price × multiplier × fx_rate)`
+1. [[workflow]]
+2. [[bias_nodes/index]] -> [[bias_nodes/creating_nodes]]
+3. [[Feature_selection/pipeline]]
+4. [[Feature_selection/Phase_1_IS/permutation_testing]]
+5. [[Feature_selection/Phase_2_WF/walkforward]]
+6. [[Vault/user_guide]]
+
+## Naming convention
+
+`{module}_{feature}_{timeframe}_{param}_{value}`
+
+Example: `rsi_signal_D_lookback_14`

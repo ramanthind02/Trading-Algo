@@ -1,0 +1,11 @@
+{
+  "timeframe": "D",
+  "ensemble_name": "filter_gate_sma200_rsi_signal_long",
+  "direction": "long",
+  "tickers": [
+    "ES",
+    "NQ"
+  ],
+  "created_at": "2026-04-13T07:33:41.780805+00:00",
+  "updated_at": "2026-04-13T07:33:41.780805+00:00"
+}

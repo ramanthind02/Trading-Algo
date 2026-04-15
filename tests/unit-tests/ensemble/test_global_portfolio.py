@@ -9,13 +9,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ensemble.global_weight_layer_adapter import (
+from ensemble.portfolio_impl.global_weight_layer_adapter import (
     build_global_adapter_rollups,
     decode_global_weight_layer_output,
     encode_forecast_vectors_for_global_weight_layer,
 )
-from utils.cache.central_cache import CentralCacheStore
-from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope
+from utils.cache.runtime.central_cache import CentralCacheStore
+from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
 from utils.core.enums import TimeFrame, Ticker
 from ensemble.portfolio import GlobalPortfolio, TFPortfolio, PortfolioCacheQuery
 

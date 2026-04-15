@@ -9,7 +9,7 @@ from typing import Callable, Literal, Mapping, cast
 import numpy as np
 import pandas as pd
 
-BuiltinMetricName = Literal['sharpe', 'sortino', 'calmar', 't_stat', 'profit_factor', 'always_zero']
+BuiltinMetricName = Literal['sharpe', 'sortino', 'calmar', 't_stat', 'profit_factor', 'mean_return', 'always_zero']
 ObjectiveMetricCallable = Callable[[pd.Series], float]
 _MetricFactoryCallable = Callable[..., float]
 
@@ -89,6 +89,14 @@ def metric_profit_factor(returns: pd.Series) -> float:
     return _deterministic_ratio(numerator=gross_gain, denominator=gross_loss)
 
 
+def metric_mean_return(returns: pd.Series) -> float:
+    """Arithmetic mean return with NaN/inf cleanup."""
+    clean = _clean_returns(returns)
+    if clean.empty:
+        return 0.0
+    return float(clean.mean())
+
+
 def metric_always_zero(_returns: pd.Series) -> float:
     """Always returns zero - useful for forcing test failures."""
     return 0.0
@@ -100,8 +108,11 @@ _BUILTIN_OBJECTIVE_METRICS: Mapping[BuiltinMetricName, _MetricFactoryCallable] =
     'calmar': metric_calmar,
     't_stat': metric_t_stat,
     'profit_factor': metric_profit_factor,
+    'mean_return': metric_mean_return,
     'always_zero': metric_always_zero,
 }
+
+SUPPORTED_OBJECTIVE_METRIC_NAMES: tuple[str, ...] = tuple(_BUILTIN_OBJECTIVE_METRICS)
 
 
 @dataclass(frozen=True)
@@ -133,14 +144,22 @@ class ObjectiveMetricSpec:
             raise ValueError('callable_path must use module:function format.')
 
 
-def resolve_objective_metric(spec: ObjectiveMetricSpec) -> ObjectiveMetricCallable:
-    """Resolve objective metric callable from builtin or import path."""
+def apply_objective_metric(spec: ObjectiveMetricSpec, returns: pd.Series) -> float:
+    """Evaluate a frozen objective spec on returns (safe to use inside multiprocessing workers)."""
     metric_callable = (
         _BUILTIN_OBJECTIVE_METRICS[spec.builtin]
         if spec.builtin is not None
         else _import_metric_callable(spec.callable_path)
     )
-    return _bind_metric_kwargs(metric_callable, spec.kwargs)
+    kwargs = dict(spec.kwargs)
+    if not kwargs:
+        return float(metric_callable(returns))
+    return float(metric_callable(returns, **kwargs))
+
+
+def resolve_objective_metric(spec: ObjectiveMetricSpec) -> ObjectiveMetricCallable:
+    """Resolve objective metric callable from builtin or import path."""
+    return lambda returns: apply_objective_metric(spec, returns)
 
 
 def _import_metric_callable(callable_path: str | None) -> _MetricFactoryCallable:
@@ -153,17 +172,6 @@ def _import_metric_callable(callable_path: str | None) -> _MetricFactoryCallable
     if not callable(metric_object):
         raise TypeError(f'Imported object at {callable_path!r} is not callable.')
     return cast(_MetricFactoryCallable, metric_object)
-
-
-def _bind_metric_kwargs(
-    metric_callable: _MetricFactoryCallable,
-    kwargs: Mapping[str, object],
-) -> ObjectiveMetricCallable:
-    if not kwargs:
-        return lambda returns: float(metric_callable(returns))
-
-    bound_kwargs = dict(kwargs)
-    return lambda returns: float(metric_callable(returns, **bound_kwargs))
 
 
 def _clean_returns(returns: pd.Series) -> pd.Series:

@@ -1,6 +1,8 @@
 # Candle Permutation
 
-> [!note] Used in [[permutation_testing]] Stage 2 (pipeline permutation). Destroys predictable temporal patterns in price history while preserving statistical structure needed for valid null comparisons.
+> [!note] **Status (2026):** **`feature_research` does not run candle permutation today** — the active pipeline permutes **feature/signal series** (vector shuffle; see [[Feature_selection/Phase_1_IS/permutation_testing]]). **This page is kept in full** as the reference spec for a possible future re-enable (stronger price-process null, walk-forward sub-stages, etc.). Code may still exist under `utils/evaluation/permutation_test/candle_shuffle` and related helpers.
+
+> [!tip] When re-enabled, candle permutation fits pipeline **Stage 2–style** nulls for continuous features: it destroys predictable temporal patterns in price history while preserving statistical structure needed for valid null comparisons.
 
 Foundation: Timothy Masters, *Core Algorithms* (bar permutation chapter).
 
@@ -134,3 +136,10 @@ Datetimes are **not** shuffled with OHLC. After reconstructing OHLC from triplet
 | Volatility clumping (intraday) | Known, documented, no fix (Masters p. 39) |
 | Basis bar/day sensitivity | Minimal but non-zero |
 | Holiday gaps folded into regular pool | Acceptable simplification; use third vector if required |
+
+---
+
+## Related
+
+- [[Feature_selection/Phase_1_IS/permutation_testing]] — current `feature_research` nulls and exports  
+- [[Feature_selection/pipeline]] — where a future candle null would sit in the tiered flow  

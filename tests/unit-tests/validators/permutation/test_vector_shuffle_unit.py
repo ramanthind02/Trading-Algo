@@ -5,7 +5,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.validation.permutation_tests import run_vector_shuffle_test
+from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
+from feature_selection.validation.permutation_tests import (
+    run_vector_shuffle_target_perm_batch,
+    run_vector_shuffle_test,
+)
 from feature_selection.validation.reports import VectorShuffleReport
 
 
@@ -125,4 +129,84 @@ def test_early_stopping_filter() -> None:
     # p=0.05, 0.08, 0.09 pass
     assert len(passers) == 3
     assert all(r.p_value <= alpha for r in passers)
+
+
+def test_target_perm_batch_two_combos() -> None:
+    """Batched target permutation produces one report per combo with correct shapes."""
+    idx = pd.date_range("2020-01-01", periods=40, freq="D")
+    tgt = pd.Series(np.random.default_rng(0).standard_normal(40), index=idx)
+    a = pd.Series(np.sign(np.random.default_rng(1).standard_normal(40)), index=idx)
+    b = pd.Series(np.sign(np.random.default_rng(2).standard_normal(40)), index=idx)
+    spec = ObjectiveMetricSpec(builtin="mean_return")
+    reps = run_vector_shuffle_target_perm_batch(
+        ordered_combo_names=["c_a", "c_b"],
+        features_by_combo={"c_a": a, "c_b": b},
+        target=tgt,
+        metric_spec=spec,
+        nreps=35,
+        alpha=0.1,
+        random_seed=7,
+    )
+    assert set(reps) == {"c_a", "c_b"}
+    assert all(len(v.null_distribution) == 35 for v in reps.values())
+    assert all(v.nreps == 35 for v in reps.values())
+
+
+def test_target_perm_batch_rejects_index_mismatch() -> None:
+    idx_a = pd.date_range("2020-01-01", periods=10, freq="D")
+    idx_b = pd.date_range("2020-02-01", periods=10, freq="D")
+    a = pd.Series(np.ones(10), index=idx_a)
+    b = pd.Series(np.ones(10), index=idx_b)
+    tgt = pd.Series(np.linspace(0.01, 0.1, 10), index=idx_a)
+    spec = ObjectiveMetricSpec(builtin="mean_return")
+    with pytest.raises(ValueError, match="index mismatch"):
+        run_vector_shuffle_target_perm_batch(
+            ordered_combo_names=["c_a", "c_b"],
+            features_by_combo={"c_a": a, "c_b": b},
+            target=tgt,
+            metric_spec=spec,
+            nreps=5,
+            alpha=0.1,
+            random_seed=1,
+        )
+
+
+def test_target_perm_batch_matches_manual_builtin_t_stat() -> None:
+    """Fast builtin path should match the manual per-rep/per-combo computation."""
+    idx = pd.date_range("2021-01-01", periods=12, freq="D")
+    target = pd.Series(
+        [0.03, -0.01, 0.02, -0.02, 0.01, 0.04, -0.03, 0.02, -0.01, 0.03, 0.01, -0.02],
+        index=idx,
+    )
+    combo_a = pd.Series([1.0, 0.0, -1.0, 1.0, 0.0, 1.0, -1.0, 0.0, 1.0, -1.0, 1.0, 0.0], index=idx)
+    combo_b = pd.Series([0.0, 1.0, 1.0, 0.0, -1.0, 1.0, 0.0, -1.0, 1.0, 0.0, -1.0, 1.0], index=idx)
+    spec = ObjectiveMetricSpec(builtin="t_stat")
+    ordered = ["c_a", "c_b"]
+    features_by_combo = {"c_a": combo_a, "c_b": combo_b}
+    nreps = 9
+    seed = 17
+
+    reports = run_vector_shuffle_target_perm_batch(
+        ordered_combo_names=ordered,
+        features_by_combo=features_by_combo,
+        target=target,
+        metric_spec=spec,
+        nreps=nreps,
+        alpha=0.1,
+        random_seed=seed,
+    )
+
+    rng = np.random.default_rng(seed)
+    expected_nulls: dict[str, list[float]] = {name: [] for name in ordered}
+    for _ in range(nreps):
+        permuted_target = target.to_numpy()[rng.permutation(len(target))]
+        for name in ordered:
+            feature = features_by_combo[name].to_numpy(dtype=float)
+            active = feature != 0.0
+            returns = pd.Series(permuted_target[active] * feature[active], dtype=np.float64)
+            expected_nulls[name].append(float(returns.mean() / (returns.std(ddof=1) / np.sqrt(len(returns)))))
+
+    for name in ordered:
+        expected = np.array(expected_nulls[name], dtype=np.float64)
+        np.testing.assert_allclose(reports[name].null_distribution, expected, atol=1e-12)
 

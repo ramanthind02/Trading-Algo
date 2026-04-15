@@ -1,0 +1,42 @@
+{
+  "feature_name": "lrs_hook_signal_signal_D_exitVariant_ma5_fridayEntryPolicy_allow_lrsPeriod_3_maPeriod_5",
+  "created_at": "2026-04-13T04:01:41.145850+00:00",
+  "updated_at": "2026-04-13T04:01:41.145850+00:00",
+  "bias_node_spec": {
+    "module_name": "lrs_hook_signal",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "lrs_period": 3,
+      "ma_period": 5,
+      "exit_variant": "ma5",
+      "friday_entry_policy": "allow"
+    }
+  },
+  "tickers": [
+    "ES",
+    "NQ"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_lrs-hook-signal_d_exit-variant_ma5_friday-entry-policy_allow_lrs-period_3_ma-period_5",
+      "model_name": "lrs_hook_signal_signal_D_exitVariant_ma5_fridayEntryPolicy_allow_lrsPeriod_3_maPeriod_5::signed_signal_lrs-hook-signal_d_exit-variant_ma5_friday-entry-policy_allow_lrs-period_3_ma-period_5",
+      "model_type": "signed_signal",
+      "feature_column": "lrs_hook_signal_signal_D_exitVariant_ma5_fridayEntryPolicy_allow_lrsPeriod_3_maPeriod_5",
+      "strategy": "long",
+      "bias_node_spec": {
+        "module_name": "lrs_hook_signal",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "lrs_period": 3,
+          "ma_period": 5,
+          "exit_variant": "ma5",
+          "friday_entry_policy": "allow"
+        }
+      }
+    }
+  ]
+}

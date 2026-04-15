@@ -34,7 +34,7 @@ from utils.core import helpers
 from ensemble.portfolio import Portfolio
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
-from ensemble.portfolio_tester import (
+from ensemble.portfolio_impl.portfolio_tester import (
     PortfolioTester,
     calculate_log_returns_from_candles,
     calculate_strategy_returns_from_positions,
@@ -198,7 +198,7 @@ def create_ensemble_from_config(
     return ensemble
 
 
-# Helper functions are now imported from ensemble.portfolio_tester
+# Helper functions are now imported from ensemble.portfolio_impl.portfolio_tester
 # Aliases for backward compatibility in test file
 calculate_returns_from_candles = calculate_log_returns_from_candles
 calculate_strategy_returns = calculate_strategy_returns_from_positions

@@ -7,9 +7,17 @@ Author: Trading Research Team
 Date: 2025-10-24
 """
 
-import pandas as pd
-from typing import Optional
+from __future__ import annotations
+
+import math
+import os
 import warnings
+from pathlib import Path
+from typing import Optional
+
+import pandas as pd
+
+from utils.cache.runtime.cache_paths import win32_extended_path
 from utils.core.enums import TimeFrame
 
 # Import QuantStats
@@ -38,6 +46,54 @@ def _normalize_returns_series(returns: pd.Series, timeframe: TimeFrame) -> pd.Se
     return normalized
 
 
+def vol_scale_returns_to_target_annualized_volatility(
+    returns: pd.Series,
+    *,
+    target_annual_volatility: float,
+    bars_per_year: int,
+    min_observations: int = 5,
+) -> pd.Series:
+    """Linearly scale a per-bar return series so sample annualized vol matches ``target_annual_volatility``.
+
+    Uses ``std(ddof=1) * sqrt(bars_per_year)`` as realized annual volatility. Sharpe ratio
+    (mean / std) is unchanged; mean return and volatility scale together with the strategy series.
+    """
+    if target_annual_volatility <= 0 or not math.isfinite(target_annual_volatility):
+        raise ValueError("target_annual_volatility must be a finite positive number")
+    if bars_per_year <= 0:
+        raise ValueError("bars_per_year must be positive")
+
+    clean = returns.dropna()
+    if len(clean) < min_observations:
+        warnings.warn(
+            f"Skipping vol scale: need at least {min_observations} non-null returns, got {len(clean)}.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return returns.copy()
+
+    per_bar_std = float(clean.std(ddof=1))
+    if per_bar_std <= 0 or not math.isfinite(per_bar_std):
+        warnings.warn(
+            "Skipping vol scale: per-bar standard deviation is zero or non-finite.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return returns.copy()
+
+    realized_annual = per_bar_std * math.sqrt(float(bars_per_year))
+    if realized_annual <= 0 or not math.isfinite(realized_annual):
+        warnings.warn(
+            "Skipping vol scale: realized annual volatility is non-finite.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return returns.copy()
+
+    scale = target_annual_volatility / realized_annual
+    return returns * scale
+
+
 def generate_tearsheet(
     strategy_returns: pd.Series,
     baseline_returns: Optional[pd.Series] = None,
@@ -45,6 +101,7 @@ def generate_tearsheet(
     output_file: Optional[str] = None,
     mode: str = "full",
     timeframe: TimeFrame = TimeFrame.D,
+    target_annual_volatility: float | None = None,
 ):
     """
     Generate QuantStats tearsheet for walk-forward analysis results.
@@ -53,7 +110,11 @@ def generate_tearsheet(
     and visualizations. Compares strategy returns against baseline (always-in).
     
     IMPORTANT: This function expects DAILY returns, not aggregated walk-forward results!
-    
+
+    When ``target_annual_volatility`` is set (e.g. ``0.10`` for 10% annual vol), strategy
+    returns are linearly scaled after normalization so sample annualized volatility matches
+    that target. The benchmark series is not scaled.
+
     Parameters
     ----------
     strategy_returns : pd.Series
@@ -70,7 +131,11 @@ def generate_tearsheet(
         - 'full': Display full tearsheet in notebook
         - 'basic': Display basic tearsheet in notebook
         - 'metrics': Display metrics only
-        
+    timeframe : TimeFrame, default=TimeFrame.D
+        Bar frequency for resampling (when needed) and for ``bars_per_year`` when vol-scaling.
+    target_annual_volatility : float or None, default=None
+        If set to a positive value, linearly scale strategy returns to this annualized volatility.
+
     Returns
     -------
     None
@@ -114,8 +179,23 @@ def generate_tearsheet(
         )
         return
 
+    resolved_vol_target: float | None = None
+    if target_annual_volatility is not None:
+        try:
+            _v = float(target_annual_volatility)
+        except (TypeError, ValueError):
+            _v = 0.0
+        resolved_vol_target = _v if _v > 0.0 else None
+
+    if resolved_vol_target is not None:
+        strategy_returns = vol_scale_returns_to_target_annualized_volatility(
+            strategy_returns,
+            target_annual_volatility=resolved_vol_target,
+            bars_per_year=timeframe.bars_per_year,
+        )
+
     strategy_returns.name = feature_name
-    
+
     # Process baseline if provided
     benchmark = None
     if baseline_returns is not None:
@@ -126,30 +206,6 @@ def generate_tearsheet(
         if not baseline_returns.empty:
             baseline_returns.name = "Baseline (Always-In)"
             benchmark = baseline_returns
-    
-    # #region agent log
-    try:
-        _n = len(strategy_returns)
-        _zero = (strategy_returns == 0.0).sum()
-        _bm_n = len(baseline_returns) if baseline_returns is not None else 0
-        with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
-            import json
-            _f.write(
-                json.dumps(
-                    {
-                        "hypothesisId": "A,C",
-                        "location": "quantstats_reports.generate_tearsheet",
-                        "message": "strategy_returns passed to QuantStats",
-                        "data": {"strategy_n": _n, "pct_strategy_zero": float(_zero) / _n if _n else 0, "baseline_n": _bm_n},
-                        "timestamp": __import__("time").time() * 1000,
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
-    except Exception:  # noqa: S110
-        pass
-    # #endregion
 
     # Generate tearsheet based on mode
     # IMPORTANT: Use match_dates=False to prevent timezone comparison errors
@@ -159,17 +215,29 @@ def generate_tearsheet(
         # Generate HTML tearsheet
         if output_file is None:
             output_file = f"{feature_name.replace(' ', '_')}_tearsheet.html"
-        
+
+        out_path = Path(output_file)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_out = out_path.resolve()
+        qs_output_path = (
+            win32_extended_path(resolved_out) if os.name == "nt" else str(resolved_out)
+        )
+
         qs.reports.html(
             strategy_returns,
             benchmark=benchmark,
-            output=output_file,
+            output=qs_output_path,
             title=f"{feature_name} - Walk-Forward Analysis",
             match_dates=False,  # Prevent timezone comparison issues
             compounded=False    # Use non-compounded returns (Carver methodology)
         )
-        print(f"\n[OK] HTML tearsheet saved to: {output_file}")
+        print(f"\n[OK] HTML tearsheet saved to: {resolved_out}")
         print("   Note: Using non-compounded returns (Robert Carver methodology)")
+        if resolved_vol_target is not None:
+            print(
+                f"   Strategy returns vol-scaled to ~{resolved_vol_target:.0%} annualized "
+                f"({timeframe.name}, {timeframe.bars_per_year} bars/year)."
+            )
         
     elif mode == 'full':
         # Display full tearsheet in notebook

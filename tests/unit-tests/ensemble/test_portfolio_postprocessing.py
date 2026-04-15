@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from ensemble.portfolio import TFPortfolio
-from ensemble.portfolio_postprocessing import (
+from ensemble.portfolio_impl.portfolio_postprocessing import (
     aggregate_forecast_vectors_fallback,
     apply_forecast_risk_management,
 )

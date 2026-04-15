@@ -8,11 +8,12 @@
 
 ## Environment
 
-- **CRITICAL**: Use the shared project virtual environment located at `/venv/` for all Python work.
-- Always activate with: `source venv/bin/activate`
+- **CRITICAL**: Use the shared project virtual environment at the repository root for all Python work (`venv` or `.venv` depending on how it was created; both are gitignored).
+- **Linux/macOS**: `source venv/bin/activate` (or your absolute path to `bin/activate`).
+- **Windows PowerShell**: use the venv interpreter directly, e.g. `.\.venv\Scripts\python.exe` or `.\venv\Scripts\python.exe` from the repo root—do not assume Unix `source` activation.
 - **NEVER** create new virtual environments in worktrees or subdirectories - the venv is shared across all worktrees.
-- Keep dependencies scoped to the shared `venv`; do not rely on system Python packages.
-- Primary test runner is `pytest`.
+- Keep dependencies scoped to the shared venv; do not rely on system Python packages.
+- Run tests with the venv’s Python: `python -m pytest <args>` (avoids “pytest not found” when the IDE or agent uses the wrong interpreter).
 
 ## Architecture Map
 

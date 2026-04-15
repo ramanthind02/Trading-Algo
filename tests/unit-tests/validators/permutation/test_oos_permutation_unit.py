@@ -102,18 +102,15 @@ def test_oos_permutation_skips_candle_when_vector_fails(monkeypatch: Any) -> Non
     assert called["pipeline"] is False
 
 
-def test_oos_permutation_routes_signal_pipeline_when_vector_passes(monkeypatch: Any) -> None:
+def test_oos_permutation_vector_only_when_vector_passes(monkeypatch: Any) -> None:
     calls: list[tuple[str, int | None]] = []
-    forwarded: dict[str, Any] = {}
 
     def fake_vector(*args: Any, **kwargs: Any) -> VectorShuffleReport:
         calls.append(("vector", kwargs.get("random_seed")))
         return _vector_report(passed=True)
 
     def fake_pipeline(*args: Any, **kwargs: Any) -> PipelinePermutationReport:
-        calls.append(("pipeline", kwargs.get("random_seed")))
-        forwarded.update(kwargs)
-        return _pipeline_report(passed=True)
+        raise AssertionError("run_pipeline_permutation should not be called")
 
     monkeypatch.setattr(permutation_tests, "run_vector_shuffle_test", fake_vector)
     monkeypatch.setattr(permutation_tests, "run_pipeline_permutation", fake_pipeline)
@@ -135,11 +132,6 @@ def test_oos_permutation_routes_signal_pipeline_when_vector_passes(monkeypatch: 
     )
 
     assert report.vector_report.passed is True
-    assert report.candle_report is not None
+    assert report.candle_report is None
     assert report.passed is True
-    assert calls == [("vector", 123), ("pipeline", 123)]
-    assert forwarded["param_combo"] == "p1"
-    assert forwarded["permutation_mode"] == "feature_shuffle"
-    assert forwarded["nreps"] == 15
-    assert forwarded["alpha"] == 0.10
-    assert forwarded["metric_threshold"] == 0.0
+    assert calls == [("vector", 123)]

@@ -10,20 +10,8 @@ __all__ = ["BaseModel"]
 
 
 def __getattr__(name: str) -> object:
-    alias_map = {
-        "".join(("Continuous", "Binning", "Model")): (
-            "."
-            + "".join(("continuous", "_", "binning")),
-            "".join(("Continuous", "Binning", "Model")),
-        ),
-        "".join(("Rule", "Based", "Model")): (
-            "."
-            + "".join(("rule", "_", "based")),
-            "".join(("Rule", "Based", "Model")),
-        ),
-    }
-    if name in alias_map:
-        module_name, attr_name = alias_map[name]
-        module = importlib.import_module(f"{__name__}{module_name}")
-        return getattr(module, attr_name)
+    legacy = frozenset({"ContinuousBinningModel", "RuleBasedModel", "BinningModelBase"})
+    if name in legacy:
+        module = importlib.import_module(f"{__name__}.base_model")
+        return getattr(module, name)
     raise AttributeError(name)

@@ -16,7 +16,7 @@ from feature_research.validation.run_validation_permutation import main
 def test_validation_permutation_main_returns_1_when_validation_window_none() -> None:
     with (
         patch("sys.argv", ["run_validation_permutation.py"]),
-        patch("feature_research.validation.run_validation_permutation.load_config") as m_load,
+        patch("feature_research.config.load_config") as m_load,
     ):
         config = m_load.return_value
         config.validation_window = None
@@ -27,7 +27,7 @@ def test_validation_permutation_main_returns_1_when_validation_window_none() -> 
 def test_validation_permutation_produces_report_and_null_distribution(tmp_path: Path) -> None:
     from dataclasses import replace
 
-    from feature_research.in_sample.config import load_config
+    from feature_research.config import load_config
 
     index = pd.date_range("2020-01-01", periods=1100, freq="D")
     reference_target = pd.Series(0.01, index=index, name="walkforward_target")
@@ -57,14 +57,14 @@ def test_validation_permutation_produces_report_and_null_distribution(tmp_path: 
 
     minimal_report = type("Report", (), {})()
     minimal_report.selection_summary_df = pd.DataFrame(
-        [{"fold_id": 0, "top_k_features": "[]"}],
+        [{"fold_id": 0, "selected_params_json": "null"}],
     )
 
     with (
         patch("sys.argv", ["run_validation_permutation.py", "--nreps", "3"]),
-        patch("feature_research.validation.run_validation_permutation.load_config") as m_load,
+        patch("feature_research.config.load_config") as m_load,
         patch(
-            "feature_research.validation.permutation_helpers.load_research_data",
+            "feature_research.validation.phase_permutation.load_research_data",
             side_effect=fake_load_research_data,
         ),
         patch(
@@ -72,7 +72,7 @@ def test_validation_permutation_produces_report_and_null_distribution(tmp_path: 
             return_value=minimal_report,
         ),
         patch(
-            "utils.evaluation.walkforward.permutation_core.run_vector_shuffle_null",
+            "utils.evaluation.permutation_test.permutation_core.run_vector_shuffle_null",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
     ):

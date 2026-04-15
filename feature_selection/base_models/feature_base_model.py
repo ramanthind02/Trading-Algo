@@ -1,20 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 import pandas as pd
 
-from feature_selection.domain_discrete import (
-    MIGRATION_ERROR_MESSAGE,
-    build_domain_discrete_bias_node_spec,
-    load_domain_discrete_spec,
-    raise_legacy_feature_artifact,
-)
-from filters import FilterSpec, create_filter
-from nodes.filtered import FilteredBiasNode
 from utils.core import helpers
 from utils.core.enums import Direction, DirectionInput, Ticker, TimeFrame, coerce_direction
 from utils.core.models import Candle
@@ -22,49 +13,8 @@ from utils.core.models import Candle
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class BiasNodeSpec:
-    module_name: str
-    timeframes: list[TimeFrame]
-    params: dict[str, object]
-    filters: tuple = ()
-
-
-@dataclass
-class DomainDiscreteCompatibilityState:
-    strategy: Direction
-    n_bins: int
-    active_bins_by_strategy_: dict[str, list[int]]
-    model_type: str = "domain_discrete"
-    is_fitted_: bool = True
-    bin_stats_: dict[int, dict[str, float]] = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.bin_stats_ is None:
-            self.bin_stats_ = {}
-
-    def get_fitted_params(self) -> dict[str, Any]:
-        raise ValueError(MIGRATION_ERROR_MESSAGE)
-
-
 def _normalize_tickers(tickers: Ticker | list[Ticker]) -> list[Ticker]:
     return [tickers] if isinstance(tickers, Ticker) else list(tickers)
-
-
-def _coerce_ticker(raw: object) -> Ticker:
-    if isinstance(raw, Ticker):
-        return raw
-    if isinstance(raw, str):
-        return Ticker[raw]
-    raise TypeError(f"ticker must be Ticker or str, got {type(raw).__name__}")
-
-
-def _coerce_timeframe(raw: object) -> TimeFrame:
-    if isinstance(raw, TimeFrame):
-        return raw
-    if isinstance(raw, str):
-        return TimeFrame[raw]
-    raise TypeError(f"timeframe must be TimeFrame or str, got {type(raw).__name__}")
 
 
 def _project_signal_to_strategy(signal: pd.Series, strategy: Direction) -> pd.Series:
@@ -84,46 +34,24 @@ def _prepare_candle_rows(candles_df: pd.DataFrame) -> pd.DataFrame:
     return rows
 
 
-def _fallback_feature_column_name(
-    nodes: dict[tuple[Ticker, TimeFrame], object],
-    tickers: list[Ticker],
-    timeframes: list[TimeFrame],
-) -> str:
-    first_key = (tickers[0], timeframes[0])
-    fallback_node = nodes[first_key]
-    names = fallback_node.get_column_names() if hasattr(fallback_node, "get_column_names") else []
-    return names[0] if names else "domain_discrete_signal"
+def _coerce_timeframe(raw: object) -> TimeFrame:
+    if isinstance(raw, TimeFrame):
+        return raw
+    if isinstance(raw, str):
+        return TimeFrame[raw]
+    raise TypeError(f"timeframe must be TimeFrame or str, got {type(raw).__name__}")
 
 
-def _build_default_feature_column(
-    source_module_name: str,
-    direction: Direction,
-    spec_version: str,
-    first_timeframe: TimeFrame,
-) -> str:
-    return helpers.build_feature_column_name(
-        module="domain_discrete",
-        feature="signal",
-        tf=first_timeframe,
-        params={
-            "sourceModule": source_module_name,
-            "direction": direction.value,
-            "specVersion": spec_version,
-        },
-    )
-
-
-def _feature_name_from_column(feature_column: str) -> str:
-    parsed = helpers.parse_feature_column_name(feature_column)
-    tf = parsed.get("tf")
-    tf_name = tf.name if hasattr(tf, "name") else str(tf)
-    if parsed.get("module") and parsed.get("feature") and tf_name:
-        return f"{parsed.get('module')}_{parsed.get('feature')}_{tf_name}"
-    return feature_column
+def _coerce_ticker(raw: object) -> Ticker:
+    if isinstance(raw, Ticker):
+        return raw
+    if isinstance(raw, str):
+        return Ticker[raw]
+    raise TypeError(f"ticker must be Ticker or str, got {type(raw).__name__}")
 
 
 class BaseModel:
-    """Thin node-backed adapter for frozen domain-discrete signed signals."""
+    """Thin node-backed adapter for native signed-signal bias nodes."""
 
     def __init__(
         self,
@@ -133,59 +61,40 @@ class BaseModel:
         use_cache: bool = True,
     ) -> None:
         if binning_model is not None:
-            raise_legacy_feature_artifact(
-                "BaseModel no longer accepts fitted/learned binning_model instances."
-            )
+            raise ValueError("BaseModel no longer accepts fitted or learned binning models.")
 
         raw_bias_node_spec = feature_config.get("bias_node_spec")
         if not isinstance(raw_bias_node_spec, dict):
             raise ValueError("feature_config must include a bias_node_spec dict")
-        if raw_bias_node_spec.get("module_name") != "domain_discrete":
-            raise_legacy_feature_artifact(
-                "BaseModel requires bias_node_spec.module_name='domain_discrete'."
-            )
+        module_name = str(raw_bias_node_spec.get("module_name") or "").strip()
+        if not module_name:
+            raise ValueError("bias_node_spec.module_name must be non-empty")
+        if module_name == "domain_discrete":
+            raise ValueError("BaseModel no longer supports domain_discrete bias nodes.")
 
+        raw_timeframes = raw_bias_node_spec.get("timeframes", [])
+        if not isinstance(raw_timeframes, list) or not raw_timeframes:
+            raise ValueError("bias_node_spec.timeframes must be a non-empty list")
         params = raw_bias_node_spec.get("params", {})
-        self.domain_discrete_spec = load_domain_discrete_spec(params)
+        if not isinstance(params, dict):
+            raise ValueError("bias_node_spec.params must be a dictionary")
+
         self.feature_config = dict(feature_config)
         self.bias_node_spec = {
-            "module_name": "domain_discrete",
-            "timeframes": [
-                _coerce_timeframe(tf)
-                for tf in raw_bias_node_spec.get("timeframes", self.domain_discrete_spec.source_bias_node_spec.timeframes)
-            ],
-            "params": self.domain_discrete_spec.to_mapping(),
-            "filters": tuple(raw_bias_node_spec.get("filters", ())),
+            "module_name": module_name,
+            "timeframes": [_coerce_timeframe(tf) for tf in raw_timeframes],
+            "params": dict(params),
         }
-
         self.tickers = _normalize_tickers(tickers)
-        disallowed_tickers = [
-            ticker.name
-            for ticker in self.tickers
-            if not self.domain_discrete_spec.ticker_scope.allows(ticker)
-        ]
-        if disallowed_tickers:
-            raise ValueError(
-                f"Tickers {disallowed_tickers} are outside ticker_scope "
-                f"{[item.name for item in self.domain_discrete_spec.ticker_scope.tickers]}"
-            )
         self.ticker = self.tickers[0] if self.tickers else None
         self.use_cache = use_cache
         self.requires_fit = False
         self.is_fitted_ = True
-        self.strategy = self.domain_discrete_spec.direction
-        self.model_type = "domain_discrete"
-        self.binning_model = DomainDiscreteCompatibilityState(
-            strategy=self.strategy,
-            n_bins=self.domain_discrete_spec.n_bins,
-            active_bins_by_strategy_={
-                "long": list(self.domain_discrete_spec.long_bins),
-                "short": list(self.domain_discrete_spec.short_bins),
-                "long_short": sorted(
-                    set(self.domain_discrete_spec.long_bins) | set(self.domain_discrete_spec.short_bins)
-                ),
-            },
+        self.strategy = coerce_direction(
+            feature_config.get("strategy", Direction.LONG_SHORT),
+            field_name="strategy",
         )
+        self.model_type = str(feature_config.get("model_type", "signed_signal"))
         self.members: list[tuple[str, object]] = []
         self._member_feature_columns: dict[str, str] = {}
         self.feature_column = feature_config.get("feature_column")
@@ -195,10 +104,10 @@ class BaseModel:
     def add_member(
         self,
         name: str,
-        binning_model: object,
+        member: object,
         feature_column: Optional[str] = None,
     ) -> None:
-        self.members.append((name, binning_model))
+        self.members.append((name, member))
         if feature_column is not None:
             self._member_feature_columns[name] = feature_column
 
@@ -213,22 +122,12 @@ class BaseModel:
 
     def _instantiate_bias_node(self, ticker: Ticker, tf: TimeFrame) -> object:
         base_spec = self.bias_node_spec
-        params = dict(base_spec.get("params", {}))
-        node = helpers.create_fresh_bias_node(
-            base_spec["module_name"],
+        return helpers.create_fresh_bias_node(
+            str(base_spec["module_name"]),
             ticker,
             tf,
-            params,
+            dict(base_spec.get("params", {})),
         )
-        filter_specs = tuple(base_spec.get("filters", ()))
-        if not filter_specs:
-            return node
-
-        filters = tuple(
-            create_filter(spec if isinstance(spec, FilterSpec) else FilterSpec(**spec))
-            for spec in filter_specs
-        )
-        return FilteredBiasNode(node, filters)
 
     def _build_bias_nodes(self) -> dict[tuple[Ticker, TimeFrame], object]:
         return {
@@ -242,7 +141,6 @@ class BaseModel:
         self.bias_nodes = nodes
 
         rows = _prepare_candle_rows(candles_df)
-
         values: list[float] = []
         index: list[pd.Timestamp] = []
         column_name: str | None = None
@@ -258,26 +156,22 @@ class BaseModel:
             if column_name is None and hasattr(nodes[key], "get_column_names"):
                 names = nodes[key].get_column_names()
                 if names:
-                    column_name = names[0]
+                    column_name = str(names[0])
             values.append(float(result[0]) if result else 0.0)
             index.append(pd.Timestamp(candle.datetime))
 
         if column_name is None:
-            column_name = _fallback_feature_column_name(
-                nodes,
-                self.tickers,
-                self.bias_node_spec["timeframes"],
-            )
+            column_name = str(self.feature_column or "signed_signal")
 
         feature_series = pd.Series(values, index=pd.DatetimeIndex(index), name=column_name, dtype=float)
         if feature_series.index.duplicated().any():
-            feature_series = feature_series.groupby(level=0).mean().round().clip(-1, 1)
+            feature_series = feature_series.groupby(level=0).mean().clip(-1, 1)
         self.feature_column = column_name
         self._latest_feature_series = feature_series
         return feature_series
 
     def add_candle(self, candle: Candle, tf: TimeFrame, ticker: Optional[Ticker] = None) -> None:
-        raise RuntimeError("BaseModel.add_candle() is no longer used in the domain-discrete path")
+        raise RuntimeError("BaseModel.add_candle() is no longer used in the signed-signal path")
 
     def get_feature(self) -> pd.Series:
         return self._latest_feature_series.copy()
@@ -346,17 +240,17 @@ class BaseModel:
         from ensemble.vault_manager import add_feature_to_ensemble
 
         if self.feature_column is None:
-            self.feature_column = _build_default_feature_column(
-                source_module_name=self.domain_discrete_spec.source_bias_node_spec.module_name,
-                direction=self.domain_discrete_spec.direction,
-                spec_version=self.domain_discrete_spec.spec_version,
-                first_timeframe=self.bias_node_spec["timeframes"][0],
+            first_timeframe = self.bias_node_spec["timeframes"][0]
+            self.feature_column = helpers.build_feature_column_name(
+                module=str(self.bias_node_spec["module_name"]),
+                feature="signal",
+                tf=first_timeframe,
+                params=dict(self.bias_node_spec.get("params", {})),
             )
-        feature_name = _feature_name_from_column(str(self.feature_column))
 
         return add_feature_to_ensemble(
-            feature_name=feature_name,
-            bias_node_spec=build_domain_discrete_bias_node_spec(self.domain_discrete_spec),
+            feature_name=str(self.feature_column),
+            bias_node_spec=dict(self.bias_node_spec),
             base_model=self,
             ensemble_dir=ensemble_dir,
             tickers=tickers or list(self.tickers),
@@ -370,4 +264,4 @@ class BaseModel:
         train_end: str,
     ) -> None:
         del ensemble_dir, model_id, train_start, train_end
-        raise ValueError(MIGRATION_ERROR_MESSAGE)
+        raise ValueError("Signed-signal base models do not store fitted params in the vault.")

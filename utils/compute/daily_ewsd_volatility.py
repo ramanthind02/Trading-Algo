@@ -17,22 +17,13 @@ from typing import Any, Dict, Iterable, Optional
 import numpy as np
 import pandas as pd
 
+from utils.core.ticker_key import normalize_ticker_key
+
 DEFAULT_ANNUAL_VOL = 0.20
 LAMBDA_SHORT_DEFAULT = 0.06061
 LONG_RUN_WINDOW_DEFAULT = 2520
 BLEND_SHORT_WEIGHT_DEFAULT = 0.7
 BLEND_LONG_WEIGHT_DEFAULT = 0.3
-
-
-def _normalize_ticker_key(ticker_val: object) -> str:
-    """Normalize ticker identifiers (enum, string, or object with name/value) to a string key."""
-    if hasattr(ticker_val, "name"):
-        return str(getattr(ticker_val, "name"))
-    if hasattr(ticker_val, "value"):
-        return str(getattr(ticker_val, "value"))
-    if isinstance(ticker_val, str):
-        return ticker_val.replace("Ticker.", "")
-    return str(ticker_val)
 
 
 @dataclass(frozen=True)
@@ -89,7 +80,7 @@ class DailyEWSDVolatilityService:
 
         out = candles_df[["datetime", "ticker", "close"]].copy()
         out["datetime"] = pd.to_datetime(out["datetime"]).dt.tz_localize(None)
-        out["ticker"] = out["ticker"].map(_normalize_ticker_key)
+        out["ticker"] = out["ticker"].map(normalize_ticker_key)
         out["close"] = pd.to_numeric(out["close"], errors="coerce")
         out = out.dropna(subset=["datetime", "ticker", "close"])
 
@@ -224,7 +215,7 @@ class DailyEWSDVolatilityService:
 
         vol = daily_volatility_df[["datetime", "ticker", "ewsd_annual_vol"]].copy()
         vol["datetime"] = pd.to_datetime(vol["datetime"]).dt.tz_localize(None).dt.normalize()
-        vol["ticker"] = vol["ticker"].map(_normalize_ticker_key)
+        vol["ticker"] = vol["ticker"].map(normalize_ticker_key)
         vol["ewsd_annual_vol"] = pd.to_numeric(vol["ewsd_annual_vol"], errors="coerce")
         vol = vol.dropna(subset=["datetime", "ticker", "ewsd_annual_vol"])
         vol = (
@@ -234,7 +225,7 @@ class DailyEWSDVolatilityService:
 
         candles = candles_df[["datetime", "ticker"]].copy()
         candles["datetime"] = pd.to_datetime(candles["datetime"]).dt.tz_localize(None)
-        candles["ticker"] = candles["ticker"].map(_normalize_ticker_key)
+        candles["ticker"] = candles["ticker"].map(normalize_ticker_key)
         candles["date"] = candles["datetime"].dt.normalize()
 
         aligned_parts: list[pd.DataFrame] = []
@@ -322,7 +313,7 @@ class DailyEWSDVolatilityService:
             return pd.DataFrame(columns=["datetime", "ticker", "ewsd_annual_vol"])
         history = pd.read_parquet(self._history_path)
         history["datetime"] = pd.to_datetime(history["datetime"]).dt.tz_localize(None)
-        history["ticker"] = history["ticker"].map(_normalize_ticker_key)
+        history["ticker"] = history["ticker"].map(normalize_ticker_key)
         history = history.sort_values(["ticker", "datetime"]).reset_index(drop=True)
         return history
 

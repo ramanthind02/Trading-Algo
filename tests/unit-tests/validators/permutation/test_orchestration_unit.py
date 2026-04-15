@@ -15,7 +15,6 @@ from feature_selection.validation.reports import (
     FunnelStatistics,
     OutOfSamplePermutationReport,
     PermutationTestSuite,
-    PipelinePermutationReport,
     VectorShuffleReport,
     WalkforwardStabilityReport,
 )
@@ -25,8 +24,9 @@ def test_permutation_test_config_defaults() -> None:
     config = PermutationTestConfig()
     assert config.nreps == 1000
     assert config.alpha == 0.10
-    assert config.permutation_mode_stage2 == "candle_shuffle"
     assert config.random_seed is None
+    assert config.n_jobs_combos == 1
+    assert config.n_jobs_reps == 1
 
 
 def test_permutation_test_config_rejects_in_sample_config_plus_legacy_scalars() -> None:
@@ -108,18 +108,18 @@ def test_run_oos_permutation_false_skips_phase3() -> None:
     assert len(suite.phase3_oos_reports) == 0
     assert suite.feature_type == "signed_signal"
     assert isinstance(suite, PermutationTestSuite)
+    assert suite.stage2_reports == {}
 
 
-def test_stage2_receives_only_stage1_passers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vector_shuffle_only_empty_stage2_reports(monkeypatch: pytest.MonkeyPatch) -> None:
     from feature_selection.validation import orchestration
 
     candles = _make_candles(30)
     target = pd.Series(np.linspace(-0.1, 0.2, 30), index=candles.index)
     param_grid = [{"lookback": 3}, {"lookback": 5}, {"lookback": 8}]
     passers = {"lookback_3", "lookback_8"}
-    batch_calls: list[list[str]] = []
 
-    def fake_stage1(**kwargs: object) -> VectorShuffleReport:
+    def fake_vector(**kwargs: object) -> VectorShuffleReport:
         combo = str(kwargs["param_combo"])
         return VectorShuffleReport(
             param_combo=combo,
@@ -132,28 +132,7 @@ def test_stage2_receives_only_stage1_passers(monkeypatch: pytest.MonkeyPatch) ->
             nreps=4,
         )
 
-    def fake_stage2_batch(**kwargs: object) -> dict[str, PipelinePermutationReport]:
-        combo_names = [item.param_combo for item in kwargs["items"]]  # type: ignore[index]
-        batch_calls.append(combo_names)
-        return {
-            combo_name: PipelinePermutationReport(
-                param_combo=combo_name,
-                feature_type="signed_signal",
-                permutation_mode="candle_shuffle",
-                original_metric=0.0,
-                null_distribution=np.zeros(4),
-                critical_value=0.0,
-                p_value=1.0,
-                passed=False,
-                alpha=0.1,
-                nreps=4,
-                no_trade_permutations=4,
-            )
-            for combo_name in combo_names
-        }
-
-    monkeypatch.setattr(orchestration, "run_vector_shuffle_test", fake_stage1)
-    monkeypatch.setattr(orchestration, "_run_pipeline_permutation_batch", fake_stage2_batch)
+    monkeypatch.setattr(orchestration, "run_vector_shuffle_test", fake_vector)
 
     suite = orchestration.run_permutation_test_suite(
         candles_df=candles,
@@ -167,21 +146,20 @@ def test_stage2_receives_only_stage1_passers(monkeypatch: pytest.MonkeyPatch) ->
         feature_name="test",
     )
 
-    assert len(batch_calls) == 1
-    assert sorted(batch_calls[0]) == sorted(passers)
-    assert len(suite.stage2_reports) == len(passers)
+    assert suite.stage2_reports == {}
+    assert set(suite.ensemble_candidates) == passers
 
 
-def test_suite_runs_oos_on_stage2_passers_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_suite_runs_oos_on_vector_passers_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     from feature_selection.validation import orchestration
 
     candles = _make_candles(8)
     target = pd.Series(np.linspace(0.1, 0.8, 8), index=candles.index)
     param_grid = [{"lookback": 3}, {"lookback": 5}, {"lookback": 8}]
-    stage2_passers = {"lookback_3", "lookback_5"}
-    oos_calls: list[tuple[str, int | None]] = []
+    vector_pass_subset = {"lookback_3", "lookback_5"}
+    oos_calls: list[str] = []
 
-    def fake_stage1(**kwargs: object) -> VectorShuffleReport:
+    def fake_vector(**kwargs: object) -> VectorShuffleReport:
         combo = str(kwargs["param_combo"])
         return VectorShuffleReport(
             param_combo=combo,
@@ -189,46 +167,16 @@ def test_suite_runs_oos_on_stage2_passers_by_default(monkeypatch: pytest.MonkeyP
             null_distribution=np.zeros(5),
             critical_value=0.0,
             p_value=0.01,
-            passed=True,
+            passed=combo in vector_pass_subset,
             alpha=0.1,
             nreps=5,
         )
-
-    def fake_stage2_batch(**kwargs: object) -> dict[str, PipelinePermutationReport]:
-        return {
-            item.param_combo: PipelinePermutationReport(
-                param_combo=item.param_combo,
-                feature_type="signed_signal",
-                permutation_mode="candle_shuffle",
-                original_metric=1.0,
-                null_distribution=np.zeros(5),
-                critical_value=0.0,
-                p_value=0.01,
-                passed=item.param_combo in stage2_passers,
-                alpha=0.1,
-                nreps=5,
-                no_trade_permutations=0,
-            )
-            for item in kwargs["items"]  # type: ignore[index]
-        }
 
     def fake_oos(**kwargs: object) -> OutOfSamplePermutationReport:
         combo = str(kwargs["param_combo"])
-        oos_calls.append((combo, kwargs.get("random_seed")))  # type: ignore[arg-type]
+        oos_calls.append(combo)
         vec = VectorShuffleReport(
             param_combo=combo,
-            original_metric=1.0,
-            null_distribution=np.zeros(5),
-            critical_value=0.0,
-            p_value=0.01,
-            passed=True,
-            alpha=0.1,
-            nreps=5,
-        )
-        candle = PipelinePermutationReport(
-            param_combo=combo,
-            feature_type="signed_signal",
-            permutation_mode="candle_shuffle",
             original_metric=1.0,
             null_distribution=np.zeros(5),
             critical_value=0.0,
@@ -236,12 +184,15 @@ def test_suite_runs_oos_on_stage2_passers_by_default(monkeypatch: pytest.MonkeyP
             passed=(combo == "lookback_5"),
             alpha=0.1,
             nreps=5,
-            no_trade_permutations=0,
         )
-        return OutOfSamplePermutationReport(param_combo=combo, vector_report=vec, candle_report=candle, passed=candle.passed)
+        return OutOfSamplePermutationReport(
+            param_combo=combo,
+            vector_report=vec,
+            candle_report=None,
+            passed=vec.passed,
+        )
 
-    monkeypatch.setattr(orchestration, "run_vector_shuffle_test", fake_stage1)
-    monkeypatch.setattr(orchestration, "_run_pipeline_permutation_batch", fake_stage2_batch)
+    monkeypatch.setattr(orchestration, "run_vector_shuffle_test", fake_vector)
     monkeypatch.setattr(orchestration, "run_oos_permutation_for_param", fake_oos)
 
     suite = orchestration.run_permutation_test_suite(
@@ -262,7 +213,5 @@ def test_suite_runs_oos_on_stage2_passers_by_default(monkeypatch: pytest.MonkeyP
         feature_name="test",
     )
 
-    assert sorted(suite.phase3_oos_reports.keys()) == sorted(stage2_passers)
-    assert sorted(combo for combo, _ in oos_calls) == sorted(stage2_passers)
-    assert {seed for _, seed in oos_calls} == {17}
+    assert sorted(oos_calls) == sorted(vector_pass_subset)
     assert suite.ensemble_candidates == ["lookback_5"]

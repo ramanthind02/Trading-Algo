@@ -6,9 +6,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from utils.cache.central_cache import CentralCacheStore
-from utils.cache.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
-from utils.cache.feature_pipeline_support import read_aligned_feature_artifact
+from utils.cache.runtime.central_cache import CentralCacheStore
+from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
+from utils.cache.runtime.feature_pipeline_support import expand_param_grid, read_aligned_feature_artifact
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -19,6 +19,32 @@ def central_cache(tmp_path: Path) -> CentralCacheStore:
     CentralCacheStore._instance = store  # type: ignore[attr-defined]
     yield store
     CentralCacheStore.reset()
+
+
+def test_expand_param_grid_nested_signal_params_filter_gate() -> None:
+    params = {
+        "filter_module": "adx_filter",
+        "filter_params": {"length": 20, "threshold": 20.0},
+        "signal_module": "cyclical_rsi",
+        "signal_params": {"short_period": [2, 3], "long_period": [80], "rsi_period": [2]},
+    }
+    combos = expand_param_grid(params)
+    assert len(combos) == 2
+    assert combos[0]["signal_params"] == {"short_period": 2, "long_period": 80, "rsi_period": 2}
+    assert combos[1]["signal_params"] == {"short_period": 3, "long_period": 80, "rsi_period": 2}
+    assert all(c["filter_params"] == {"length": 20, "threshold": 20.0} for c in combos)
+
+
+def test_expand_param_grid_dual_signal_nested_grids() -> None:
+    params = {
+        "moduleA": "rsi_signal",
+        "moduleB": "ewmac",
+        "paramsA": {"lookback": [10, 14]},
+        "paramsB": {"span_fast": [16]},
+    }
+    combos = expand_param_grid(params)
+    assert len(combos) == 2
+    assert {c["paramsA"]["lookback"] for c in combos} == {10, 14}
 
 
 def test_read_aligned_feature_artifact_clamps_calendar_boundaries_to_coverage(

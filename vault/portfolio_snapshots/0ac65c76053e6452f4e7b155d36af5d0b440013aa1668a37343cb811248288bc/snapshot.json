@@ -1,0 +1,942 @@
+{
+  "created_at": "2026-04-13T07:18:55.982670+00:00",
+  "fit_window": {
+    "end": "2022-12-31T00:00:00+00:00",
+    "start": "2000-01-01T00:00:00+00:00"
+  },
+  "global_portfolio": {
+    "config": {
+      "idm_max": 2.5,
+      "instrument_weights": null,
+      "max_position_pct": 3.5
+    },
+    "fitted_state": {
+      "global_adapter_diagnostics": {
+        "stream_decode_map": {
+          "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": {
+            "original_model_name": "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": {
+            "original_model_name": "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4": {
+            "original_model_name": "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": {
+            "original_model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": {
+            "original_model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": {
+            "original_model_name": "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "ES",
+            "timeframe": "M"
+          },
+          "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "GC",
+            "timeframe": "M"
+          },
+          "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": {
+            "original_model_name": "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2": {
+            "original_model_name": "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": {
+            "original_model_name": "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": {
+            "original_model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": {
+            "original_model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": {
+            "original_model_name": "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "NQ",
+            "timeframe": "M"
+          }
+        },
+        "stream_weights": {
+          "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": 0.0,
+          "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": 0.0,
+          "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4": 0.3,
+          "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": 0.3,
+          "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.10537418392672222,
+          "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": 5.640476425120246e-18,
+          "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.014035084991285767,
+          "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 2.1845304575493123e-17,
+          "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": 2.255166301456236e-18,
+          "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2": 0.20169928173527113,
+          "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": 0.0,
+          "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": 0.06580560457465495,
+          "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.0,
+          "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": 0.013085844772065999,
+          "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 3.2304066775429035e-18
+        },
+        "synthetic_ticker": "__GLOBAL__",
+        "ticker_rollups": {
+          "ES": 0.719409268918008,
+          "GC": 2.1845304575493123e-17,
+          "NQ": 0.28059073108199206
+        },
+        "timeframe_rollups": {
+          "D": 0.9859649150087143,
+          "M": 0.014035084991285793
+        }
+      },
+      "global_eligibility_diagnostics": {
+        "min_activity_ratio": 0.02,
+        "min_effective_obs": 21,
+        "min_obs": 252,
+        "mode": "diagnostics_only_no_filtering",
+        "tickers": {
+          "ES": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+              "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+              "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4",
+              "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+              "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+              "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.3563811489508084,
+                "effective_obs": 2071,
+                "eligible": true,
+                "model_name": "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.22497420020639836,
+                "effective_obs": 1308,
+                "eligible": true,
+                "model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.40058479532163743,
+                "effective_obs": 2328,
+                "eligible": true,
+                "model_name": "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.29566563467492263,
+                "effective_obs": 1718,
+                "eligible": true,
+                "model_name": "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9659442724458205,
+                "effective_obs": 5612,
+                "eligible": true,
+                "model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.35190918472652216,
+                "effective_obs": 2044,
+                "eligible": true,
+                "model_name": "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9967320261437909,
+                "effective_obs": 5791,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 5814
+              }
+            ],
+            "n_models_after": 7,
+            "n_models_before": 7
+          },
+          "GC": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.9967320261437909,
+                "effective_obs": 5791,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 5814
+              }
+            ],
+            "n_models_after": 1,
+            "n_models_before": 1
+          },
+          "NQ": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+              "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2",
+              "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+              "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+              "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+              "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.3737530099759202,
+                "effective_obs": 2172,
+                "eligible": true,
+                "model_name": "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.216890264877881,
+                "effective_obs": 1261,
+                "eligible": true,
+                "model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.18145854833161335,
+                "effective_obs": 1054,
+                "eligible": true,
+                "model_name": "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.4102167182662539,
+                "effective_obs": 2382,
+                "eligible": true,
+                "model_name": "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9659442724458205,
+                "effective_obs": 5612,
+                "eligible": true,
+                "model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.36635706914344685,
+                "effective_obs": 2129,
+                "eligible": true,
+                "model_name": "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9967320261437909,
+                "effective_obs": 5791,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 5814
+              }
+            ],
+            "n_models_after": 7,
+            "n_models_before": 7
+          }
+        }
+      },
+      "global_eligible_models_by_ticker": {
+        "ES": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+          "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+          "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4",
+          "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+          "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6"
+        ],
+        "GC": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+        ],
+        "NQ": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+          "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2",
+          "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+          "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+          "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6"
+        ]
+      },
+      "global_idm": 1.8873326910515933,
+      "global_tf_weights_compat": {
+        "D": 0.9859649150087143,
+        "M": 0.014035084991285793
+      },
+      "instruments": [
+        "ES",
+        "GC",
+        "NQ"
+      ],
+      "is_fitted": true,
+      "mean_instrument_return_correlation": 0.2707392109691011,
+      "weight_layer_diagnostics": {
+        "fdm_max": 2.0,
+        "is_fitted": true,
+        "summary": {
+          "max_fdm": 2.0,
+          "mean_clusters_per_ticker": 15.0,
+          "mean_fdm": 2.0,
+          "mean_models_per_ticker": 15.0,
+          "min_fdm": 2.0,
+          "n_tickers": 1,
+          "total_models": 15
+        },
+        "tickers": {
+          "__GLOBAL__": {
+            "cluster_assignments": {
+              "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": "cluster_1",
+              "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": "cluster_2",
+              "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4": "cluster_3",
+              "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": "cluster_4",
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": "cluster_5",
+              "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": "cluster_6",
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_7",
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_8",
+              "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": "cluster_9",
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2": "cluster_10",
+              "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": "cluster_11",
+              "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": "cluster_12",
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": "cluster_13",
+              "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": "cluster_14",
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_15"
+            },
+            "cluster_metrics": {
+              "cluster_1": {
+                "avg_positive_corr": 0.26627176260031776,
+                "member_count": 1,
+                "score": 0.7897198923132246,
+                "ulcer_index": null
+              },
+              "cluster_10": {
+                "avg_positive_corr": 0.2065037361260979,
+                "member_count": 1,
+                "score": 0.8288411963073149,
+                "ulcer_index": null
+              },
+              "cluster_11": {
+                "avg_positive_corr": 0.2912958696018046,
+                "member_count": 1,
+                "score": 0.7744158589374013,
+                "ulcer_index": null
+              },
+              "cluster_12": {
+                "avg_positive_corr": 0.14206327541246322,
+                "member_count": 1,
+                "score": 0.8756082272576743,
+                "ulcer_index": null
+              },
+              "cluster_13": {
+                "avg_positive_corr": 0.21579802107669116,
+                "member_count": 1,
+                "score": 0.8225050400348703,
+                "ulcer_index": null
+              },
+              "cluster_14": {
+                "avg_positive_corr": 0.23851750007906417,
+                "member_count": 1,
+                "score": 0.8074169318852275,
+                "ulcer_index": null
+              },
+              "cluster_15": {
+                "avg_positive_corr": 0.17630877014565208,
+                "member_count": 1,
+                "score": 0.8501169296528995,
+                "ulcer_index": null
+              },
+              "cluster_2": {
+                "avg_positive_corr": 0.2697565236966277,
+                "member_count": 1,
+                "score": 0.7875525593589481,
+                "ulcer_index": null
+              },
+              "cluster_3": {
+                "avg_positive_corr": 0.09465945388455185,
+                "member_count": 1,
+                "score": 0.9135261166852947,
+                "ulcer_index": null
+              },
+              "cluster_4": {
+                "avg_positive_corr": 0.14590888552917,
+                "member_count": 1,
+                "score": 0.8726697319728082,
+                "ulcer_index": null
+              },
+              "cluster_5": {
+                "avg_positive_corr": 0.19786793709896905,
+                "member_count": 1,
+                "score": 0.8348165678612525,
+                "ulcer_index": null
+              },
+              "cluster_6": {
+                "avg_positive_corr": 0.21456562727466108,
+                "member_count": 1,
+                "score": 0.8233396183324235,
+                "ulcer_index": null
+              },
+              "cluster_7": {
+                "avg_positive_corr": 0.1415432541331016,
+                "member_count": 1,
+                "score": 0.876007103873965,
+                "ulcer_index": null
+              },
+              "cluster_8": {
+                "avg_positive_corr": 0.05668883284275047,
+                "member_count": 1,
+                "score": 0.9463523876842309,
+                "ulcer_index": null
+              },
+              "cluster_9": {
+                "avg_positive_corr": 0.28299243034747146,
+                "member_count": 1,
+                "score": 0.7794278254074898,
+                "ulcer_index": null
+              }
+            },
+            "cluster_weights": {
+              "cluster_1": 0.0,
+              "cluster_10": 0.20169928173527113,
+              "cluster_11": 0.0,
+              "cluster_12": 0.06580560457465495,
+              "cluster_13": 0.0,
+              "cluster_14": 0.013085844772065999,
+              "cluster_15": 3.2304066775429035e-18,
+              "cluster_2": 0.0,
+              "cluster_3": 0.3,
+              "cluster_4": 0.3,
+              "cluster_5": 0.10537418392672222,
+              "cluster_6": 5.640476425120246e-18,
+              "cluster_7": 0.014035084991285767,
+              "cluster_8": 2.1845304575493123e-17,
+              "cluster_9": 2.255166301456236e-18
+            },
+            "fdm": 2.0,
+            "mean_cluster_correlation": 0.19604945865662626,
+            "mean_signal_correlation": 0.19604945865662626,
+            "models": [
+              "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+              "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+              "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4",
+              "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+              "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2",
+              "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+              "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+              "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0"
+            ],
+            "n_models": 15,
+            "weights": {
+              "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": 0.0,
+              "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": 0.0,
+              "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4": 0.3,
+              "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": 0.3,
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.10537418392672222,
+              "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": 5.640476425120246e-18,
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.014035084991285767,
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 2.1845304575493123e-17,
+              "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": 2.255166301456236e-18,
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2": 0.20169928173527113,
+              "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": 0.0,
+              "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": 0.06580560457465495,
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.0,
+              "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": 0.013085844772065999,
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 3.2304066775429035e-18
+            }
+          }
+        },
+        "weight_method": "optimize_sortino_capped"
+      }
+    },
+    "tf_portfolios": [
+      {
+        "config": {
+          "idm_max": 2.5,
+          "instrument_weights": null,
+          "max_position_pct": 3.5,
+          "sector_allocation_config_path": null,
+          "target_volatility": 0.15,
+          "trading_timeframe": "D",
+          "use_cache": true
+        },
+        "ensembles": [
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "6b827174ea3abeac58b9b40dc77170e0bb42c4b08a043594a7089b0ce5b8b5c4",
+              "features/casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long.json": "a6637c9033bcaa85b27ab2f7826a849bceb755f925875db49495bf101f7d32ea"
+            },
+            "ensemble_name": "casey_percent_c_signal_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long": 0.36978480456741325
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/casey_percent_c_signal_long",
+            "source_ensemble_dir": "vault\\D\\casey_percent_c_signal_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "b40bb3ace2ce5f1c35e0f3d6b70e5e94ab4241a63ab881d65b0a6bec92a51311",
+              "features/turnaroundtuesday_signal_D_mode_tue_wed.json": "52ede0201684f9dc70019aa78a0eb6c6fe17abbf7a050a2eb574b759aa8c7e99"
+            },
+            "ensemble_name": "mr_indices_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3": 0.2222222222222222
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/mr_indices_long",
+            "source_ensemble_dir": "vault\\D\\mr_indices_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "79972bc4473c0e2c266c413953b93c5106fde75feb77a4acc342dc57f718d113",
+              "features/ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3.json": "5a27cb3b068a4911f971fba653f554434175320d2ee1254aa08687ccccebfeef"
+            },
+            "ensemble_name": "mr_indices_long_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3": 0.18379446640316205
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/mr_indices_long_long",
+            "source_ensemble_dir": "vault\\D\\mr_indices_long_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "506b3f3977e01fc14220aac878e715bb63607faa1a23c19867c78a2c141bf9e7",
+              "features/rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long.json": "bf6888e695c9748d59862ef46e3a63731615ce3ee608ebaab85badcb404600b3"
+            },
+            "ensemble_name": "rsi_signal_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long": 0.4122749231444884
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/rsi_signal_long",
+            "source_ensemble_dir": "vault\\D\\rsi_signal_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "80767500c79c3e9a668db5ccda21b6222d03750a41b70bda77313a39cb880b05",
+              "features/seasonalindiceseof_signal_D_smaPeriod_200.json": "503f590f462e1dec3fd601a72ac552042b21875ab054963317d2e90be887093d"
+            },
+            "ensemble_name": "seasonal_indices_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3": 0.29183135704874835
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/seasonal_indices_long",
+            "source_ensemble_dir": "vault\\D\\seasonal_indices_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "682936f5b48ef05c466716b835ad35a0464af1a7abb77da3fcc42b248856960c",
+              "features/sma_regime_signal_signal_D_period_200.json": "6bdd3d66f18eef86c22546c876e18e37345cbb2ed2ee146d3760dac643260f70"
+            },
+            "ensemble_name": "sma_regime_long_short_long_short",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200": 0.9563021519543259
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/sma_regime_long_short_long_short",
+            "source_ensemble_dir": "vault\\D\\sma_regime_long_short_long_short",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "d3e7c31e9225646ae2478d726cc1160a20290b52868f2349ceb87eb0c073b10e",
+              "features/williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long.json": "dcf7b8a6f795bea8e8981b886335f4247a20574f0ebeb559b26fe4fa29df4cc1"
+            },
+            "ensemble_name": "williamsr_signal_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long": 0.3685770750988142
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/williamsr_signal_long",
+            "source_ensemble_dir": "vault\\D\\williamsr_signal_long",
+            "timeframe": "D"
+          }
+        ],
+        "fitted_state": {
+          "idm": null,
+          "instruments": null,
+          "is_fitted": true,
+          "mean_return_correlation": null
+        }
+      },
+      {
+        "config": {
+          "idm_max": 2.5,
+          "instrument_weights": null,
+          "max_position_pct": 3.5,
+          "sector_allocation_config_path": null,
+          "target_volatility": 0.15,
+          "trading_timeframe": "M",
+          "use_cache": true
+        },
+        "ensembles": [
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "0a420d5295199ceb6cef30f245dfa73c8cccabb79e68a6e92cec37ee678c93a8",
+              "features/buy_hold_signal_M.json": "6d1324092a6da09f7033c3bd2c2b0a1b29b045383e063471246584f168b7a37f"
+            },
+            "ensemble_name": "buy_hold_long",
+            "fitted_state": {
+              "base_tf": "M",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "buy_hold_signal_M::rule_based_3": 1.0
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/M/buy_hold_long",
+            "source_ensemble_dir": "vault\\M\\buy_hold_long",
+            "timeframe": "M"
+          }
+        ],
+        "fitted_state": {
+          "idm": null,
+          "instruments": null,
+          "is_fitted": true,
+          "mean_return_correlation": null
+        }
+      }
+    ],
+    "weight_layer": {
+      "class_name": "ClusteredWeightLayer",
+      "config": {
+        "fdm_max": 2.0,
+        "group_weight_cap": 0.25,
+        "max_signal_weight": 0.3,
+        "rho_cut": 0.7,
+        "sortino_mar": 0.0,
+        "weighting_method": "optimize_sortino_capped"
+      },
+      "state": {
+        "cluster_assignments": {
+          "__GLOBAL__": {
+            "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": "cluster_1",
+            "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": "cluster_2",
+            "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4": "cluster_3",
+            "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": "cluster_4",
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": "cluster_5",
+            "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": "cluster_6",
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_7",
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_8",
+            "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": "cluster_9",
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2": "cluster_10",
+            "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": "cluster_11",
+            "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": "cluster_12",
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": "cluster_13",
+            "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": "cluster_14",
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_15"
+          }
+        },
+        "cluster_metrics": {
+          "__GLOBAL__": {
+            "cluster_1": {
+              "avg_positive_corr": 0.26627176260031776,
+              "member_count": 1,
+              "score": 0.7897198923132246,
+              "ulcer_index": null
+            },
+            "cluster_10": {
+              "avg_positive_corr": 0.2065037361260979,
+              "member_count": 1,
+              "score": 0.8288411963073149,
+              "ulcer_index": null
+            },
+            "cluster_11": {
+              "avg_positive_corr": 0.2912958696018046,
+              "member_count": 1,
+              "score": 0.7744158589374013,
+              "ulcer_index": null
+            },
+            "cluster_12": {
+              "avg_positive_corr": 0.14206327541246322,
+              "member_count": 1,
+              "score": 0.8756082272576743,
+              "ulcer_index": null
+            },
+            "cluster_13": {
+              "avg_positive_corr": 0.21579802107669116,
+              "member_count": 1,
+              "score": 0.8225050400348703,
+              "ulcer_index": null
+            },
+            "cluster_14": {
+              "avg_positive_corr": 0.23851750007906417,
+              "member_count": 1,
+              "score": 0.8074169318852275,
+              "ulcer_index": null
+            },
+            "cluster_15": {
+              "avg_positive_corr": 0.17630877014565208,
+              "member_count": 1,
+              "score": 0.8501169296528995,
+              "ulcer_index": null
+            },
+            "cluster_2": {
+              "avg_positive_corr": 0.2697565236966277,
+              "member_count": 1,
+              "score": 0.7875525593589481,
+              "ulcer_index": null
+            },
+            "cluster_3": {
+              "avg_positive_corr": 0.09465945388455185,
+              "member_count": 1,
+              "score": 0.9135261166852947,
+              "ulcer_index": null
+            },
+            "cluster_4": {
+              "avg_positive_corr": 0.14590888552917,
+              "member_count": 1,
+              "score": 0.8726697319728082,
+              "ulcer_index": null
+            },
+            "cluster_5": {
+              "avg_positive_corr": 0.19786793709896905,
+              "member_count": 1,
+              "score": 0.8348165678612525,
+              "ulcer_index": null
+            },
+            "cluster_6": {
+              "avg_positive_corr": 0.21456562727466108,
+              "member_count": 1,
+              "score": 0.8233396183324235,
+              "ulcer_index": null
+            },
+            "cluster_7": {
+              "avg_positive_corr": 0.1415432541331016,
+              "member_count": 1,
+              "score": 0.876007103873965,
+              "ulcer_index": null
+            },
+            "cluster_8": {
+              "avg_positive_corr": 0.05668883284275047,
+              "member_count": 1,
+              "score": 0.9463523876842309,
+              "ulcer_index": null
+            },
+            "cluster_9": {
+              "avg_positive_corr": 0.28299243034747146,
+              "member_count": 1,
+              "score": 0.7794278254074898,
+              "ulcer_index": null
+            }
+          }
+        },
+        "cluster_weights": {
+          "__GLOBAL__": {
+            "cluster_1": 0.0,
+            "cluster_10": 0.20169928173527113,
+            "cluster_11": 0.0,
+            "cluster_12": 0.06580560457465495,
+            "cluster_13": 0.0,
+            "cluster_14": 0.013085844772065999,
+            "cluster_15": 3.2304066775429035e-18,
+            "cluster_2": 0.0,
+            "cluster_3": 0.3,
+            "cluster_4": 0.3,
+            "cluster_5": 0.10537418392672222,
+            "cluster_6": 5.640476425120246e-18,
+            "cluster_7": 0.014035084991285767,
+            "cluster_8": 2.1845304575493123e-17,
+            "cluster_9": 2.255166301456236e-18
+          }
+        },
+        "fdm": {
+          "__GLOBAL__": 2.0
+        },
+        "is_fitted": true,
+        "mean_cluster_correlation": {
+          "__GLOBAL__": 0.19604945865662626
+        },
+        "mean_signal_correlation": {
+          "__GLOBAL__": 0.19604945865662626
+        },
+        "model_names": {
+          "__GLOBAL__": [
+            "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+            "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+            "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4",
+            "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+            "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0",
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2",
+            "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3",
+            "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5",
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1",
+            "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6",
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0"
+          ]
+        },
+        "weights": {
+          "__GLOBAL__": {
+            "ES::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": 0.0,
+            "ES::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": 0.0,
+            "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_4": 0.3,
+            "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": 0.3,
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.10537418392672222,
+            "ES::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": 5.640476425120246e-18,
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.014035084991285767,
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 2.1845304575493123e-17,
+            "NQ::D::casey_percent_c_signal_signal_D_atrLookback_5_emaLookback_2_exitBars_10_exitPolicy_threshold_or_bars_multiplier_1.25_overbought_65.0_oversold_35.0_smoothing_2_strategyMode_long::signed_signal_casey-percent-c-signal_d_atr-lookback_5_ema-lookback_2_exit-bars_10_exit-policy_threshold-or-bars_multiplier_1-25_overbought_65-0_oversold_35-0_smoothing_2_strategy-mode_long__D::ensemble_0": 2.255166301456236e-18,
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_2": 0.20169928173527113,
+            "NQ::D::rsi_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_overbought_75.0_oversold_25.0_rsiPeriod_2_strategyMode_long::signed_signal_rsi-signal_d_exit-bars_10_exit-policy_threshold-or-bars_overbought_75-0_oversold_25-0_rsi-period_2_strategy-mode_long__D::ensemble_3": 0.0,
+            "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_5": 0.06580560457465495,
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_1": 0.0,
+            "NQ::D::williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long__D::ensemble_6": 0.013085844772065999,
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 3.2304066775429035e-18
+          }
+        }
+      }
+    }
+  },
+  "portfolio_id": "0ac65c76053e6452f4e7b155d36af5d0b440013aa1668a37343cb811248288bc",
+  "schema_version": "1.0"
+}

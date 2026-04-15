@@ -164,6 +164,7 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 - `feature_extraction/feature_extractor.py` remains the entrypoint
 - cache-specific helper logic lives in `utils/cache/feature_pipeline_support.py`
 - cache reads should not silently downgrade into an uncached recomputation path
+- **`feature_research`:** `populate_cache_if_needed` always runs before cache-backed extraction; `ResearchConfig` has no opt-out flags for central-cache usage
 
 ### Portfolio APIs
 

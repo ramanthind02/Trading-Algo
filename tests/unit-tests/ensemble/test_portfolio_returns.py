@@ -3,7 +3,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ensemble.portfolio_returns import calculate_idm_from_returns, calculate_returns_from_candles
+from ensemble.portfolio_impl.portfolio_returns import (
+    calculate_idm_from_returns,
+    calculate_returns_from_candles,
+)
 from utils.core.enums import TimeFrame, Ticker
 
 

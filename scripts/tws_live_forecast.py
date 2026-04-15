@@ -336,7 +336,7 @@ def ensure_cache_ready(required_tickers: Set[str]) -> Dict[str, Any]:
     Returns dict with 'bootstrapped' bool and coverage info per ticker.
     """
     from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.cache.cache_manager import CacheManager
+    from utils.cache.runtime.cache_manager import CacheManager
 
     store = CentralCacheStore.get_instance()
     manager = CacheManager()
@@ -442,7 +442,7 @@ def refresh_bias_caches(
     Returns the summary dict from ensure_vault_cache_coverage.
     """
     from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.cache.cache_manager import CacheManager
+    from utils.cache.runtime.cache_manager import CacheManager
 
     store = CentralCacheStore.get_instance()
     manager = CacheManager()
@@ -508,7 +508,7 @@ def build_cache_query(
     Returns (query, instrument_returns) tuple.
     """
     from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.cache.central_cache_models import ArtifactScope
+    from utils.cache.runtime.central_cache_models import ArtifactScope
     from ensemble.portfolio import PortfolioCacheQuery
 
     store = CentralCacheStore.get_instance()

@@ -1,0 +1,10 @@
+{
+  "timeframe": "D",
+  "ensemble_name": "algomatic_momentum_signal_long_defaults",
+  "direction": "long",
+  "tickers": [
+    "NQ"
+  ],
+  "created_at": "2026-04-13T07:59:56.601559+00:00",
+  "updated_at": "2026-04-13T07:59:56.601559+00:00"
+}

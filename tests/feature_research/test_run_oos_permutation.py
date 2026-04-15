@@ -18,7 +18,7 @@ def test_oos_permutation_main_returns_1_when_oos_window_none() -> None:
     """When config.oos_window is None, main() exits with code 1."""
     with (
         patch("sys.argv", ["run_oos_permutation.py"]),
-        patch("feature_research.oos.run_oos_permutation.load_config") as m_load,
+        patch("feature_research.config.load_config") as m_load,
     ):
         config = m_load.return_value
         config.oos_window = None
@@ -30,7 +30,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
     """With mocked data and pipeline, main() writes report and null dist; p_value in [0, 1]."""
     from dataclasses import replace
 
-    from feature_research.in_sample.config import load_config
+    from feature_research.config import load_config
 
     index = pd.date_range("2020-01-01", periods=1100, freq="D")
     reference_target = pd.Series(0.01, index=index, name="walkforward_target")
@@ -60,7 +60,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
 
     minimal_report = type("Report", (), {})()
     minimal_report.selection_summary_df = pd.DataFrame(
-        [{"fold_id": 0, "top_k_features": "[]"}],
+        [{"fold_id": 0, "selected_params_json": "null"}],
     )
     minimal_report.aggregate_oos_returns = pd.Series(
         [0.01, -0.005, 0.003], index=pd.date_range("2022-01-01", periods=3, freq="D")
@@ -68,9 +68,9 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
 
     with (
         patch("sys.argv", ["run_oos_permutation.py", "--nreps", "3"]),
-        patch("feature_research.oos.run_oos_permutation.load_config") as m_load,
+        patch("feature_research.config.load_config") as m_load,
         patch(
-            "feature_research.validation.permutation_helpers.load_research_data",
+            "feature_research.validation.phase_permutation.load_research_data",
             side_effect=fake_load_research_data,
         ),
         patch(
@@ -78,7 +78,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
             return_value=minimal_report,
         ),
         patch(
-            "utils.evaluation.walkforward.permutation_core.run_vector_shuffle_null",
+            "utils.evaluation.permutation_test.permutation_core.run_vector_shuffle_null",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
     ):

@@ -8,7 +8,12 @@ Usage
     source /home/raman/repos/Trading-Algo/venv/bin/activate
     python portfolio_research/run_portfolio_test.py
 
-Artifacts are written to config.output_root.
+Artifacts are written to config.output_root, including per-phase and combined
+``weight_layer_weights*.csv`` files (long format for Power BI; stream/model ids
+are not hardcoded). Optional HTML tearsheets: set
+``export_per_timeframe_tearsheets`` / ``export_per_ensemble_tearsheets`` in
+``portfolio_research.config.load_config()`` to False to skip slower detail reports
+(combined phase portfolio tearsheets are still written).
 """
 from __future__ import annotations
 
@@ -16,20 +21,25 @@ import sys
 from pathlib import Path
 
 
-def _find_repo_root(start: Path) -> Path | None:
-    """Search up from start path to find repo root (pyproject.toml or .git)."""
-    search_root = start if start.is_dir() else start.parent
-    for parent in (search_root, *search_root.parents):
-        if (parent / "pyproject.toml").exists():
-            return parent
-        if (parent / ".git").exists():
-            return parent
-    return None
+def _prepend_repo_root_to_syspath() -> None:
+    """Allow ``python path/to/run_portfolio_test.py`` without PYTHONPATH."""
+    start = Path(__file__).resolve()
+    for parent in (start.parent, *start.parents):
+        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
+            root = str(parent)
+            if root not in sys.path:
+                sys.path.insert(0, root)
+            return
+    raise RuntimeError(
+        "Could not locate repository root (no pyproject.toml or .git above this file)."
+    )
 
 
-_repo_root = _find_repo_root(Path(__file__).resolve())
-if _repo_root is not None and str(_repo_root) not in sys.path:
-    sys.path.insert(0, str(_repo_root))
+_prepend_repo_root_to_syspath()
+
+from utils.repo_bootstrap import ensure_repo_root_on_syspath
+
+ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 from portfolio_research.config import PortfolioResearchConfig, load_config
 from portfolio_research.pipelines.portfolio_test import (

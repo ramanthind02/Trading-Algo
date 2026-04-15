@@ -21,8 +21,11 @@ def compute_param_sensitivity_metric(
 ) -> float:
     """Compute a named metric for param sensitivity using shared logic.
 
-    This preserves existing binning semantics for ``sharpe``/``mean``/``t_stat``/``sortino``
-    and adds ``calmar``/``profit_factor`` using the shared objective-metric implementations.
+    Callers (e.g. in-sample EDA) typically pass **per-bar strategy returns**
+    ``signal * target`` over the full aligned index so features are comparable on the same
+    calendar.     ``sharpe`` and ``sortino`` annualize using ``sqrt(timeframe.bars_per_year)`` (same
+    ``TimeFrame`` convention as elsewhere). ``mean`` and ``t_stat`` stay on the raw
+    per-bar return scale. Adds ``calmar``/``profit_factor`` via shared objective metrics.
 
     Parameters
     ----------
@@ -31,7 +34,7 @@ def compute_param_sensitivity_metric(
     metric_name : str
         Name of metric: sharpe, mean, t_stat, sortino, calmar, profit_factor.
     timeframe : TimeFrame
-        Timeframe for annualization (sortino, calmar). Defaults to TimeFrame.D (252 bars/year).
+        Timeframe for annualization (sharpe, sortino, calmar). Defaults to TimeFrame.D (252 bars/year).
     """
     s = pd.to_numeric(pd.Series(returns), errors="coerce").dropna()
     if s.empty:
@@ -46,11 +49,12 @@ def compute_param_sensitivity_metric(
         return mean_return
 
     if metric_name == "sharpe":
+        sqrt_annual = math.sqrt(float(timeframe.bars_per_year))
         if not np.isfinite(volatility) or volatility <= 1e-12:
             if abs(mean_return) <= 1e-12:
                 return 0.0
-            return float(np.sign(mean_return) * 10.0)
-        return float(mean_return / volatility)
+            return float(np.sign(mean_return) * 10.0 * sqrt_annual)
+        return float(mean_return / volatility) * sqrt_annual
 
     if metric_name == "t_stat":
         if not np.isfinite(volatility) or volatility <= 1e-12:

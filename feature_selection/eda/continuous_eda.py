@@ -5,14 +5,17 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from feature_selection.eda.common_eda import (
+    EDA_VOL_EPS,
+    align_feature_target,
+    sharpe_from_mean_vol,
+)
 from feature_selection.eda.eda_dataclasses import (
     DecileAnalysis,
     DecileBinStats,
     DistributionDiagnostics,
     QuintileSpread,
 )
-
-_VOL_THRESHOLD = 1e-10  # volatility below this is treated as zero
 
 
 def compute_decile_analysis(
@@ -21,7 +24,7 @@ def compute_decile_analysis(
     n_bins: int = 15,
 ) -> DecileAnalysis:
     """Bin feature into n_bins quantile bins and compute per-bin target statistics."""
-    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
+    aligned = align_feature_target(feature, target)
     max_bins = len(aligned) // 10
     if n_bins > max_bins:
         raise ValueError(
@@ -56,10 +59,9 @@ def compute_decile_analysis(
         mean_return[idx_i] = m
         volatility[idx_i] = v
         sample_count[idx_i] = n
-        if v > _VOL_THRESHOLD:
-            sharpe[idx_i] = m / v
-            if n >= 2:
-                t_stat[idx_i] = m / (v / np.sqrt(n))
+        sharpe[idx_i] = sharpe_from_mean_vol(m, v)
+        if v > EDA_VOL_EPS and n >= 2:
+            t_stat[idx_i] = m / (v / np.sqrt(n))
 
     valid_means = mean_return[~np.isnan(mean_return)]
     tau, p = stats.kendalltau(np.arange(len(valid_means)), valid_means)
@@ -106,7 +108,7 @@ def compute_quintile_spread(
     target: pd.Series,
 ) -> QuintileSpread:
     """Bin feature into 5 quantiles and compute per-quintile mean return."""
-    aligned = pd.DataFrame({"f": feature, "t": target}).dropna().copy()
+    aligned = align_feature_target(feature, target).copy()
     aligned["quintile"] = pd.qcut(aligned["f"], q=5, labels=False, duplicates="drop")
     quintile_means = (
         aligned.groupby("quintile")["t"]

@@ -14,12 +14,6 @@ from typing import TypeVar
 from utils.evaluation.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
 
 
-class WalkforwardSelectionMethod(str, Enum):
-    TOP_K = "top_k"
-    ENHANCED = "enhanced"
-    MARGINAL_PEAK = "marginal_peak"
-
-
 class WeightLayerAlgorithm(str, Enum):
     EQUAL_SIGNAL = "equal_signal"
     INVERSE_AVG_PAIRWISE_CORR = "inverse_avg_pairwise_corr"
@@ -53,14 +47,11 @@ def _coerce_enum_or_raise(value: object, enum_cls: type[EnumT], field_name: str)
 
 @dataclass(frozen=True)
 class WalkforwardResearchConfig:
-    """Walkforward research window and selection algorithm.
+    """Walkforward research window and scoring.
 
-    Selection is controlled only by selection_method (no boolean overrides):
-      - TOP_K: select top_k params by smoothed objective.
-      - ENHANCED: three-objective (smoothed obj + trade_freq + diversity); outputs top_k.
-      - MARGINAL_PEAK: pairwise 2D marginal tables, pick table with largest peak-vs-second gap,
-        restrict to peak cell, return top k_max by raw objective; uses marginal_peak
-        (MarginalPeakConfig). Best for large grids (15–50 combos, 3+ dimensions).
+    Each fold selects exactly one param combo: best in-sample raw objective
+    (ties broken by ``param_label``). ``smoothed_objective`` in outputs equals
+    ``raw_objective`` for table compatibility.
     """
 
     train_start: datetime
@@ -68,14 +59,9 @@ class WalkforwardResearchConfig:
     enabled: bool = False
     test_step: int = 730
     num_steps: int = 4
-    top_k: int = 5
     objective_metric_name: str = "t_stat"  # Overridden by build_walkforward() from global config
     min_fold_samples: int = 10
     output_root: Path = Path("feature_research/shared_results")
-    trade_freq_min: float = 0.01
-    # --- Selection algorithm (single source of truth) ---
-    selection_method: WalkforwardSelectionMethod | str = WalkforwardSelectionMethod.TOP_K
-    marginal_peak: object = field(default=None)  # MarginalPeakConfig | None
     # --- Configurable weight layer method ---
     weight_layer_algorithm: WeightLayerAlgorithm | str = WeightLayerAlgorithm.EQUAL_SIGNAL
     weight_layer_config: object = field(default=None)  # WeightLayerConfig | None
@@ -83,23 +69,14 @@ class WalkforwardResearchConfig:
     member_prediction_mode: MemberPredictionMode | str = MemberPredictionMode.BINARY
     # --- Parallelism: number of jobs for scoring param combos within each fold; 1 = sequential ---
     n_jobs: int = 1  # -1 = use all CPUs (resolved at runtime in runner)
-    # --- Smoothing: weight for the center param relative to each 1-step neighbor ---
-    # 1.0 = equal weight (most aggressive smoothing; boundary params get diluted).
-    # Higher values (e.g. 2.0–3.0) reduce neighbor dilution for boundary params.
-    # Must match the value used in EDA/param_sensitivity so researcher sees the same landscape.
-    smoothing_self_weight: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.smoothing_self_weight <= 0:
-            raise ValueError("smoothing_self_weight must be > 0")
         if self.train_end <= self.train_start:
             raise ValueError("train_end must be greater than train_start")
         if self.test_step < 1:
             raise ValueError("test_step must be >= 1")
         if self.num_steps < 1:
             raise ValueError("num_steps must be >= 1")
-        if self.top_k < 1:
-            raise ValueError("top_k must be >= 1")
         if self.objective_metric_name not in SUPPORTED_OBJECTIVE_METRICS:
             raise ValueError(
                 "objective_metric_name must be one of: "
@@ -112,14 +89,6 @@ class WalkforwardResearchConfig:
         normalized_output_root = str(self.output_root).strip()
         if normalized_output_root in {"", "."}:
             raise ValueError("output_root must be a non-empty Path")
-        if not (0.0 <= self.trade_freq_min <= 1.0):
-            raise ValueError("trade_freq_min must be in [0, 1]")
-        normalized_selection_method = _coerce_enum_or_raise(
-            self.selection_method,
-            WalkforwardSelectionMethod,
-            "selection_method",
-        )
-        object.__setattr__(self, "selection_method", normalized_selection_method)
 
         normalized_weight_layer_algorithm = _coerce_enum_or_raise(
             self.weight_layer_algorithm,
@@ -138,11 +107,3 @@ class WalkforwardResearchConfig:
             "member_prediction_mode",
         )
         object.__setattr__(self, "member_prediction_mode", normalized_member_prediction_mode)
-
-    def _effective_selection_method(self) -> str:
-        """Return the active selection method string (top_k, enhanced, or marginal_peak)."""
-        return _coerce_enum_or_raise(
-            self.selection_method,
-            WalkforwardSelectionMethod,
-            "selection_method",
-        ).value

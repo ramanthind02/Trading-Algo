@@ -1,0 +1,41 @@
+---
+description: Shared venv, Windows PowerShell vs Unix, and python -m pytest so agents use the correct interpreter.
+alwaysApply: true
+---
+# Python Environment & Terminal Commands
+
+## Shared venv (repo root only)
+
+- Use the **single** virtual environment at the repository root (`venv` or `.venv`—both are gitignored; local convention may use either name).
+- **Never** create a new venv inside worktrees or subdirectories (see `AGENTS.md`).
+
+## If `pytest` is “missing” or import errors occur
+
+- The shell or IDE is almost certainly using **system Python** or the wrong interpreter—not the project venv.
+- Fix: run commands with the venv’s `python` and prefer **`python -m pytest`** so you do not rely on `pytest` on `PATH`.
+
+## Windows PowerShell (native)
+
+- Do **not** use Unix `source venv/bin/activate` as the primary story; it is not the Windows pattern.
+- From the **repo root**, call the venv interpreter explicitly (adjust `.venv` vs `venv` to match your folder):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\unit-tests\feature_research\test_permutation_pipeline.py -v
+.\.venv\Scripts\python.exe -m feature_research.in_sample.run_is
+```
+
+- Optional activation (if you prefer): `.\.venv\Scripts\Activate.ps1` then `python -m pytest ...`
+- `.vscode/settings.json` may set `python.defaultInterpreterPath` to `${workspaceFolder}/.venv/Scripts/python.exe` so Cursor uses the venv; override to `venv/bin/python` on Linux/macOS/WSL.
+
+## Linux / macOS / WSL
+
+```bash
+source venv/bin/activate   # or: source .venv/bin/activate
+python -m pytest tests/ -v
+python -m feature_research.in_sample.run_is
+```
+
+## Agent / automation defaults
+
+- When proposing terminal commands for this repo, **prefer the explicit venv path** on Windows (`.\.venv\Scripts\python.exe` or `.\venv\Scripts\python.exe`) so copy-paste works without activation.
+- Install deps only into this venv (`pip install -r requirements.txt` with that interpreter), not system-wide.

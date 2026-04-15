@@ -1,0 +1,711 @@
+{
+  "created_at": "2026-04-10T11:24:34.806768+00:00",
+  "fit_window": {
+    "end": "2022-12-31T00:00:00+00:00",
+    "start": "2006-01-01T00:00:00+00:00"
+  },
+  "global_portfolio": {
+    "config": {
+      "idm_max": 2.5,
+      "instrument_weights": null,
+      "max_position_pct": 3.5
+    },
+    "fitted_state": {
+      "global_adapter_diagnostics": {
+        "stream_decode_map": {
+          "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": {
+            "original_model_name": "rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5": {
+            "original_model_name": "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": {
+            "original_model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "ES",
+            "timeframe": "M"
+          },
+          "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "GC",
+            "timeframe": "M"
+          },
+          "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": {
+            "original_model_name": "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": {
+            "original_model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "NQ",
+            "timeframe": "M"
+          },
+          "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "RTY",
+            "timeframe": "M"
+          }
+        },
+        "stream_weights": {
+          "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": 0.1111111111111111,
+          "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5": 0.1111111111111111,
+          "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.1111111111111111,
+          "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+          "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+          "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": 0.1111111111111111,
+          "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.1111111111111111,
+          "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+          "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111
+        },
+        "synthetic_ticker": "__GLOBAL__",
+        "ticker_rollups": {
+          "ES": 0.4444444444444444,
+          "GC": 0.1111111111111111,
+          "NQ": 0.3333333333333333,
+          "RTY": 0.1111111111111111
+        },
+        "timeframe_rollups": {
+          "D": 0.5555555555555556,
+          "M": 0.4444444444444444
+        }
+      },
+      "global_eligibility_diagnostics": {
+        "min_activity_ratio": 0.02,
+        "min_effective_obs": 21,
+        "min_obs": 252,
+        "mode": "diagnostics_only_no_filtering",
+        "tickers": {
+          "ES": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2",
+              "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5",
+              "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.21733086190917517,
+                "effective_obs": 932,
+                "eligible": true,
+                "model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+                "obs": 4316
+              },
+              {
+                "activity_ratio": 0.4953660797034291,
+                "effective_obs": 2118,
+                "eligible": true,
+                "model_name": "rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2",
+                "obs": 4316
+              },
+              {
+                "activity_ratio": 0.3241427247451344,
+                "effective_obs": 1383,
+                "eligible": true,
+                "model_name": "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5",
+                "obs": 4316
+              },
+              {
+                "activity_ratio": 0.9958294717330862,
+                "effective_obs": 4263,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 4316
+              }
+            ],
+            "n_models_after": 4,
+            "n_models_before": 4
+          },
+          "GC": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.9958294717330862,
+                "effective_obs": 4263,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 4316
+              }
+            ],
+            "n_models_after": 1,
+            "n_models_before": 1
+          },
+          "NQ": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+              "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.21014828544949027,
+                "effective_obs": 902,
+                "eligible": true,
+                "model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+                "obs": 4316
+              },
+              {
+                "activity_ratio": 0.16010194624652457,
+                "effective_obs": 686,
+                "eligible": true,
+                "model_name": "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+                "obs": 4316
+              },
+              {
+                "activity_ratio": 0.9958294717330862,
+                "effective_obs": 4263,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 4316
+              }
+            ],
+            "n_models_after": 3,
+            "n_models_before": 3
+          },
+          "RTY": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.9958294717330862,
+                "effective_obs": 4263,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 4316
+              }
+            ],
+            "n_models_after": 1,
+            "n_models_before": 1
+          }
+        }
+      },
+      "global_eligible_models_by_ticker": {
+        "ES": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2",
+          "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+        ],
+        "GC": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+        ],
+        "NQ": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+        ],
+        "RTY": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0"
+        ]
+      },
+      "global_idm": 1.4901178907233328,
+      "global_tf_weights_compat": {
+        "D": 0.5555555555555556,
+        "M": 0.4444444444444444
+      },
+      "instruments": [
+        "ES",
+        "GC",
+        "NQ",
+        "RTY"
+      ],
+      "is_fitted": true,
+      "mean_instrument_return_correlation": 0.44035889203049416,
+      "weight_layer_diagnostics": {
+        "fdm_max": 2.0,
+        "is_fitted": true,
+        "summary": {
+          "max_fdm": 2.0,
+          "mean_clusters_per_ticker": 9.0,
+          "mean_fdm": 2.0,
+          "mean_models_per_ticker": 9.0,
+          "min_fdm": 2.0,
+          "n_tickers": 1,
+          "total_models": 9
+        },
+        "tickers": {
+          "__GLOBAL__": {
+            "cluster_assignments": {
+              "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": "cluster_1",
+              "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5": "cluster_2",
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_3",
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_4",
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_5",
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": "cluster_6",
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_7",
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_8",
+              "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_9"
+            },
+            "cluster_metrics": {
+              "cluster_1": {
+                "avg_positive_corr": 0.07377718950852184,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_2": {
+                "avg_positive_corr": 0.06931289720818115,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_3": {
+                "avg_positive_corr": 0.1315463221722572,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_4": {
+                "avg_positive_corr": 0.23913265295809868,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_5": {
+                "avg_positive_corr": 0.10112518240852399,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_6": {
+                "avg_positive_corr": 0.096688199960793,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_7": {
+                "avg_positive_corr": 0.12414125722387685,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_8": {
+                "avg_positive_corr": 0.18997823105541184,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              },
+              "cluster_9": {
+                "avg_positive_corr": 0.20126706060520444,
+                "member_count": 1,
+                "score": null,
+                "ulcer_index": null
+              }
+            },
+            "cluster_weights": {
+              "cluster_1": 0.1111111111111111,
+              "cluster_2": 0.1111111111111111,
+              "cluster_3": 0.1111111111111111,
+              "cluster_4": 0.1111111111111111,
+              "cluster_5": 0.1111111111111111,
+              "cluster_6": 0.1111111111111111,
+              "cluster_7": 0.1111111111111111,
+              "cluster_8": 0.1111111111111111,
+              "cluster_9": 0.1111111111111111
+            },
+            "fdm": 2.0,
+            "mean_cluster_correlation": 0.13632988812231878,
+            "mean_signal_correlation": 0.13632988812231878,
+            "models": [
+              "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2",
+              "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5",
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0"
+            ],
+            "n_models": 9,
+            "weights": {
+              "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": 0.1111111111111111,
+              "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5": 0.1111111111111111,
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.1111111111111111,
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": 0.1111111111111111,
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.1111111111111111,
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+              "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111
+            }
+          }
+        },
+        "weight_method": "equal_signal"
+      }
+    },
+    "tf_portfolios": [
+      {
+        "config": {
+          "idm_max": 2.5,
+          "instrument_weights": null,
+          "max_position_pct": 3.5,
+          "sector_allocation_config_path": null,
+          "target_volatility": 0.15,
+          "trading_timeframe": "D",
+          "use_cache": true
+        },
+        "ensembles": [
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "b40bb3ace2ce5f1c35e0f3d6b70e5e94ab4241a63ab881d65b0a6bec92a51311",
+              "features/turnaroundtuesday_signal_D_mode_tue_wed.json": "52ede0201684f9dc70019aa78a0eb6c6fe17abbf7a050a2eb574b759aa8c7e99"
+            },
+            "ensemble_name": "mr_indices_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3": 0.21338842975206612
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/mr_indices_long",
+            "source_ensemble_dir": "vault\\D\\mr_indices_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "79972bc4473c0e2c266c413953b93c5106fde75feb77a4acc342dc57f718d113",
+              "features/ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3.json": "5a27cb3b068a4911f971fba653f554434175320d2ee1254aa08687ccccebfeef"
+            },
+            "ensemble_name": "mr_indices_long_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3": 0.15537190082644628
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/mr_indices_long_long",
+            "source_ensemble_dir": "vault\\D\\mr_indices_long_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "6bf7c616484a8a5cadd55c940ebf6254d25faa8173b9172e66d0fd4039406abc",
+              "features/rebalancing_signal_D_crossTickers_TLT.json": "93e87d1550f17b0ae9205a5a305ac0df02770c53eedbbb18900e87f1447b3228"
+            },
+            "ensemble_name": "rebalancing_es_tlt_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt": 0.4968595041322314
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/rebalancing_es_tlt_long",
+            "source_ensemble_dir": "vault\\D\\rebalancing_es_tlt_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "92bc7003737c3d0c25270b32c286b01970203ec0d661ee8409fae527ed930312",
+              "features/rebalancing_cross_signal_D_crossTickers_ES.json": "6cf5b69760b0f4651c35891385cdaf4ad82868e41bd09439bdeaf64df6620d46"
+            },
+            "ensemble_name": "rebalancing_tlt_es_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": false,
+              "model_exposure_fractions": null,
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": null,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/rebalancing_tlt_es_long",
+            "source_ensemble_dir": "vault\\D\\rebalancing_tlt_es_long",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "7a33465578ce92f526dea4fbd4df72b14f635f97e048b816563b5ea201172588",
+              "features/seasonalbondsmonth_signal_D_longDays_7_mode_short_then_long_shortDays_7.json": "9dfb198f120449a8544cfed28caa2ab04f771e602e97bd072bc83b01f1fa8cde"
+            },
+            "ensemble_name": "seasonal_bonds_long_short",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": false,
+              "model_exposure_fractions": null,
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": null,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/seasonal_bonds_long_short",
+            "source_ensemble_dir": "vault\\D\\seasonal_bonds_long_short",
+            "timeframe": "D"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "80767500c79c3e9a668db5ccda21b6222d03750a41b70bda77313a39cb880b05",
+              "features/seasonalindiceseof_signal_D_smaPeriod_200.json": "503f590f462e1dec3fd601a72ac552042b21875ab054963317d2e90be887093d"
+            },
+            "ensemble_name": "seasonal_indices_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3": 0.32859504132231404
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/D/seasonal_indices_long",
+            "source_ensemble_dir": "vault\\D\\seasonal_indices_long",
+            "timeframe": "D"
+          }
+        ],
+        "fitted_state": {
+          "idm": null,
+          "instruments": null,
+          "is_fitted": true,
+          "mean_return_correlation": null
+        }
+      },
+      {
+        "config": {
+          "idm_max": 2.5,
+          "instrument_weights": null,
+          "max_position_pct": 3.5,
+          "sector_allocation_config_path": null,
+          "target_volatility": 0.15,
+          "trading_timeframe": "M",
+          "use_cache": true
+        },
+        "ensembles": [
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "f2cd1c2dc94b11843a58249cdd966e913287f213cd5daea4de4ea9aa4fd121e0",
+              "features/buy_hold_signal_M.json": "b4a75ab3789c652b8cfd9eb2e80ff9e701c9c5dd86cd2edb3c1ba53e52586df3"
+            },
+            "ensemble_name": "buy_hold_long",
+            "fitted_state": {
+              "base_tf": "M",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "buy_hold_signal_M::rule_based_3": 1.0
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/M/buy_hold_long",
+            "source_ensemble_dir": "vault\\M\\buy_hold_long",
+            "timeframe": "M"
+          }
+        ],
+        "fitted_state": {
+          "idm": null,
+          "instruments": null,
+          "is_fitted": true,
+          "mean_return_correlation": null
+        }
+      }
+    ],
+    "weight_layer": {
+      "class_name": "ClusteredWeightLayer",
+      "config": {
+        "fdm_max": 2.0,
+        "group_weight_cap": 1.0,
+        "rho_cut": 0.7,
+        "weighting_method": "equal_signal"
+      },
+      "state": {
+        "cluster_assignments": {
+          "__GLOBAL__": {
+            "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": "cluster_1",
+            "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5": "cluster_2",
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_3",
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_4",
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_5",
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": "cluster_6",
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_7",
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_8",
+            "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_9"
+          }
+        },
+        "cluster_metrics": {
+          "__GLOBAL__": {
+            "cluster_1": {
+              "avg_positive_corr": 0.07377718950852184,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_2": {
+              "avg_positive_corr": 0.06931289720818115,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_3": {
+              "avg_positive_corr": 0.1315463221722572,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_4": {
+              "avg_positive_corr": 0.23913265295809868,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_5": {
+              "avg_positive_corr": 0.10112518240852399,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_6": {
+              "avg_positive_corr": 0.096688199960793,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_7": {
+              "avg_positive_corr": 0.12414125722387685,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_8": {
+              "avg_positive_corr": 0.18997823105541184,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            },
+            "cluster_9": {
+              "avg_positive_corr": 0.20126706060520444,
+              "member_count": 1,
+              "score": null,
+              "ulcer_index": null
+            }
+          }
+        },
+        "cluster_weights": {
+          "__GLOBAL__": {
+            "cluster_1": 0.1111111111111111,
+            "cluster_2": 0.1111111111111111,
+            "cluster_3": 0.1111111111111111,
+            "cluster_4": 0.1111111111111111,
+            "cluster_5": 0.1111111111111111,
+            "cluster_6": 0.1111111111111111,
+            "cluster_7": 0.1111111111111111,
+            "cluster_8": 0.1111111111111111,
+            "cluster_9": 0.1111111111111111
+          }
+        },
+        "fdm": {
+          "__GLOBAL__": 2.0
+        },
+        "is_fitted": true,
+        "mean_cluster_correlation": {
+          "__GLOBAL__": 0.13632988812231878
+        },
+        "mean_signal_correlation": {
+          "__GLOBAL__": 0.13632988812231878
+        },
+        "model_names": {
+          "__GLOBAL__": [
+            "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2",
+            "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5",
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0"
+          ]
+        },
+        "weights": {
+          "__GLOBAL__": {
+            "ES::D::rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt__D::ensemble_2": 0.1111111111111111,
+            "ES::D::seasonalindiceseof_signal_D_smaPeriod_200::rule_based_3__D::ensemble_5": 0.1111111111111111,
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.1111111111111111,
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": 0.1111111111111111,
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.1111111111111111,
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111,
+            "RTY::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.1111111111111111
+          }
+        }
+      }
+    }
+  },
+  "portfolio_id": "7027d7aec93519027866e726a8347d8c9838066ebdf05b4475ead7ca8d5eda3b",
+  "schema_version": "1.0"
+}

@@ -27,10 +27,9 @@ alwaysApply: true
 *   **Pattern Matching:** Use the `match`/`case` statement (Python 3.10+) to handle these types. This effectively replaces the Visitor pattern and ensures structural correctness.
 
 ## 5. Development Environment
-*   **Virtual Environment:** Always use the project's virtual environment located at `venv/bin/activate`.
-    *   When running Python commands, scripts, or tests, ensure the venv is activated.
-    *   Use `source venv/bin/activate` to activate the environment before executing any Python-related operations.
-    *   All dependencies should be installed within this venv, not system-wide.
+*   **Virtual environment:** Use the **single** repo-root venv (`venv` or `.venv`); never create per-worktree venvs. Install dependencies only there, not system-wide.
+*   **Shell commands:** Windows PowerShell uses `.\.venv\Scripts\python.exe` (or `.\venv\Scripts\python.exe`); Linux/macOS use `source venv/bin/activate` (or `.venv`). Prefer `python -m pytest` so tests run without `pytest` on `PATH`.
+*   **Details and copy-paste examples:** `.cursor/rules/005-python-environment.mdc` and `AGENTS.md`.
 
 ## Examples
 

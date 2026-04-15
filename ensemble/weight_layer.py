@@ -1,10 +1,10 @@
-"""Weight layer with equal, inverse-correlation, and HRP allocation modes."""
+"""Weight layer: equal, inverse-correlation, and HRP allocation."""
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from dataclasses import dataclass as _dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -842,7 +842,15 @@ def serialize_weight_layer_state(weight_layer: BaseWeightLayer) -> Dict[str, Any
 def deserialize_weight_layer_state(payload: Dict[str, Any]) -> BaseWeightLayer:
     """Restore a weight layer from ``serialize_weight_layer_state`` payload."""
     config_payload = dict(payload.get("config", {}))
-    config = WeightLayerConfig(**config_payload)
+    known = {f.name for f in fields(WeightLayerConfig)}
+    filtered = {k: v for k, v in config_payload.items() if k in known}
+    if filtered.get("weighting_method") == "optimize_sortino_capped":
+        logger.warning(
+            "deserialize_weight_layer_state: legacy weighting_method "
+            "'optimize_sortino_capped' is no longer supported; using 'hrp_classic'"
+        )
+        filtered["weighting_method"] = "hrp_classic"
+    config = WeightLayerConfig(**filtered)
     restored = WeightLayer(config=config)
     if not isinstance(restored, ClusteredWeightLayer):
         raise TypeError(

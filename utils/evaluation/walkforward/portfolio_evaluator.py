@@ -66,7 +66,7 @@ def _calculate_oos_returns_from_positions(
             f"positions_df is missing required columns for return calculation: {sorted(missing_columns)}"
         )
 
-    from ensemble.portfolio_tester import calculate_strategy_returns_from_positions
+    from ensemble.portfolio_impl.portfolio_tester import calculate_strategy_returns_from_positions
 
     returns = calculate_strategy_returns_from_positions(
         positions_df=positions_df,
@@ -95,10 +95,13 @@ def _normalize_ticker_label(value: object) -> str:
 def _signal_return_series(
     combo_data: pd.DataFrame,
 ) -> pd.Series:
-    signal_column = "signal" if "signal" in combo_data.columns else "feature"
-    signal = combo_data[signal_column]
-    target = combo_data["target"]
-    result = signal.mul(target)
+    if "returns" in combo_data.columns:
+        result = combo_data["returns"].copy()
+    else:
+        signal_column = "signal" if "signal" in combo_data.columns else "feature"
+        signal = combo_data[signal_column]
+        target = combo_data["target"]
+        result = signal.mul(target)
     if not isinstance(result.index, pd.DatetimeIndex):
         result.index = pd.DatetimeIndex(pd.to_datetime(result.index, utc=False))
     if result.index.duplicated().any():

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from utils.cache.central_cache import CentralCacheStore
+from utils.cache.runtime.central_cache import CentralCacheStore
 
 
 @pytest.fixture

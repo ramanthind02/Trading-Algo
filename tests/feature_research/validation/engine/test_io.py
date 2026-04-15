@@ -12,6 +12,7 @@ from utils.evaluation.walkforward.io import (
     write_walkforward_artifacts,
 )
 from utils.evaluation.walkforward.runner import WalkforwardRunReport
+from utils.evaluation.walkforward.selected_params_codec import serialize_selected_params
 
 
 def _build_report() -> WalkforwardRunReport:
@@ -43,52 +44,10 @@ def _build_report() -> WalkforwardRunReport:
             "selected_feature": ["x=2", "x=2"],
             "selected_raw_objective": [0.6, 0.7],
             "selected_smoothed_objective": [0.65, 0.75],
-            "top_k_features": ['["x=2","x=1"]', '["x=2","x=1"]'],
-        }
-    )
-    return WalkforwardRunReport(
-        folds_df=folds_df,
-        fold_scores_df=fold_scores_df,
-        selection_summary_df=selection_summary_df,
-        portfolio_results_df=pd.DataFrame(
-            columns=["fold_id", "oos_portfolio_sharpe", "n_params_selected", "error"]
-        ),
-    )
-
-
-def _build_enhanced_report() -> WalkforwardRunReport:
-    """WalkforwardRunReport with enhanced selection columns in fold_scores_df."""
-    folds_df = pd.DataFrame(
-        {
-            "fold_id": [0],
-            "train_start": [pd.Timestamp("2020-01-01")],
-            "train_end": [pd.Timestamp("2020-01-31")],
-            "test_start": [pd.Timestamp("2020-02-01")],
-            "test_end": [pd.Timestamp("2020-02-29")],
-            "train_samples": [31],
-            "test_samples": [29],
-        }
-    )
-    fold_scores_df = pd.DataFrame(
-        {
-            "fold_id": [0, 0, 0],
-            "param_label": ["x=1", "x=2", "x=3"],
-            "raw_objective": [0.4, 0.6, 0.5],
-            "oos_objective": [0.3, 0.7, 0.65],
-            "smoothed_objective": [0.45, 0.65, 0.62],
-            "rank": [3, 1, 2],
-            "selected_feature": [False, True, False],
-            "trade_frequency": [0.6, 0.7, 0.65],
-            "selected_in_top_k": [False, True, True],
-        }
-    )
-    selection_summary_df = pd.DataFrame(
-        {
-            "fold_id": [0],
-            "selected_feature": ["x=2"],
-            "selected_raw_objective": [0.6],
-            "selected_smoothed_objective": [0.65],
-            "top_k_features": ['["x=2","x=1"]'],
+            "selected_params_json": [
+                serialize_selected_params({"x": 2}),
+                serialize_selected_params({"x": 2}),
+            ],
         }
     )
     return WalkforwardRunReport(
@@ -199,11 +158,11 @@ def test_write_walkforward_artifacts_rejects_blank_identifiers(
         )
 
 
-def test_build_selected_params_detailed_uses_selected_in_top_k_rows() -> None:
-    """Unit test: _build_selected_params_detailed includes rows where selected_in_top_k is True."""
-    report = _build_enhanced_report()
+def test_build_selected_params_detailed_uses_selected_feature_rows() -> None:
+    """Rows with ``selected_feature`` True appear in the detailed export."""
+    report = _build_report()
     detailed = _build_selected_params_detailed(report, {})
-    assert set(detailed["param_label"]) == {"x=2", "x=3"}
+    assert set(detailed["param_label"]) == {"x=2"}
 
 
 def test_write_walkforward_artifacts_includes_research_context_and_last_fold_test_end(

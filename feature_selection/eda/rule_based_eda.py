@@ -4,14 +4,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from feature_selection.eda.common_eda import align_feature_target, sharpe_from_mean_vol
 from feature_selection.eda.eda_dataclasses import (
     BootstrapCI,
     BootstrapCIResults,
     LevelStats,
     PerLevelStats,
 )
-
-_VOL_THRESHOLD = 1e-10
 
 
 def _validate_aligned_index(feature: pd.Series, target: pd.Series) -> None:
@@ -23,25 +22,51 @@ def _validate_aligned_index(feature: pd.Series, target: pd.Series) -> None:
 def _validate_feature_levels(feature: pd.Series, levels: list[int]) -> None:
     """Raise ValueError when feature contains values outside levels."""
     allowed = set(levels)
-    observed = set(feature.dropna().unique())
+    observed = {int(round(float(x))) for x in feature.dropna().unique()}
     unexpected = sorted(observed - allowed)
     if unexpected:
         raise ValueError(f"unexpected feature level values: {unexpected}")
 
 
+def infer_discrete_feature_levels(feature: pd.Series) -> list[int]:
+    """Integer levels present in *feature* (NaNs dropped), sorted ascending.
+
+    Used for stacked / multi-step discrete nodes (e.g. BasicBreakout, BasicMR) whose
+    outputs are not confined to ``{-1, 0, 1}``.
+    """
+    return sorted({int(round(float(x))) for x in feature.dropna().unique()})
+
+
 def compute_per_level_stats(
     feature: pd.Series,
     target: pd.Series,
-    levels: list[int] = [-1, 0, 1],
+    levels: list[int] | None = None,
 ) -> PerLevelStats:
-    """Compute per-level mean, volatility, Sharpe, and reliability metadata."""
+    """Compute per-level mean, volatility, Sharpe, and reliability metadata.
+
+    Uses **strategy** returns ``feature * target`` per row (same as in-sample / OOS
+    ``signal * target``), not raw forward returns. Short legs (``feature == -1``)
+    therefore show P&L consistent with cumulative equity, not inverted market drift.
+
+    Parameters
+    ----------
+    levels
+        Allowed discrete levels. If ``None``, levels are inferred from *feature*
+        (see :func:`infer_discrete_feature_levels`). Pass ``[-1, 0, 1]`` explicitly
+        when you require ternary-only validation.
+    """
     _validate_aligned_index(feature, target)
-    _validate_feature_levels(feature, levels)
-    aligned = pd.DataFrame({"f": feature, "t": target}).dropna()
+    resolved = infer_discrete_feature_levels(feature) if levels is None else list(levels)
+    _validate_feature_levels(feature, resolved)
+    aligned = align_feature_target(feature, target)
+    strategy_returns = aligned["f"].astype(float) * aligned["t"].astype(float)
 
     stats_by_level: dict[int, LevelStats] = {
-        level: _compute_single_level_stats(level=level, returns=aligned.loc[aligned["f"] == level, "t"])
-        for level in levels
+        level: _compute_single_level_stats(
+            level=level,
+            returns=strategy_returns.loc[aligned["f"].astype(float) == float(level)],
+        )
+        for level in resolved
     }
     return PerLevelStats(stats_by_level=stats_by_level)
 
@@ -51,11 +76,7 @@ def _compute_single_level_stats(level: int, returns: pd.Series) -> LevelStats:
     sample_count = int(len(returns))
     mean_return = float(returns.mean()) if sample_count > 0 else float("nan")
     volatility = float(returns.std()) if sample_count > 0 else float("nan")
-    sharpe = (
-        float("nan")
-        if np.isnan(volatility) or abs(volatility) <= _VOL_THRESHOLD
-        else float(mean_return / volatility)
-    )
+    sharpe = sharpe_from_mean_vol(mean_return, volatility)
     return LevelStats(
         level=level,
         mean_return=mean_return,

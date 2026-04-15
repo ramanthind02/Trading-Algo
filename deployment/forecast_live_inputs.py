@@ -101,7 +101,7 @@ class ForecastLiveInputs:
 
         self.candle_buffers[key].append(candle)
         try:
-            from utils.cache.central_cache import CentralCacheStore
+            from utils.cache.runtime.central_cache import CentralCacheStore
 
             cache = CentralCacheStore.get_instance()
             cache.upsert_candles(
@@ -186,7 +186,7 @@ class ForecastLiveInputs:
         if not cross:
             return
 
-        from utils.cache.central_cache import CentralCacheStore
+        from utils.cache.runtime.central_cache import CentralCacheStore
 
         ct_store = CentralCacheStore.get_instance()
         for ct_ticker, timeframe in cross:
@@ -235,8 +235,8 @@ class ForecastLiveInputs:
 
     def upsert_cross_ticker_candle(self, ticker: Ticker, timeframe: TimeFrame, candle: Candle) -> None:
         """Insert or replace the latest candle for a cross-ticker in the cache."""
-        from utils.cache.central_cache import CentralCacheStore
-        from utils.cache.central_cache_errors import ArtifactMissingError
+        from utils.cache.runtime.central_cache import CentralCacheStore
+        from utils.cache.runtime.central_cache_errors import ArtifactMissingError
 
         ct_store = CentralCacheStore.get_instance()
         try:
