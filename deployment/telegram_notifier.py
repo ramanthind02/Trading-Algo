@@ -22,31 +22,75 @@ from utils.core.enums import TimeFrame
 
 logger = get_logger(__name__)
 
+# Bot credentials. Prop-firm bot is the legacy default; personal-account bot
+# is a separate bot to keep the two signal streams in different channels.
+_PROP_BOT_TOKEN = "8157808736:AAHhqYe9N_PQ4Ox2Khz-zMbKoytly9ugrGY"
+_PROP_CHAT_ID = "-1002856645393"
+
+# enigma_pa_notifications_bot. chat_id filled in once the user adds the bot
+# to its channel and we read it from getUpdates; overridable via env var.
+_PERSONAL_BOT_TOKEN = "8698079967:AAEXjTkAJcHsh1B88E-dRa-YIQVLuQly6NE"
+_PERSONAL_CHAT_ID = ""
+
+
 class TelegramNotifier:
     """
     Telegram bot for sending forecast notifications.
-    
+
     Formats prediction results and sends them to a Telegram channel.
+    Use :meth:`for_prop_firms` and :meth:`for_personal_account` classmethods
+    to get a notifier bound to the correct bot/channel.
     """
-    
+
     def __init__(self, token: Optional[str] = None, chat_id: Optional[str] = None):
         """
         Initialize Telegram notifier.
-        
+
         Parameters
         ----------
         token : str, optional
-            Telegram bot token (if None, gets from env var)
+            Telegram bot token (if None, falls back to ``TELEGRAM_BOT_TOKEN``
+            env var, then the prop-firm bot default)
         chat_id : str, optional
-            Telegram chat ID (if None, gets from env var)
+            Telegram chat ID (if None, falls back to ``TELEGRAM_CHAT_ID`` env
+            var, then the prop-firm channel default)
         """
-        self.token = token or os.environ.get("TELEGRAM_BOT_TOKEN", "8157808736:AAHhqYe9N_PQ4Ox2Khz-zMbKoytly9ugrGY")
-        self.chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID", "-1002856645393")
-        
+        self.token = token or os.environ.get("TELEGRAM_BOT_TOKEN", _PROP_BOT_TOKEN)
+        self.chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID", _PROP_CHAT_ID)
+
         if not self.token or not self.chat_id:
             logger.warning("Telegram token or chat_id not configured. Messages will be logged only.")
-        
+
         self.base_url = f"https://api.telegram.org/bot{self.token}"
+
+    @classmethod
+    def for_prop_firms(cls) -> "TelegramNotifier":
+        """Notifier bound to the prop-firm signal channel (Enigma Notifications)."""
+        token = os.environ.get("TELEGRAM_PROP_BOT_TOKEN", _PROP_BOT_TOKEN)
+        chat_id = os.environ.get("TELEGRAM_PROP_CHAT_ID", _PROP_CHAT_ID)
+        return cls(token=token, chat_id=chat_id)
+
+    @classmethod
+    def for_personal_account(cls) -> "TelegramNotifier":
+        """Notifier bound to the personal-account signal channel (Enigma PA Notifications).
+
+        The personal chat_id must be configured (via ``TELEGRAM_PERSONAL_CHAT_ID``
+        env var or the ``_PERSONAL_CHAT_ID`` module constant). If unset, the
+        notifier logs rather than sending so we never cross-post into the
+        prop-firm channel by accident.
+        """
+        token = os.environ.get("TELEGRAM_PERSONAL_BOT_TOKEN", _PERSONAL_BOT_TOKEN)
+        chat_id = os.environ.get("TELEGRAM_PERSONAL_CHAT_ID", _PERSONAL_CHAT_ID)
+        instance = cls.__new__(cls)
+        instance.token = token
+        instance.chat_id = chat_id
+        instance.base_url = f"https://api.telegram.org/bot{token}"
+        if not chat_id:
+            logger.warning(
+                "Personal-account chat_id is unset; messages will be logged only. "
+                "Set TELEGRAM_PERSONAL_CHAT_ID to enable sends."
+            )
+        return instance
     
     def send_forecast_update(
         self, 

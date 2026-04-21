@@ -66,6 +66,8 @@ from utils.vault_paths import resolve_vault_root
 # ==============================================================================
 
 DEFAULT_CONFIG_PATH = "configs/live_forecast_config.json"
+DEFAULT_CONFIG_PATH_PROP = "configs/live_forecast_config_prop.json"
+DEFAULT_CONFIG_PATH_PERSONAL = "configs/live_forecast_config_personal.json"
 
 
 # ==============================================================================
@@ -175,6 +177,78 @@ def fetch_historical_candles(
     return df
 
 
+def fetch_partial_daily_candle(
+    client: IBDataClient,
+    ticker: str,
+    instrument_info: Dict,
+    intraday_bar_size: str = "15 mins",
+) -> pd.DataFrame:
+    """Build a synthetic *partial* daily candle for today from intraday bars.
+
+    Used by the personal-account profile which runs before the official daily
+    candle closes. Fetches intraday bars for today only, then aggregates them
+    into a single OHLCV row dated today. O=first, H=max, L=min, C=latest, V=sum.
+
+    Returns a 1-row DataFrame shaped like :func:`fetch_historical_candles`
+    output, or an empty frame if no intraday bars are returned.
+    """
+    contract = _create_contract_from_config(ticker, instrument_info)
+
+    # Ask for "1 D" of intraday bars; IB returns today's session so far when
+    # end_date_time is empty.
+    req_id = client.request_historical_data(
+        contract,
+        end_date_time="",
+        duration="1 D",
+        bar_size=intraday_bar_size,
+        what_to_show="TRADES",
+        use_rth=1,
+        format_date=1,
+        keep_up_to_date=False,
+    )
+    success = client.wait_for_historical_data(req_id, timeout=30.0)
+
+    if not client.historical_bars:
+        if not success:
+            print(f"  Warning: Timeout or error fetching intraday bars for {ticker}")
+        else:
+            print(f"  Warning: No intraday bars for {ticker}")
+        return pd.DataFrame()
+
+    rows = []
+    for bar in client.historical_bars:
+        rows.append({
+            "dt": pd.to_datetime(bar.date),
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": int(bar.volume),
+        })
+    bars_df = pd.DataFrame(rows).sort_values("dt").reset_index(drop=True)
+    if bars_df.empty:
+        return pd.DataFrame()
+
+    # Aggregate into one synthetic daily bar dated today (date of latest bar).
+    latest_date = bars_df["dt"].iloc[-1].normalize()
+    synthetic = pd.DataFrame([{
+        "datetime": latest_date,
+        "open": bars_df["open"].iloc[0],
+        "high": bars_df["high"].max(),
+        "low": bars_df["low"].min(),
+        "close": bars_df["close"].iloc[-1],
+        "volume": int(bars_df["volume"].sum()),
+        "ticker": ticker,
+        "timeframe": TimeFrame.D,
+    }])
+    print(
+        f"  {ticker}: synthesized partial daily from {len(bars_df)} × {intraday_bar_size} bars "
+        f"(O {synthetic['open'].iloc[0]:.2f}, H {synthetic['high'].iloc[0]:.2f}, "
+        f"L {synthetic['low'].iloc[0]:.2f}, C {synthetic['close'].iloc[0]:.2f})"
+    )
+    return synthetic
+
+
 def resample_daily_to_monthly(daily_df: pd.DataFrame) -> pd.DataFrame:
     """Resample daily candles to monthly OHLCV candles, per ticker."""
     results = []
@@ -246,20 +320,35 @@ def fetch_current_prices(
 # ==============================================================================
 
 def _load_ensembles_for_tf(vault_root: str, tf: TimeFrame) -> list:
-    """Load all ensembles from ``vault_root/{tf.name}/`` (flat layout under each TF)."""
+    """Load all ensembles from ``vault_root/{tf.name}/``.
+
+    Supports both the preferred nested layout
+    (``vault_root/{tf}/{weight_group}/{ensemble}/``) and the legacy flat
+    layout (``vault_root/{tf}/{ensemble}/``).
+    """
+    from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
+
     tf_dir = Path(vault_root) / tf.name
     if not tf_dir.exists():
         return []
+
     ensembles = []
-    for ens_dir in sorted(tf_dir.iterdir()):
-        if not ens_dir.is_dir():
+    for child in sorted(tf_dir.iterdir()):
+        if not child.is_dir():
             continue
-        try:
-            ens = load_ensemble_from_vault(str(ens_dir))
-            ensembles.append(ens)
-            print(f"    Loaded: {ens_dir.name}")
-        except Exception as e:
-            print(f"    Warning: Skipping {ens_dir.name}: {e}")
+        if child.name in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES:
+            # Nested: iterate ensembles under this weight group.
+            candidates = sorted(d for d in child.iterdir() if d.is_dir())
+        else:
+            # Legacy flat: ``child`` is the ensemble leaf itself.
+            candidates = [child]
+        for ens_dir in candidates:
+            try:
+                ens = load_ensemble_from_vault(str(ens_dir))
+                ensembles.append(ens)
+                print(f"    Loaded: {ens_dir.name}")
+            except Exception as e:
+                print(f"    Warning: Skipping {ens_dir.name}: {e}")
     return ensembles
 
 
@@ -466,14 +555,25 @@ def refresh_bias_caches(
     if earliest_start is None or latest_end is None:
         raise ValueError("No candle coverage found in cache. Run bootstrap first.")
 
-    vault_dirs = []
+    # Discover ensemble directories, supporting both the nested weight-hierarchy
+    # layout (vault/<TF>/<weight_group>/<ensemble>/) and the legacy flat layout
+    # (vault/<TF>/<ensemble>/).
+    from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
+
+    vault_dirs: List[str] = []
     for tf_name in ["D", "M"]:
         tf_dir = Path(vault_root) / tf_name
         if not tf_dir.exists():
             continue
-        for ens_dir in sorted(tf_dir.iterdir()):
-            if ens_dir.is_dir():
-                vault_dirs.append(str(ens_dir))
+        for child in sorted(tf_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            if child.name in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES:
+                for ens_dir in sorted(child.iterdir()):
+                    if ens_dir.is_dir():
+                        vault_dirs.append(str(ens_dir))
+            else:
+                vault_dirs.append(str(child))
 
     if not vault_dirs:
         raise ValueError(f"No vault ensembles found in {vault_root}")
@@ -594,6 +694,80 @@ def compute_fetch_lookback(
 # POSITION SIZING
 # ==============================================================================
 
+# Futures contract specifications: CME/CBOT/COMEX micro contracts.
+# point_value: dollar P&L per 1.00 point move per micro contract.
+# For TLT (bond ETF), we map to ZN (10Y Treasury Note future) as the closest
+# liquid futures proxy; ZN has no micro variant, so we use the full contract.
+FUTURES_CONTRACT_SPECS: Dict[str, Dict[str, Any]] = {
+    "ES":  {"micro": "MES", "mini": "ES",  "micro_point_value": 5.0,    "mini_point_value": 50.0,  "exchange": "CME"},
+    "NQ":  {"micro": "MNQ", "mini": "NQ",  "micro_point_value": 2.0,    "mini_point_value": 20.0,  "exchange": "CME"},
+    "YM":  {"micro": "MYM", "mini": "YM",  "micro_point_value": 0.5,    "mini_point_value": 5.0,   "exchange": "CBOT"},
+    "RTY": {"micro": "M2K", "mini": "RTY", "micro_point_value": 5.0,    "mini_point_value": 50.0,  "exchange": "CME"},
+    "GC":  {"micro": "MGC", "mini": "GC",  "micro_point_value": 10.0,   "mini_point_value": 100.0, "exchange": "COMEX"},
+    "TLT": {"micro": "ZN",  "mini": "ZN",  "micro_point_value": 1000.0, "mini_point_value": 1000.0, "exchange": "CBOT"},
+}
+
+
+def calculate_futures_contracts(
+    positions_df: pd.DataFrame,
+    prices: Dict[str, float],
+    capital_usd: float,
+) -> pd.DataFrame:
+    """Convert position fractions to micro futures contract quantities.
+
+    ``notional_per_contract = price * micro_point_value``.
+    ``contracts_fractional = target_dollars / notional_per_contract``.
+    ``contracts_whole = round(contracts_fractional)``.
+
+    Returns a DataFrame with both the exact fractional value (for transparency)
+    and the rounded whole integer (for execution).
+    """
+    results = []
+    latest = positions_df.sort_values("datetime").groupby("ticker").last().reset_index()
+
+    for _, row in latest.iterrows():
+        ticker = row["ticker"]
+        ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
+
+        spec = FUTURES_CONTRACT_SPECS.get(ticker_str)
+        if spec is None:
+            continue
+        if ticker_str not in prices:
+            continue
+
+        forecast_score = row.get("forecast_score", 0.0)
+        position_fraction = row.get("position_fraction", 0.0)
+        futures_price = prices[ticker_str]
+        point_value = spec["micro_point_value"]
+        contract_symbol = spec["micro"]
+
+        notional_per_contract = futures_price * point_value
+        target_dollars = position_fraction * capital_usd
+        contracts_fractional = (
+            target_dollars / notional_per_contract if notional_per_contract > 0 else 0.0
+        )
+        contracts_whole = int(round(contracts_fractional))
+        actual_notional = contracts_whole * notional_per_contract
+        actual_pct = (actual_notional / capital_usd * 100) if capital_usd > 0 else 0.0
+
+        results.append({
+            "ticker": ticker_str,
+            "contract_symbol": contract_symbol,
+            "forecast": forecast_score,
+            "position_pct": position_fraction * 100,
+            "target_dollars": target_dollars,
+            "futures_price": futures_price,
+            "point_value": point_value,
+            "notional_per_contract": notional_per_contract,
+            "contracts_fractional": contracts_fractional,
+            "contracts_whole": contracts_whole,
+            "actual_notional": actual_notional,
+            "actual_pct": actual_pct,
+        })
+
+    return pd.DataFrame(results)
+
+
 def calculate_etf_shares(
     positions_df: pd.DataFrame,
     prices: Dict[str, float],
@@ -668,21 +842,39 @@ def calculate_etf_shares(
 # OUTPUT FORMATTING
 # ==============================================================================
 
+def _strength_label(forecast: float) -> str:
+    if forecast >= 1.5:
+        return "Strong Bull"
+    if forecast >= 0.5:
+        return "Bullish"
+    if forecast >= 0:
+        return "Weak Bull"
+    if forecast >= -0.5:
+        return "Weak Bear"
+    if forecast >= -1.5:
+        return "Bearish"
+    return "Strong Bear"
+
+
 def format_console_output(
     forecasts_df: pd.DataFrame,
     shares_df: pd.DataFrame,
-    capital: float
+    capital: float,
+    profile: str = "prop",
 ) -> str:
-    """Format results for console display."""
+    """Format results for console display (profile-aware: futures vs ETFs)."""
     lines = []
     lines.append("=" * 70)
-    lines.append(f"ENIGMA ALGOS FORECAST - {datetime.now().strftime('%Y-%m-%d %H:%M PST')}")
+    title = "PROP (MICRO FUTURES)" if profile == "prop" else "PERSONAL (ETFs)"
+    lines.append(
+        f"ENIGMA ALGOS FORECAST -- {title} -- "
+        f"{datetime.now().strftime('%Y-%m-%d %H:%M PST')}"
+    )
     lines.append("=" * 70)
     lines.append("")
     lines.append(f"Account Capital: ${capital:,.2f} USD")
     lines.append("")
 
-    # Forecasts section with interpretation
     lines.append("FORECASTS & SIGNALS:")
     lines.append(f"  {'Ticker':<6} {'Forecast':>10} {'Target %':>10}   {'Interpretation':<15}")
     lines.append("  " + "-" * 50)
@@ -690,121 +882,136 @@ def format_console_output(
         forecast = row["forecast"]
         position_pct = row["position_pct"]
         sign = "+" if forecast >= 0 else ""
-
-        # Interpret forecast
-        if forecast >= 1.5:
-            interp = "Strong Bullish"
-        elif forecast >= 0.5:
-            interp = "Bullish"
-        elif forecast >= 0:
-            interp = "Weak Bullish"
-        elif forecast >= -0.5:
-            interp = "Weak Bearish"
-        elif forecast >= -1.5:
-            interp = "Bearish"
-        else:
-            interp = "Strong Bearish"
-
-        lines.append(f"  {row['ticker']:<6} {sign}{forecast:>9.2f} {sign}{position_pct:>9.1f}%   {interp:<15}")
-    lines.append("")
-
-    # ETF positions section - fractional shares
-    lines.append("ETF POSITIONS (fractional shares for precise allocation):")
-    lines.append(f"  {'Ticker':<6} {'ETF':<5} {'Price':>9} {'Allocate $':>11} {'Shares':>10}")
-    lines.append("  " + "-" * 45)
-
-    total_target = 0
-
-    for _, row in shares_df.iterrows():
-        total_target += row["target_dollars"]
-        sign = "+" if row["target_dollars"] >= 0 else ""
-
         lines.append(
-            f"  {row['ticker']:<6} {row['etf']:<5} ${row['etf_price']:>8.2f} "
-            f"{sign}${abs(row['target_dollars']):>9.2f} {row['shares_fractional']:>10.3f}"
+            f"  {row['ticker']:<6} {sign}{forecast:>9.2f} "
+            f"{sign}{position_pct:>9.1f}%   {_strength_label(forecast):<15}"
         )
-
-    # Totals
-    total_pct = (total_target / capital * 100) if capital > 0 else 0
-    lines.append("  " + "-" * 45)
-    lines.append(
-        f"  {'TOTAL':<6} {'':<5} {'':<9} "
-        f"${total_target:>10.2f} ({total_pct:.1f}%)"
-    )
-
     lines.append("")
-    lines.append("Note: Forecast > 0 means bullish, < 0 means bearish.")
-    lines.append("      Target % can exceed 100% due to diversification multipliers (IDM/FDM).")
-    lines.append("=" * 70)
 
+    total_target = 0.0
+    if profile == "prop":
+        lines.append("FUTURES POSITIONS (micro contracts):")
+        lines.append(
+            f"  {'Ticker':<6} {'Contract':<8} {'Price':>10} {'Allocate $':>12} "
+            f"{'Fractional':>11} {'Whole':>7}"
+        )
+        lines.append("  " + "-" * 60)
+        for _, row in shares_df.iterrows():
+            total_target += row["target_dollars"]
+            dollars = row["target_dollars"]
+            dollars_sign = "+" if dollars >= 0 else "-"
+            frac_sign = "+" if row["contracts_fractional"] >= 0 else "-"
+            lines.append(
+                f"  {row['ticker']:<6} {row['contract_symbol']:<8} "
+                f"${row['futures_price']:>9,.2f} "
+                f"{dollars_sign}${abs(dollars):>10,.2f} "
+                f"{frac_sign}{abs(row['contracts_fractional']):>10.3f} "
+                f"{row['contracts_whole']:>+7d}"
+            )
+        total_pct = (total_target / capital * 100) if capital > 0 else 0
+        lines.append("  " + "-" * 60)
+        total_sign = "+" if total_target >= 0 else "-"
+        lines.append(
+            f"  {'TOTAL':<6} {'':<8} {'':<10} "
+            f"{total_sign}${abs(total_target):>10,.2f} ({total_pct:>+6.1f}%)"
+        )
+        lines.append("")
+        lines.append("Note: Forecast > 0 = bullish, < 0 = bearish.")
+        lines.append("      Fractional = target sizing before rounding; Whole = what to trade.")
+        lines.append("      Target % can exceed 100% due to diversification multipliers.")
+    else:
+        lines.append("ETF POSITIONS (fractional shares):")
+        lines.append(
+            f"  {'Ticker':<6} {'ETF':<5} {'Price':>9} {'Allocate $':>11} {'Shares':>10}"
+        )
+        lines.append("  " + "-" * 50)
+        for _, row in shares_df.iterrows():
+            total_target += row["target_dollars"]
+            sign = "+" if row["target_dollars"] >= 0 else ""
+            lines.append(
+                f"  {row['ticker']:<6} {row['etf']:<5} ${row['etf_price']:>8.2f} "
+                f"{sign}${abs(row['target_dollars']):>9.2f} {row['shares_fractional']:>10.3f}"
+            )
+        total_pct = (total_target / capital * 100) if capital > 0 else 0
+        lines.append("  " + "-" * 50)
+        lines.append(
+            f"  {'TOTAL':<6} {'':<5} {'':<9} "
+            f"${total_target:>10.2f} ({total_pct:.1f}%)"
+        )
+        lines.append("")
+        lines.append("Note: Forecast > 0 = bullish, < 0 = bearish. TWS supports fractional shares")
+        lines.append("      during RTH (9:30 AM - 4:00 PM ET).")
+
+    lines.append("=" * 70)
     return "\n".join(lines)
 
 
 def format_telegram_message(
     shares_df: pd.DataFrame,
-    capital: float
+    capital: float,
+    profile: str = "prop",
 ) -> str:
-    """Format results for Telegram notification."""
+    """Format results for Telegram notification (profile-aware)."""
     lines = []
-    lines.append("*ENIGMA ALGOS FORECAST*")
+    heading = (
+        "*ENIGMA ALGOS FORECAST -- PROP*"
+        if profile == "prop"
+        else "*ENIGMA ALGOS FORECAST -- PERSONAL*"
+    )
+    lines.append(heading)
     lines.append(f"_{datetime.now().strftime('%Y-%m-%d %H:%M PST')}_")
     lines.append("")
     lines.append(f"Capital: ${capital:,.2f}")
     lines.append("")
 
-    # Forecast explanation
     lines.append("*SIGNALS* (forecast > 0 = bullish)")
     lines.append("```")
     lines.append(f"{'Ticker':<6} {'Signal':>8} {'Strength':<12}")
     lines.append("-" * 28)
-
     for _, row in shares_df.iterrows():
-        forecast = row["forecast"]
-        ticker = row["ticker"]
-
-        # Interpret forecast strength
-        if forecast >= 1.5:
-            strength = "Strong Bull"
-        elif forecast >= 0.5:
-            strength = "Bullish"
-        elif forecast >= 0:
-            strength = "Weak Bull"
-        elif forecast >= -0.5:
-            strength = "Weak Bear"
-        elif forecast >= -1.5:
-            strength = "Bearish"
-        else:
-            strength = "Strong Bear"
-
-        lines.append(f"{ticker:<6} {forecast:>+8.2f} {strength:<12}")
-
+        lines.append(
+            f"{row['ticker']:<6} {row['forecast']:>+8.2f} {_strength_label(row['forecast']):<12}"
+        )
     lines.append("```")
     lines.append("")
 
-    # Position sizing
-    lines.append("*POSITIONS* (fractional shares)")
-    lines.append("```")
-    lines.append(f"{'ETF':<5} {'Price':>9} {'Dollars':>8} {'Shares':>7}")
-    lines.append("-" * 33)
-
-    total_dollars = 0
-
-    for _, row in shares_df.iterrows():
-        etf = row["etf"]
-        price = row["etf_price"]
-        dollars = row["target_dollars"]
-        shares = row["shares_fractional"]
-        total_dollars += dollars
-
-        price_str = f"${price:.2f}"
-        dollars_str = f"${abs(dollars):.0f}" if dollars >= 0 else f"-${abs(dollars):.0f}"
-        lines.append(f"{etf:<5} {price_str:>9} {dollars_str:>8} {shares:>7.2f}")
-
-    lines.append("-" * 33)
-    total_pct = (total_dollars / capital * 100) if capital > 0 else 0
-    total_str = f"${total_dollars:.0f}"
-    lines.append(f"{'TOTAL':<5} {'':>9} {total_str:>8} ({total_pct:.0f}%)")
-    lines.append("```")
+    total_dollars = 0.0
+    if profile == "prop":
+        lines.append("*POSITIONS* (micro futures)")
+        lines.append("```")
+        lines.append(f"{'Sym':<4} {'Price':>10} {'Frac':>7} {'Whole':>6}")
+        lines.append("-" * 32)
+        for _, row in shares_df.iterrows():
+            total_dollars += row["target_dollars"]
+            price_str = f"${row['futures_price']:,.2f}"
+            lines.append(
+                f"{row['contract_symbol']:<4} {price_str:>10} "
+                f"{row['contracts_fractional']:>+7.3f} {row['contracts_whole']:>+6d}"
+            )
+        lines.append("-" * 32)
+        total_sign = "+" if total_dollars >= 0 else "-"
+        total_str = f"{total_sign}${abs(total_dollars):,.0f}"
+        total_pct = (total_dollars / capital * 100) if capital > 0 else 0
+        lines.append(f"{'TOTAL':<4} {total_str:>10} {total_pct:>+7.0f}%")
+        lines.append("```")
+    else:
+        lines.append("*POSITIONS* (ETF fractional shares)")
+        lines.append("```")
+        lines.append(f"{'ETF':<5} {'Price':>9} {'Dollars':>8} {'Shares':>7}")
+        lines.append("-" * 33)
+        for _, row in shares_df.iterrows():
+            total_dollars += row["target_dollars"]
+            price_str = f"${row['etf_price']:.2f}"
+            dollars = row["target_dollars"]
+            dollars_str = f"${abs(dollars):.0f}" if dollars >= 0 else f"-${abs(dollars):.0f}"
+            lines.append(
+                f"{row['etf']:<5} {price_str:>9} {dollars_str:>8} {row['shares_fractional']:>7.2f}"
+            )
+        lines.append("-" * 33)
+        total_pct = (total_dollars / capital * 100) if capital > 0 else 0
+        total_str = f"${total_dollars:.0f}"
+        lines.append(f"{'TOTAL':<5} {'':>9} {total_str:>8} ({total_pct:.0f}%)")
+        lines.append("```")
 
     return "\n".join(lines)
 
@@ -816,18 +1023,40 @@ def format_telegram_message(
 def main():
     """Main entry point."""
     # Parse arguments
-    parser = argparse.ArgumentParser(description="TWS Live Forecast Pipeline")
-    parser.add_argument("--config", default=DEFAULT_CONFIG_PATH, help="Path to config file")
+    parser = argparse.ArgumentParser(description="Enigma Live Forecast Pipeline")
+    parser.add_argument(
+        "--profile",
+        choices=["prop", "personal"],
+        default="prop",
+        help=(
+            "Signal profile. 'prop' uses vault/ and sizes micro futures; "
+            "'personal' uses vault_personal/, sizes ETF shares, fetches a "
+            "partial 15-min daily candle for today, and posts to the personal channel."
+        ),
+    )
+    parser.add_argument("--config", default=None, help="Path to config file (profile default if omitted)")
     parser.add_argument("--capital", type=float, help="Override account capital")
     parser.add_argument("--port", type=int, help="Override TWS port (7497=paper, 7496=live)")
     parser.add_argument("--dry-run", action="store_true", help="Print results without sending Telegram")
     args = parser.parse_args()
 
-    # Load configuration
-    config_path = Path(args.config)
-    if not config_path.is_absolute():
-        project_root = Path(__file__).parent.parent
-        config_path = project_root / args.config
+    profile = args.profile
+
+    # Pick config file based on profile (fall back to legacy shared config if
+    # a profile-specific one does not exist yet).
+    project_root = Path(__file__).parent.parent
+    if args.config is not None:
+        config_candidate = Path(args.config)
+        if not config_candidate.is_absolute():
+            config_candidate = project_root / args.config
+        config_path = config_candidate
+    else:
+        profile_default = (
+            DEFAULT_CONFIG_PATH_PROP if profile == "prop" else DEFAULT_CONFIG_PATH_PERSONAL
+        )
+        profile_path = project_root / profile_default
+        legacy_path = project_root / DEFAULT_CONFIG_PATH
+        config_path = profile_path if profile_path.exists() else legacy_path
 
     if not config_path.exists():
         print(f"Error: Config file not found: {config_path}")
@@ -836,14 +1065,26 @@ def main():
     with open(config_path, "r") as f:
         config = json.load(f)
 
+    # Profile-specific vault root override: prop -> vault/, personal -> vault_personal/
+    # unless the config already has an explicit override.
+    if "portfolio" in config and "vault_root" not in config.get("portfolio", {}):
+        config.setdefault("portfolio", {})
+    if profile == "personal":
+        config["portfolio"]["vault_root"] = config["portfolio"].get("vault_root") or "vault_personal"
+    else:
+        config["portfolio"]["vault_root"] = config["portfolio"].get("vault_root") or "vault"
+
     # Apply overrides
     capital = args.capital or config["account"]["capital_usd"]
     port = args.port or config["connection"]["port"]
 
     print("=" * 60)
-    print("TWS Live Forecast Pipeline (Multi-TF)")
+    header = "Prop Firms (futures)" if profile == "prop" else "Personal Account (ETFs)"
+    print(f"Enigma Live Forecast Pipeline -- {header}")
     print("=" * 60)
+    print(f"Profile: {profile}")
     print(f"Config: {config_path}")
+    print(f"Vault: {config['portfolio']['vault_root']}")
     print(f"Capital: ${capital:,.2f}")
     print(f"Port: {port} ({'Paper' if port == 7497 else 'Live' if port == 7496 else 'Custom'})")
     print(f"Dry Run: {args.dry_run}")
@@ -931,6 +1172,43 @@ def main():
         daily_candles = pd.concat(all_candles, ignore_index=True)
         print(f"Total daily candles: {len(daily_candles)} across {daily_candles['ticker'].nunique()} instruments")
 
+        # Personal profile: append a synthetic partial daily candle for today
+        # built from 15-min intraday bars. We run the script before the regular
+        # daily close, so IB's daily bar for today isn't available yet.
+        if profile == "personal":
+            print("\n4b. Fetching partial daily candles (15-min aggregation) for today...")
+            partial_frames = []
+            for ticker in sorted(required_tickers):
+                if ticker not in instruments:
+                    continue
+                partial = fetch_partial_daily_candle(
+                    client,
+                    ticker,
+                    instruments[ticker],
+                    intraday_bar_size="15 mins",
+                )
+                if partial.empty:
+                    continue
+                # Drop any existing row for the same date/ticker so we replace
+                # whatever IB returned with the fresher synthetic bar.
+                partial_date = partial["datetime"].iloc[0]
+                mask = (
+                    (daily_candles["ticker"] == ticker)
+                    & (pd.to_datetime(daily_candles["datetime"]).dt.normalize() == partial_date)
+                )
+                daily_candles = daily_candles.loc[~mask]
+                partial_frames.append(partial)
+            if partial_frames:
+                daily_candles = pd.concat(
+                    [daily_candles] + partial_frames, ignore_index=True
+                ).sort_values(["ticker", "datetime"]).reset_index(drop=True)
+                print(
+                    f"  Appended {len(partial_frames)} partial daily candle(s) dated today. "
+                    f"Total daily candles: {len(daily_candles)}."
+                )
+            else:
+                print("  No partial daily candles synthesized (no intraday bars returned).")
+
         # Step 5: Upsert fetched candles into central cache (+ auto monthly resample)
         print("\n5. Upserting TWS candles into cache...")
         upsert_tws_candles(daily_candles, required_tickers)
@@ -1000,35 +1278,45 @@ def main():
             print(f"  {ticker_str}: forecast_score={forecast:.4f}, position_fraction={position_frac:.4f}")
         print("=" * 60)
 
-        # Step 9: Fetch current ETF prices
-        print("\n9. Fetching current ETF prices...")
-        # Only fetch ETF prices for tickers that appear in positions
+        # Step 9: Position sizing (profile-specific)
         position_tickers = set()
         for _, row in latest.iterrows():
             ticker = row["ticker"]
-            ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
+            ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
             if ticker_str in instruments:
                 position_tickers.add(ticker_str)
 
-        etf_symbols = list({
-            instruments[t]["etf"]
-            for t in position_tickers
-            if t in instruments
-        })
-        prices = fetch_current_prices(client, etf_symbols)
-
-        if not prices:
-            print("ERROR: No ETF prices fetched.")
-            sys.exit(1)
-
-        # Step 10: Calculate ETF shares
-        print("\n10. Calculating ETF positions...")
-        shares_df = calculate_etf_shares(
-            positions_df,
-            prices,
-            capital,
-            instruments
-        )
+        if profile == "prop":
+            # Futures sizing: use last-close futures prices from fetched candles
+            # (no extra TWS round-trip needed) and compute micro contract counts.
+            print("\n9. Using latest futures prices from fetched candles...")
+            futures_prices: Dict[str, float] = {}
+            last_closes = (
+                daily_candles.sort_values("datetime").groupby("ticker")["close"].last()
+            )
+            for ticker_val, close_price in last_closes.items():
+                ticker_str = ticker_val.name if hasattr(ticker_val, "name") else str(ticker_val)
+                futures_prices[ticker_str] = float(close_price)
+                print(f"  {ticker_str}: ${float(close_price):,.2f}")
+            if not futures_prices:
+                print("ERROR: No futures prices available.")
+                sys.exit(1)
+            print("\n10. Calculating futures positions...")
+            shares_df = calculate_futures_contracts(positions_df, futures_prices, capital)
+        else:
+            # ETF sizing: fetch current ETF prices from TWS and compute fractional shares.
+            print("\n9. Fetching current ETF prices...")
+            etf_symbols = list({
+                instruments[t]["etf"]
+                for t in position_tickers
+                if t in instruments
+            })
+            prices = fetch_current_prices(client, etf_symbols)
+            if not prices:
+                print("ERROR: No ETF prices fetched.")
+                sys.exit(1)
+            print("\n10. Calculating ETF positions...")
+            shares_df = calculate_etf_shares(positions_df, prices, capital, instruments)
 
         # Log position sizing calculation
         print("\n" + "=" * 60)
@@ -1045,13 +1333,17 @@ def main():
         print("=" * 60)
 
         # Display results
-        print("\n" + format_console_output(positions_df, shares_df, capital))
+        print("\n" + format_console_output(positions_df, shares_df, capital, profile=profile))
 
-        # Send Telegram notification
+        # Telegram: route to the profile-appropriate bot/channel.
+        notifier = (
+            TelegramNotifier.for_prop_firms()
+            if profile == "prop"
+            else TelegramNotifier.for_personal_account()
+        )
+        message = format_telegram_message(shares_df, capital, profile=profile)
         if not args.dry_run:
-            print("\n11. Sending Telegram notification...")
-            notifier = TelegramNotifier()
-            message = format_telegram_message(shares_df, capital)
+            print(f"\n11. Sending Telegram notification ({profile})...")
             if notifier.send_message(message):
                 print("Telegram notification sent!")
             else:
@@ -1060,7 +1352,7 @@ def main():
             print("\n11. Skipping Telegram (dry-run mode)")
             print("\nTelegram message would be:")
             print("-" * 40)
-            print(format_telegram_message(shares_df, capital))
+            print(message)
             print("-" * 40)
 
     except KeyboardInterrupt:

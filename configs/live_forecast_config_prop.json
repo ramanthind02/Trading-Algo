@@ -1,0 +1,29 @@
+{
+  "_comment": "Prop-firm profile: trades micro futures, reads vault/, posts to prop Telegram channel.",
+  "connection": {
+    "host": "127.0.0.1",
+    "port": 7497,
+    "client_id": 1
+  },
+  "account": {
+    "capital_usd": 25000
+  },
+  "instruments": {
+    "ES":  {"etf": "SPY", "sec_type": "CONTFUT", "exchange": "CME"},
+    "NQ":  {"etf": "QQQ", "sec_type": "CONTFUT", "exchange": "CME"},
+    "YM":  {"etf": "DIA", "sec_type": "CONTFUT", "exchange": "CBOT"},
+    "RTY": {"etf": "IWM", "sec_type": "CONTFUT", "exchange": "CME"},
+    "GC":  {"etf": "GLD", "sec_type": "CONTFUT", "exchange": "COMEX"},
+    "TLT": {"etf": "TLT", "sec_type": "STK",     "exchange": "SMART"}
+  },
+  "portfolio": {
+    "vault_root": "vault",
+    "target_volatility": 0.10,
+    "max_position_pct": 2.5,
+    "idm_max": 2.5
+  },
+  "data": {
+    "min_lookback_days": 10,
+    "max_lookback_days": 365
+  }
+}
