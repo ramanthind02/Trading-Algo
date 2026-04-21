@@ -48,7 +48,7 @@ Prefer the venv interpreter explicitly; `python -m pytest` avoids needing `pytes
 # In-sample research (same as: python -m feature_research.in_sample.run_is)
 .\.venv\Scripts\python.exe -m feature_research.in_sample.run_is
 
-# Feature–vault correlation CSV (runs feature_research OOS once; enable FeatureVaultCorrelationConfig in portfolio_research.config.load_config)
+# Feature–vault correlation CSV (runs feature_research OOS once; enable FeatureVaultCorrelationConfig in portfolio_research.config.load_config; unset vault_root scans prop vault, set Path for vault_personal)
 .\.venv\Scripts\python.exe -m portfolio_research.run_feature_vault_correlation
 ```
 
@@ -88,16 +88,17 @@ This keeps the main branch history linear and readable, with each merge represen
 
 ### Pipeline (data flows left to right)
 
-The pipeline has two levels: a per-timeframe level and a cross-timeframe global level.
+The pipeline has two levels: per-timeframe stacks and a cross-timeframe global combine.
 
 ```
-                                                                     ┌─ forecast_score_D ─┐
-Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → WeightLayer → TFPortfolio (D) ──┤
-                  (nodes/)      (feature_      (ensemble/)           (ensemble/)   (ensemble/)       ├→ GlobalWeightLayer → GlobalPortfolio → PositionSizer
-                                selection/)                                                           │  (cross-TF HRP+FDM)  (ensemble/)       (execution/)
-                                                                     TFPortfolio (W) ── forecast_W ──┤
-                                                                     TFPortfolio (M) ── forecast_M ──┘
+Per TF:  Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → TFPortfolio (D / W / M)
+         (nodes/)          (feature_selection/)      (ensemble/)            (ensemble/portfolio_impl/)
+
+Global:  TFPortfolio forecast streams → WeightLayer (cross-TF) → GlobalPortfolio → PositionSizer
+                                        (ensemble/weight_layer.py)          (ensemble/)        (execution/)
 ```
+
+Non-daily forecasts are forward-filled to a daily grid before `WeightLayer` runs. `WeightLayer` is configured on `GlobalPortfolio` (default `equal_signal`).
 
 **Bias Nodes** (`nodes/`): 50+ technical indicators (RSI, ATR, EWMAC, etc.). Each produces one feature column per instrument. Naming convention: `{module}_{feature}_{timeframe}_{param}_{value}` (e.g., `rsi_signal_D_lookback_14`).
 
@@ -105,13 +106,11 @@ Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → Weigh
 
 **DiversifiedEnsemble** (`ensemble/diversified_ensemble.py`): Owns base models, generates per-model volatility-scaled forecasts. Formula: `F_i = (τ / (σ × √h_i)) × X_i`. Configured via JSON control files.
 
-**WeightLayer** (`ensemble/weight_layer.py`): Combines forecasts using inverse-correlation weights and applies FDM (Forecast Diversification Multiplier): `FDM = min(√(1 / (mean_corr + 0.01)), 2.0)`.
+**WeightLayer** (`ensemble/weight_layer.py`): Combines encoded global forecast streams. Modes include `equal_signal`, `inverse_avg_pairwise_corr`, and manual `hierarchy_equal` (nested tree in `ensemble/weight_hierarchy.py`). Applies FDM (Forecast Diversification Multiplier) from positive-clipped signal correlation: `FDM = min(√(1 / (mean_corr + 0.01)), fdm_max)` (default `fdm_max = 2.0`). Legacy HRP-based weighting methods are no longer valid config.
 
-**TFPortfolio** (`ensemble/portfolio.py`): Per-timeframe portfolio. Applies instrument weights and IDM (Instrument Diversification Multiplier): `IDM = min(√(1 / (mean_corr + 0.01)), 2.5)`. `Portfolio` is a backward-compatible alias for `TFPortfolio`.
+**TFPortfolio** (`ensemble/portfolio.py` / `ensemble/portfolio_impl/tf_portfolio.py`): Per-timeframe portfolio. Applies instrument weights and IDM (Instrument Diversification Multiplier): `IDM = min(√(1 / (mean_corr + 0.01)), 2.5)`. `Portfolio` is a backward-compatible alias for `TFPortfolio`.
 
-**GlobalWeightLayer** (`ensemble/global_weight_layer.py`): Combines per-timeframe `forecast_score` streams using downside HRP across timeframes, applies a cross-TF FDM (same formula, cap 2.0). Non-daily TF streams are forward-filled to a daily grid before combination. Single-TF fallback: weight=1.0, FDM=1.0.
-
-**GlobalPortfolio** (`ensemble/portfolio.py`): Top-level class owning multiple `TFPortfolio` instances and one `GlobalWeightLayer`. Orchestrates fit/predict across all timeframes and produces the final `['ticker', 'datetime', 'forecast_score', 'position_fraction']` output.
+**GlobalPortfolio** (`ensemble/portfolio.py` / `ensemble/portfolio_impl/global_portfolio_impl.py`): Owns multiple `TFPortfolio` instances and the cross-timeframe `WeightLayer`. Orchestrates fit/predict across timeframes and produces the final `['ticker', 'datetime', 'forecast_score', 'position_fraction']` output.
 
 **PositionSizer** (`execution/position_sizer.py`): Converts position fractions to contract quantities: `contracts = (position_fraction × capital) / (price × multiplier × fx_rate)`.
 
@@ -123,7 +122,7 @@ Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → Weigh
 ### Supporting Systems
 
 - **Cache** (`cache/`, `utils/cache_manager.py`): Stores computed bias node outputs per node type
-- **Vault** (`vault/`): Validated feature storage organized by timeframe and ensemble direction, contains feature control files (JSON)
+- **Vault:** default prop tree `vault/`, personal `vault_personal/` (env overrides in `utils/vault_paths.py`; see `docs/library/Vault/vault.md`). Validated feature storage by timeframe under `<vault_root>/D|W|M/`. Working ensembles use a **nested** layout `<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble_leaf>/` (groups: `mean_reversion_indices`, `buy_hold`, `es_tlt`, `seasonal`, `momentum`) so on-disk folders match the manual global weight hierarchy; feature JSONs carry `weight_hierarchy_group`. Legacy flat `<vault_root>/<TF>/<ensemble_leaf>/` is still supported for discovery and cache preflight.
 - **Deployment** (`deployment/`): REST forecast server, production training pipeline, Telegram notifier, MT5 connector
 - **Live Trading**: Interactive Brokers integration via `scripts/tws_live_forecast.py`
 

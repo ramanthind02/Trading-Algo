@@ -1,0 +1,40 @@
+{
+  "feature_name": "rebalancing_signal_D_crossTickers_TLT",
+  "weight_hierarchy_group": "es_tlt",
+  "created_at": "2026-03-20T15:59:29.478353+00:00",
+  "updated_at": "2026-04-17T22:00:00+00:00",
+  "bias_node_spec": {
+    "module_name": "rebalancing",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "cross_tickers": [
+        "TLT"
+      ]
+    }
+  },
+  "tickers": [
+    "ES"
+  ],
+  "base_models": [
+    {
+      "model_id": "rule_based_3_cross_tickers_tlt",
+      "model_name": "rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt",
+      "strategy": "long",
+      "model_type": "signed_signal",
+      "feature_column": "rebalancing_signal_D_crossTickers_TLT",
+      "bias_node_spec": {
+        "module_name": "rebalancing",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "cross_tickers": [
+            "TLT"
+          ]
+        }
+      }
+    }
+  ]
+}

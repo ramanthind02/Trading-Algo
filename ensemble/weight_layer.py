@@ -1,4 +1,4 @@
-"""Weight layer: equal, inverse-correlation, and HRP allocation."""
+"""Weight layer: equal, inverse-correlation, and manual hierarchy allocation."""
 
 from __future__ import annotations
 
@@ -6,23 +6,38 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import asdict, fields
 from dataclasses import dataclass as _dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.cluster.hierarchy import fcluster, leaves_list, linkage as scipy_linkage
-from scipy.spatial.distance import squareform
 from sklearn.covariance import LedoitWolf
+
+from ensemble.weight_hierarchy import (
+    compute_equal_split_weights,
+    resolve_hierarchy_for_fit,
+)
 
 logger = logging.getLogger(__name__)
 
 _WEIGHT_METHODS = {
     "equal_signal",
     "inverse_avg_pairwise_corr",
-    "hrp_cluster_equal",
-    "hrp_classic",
+    "hierarchy_equal",
+    "inverse_corr_hierarchy",
+    "ledoit_wolf_min_corr",
+    "risk_parity_corr",
+    "hierarchy_theme_inv_corr",
+    "hierarchy_theme_ledoit",
+    "ledoit_wolf_hierarchy_within",
 }
-_EPSILON = 1e-12
+
+_LEGACY_REMOVED_METHODS = frozenset(
+    {
+        "hrp_cluster_equal",
+        "hrp_classic",
+        "optimize_sortino_capped",
+    }
+)
 
 
 @_dataclass(frozen=True)
@@ -30,9 +45,9 @@ class WeightLayerConfig:
     """Configuration for the weight layer."""
 
     weighting_method: str = "equal_signal"
-    rho_cut: float = 0.70
     fdm_max: float = 2.0
-    group_weight_cap: float = 0.25
+    hierarchy_spec: Optional[dict[str, object]] = None
+    hierarchy_path: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.weighting_method not in _WEIGHT_METHODS:
@@ -40,14 +55,21 @@ class WeightLayerConfig:
                 f"weighting_method must be one of {sorted(_WEIGHT_METHODS)}, "
                 f"got '{self.weighting_method}'"
             )
-        if not (0.0 <= self.rho_cut <= 1.0):
-            raise ValueError(f"rho_cut must be in [0, 1], got {self.rho_cut}")
         if self.fdm_max <= 0.0:
             raise ValueError(f"fdm_max must be > 0, got {self.fdm_max}")
-        if not (0.0 < self.group_weight_cap <= 1.0):
-            raise ValueError(
-                f"group_weight_cap must be in (0, 1], got {self.group_weight_cap}"
-            )
+        if self.weighting_method in (
+            "hierarchy_equal",
+            "inverse_corr_hierarchy",
+            "hierarchy_theme_inv_corr",
+            "hierarchy_theme_ledoit",
+            "ledoit_wolf_hierarchy_within",
+        ):
+            has_spec = self.hierarchy_spec is not None and len(self.hierarchy_spec) > 0
+            has_path = self.hierarchy_path is not None and str(self.hierarchy_path).strip() != ""
+            if not has_spec and not has_path:
+                raise ValueError(
+                    f"{self.weighting_method} requires a non-empty hierarchy_spec or hierarchy_path"
+                )
 
 
 class BaseWeightLayer(ABC):
@@ -241,7 +263,7 @@ def _pivot_ticker_forecasts(
     return pivot[existing_models].dropna(how="all")
 
 
-def _safe_normalize(weights: pd.Series | np.ndarray, labels: Sequence[str]) -> pd.Series:
+def _safe_normalize(weights: pd.Series | np.ndarray, labels: List[str]) -> pd.Series:
     values = weights.to_numpy(dtype=float) if isinstance(weights, pd.Series) else np.asarray(weights, dtype=float)
     total = float(values.sum())
     if total <= 0.0:
@@ -288,33 +310,6 @@ def _compute_fdm_from_corr_matrix(corr_matrix: pd.DataFrame, fdm_max: float) -> 
     return fdm
 
 
-def _apply_group_weight_cap(weights: np.ndarray, cap: float) -> np.ndarray:
-    n_weights = len(weights)
-    if cap >= 1.0 or n_weights <= 1:
-        return weights
-    if n_weights * cap < 1.0 - 1e-9:
-        return np.ones(n_weights) / n_weights
-
-    clipped = weights.copy()
-    permanently_capped = np.zeros(n_weights, dtype=bool)
-
-    for _ in range(n_weights):
-        over_cap = (~permanently_capped) & (clipped > cap)
-        if not over_cap.any():
-            break
-        surplus = float((clipped[over_cap] - cap).sum())
-        clipped[over_cap] = cap
-        permanently_capped |= over_cap
-        free = ~permanently_capped
-        free_sum = clipped[free].sum()
-        if free_sum <= 0.0:
-            break
-        clipped[free] += surplus * (clipped[free] / free_sum)
-
-    total = clipped.sum()
-    return clipped / total if total > 0.0 else np.ones(n_weights) / n_weights
-
-
 def _covariance_to_correlation(covariance: pd.DataFrame) -> pd.DataFrame:
     std = np.sqrt(np.clip(np.diag(covariance.to_numpy(dtype=float)), 0.0, None))
     scale = np.outer(std, std)
@@ -351,54 +346,7 @@ def _estimate_covariance_and_correlation(
     return covariance, correlation, positive_corr
 
 
-def _build_linkage_matrix(full_corr: pd.DataFrame) -> np.ndarray:
-    dist = np.sqrt(np.clip(0.5 * (1.0 - full_corr.to_numpy(dtype=float)), 0.0, None))
-    np.fill_diagonal(dist, 0.0)
-    condensed = squareform(dist, checks=False)
-    if len(condensed) == 0 or not np.all(np.isfinite(condensed)):
-        raise ValueError("non-finite HRP distance matrix")
-    return scipy_linkage(condensed, method="ward")
-
-
-def _extract_cluster_assignments(
-    model_names: Sequence[str],
-    linkage_matrix: np.ndarray,
-    rho_cut: float,
-) -> Dict[str, str]:
-    if len(model_names) <= 1:
-        return {str(model_names[0]): "cluster_1"} if model_names else {}
-
-    dist_threshold = float(np.sqrt(0.5 * (1.0 - rho_cut)))
-    labels = fcluster(linkage_matrix, dist_threshold, criterion="distance")
-    normalized_labels = {
-        int(raw_label): f"cluster_{idx}"
-        for idx, raw_label in enumerate(sorted(set(labels)), start=1)
-    }
-    return {
-        str(model): normalized_labels[int(label)]
-        for model, label in zip(model_names, labels)
-    }
-
-
-def _build_cluster_forecasts(
-    signal_pivot: pd.DataFrame,
-    cluster_assignments: Dict[str, str],
-) -> pd.DataFrame:
-    clusters = sorted(set(cluster_assignments.values()))
-    cluster_series = {
-        cluster: signal_pivot[
-            [
-                model
-                for model, mapped_cluster in cluster_assignments.items()
-                if mapped_cluster == cluster
-            ]
-        ].mean(axis=1)
-        for cluster in clusters
-    }
-    return pd.DataFrame(cluster_series)
-
-
-def _build_singleton_assignments(model_names: Sequence[str]) -> Dict[str, str]:
+def _build_singleton_assignments(model_names: List[str]) -> Dict[str, str]:
     return {model: f"cluster_{idx}" for idx, model in enumerate(model_names, start=1)}
 
 
@@ -436,98 +384,55 @@ def _average_peer_correlation(corr_matrix: pd.DataFrame, label: str) -> float:
     return float(peers.mean()) if len(peers) > 0 else 0.0
 
 
-def _build_cluster_metrics(
-    cluster_assignments: Dict[str, str],
-    cluster_corr: pd.DataFrame,
+def _group_corr_scores(
+    members: List[str],
+    positive_corr: pd.DataFrame,
     *,
-    include_scores: bool,
-) -> Dict[str, Dict[str, float | int | None]]:
-    clusters = sorted(set(cluster_assignments.values()))
-    metrics: Dict[str, Dict[str, float | int | None]] = {}
-    for cluster in clusters:
-        avg_positive_corr = _average_peer_correlation(cluster_corr, cluster)
-        metrics[cluster] = {
-            "avg_positive_corr": avg_positive_corr,
-            "ulcer_index": None,
-            "score": float(1.0 / (1.0 + avg_positive_corr)) if include_scores else None,
-            "member_count": int(sum(1 for group in cluster_assignments.values() if group == cluster)),
-        }
-    return metrics
+    mode: str,
+) -> np.ndarray:
+    """Per-member score from positive_corr using 'inv_avg' or 'ledoit' penalty."""
+    if mode == "inv_avg":
+        return np.asarray(
+            [1.0 / (1.0 + _average_peer_correlation(positive_corr, m)) for m in members],
+            dtype=float,
+        )
+    # ledoit: 1 / sum of row correlations
+    return np.asarray(
+        [1.0 / max(float(positive_corr.loc[m].sum()), 0.01) if m in positive_corr.index else 1.0
+         for m in members],
+        dtype=float,
+    )
 
 
-def _cluster_corr_from_assignments(
-    signal_pivot: pd.DataFrame,
-    cluster_assignments: Dict[str, str],
-) -> tuple[pd.DataFrame, float]:
-    cluster_forecasts = _build_cluster_forecasts(signal_pivot, cluster_assignments)
-    if cluster_forecasts.empty or len(cluster_forecasts.columns) <= 1:
-        return pd.DataFrame(), 1.0
-    cluster_corr = _positive_clipped_correlation(cluster_forecasts.corr().fillna(0.0))
-    return cluster_corr, _mean_off_diagonal_correlation(cluster_corr)
+def _theme_aggregate_corr(
+    theme_members: Dict[str, List[str]],
+    positive_corr: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build a theme × theme correlation matrix by averaging member signal correlations."""
+    theme_ids = list(theme_members.keys())
+    n = len(theme_ids)
+    mat = np.ones((n, n), dtype=float)
+    for i, ti in enumerate(theme_ids):
+        for j, tj in enumerate(theme_ids):
+            if i == j:
+                continue
+            cross_corrs = [
+                float(positive_corr.loc[a, b])
+                for a in theme_members[ti]
+                for b in theme_members[tj]
+                if a in positive_corr.index and b in positive_corr.columns
+            ]
+            mat[i, j] = float(np.mean(cross_corrs)) if cross_corrs else 0.0
+    return pd.DataFrame(mat, index=theme_ids, columns=theme_ids)
 
 
-def _split_cluster_weights_to_models(
-    model_names: Sequence[str],
-    cluster_assignments: Dict[str, str],
-    cluster_weights: Dict[str, float],
-) -> pd.Series:
-    weights: Dict[str, float] = {}
-    for cluster, cluster_weight in cluster_weights.items():
-        members = [model for model in model_names if cluster_assignments[model] == cluster]
-        per_model = cluster_weight / len(members) if members else 0.0
-        for model in members:
-            weights[model] = per_model
-    return _safe_normalize(pd.Series(weights, dtype=float), list(model_names))
-
-
-def _inverse_variance_weights(covariance: pd.DataFrame) -> pd.Series:
-    labels = list(covariance.index)
-    diag = np.diag(covariance.to_numpy(dtype=float))
-    inv_diag = np.where(diag > _EPSILON, 1.0 / diag, 0.0)
-    if float(inv_diag.sum()) <= 0.0:
-        return _safe_normalize(np.ones(len(labels), dtype=float), labels)
-    return _safe_normalize(inv_diag, labels)
-
-
-def _cluster_variance(covariance: pd.DataFrame) -> float:
-    ivp = _inverse_variance_weights(covariance)
-    weights = ivp.to_numpy(dtype=float)
-    cov_values = covariance.to_numpy(dtype=float)
-    return float(weights @ cov_values @ weights)
-
-
-def _hrp_recursive_weights(
-    covariance: pd.DataFrame,
-    ordered_models: Sequence[str],
-) -> pd.Series:
-    if len(ordered_models) == 1:
-        return pd.Series({ordered_models[0]: 1.0}, dtype=float)
-
-    split_idx = len(ordered_models) // 2
-    left_models = list(ordered_models[:split_idx])
-    right_models = list(ordered_models[split_idx:])
-    left_cov = covariance.loc[left_models, left_models]
-    right_cov = covariance.loc[right_models, right_models]
-
-    left_variance = _cluster_variance(left_cov)
-    right_variance = _cluster_variance(right_cov)
-    denom = left_variance + right_variance
-    left_weight = 0.5 if denom <= 0.0 else right_variance / denom
-    right_weight = 1.0 - left_weight
-
-    left_alloc = _hrp_recursive_weights(covariance, left_models) * left_weight
-    right_alloc = _hrp_recursive_weights(covariance, right_models) * right_weight
-    combined = pd.concat([left_alloc, right_alloc])
-    return _safe_normalize(combined, list(combined.index))
-
-
-def _equal_weights(model_names: Sequence[str]) -> pd.Series:
+def _equal_weights(model_names: List[str]) -> pd.Series:
     equal_weight = 1.0 / len(model_names) if model_names else 1.0
     return pd.Series({model: equal_weight for model in model_names}, dtype=float)
 
 
 class ClusteredWeightLayer(BaseWeightLayer):
-    """Weight layer supporting equal, inverse-correlation, and HRP modes."""
+    """Weight layer: equal, inverse-correlation, or manual hierarchy (equal split)."""
 
     def __init__(self, config: Optional[WeightLayerConfig] = None) -> None:
         self._wl_config = config or WeightLayerConfig()
@@ -601,20 +506,19 @@ class ClusteredWeightLayer(BaseWeightLayer):
 
             try:
                 signal_pivot = _prepare_signal_matrix(forecast_pivot)
-                covariance, full_corr, positive_corr = _estimate_covariance_and_correlation(
+                _covariance, _full_corr, positive_corr = _estimate_covariance_and_correlation(
                     signal_pivot
                 )
-                linkage_matrix = _build_linkage_matrix(full_corr)
             except Exception as exc:
                 logger.warning(
-                    "Ticker %s falling back to equal weights after HRP prep failure: %s",
+                    "Ticker %s falling back to equal weights after covariance failure: %s",
                     ticker,
                     exc,
                 )
                 self._store_equal_fallback_result(
                     ticker=ticker,
                     model_names=available_models,
-                    reason="invalid covariance or linkage inputs",
+                    reason="invalid covariance inputs",
                 )
                 continue
 
@@ -647,53 +551,105 @@ class ClusteredWeightLayer(BaseWeightLayer):
                     include_scores=True,
                 )
                 mean_cluster_corr = mean_signal_corr
-            else:
-                cluster_assignments = _extract_cluster_assignments(
-                    available_models,
-                    linkage_matrix,
-                    self._wl_config.rho_cut,
+            elif self.weight_method == "inverse_corr_hierarchy":
+                root = resolve_hierarchy_for_fit(
+                    hierarchy_spec=self._wl_config.hierarchy_spec,
+                    hierarchy_path=self._wl_config.hierarchy_path,
                 )
-                cluster_corr, mean_cluster_corr = _cluster_corr_from_assignments(
-                    signal_pivot,
-                    cluster_assignments,
+                equal_weights, cluster_assignments, cluster_weights, cluster_metrics = (
+                    compute_equal_split_weights(root, available_models)
                 )
-                cluster_metrics = _build_cluster_metrics(
-                    cluster_assignments,
-                    cluster_corr,
-                    include_scores=False,
+                # Invert each group's equal share by within-group corr; preserve group mass.
+                group_to_members: Dict[str, List[str]] = {}
+                for model_name, path in cluster_assignments.items():
+                    group = "/".join(path.split("/")[:-1])
+                    group_to_members.setdefault(group, []).append(model_name)
+                adjusted: Dict[str, float] = {}
+                for group, members in group_to_members.items():
+                    group_mass = sum(float(equal_weights[m]) for m in members)
+                    raw = np.asarray(
+                        [1.0 / (1.0 + _average_peer_correlation(positive_corr, m)) for m in members],
+                        dtype=float,
+                    )
+                    total = float(raw.sum())
+                    for m, r in zip(members, raw):
+                        adjusted[m] = group_mass * (r / total if total > 0.0 else 1.0 / len(members))
+                model_weights = pd.Series(adjusted, dtype=float)
+                mean_cluster_corr = mean_signal_corr
+            elif self.weight_method == "ledoit_wolf_min_corr":
+                col_sums = positive_corr.sum(axis=1)
+                raw_scores = np.asarray(1.0 / col_sums.clip(lower=0.01), dtype=float)
+                model_weights = _safe_normalize(raw_scores, available_models)
+                cluster_assignments, cluster_weights, cluster_metrics = _build_singleton_metrics(
+                    model_weights, positive_corr, include_scores=True
                 )
+                mean_cluster_corr = mean_signal_corr
+            elif self.weight_method == "risk_parity_corr":
+                col_sums = positive_corr.sum(axis=1)
+                raw_scores = np.asarray(1.0 / np.sqrt(col_sums.clip(lower=0.01)), dtype=float)
+                model_weights = _safe_normalize(raw_scores, available_models)
+                cluster_assignments, cluster_weights, cluster_metrics = _build_singleton_metrics(
+                    model_weights, positive_corr, include_scores=True
+                )
+                mean_cluster_corr = mean_signal_corr
+            elif self.weight_method in (
+                "hierarchy_theme_inv_corr",
+                "hierarchy_theme_ledoit",
+                "ledoit_wolf_hierarchy_within",
+            ):
+                root = resolve_hierarchy_for_fit(
+                    hierarchy_spec=self._wl_config.hierarchy_spec,
+                    hierarchy_path=self._wl_config.hierarchy_path,
+                )
+                equal_weights, cluster_assignments, cluster_weights, cluster_metrics = (
+                    compute_equal_split_weights(root, available_models)
+                )
+                # Map each top-level theme to its member models.
+                theme_to_members: Dict[str, List[str]] = {}
+                for model_name, path in cluster_assignments.items():
+                    # path is e.g. "root/theme/model" — theme is parts[1]
+                    parts = path.split("/")
+                    theme = parts[1] if len(parts) >= 2 else parts[0]
+                    theme_to_members.setdefault(theme, []).append(model_name)
 
-                if self.weight_method == "hrp_cluster_equal":
-                    clusters = sorted(set(cluster_assignments.values()))
-                    base_weights = np.ones(len(clusters), dtype=float) / len(clusters)
-                    capped = _apply_group_weight_cap(
-                        base_weights,
-                        self._wl_config.group_weight_cap,
-                    )
-                    cluster_weights = {
-                        cluster: float(weight)
-                        for cluster, weight in zip(clusters, capped)
-                    }
-                    model_weights = _split_cluster_weights_to_models(
-                        available_models,
-                        cluster_assignments,
-                        cluster_weights,
-                    )
-                else:
-                    ordered_models = [available_models[idx] for idx in leaves_list(linkage_matrix)]
-                    model_weights = _hrp_recursive_weights(covariance, ordered_models)
-                    model_weights = model_weights.reindex(available_models).fillna(0.0)
-                    model_weights = _safe_normalize(model_weights, available_models)
-                    cluster_weights = {
-                        cluster: float(
-                            model_weights[
-                                [model for model in available_models if cluster_assignments[model] == cluster]
-                            ].sum()
-                        )
-                        for cluster in sorted(set(cluster_assignments.values()))
-                    }
-                    if cluster_corr.empty:
-                        mean_cluster_corr = 1.0
+                theme_corr = _theme_aggregate_corr(theme_to_members, positive_corr)
+                theme_ids = list(theme_to_members.keys())
+
+                # Score themes by inter-theme correlation.
+                penalty_mode = "ledoit" if self.weight_method in (
+                    "hierarchy_theme_ledoit", "ledoit_wolf_hierarchy_within"
+                ) else "inv_avg"
+                theme_raw = _group_corr_scores(theme_ids, theme_corr, mode=penalty_mode)
+                theme_raw_total = float(theme_raw.sum())
+                theme_masses = {
+                    t: (theme_raw[i] / theme_raw_total if theme_raw_total > 0.0 else 1.0 / len(theme_ids))
+                    for i, t in enumerate(theme_ids)
+                }
+
+                # Distribute each theme's mass to its members.
+                adjusted_weights: Dict[str, float] = {}
+                for theme, members in theme_to_members.items():
+                    mass = theme_masses[theme]
+                    if self.weight_method == "ledoit_wolf_hierarchy_within":
+                        within_raw = _group_corr_scores(members, positive_corr, mode="ledoit")
+                    else:
+                        # equal within each theme
+                        within_raw = np.ones(len(members), dtype=float)
+                    within_total = float(within_raw.sum())
+                    for m, r in zip(members, within_raw):
+                        adjusted_weights[m] = mass * (r / within_total if within_total > 0.0 else 1.0 / len(members))
+
+                model_weights = pd.Series(adjusted_weights, dtype=float)
+                mean_cluster_corr = mean_signal_corr
+            else:
+                root = resolve_hierarchy_for_fit(
+                    hierarchy_spec=self._wl_config.hierarchy_spec,
+                    hierarchy_path=self._wl_config.hierarchy_path,
+                )
+                model_weights, cluster_assignments, cluster_weights, cluster_metrics = (
+                    compute_equal_split_weights(root, available_models)
+                )
+                mean_cluster_corr = mean_signal_corr
 
             self.weights_[ticker] = model_weights
             self.model_names_[ticker] = available_models
@@ -760,18 +716,27 @@ def WeightLayer(
     weight_method: str = "equal_signal",
     fdm_max: float = 2.0,
     config: Optional[WeightLayerConfig] = None,
-    **kwargs: float,
+    **kwargs: object,
 ) -> BaseWeightLayer:
     """Factory for the weight layer."""
     if config is None:
         if "risk_tilt_alpha" in kwargs:
             raise ValueError("risk_tilt_alpha is no longer supported by WeightLayer")
+        hierarchy_spec = kwargs.pop("hierarchy_spec", None)
+        hierarchy_path_raw = kwargs.pop("hierarchy_path", None)
+        hp: str | None = None
+        if hierarchy_path_raw is not None:
+            hp = str(hierarchy_path_raw).strip() or None
         config = WeightLayerConfig(
             weighting_method=weight_method,
             fdm_max=float(kwargs.pop("fdm_max", fdm_max)),
-            rho_cut=float(kwargs.pop("rho_cut", 0.70)),
-            group_weight_cap=float(kwargs.pop("group_weight_cap", 0.25)),
+            hierarchy_spec=dict(hierarchy_spec) if isinstance(hierarchy_spec, dict) else None,
+            hierarchy_path=hp,
         )
+        if kwargs:
+            raise TypeError(
+                f"WeightLayer got unexpected keyword arguments: {sorted(kwargs.keys())}"
+            )
     elif kwargs:
         raise ValueError("Pass either config or keyword overrides, not both")
 
@@ -844,12 +809,13 @@ def deserialize_weight_layer_state(payload: Dict[str, Any]) -> BaseWeightLayer:
     config_payload = dict(payload.get("config", {}))
     known = {f.name for f in fields(WeightLayerConfig)}
     filtered = {k: v for k, v in config_payload.items() if k in known}
-    if filtered.get("weighting_method") == "optimize_sortino_capped":
-        logger.warning(
-            "deserialize_weight_layer_state: legacy weighting_method "
-            "'optimize_sortino_capped' is no longer supported; using 'hrp_classic'"
+    wm = filtered.get("weighting_method")
+    if wm in _LEGACY_REMOVED_METHODS:
+        raise ValueError(
+            "Cannot deserialize weight layer: weighting_method "
+            f"'{wm}' was removed (HRP / legacy). Re-fit the portfolio with "
+            "equal_signal, inverse_avg_pairwise_corr, or hierarchy_equal."
         )
-        filtered["weighting_method"] = "hrp_classic"
     config = WeightLayerConfig(**filtered)
     restored = WeightLayer(config=config)
     if not isinstance(restored, ClusteredWeightLayer):

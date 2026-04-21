@@ -17,8 +17,7 @@ from utils.evaluation.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
 class WeightLayerAlgorithm(str, Enum):
     EQUAL_SIGNAL = "equal_signal"
     INVERSE_AVG_PAIRWISE_CORR = "inverse_avg_pairwise_corr"
-    HRP_CLUSTER_EQUAL = "hrp_cluster_equal"
-    HRP_CLASSIC = "hrp_classic"
+    HIERARCHY_EQUAL = "hierarchy_equal"
 
 
 class MemberPredictionMode(str, Enum):

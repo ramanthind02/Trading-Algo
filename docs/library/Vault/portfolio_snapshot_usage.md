@@ -5,11 +5,13 @@
 
 Related: [[Vault/architecture]], [[Vault/user_guide]], [[Vault/portfolio_snapshots_and_predictions]], [[Vault/vault]], [[Cache/architecture]], [[Ensemble/portfolio]].
 
+Paths below use the prop tree (`vault/...`) as examples; pass `vault_root=` / use `vault_personal/...` for the personal vault ([[Vault/vault]]).
+
 ## What gets persisted
 
 When you call `GlobalPortfolio.save_to_vault(...)`:
 
-- a new immutable snapshot is written under `vault/portfolio_snapshots/<portfolio_id>/`
+- a new immutable snapshot is written under `<vault_root>/portfolio_snapshots/<portfolio_id>/`
 - `snapshot.json` stores the fitted portfolio state and fit window
 - frozen copies of the referenced ensemble files are copied into the snapshot folder
 
@@ -31,7 +33,7 @@ from utils.cache.central_cache_models import ArtifactScope
 from utils.core.enums import TimeFrame
 
 ensemble = load_ensemble_from_vault(
-    "vault/M/buy_hold_long",
+    "vault/M/buy_hold/buy_hold_long",
     refit=True,
     target_volatility=0.15,
 )
@@ -124,9 +126,9 @@ materialize_global_portfolio_predictions(
 Snapshot files:
 
 ```text
-vault/portfolio_snapshots/<portfolio_id>/snapshot.json
-vault/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/ensemble_config.json
-vault/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/features/*.json
+<vault_root>/portfolio_snapshots/<portfolio_id>/snapshot.json
+<vault_root>/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/ensemble_config.json
+<vault_root>/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/features/*.json
 ```
 
 Materialized outputs:

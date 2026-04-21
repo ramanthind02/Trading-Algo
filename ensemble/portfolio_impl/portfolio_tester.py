@@ -14,6 +14,7 @@ import pandas as pd
 
 from ensemble.ensemble_utils import normalize_ticker_key
 from ensemble.portfolio import PortfolioCacheQuery
+from ensemble.portfolio_impl.tf_portfolio import ensemble_prediction_dict_key
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
 
 
@@ -377,7 +378,14 @@ class PortfolioTester:
         self.base_model_predictions: Optional[Dict[str, pd.DataFrame]] = None
         self.strategy_returns: Optional[pd.Series] = None
         self.baseline_returns: Optional[pd.Series] = None
-        
+
+    def _ensemble_for_prediction_key(self, key: str) -> object | None:
+        """Resolve the portfolio ensemble object for a prediction dict key (vault name or ``ensemble_N``)."""
+        for idx, ens in enumerate(self.portfolio.ensembles):
+            if ensemble_prediction_dict_key(ens, idx) == key:
+                return ens
+        return None
+
     def fit(self, candles_df: pd.DataFrame) -> 'PortfolioTester':
         """
         Fit portfolio using candles DataFrame.
@@ -650,27 +658,19 @@ class PortfolioTester:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         for ensemble_name, ensemble_positions in self.ensemble_predictions.items():
-            # Extract ensemble index from name (e.g., "ensemble_0" -> 0)
-            try:
-                ensemble_idx = int(ensemble_name.replace('ensemble_', ''))
-                if ensemble_idx < len(self.portfolio.ensembles):
-                    ensemble = self.portfolio.ensembles[ensemble_idx]
-                    # Determine dominant strategy from base models in this ensemble
-                    # If all base models have same strategy, use that; otherwise default to 'long'
-                    strategies = set()
-                    if hasattr(ensemble, 'base_models'):
-                        for base_model in ensemble.base_models.values():
-                            if hasattr(base_model, 'binning_model'):
-                                strategies.add(base_model.binning_model.strategy)
-                            elif hasattr(base_model, 'strategy'):
-                                strategies.add(base_model.strategy)
-
-                    # Use strategy if all models agree, otherwise default to 'long'
-                    ensemble_strategy = list(strategies)[0] if len(strategies) == 1 else 'long'
-                else:
-                    ensemble_strategy = 'long'  # Fallback
-            except (ValueError, AttributeError, IndexError):
-                ensemble_strategy = 'long'  # Fallback if can't determine
+            ensemble_strategy = "long"
+            ensemble = self._ensemble_for_prediction_key(ensemble_name)
+            if ensemble is not None:
+                strategies = set()
+                if hasattr(ensemble, "base_models"):
+                    for base_model in ensemble.base_models.values():
+                        if hasattr(base_model, "binning_model"):
+                            strategies.add(base_model.binning_model.strategy)
+                        elif hasattr(base_model, "strategy"):
+                            strategies.add(base_model.strategy)
+                ensemble_strategy = (
+                    list(strategies)[0] if len(strategies) == 1 else "long"
+                )
 
             # Calculate returns for this ensemble
             ensemble_returns = calculate_strategy_returns_from_positions(
@@ -748,24 +748,21 @@ class PortfolioTester:
             model_strategy = 'long'  # Default
             
             try:
-                if '::' in model_name:
-                    # Parse "ensemble_X::model_name" or "ensemble_X::feature_name::binning_method"
-                    parts = model_name.split('::')
-                    ensemble_part = parts[0]  # "ensemble_X"
-                    ensemble_idx = int(ensemble_part.replace('ensemble_', ''))
-                    
-                    if len(parts) >= 2:
-                        # Try to find the base model - it could be parts[1] or parts[1]::parts[2]
-                        base_model_name = '::'.join(parts[1:])  # Join everything after ensemble_X
-                        
-                        if ensemble_idx < len(self.portfolio.ensembles):
-                            ensemble = self.portfolio.ensembles[ensemble_idx]
-                            if hasattr(ensemble, 'base_models') and base_model_name in ensemble.base_models:
-                                base_model = ensemble.base_models[base_model_name]
-                                if hasattr(base_model, 'binning_model'):
-                                    model_strategy = base_model.binning_model.strategy
-                                elif hasattr(base_model, 'strategy'):
-                                    model_strategy = base_model.strategy
+                if "::" in model_name:
+                    parts = model_name.split("::")
+                    ensemble_key = parts[0]
+                    ensemble = self._ensemble_for_prediction_key(ensemble_key)
+                    if ensemble is not None and len(parts) >= 2:
+                        base_model_name = "::".join(parts[1:])
+                        if (
+                            hasattr(ensemble, "base_models")
+                            and base_model_name in ensemble.base_models
+                        ):
+                            base_model = ensemble.base_models[base_model_name]
+                            if hasattr(base_model, "binning_model"):
+                                model_strategy = base_model.binning_model.strategy
+                            elif hasattr(base_model, "strategy"):
+                                model_strategy = base_model.strategy
             except (ValueError, AttributeError, IndexError, KeyError) as e:
                 # Fallback to 'long' if can't determine strategy
                 model_strategy = 'long'

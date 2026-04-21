@@ -1,7 +1,7 @@
 # Portfolio Snapshots and Prediction Materialization
 
 > [!summary] Implemented contract
-> `GlobalPortfolio.save_to_vault(...)` writes an immutable snapshot under `vault/portfolio_snapshots/<portfolio_id>/`. `load_global_portfolio_snapshot(...)` reloads that snapshot from the frozen files, and `materialize_global_portfolio_predictions(...)` writes portfolio and base-model parquet outputs under the central cache.
+> `GlobalPortfolio.save_to_vault(...)` writes an immutable snapshot under `<vault_root>/portfolio_snapshots/<portfolio_id>/` (default prop tree: `vault/`; personal: `vault_personal/` or env — [[Vault/vault]]). `load_global_portfolio_snapshot(...)` reloads that snapshot from the frozen files, and `materialize_global_portfolio_predictions(...)` writes portfolio and base-model parquet outputs under the central cache.
 >
 > Related: [[Vault/architecture]], [[Vault/user_guide]], [[Vault/vault]], [[Vault/portfolio_snapshot_usage]], [[Cache/architecture]], [[Ensemble/portfolio]], [[Vault/monitoring]].
 
@@ -12,9 +12,9 @@
 Each snapshot is stored at:
 
 ```text
-vault/portfolio_snapshots/<portfolio_id>/snapshot.json
-vault/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/ensemble_config.json
-vault/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/features/*.json
+<vault_root>/portfolio_snapshots/<portfolio_id>/snapshot.json
+<vault_root>/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/ensemble_config.json
+<vault_root>/portfolio_snapshots/<portfolio_id>/ensembles/<TF>/<ensemble_name>/features/*.json
 ```
 
 The snapshot hash is derived from semantic payload only. It includes the fit window, portfolio config, fitted portfolio state, fitted weight-layer state, TF portfolio state, global IDM state, member identities, and hashes of the copied ensemble files. Wall-clock write time is not part of the id.
@@ -61,7 +61,7 @@ Writes are upserted by the materializer's row key, so rerunning with the same id
 
 ## Base-model cleanup
 
-`prune_inactive_base_model_materializations(vault_root="vault", scope=ArtifactScope.LIVE, ensemble_dirs=None)` scans the current working vault for active base-model members.
+`prune_inactive_base_model_materializations(vault_root="vault", scope=ArtifactScope.LIVE, ensemble_dirs=None)` scans the current working vault for active base-model members (`vault_root` is the prop dirname by default; use `vault_personal` or an absolute path for the personal tree).
 
 Only stale base-model parquet files are removed. Portfolio-level materializations keyed by historical `portfolio_id` are retained.
 

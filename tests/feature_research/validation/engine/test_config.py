@@ -63,8 +63,8 @@ def test_validation_bounds(kwargs: dict[str, object], expected_message: str) -> 
     ("weight_layer_algorithm", "expected"),
     [
         (
-            WeightLayerAlgorithm.HRP_CLASSIC,
-            WeightLayerAlgorithm.HRP_CLASSIC,
+            WeightLayerAlgorithm.HIERARCHY_EQUAL,
+            WeightLayerAlgorithm.HIERARCHY_EQUAL,
         ),
         ("equal_signal", WeightLayerAlgorithm.EQUAL_SIGNAL),
         (

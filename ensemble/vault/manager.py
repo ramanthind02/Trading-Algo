@@ -16,6 +16,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 import pandas as pd
@@ -36,9 +37,11 @@ from ensemble.vault.feature_files import (
 )
 from feature_selection.base_models.feature_base_model import BaseModel
 
-from utils.cache.runtime.cache_paths import win32_extended_path
+from utils.cache.runtime.cache_paths import project_root, win32_extended_path
 from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
-from utils.vault_paths import resolve_vault_root
+from utils.vault_paths import resolve_vault_personal, resolve_vault_prop, resolve_vault_root
+
+from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
 
 # Type hint for forward reference
 if TYPE_CHECKING:
@@ -94,7 +97,15 @@ def get_default_ensemble_tickers() -> Optional[List[Ticker]]:
 
 
 def _iter_vault_root_candidates() -> List[Path]:
-    return [resolve_vault_root()]
+    """Prop vault first, then personal (deduped). Used for auto-detect and path fallbacks."""
+    out: List[Path] = []
+    seen: set[str] = set()
+    for p in (resolve_vault_prop(), resolve_vault_personal()):
+        key = str(p.resolve())
+        if key not in seen:
+            seen.add(key)
+            out.append(p)
+    return out
 
 
 def _iter_vault_timeframe_dirs(vault_path: Path) -> List[Path]:
@@ -119,13 +130,48 @@ def _parse_ensemble_dir_identity(dir_name: str) -> Optional[tuple[str, str]]:
     return None
 
 
+def _is_vault_weight_group_directory(path: Path) -> bool:
+    return path.is_dir() and path.name in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
+
+
+def _ensemble_leaf_directory(path: Path) -> bool:
+    """True if ``path`` looks like an ensemble directory (config and/or feature JSON)."""
+    if not path.is_dir():
+        return False
+    if (path / "ensemble_config.json").exists():
+        return True
+    return _has_feature_files(path)
+
+
 def _iter_vault_ensemble_dirs(vault_path: Path) -> List[tuple[str, Path]]:
+    """Yield ``(timeframe_name, ensemble_path)`` for each ensemble under the vault.
+
+    Supports:
+
+    - **Nested (preferred):** ``vault/<D|W|M>/<weight_group>/<ensemble_name>/``
+    - **Legacy flat:** ``vault/<D|W|M>/<ensemble_name>/``
+    """
     ensemble_dirs: List[tuple[str, Path]] = []
     for timeframe_path in _iter_vault_timeframe_dirs(vault_path):
-        for ensemble_path in sorted(timeframe_path.iterdir()):
-            if ensemble_path.is_dir():
-                ensemble_dirs.append((timeframe_path.name, ensemble_path))
+        tf_name = timeframe_path.name
+        for child in sorted(timeframe_path.iterdir()):
+            if not child.is_dir():
+                continue
+            if _is_vault_weight_group_directory(child):
+                for ensemble_path in sorted(child.iterdir()):
+                    if _ensemble_leaf_directory(ensemble_path):
+                        ensemble_dirs.append((tf_name, ensemble_path))
+            elif _ensemble_leaf_directory(child):
+                ensemble_dirs.append((tf_name, child))
     return ensemble_dirs
+
+
+def _find_ensemble_path_by_leaf_name(vault_root: Path, ensemble_dir_name: str) -> Optional[Path]:
+    """Locate ``vault/<TF>/<group?>/<ensemble_dir_name>`` by leaf folder name."""
+    for _tf, ensemble_path in _iter_vault_ensemble_dirs(vault_root):
+        if ensemble_path.name == ensemble_dir_name:
+            return ensemble_path
+    return None
 
 
 def _has_feature_files(ensemble_path: Path) -> bool:
@@ -251,13 +297,20 @@ def _resolve_ensemble_path(ensemble_dir: str) -> Path:
     if ensemble_path.exists():
         return ensemble_path
 
-    vault_root_path = resolve_vault_root()
-    resolved = vault_root_path.parent / ensemble_dir
-    if resolved.exists():
-        return resolved
-    nested_resolved = vault_root_path / ensemble_dir
-    if nested_resolved.exists():
-        return nested_resolved
+    repo_relative = project_root() / ensemble_dir
+    if repo_relative.exists():
+        return repo_relative
+
+    for vault_root_path in _iter_vault_root_candidates():
+        nested_resolved = vault_root_path / ensemble_dir
+        if nested_resolved.exists():
+            return nested_resolved
+        parts = Path(ensemble_dir).parts
+        if parts:
+            leaf = parts[-1]
+            found = _find_ensemble_path_by_leaf_name(vault_root_path, leaf)
+            if found is not None:
+                return found
 
     # If still not found, return the original path (will fail later with better error)
     return ensemble_path
@@ -417,17 +470,44 @@ def generate_model_id(
 # Ensemble Directory Management
 # ============================================================================
 
+
+def _build_ensemble_dir_name(ensemble_name: Any, direction: Direction) -> str:
+    return f"{str(ensemble_name).strip()}_{direction.value}"
+
+
+def _ensemble_path_for_create(
+    *,
+    vault_path: Path,
+    timeframe_name: str,
+    ensemble_dir_name: str,
+    weight_hierarchy_group: Optional[str],
+) -> Path:
+    if weight_hierarchy_group is None:
+        return vault_path / timeframe_name / ensemble_dir_name
+    group = str(weight_hierarchy_group).strip()
+    if not group:
+        raise ValueError("weight_hierarchy_group must be a non-empty string when provided")
+    if group not in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES:
+        raise ValueError(
+            f"weight_hierarchy_group must be one of {sorted(VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES)}, "
+            f"got {group!r}"
+        )
+    return vault_path / timeframe_name / group / ensemble_dir_name
+
+
 def create_ensemble_directory(
     timeframe: Any,
     ensemble_name: Any,
     direction: DirectionInput,
     tickers: Optional[List[Ticker]] = None,
     vault_root: Optional[str] = None,
+    *,
+    weight_hierarchy_group: Optional[str] = None,
 ) -> str:
     """
     Create a new ensemble directory in the vault.
     
-    The vault root is hardcoded to 'vault' at the project root.
+    The vault root comes from ``vault_root=`` or :func:`utils.vault_paths.resolve_vault_root`.
     After creation, this ensemble directory becomes the default for all vault operations.
     
     Parameters
@@ -442,11 +522,17 @@ def create_ensemble_directory(
         List of tickers this ensemble will use. If None, defaults to [Ticker.ES].
         This is stored in ensemble_config.json and used to validate all features
         added to this ensemble have matching tickers.
-        
+    weight_hierarchy_group : str, optional
+        When set, the ensemble is created under
+        ``vault/<TF>/<weight_hierarchy_group>/<ensemble_name_direction>/`` (manual
+        weight-layer grouping). Must be a key in
+        ``VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES``. When omitted, the legacy flat
+        layout ``vault/<TF>/<ensemble_name_direction>/`` is used.
+
     Returns
     -------
     str
-        Path to the created ensemble directory (e.g., 'vault/D/commodity_breakout_long')
+        Path to the created ensemble directory (e.g. ``vault/D/momentum/foo_long``)
         
     Raises
     ------
@@ -484,9 +570,14 @@ def create_ensemble_directory(
     direction = coerce_direction(direction, field_name="direction")
     tickers, ticker_names = _normalize_ensemble_tickers(tickers)
 
-    ensemble_dir_name = f"{ensemble_name}_{direction.value}"
+    ensemble_dir_name = _build_ensemble_dir_name(ensemble_name, direction)
     vault_path = _resolve_vault_root_path(vault_root)
-    ensemble_path = vault_path / timeframe.name / ensemble_dir_name
+    ensemble_path = _ensemble_path_for_create(
+        vault_path=vault_path,
+        timeframe_name=timeframe.name,
+        ensemble_dir_name=ensemble_dir_name,
+        weight_hierarchy_group=weight_hierarchy_group,
+    )
     ensemble_dir_str = str(ensemble_path)
 
     config = _build_ensemble_config(
@@ -510,12 +601,14 @@ def get_ensemble_path(
     ensemble_name: Any,
     direction: DirectionInput,
     vault_root: Optional[str] = None,
+    *,
+    weight_hierarchy_group: Optional[str] = None,
 ) -> str:
     """
     Get the path to an ensemble directory.
-    
-    The vault root is hardcoded to 'vault' at the project root.
-    
+
+    The vault root comes from ``vault_root=`` or :func:`utils.vault_paths.resolve_vault_root`.
+
     Parameters
     ----------
     timeframe : TimeFrame
@@ -547,8 +640,19 @@ def get_ensemble_path(
 
     ensemble_dir_name = _build_ensemble_dir_name(ensemble_name, direction)
     root = _resolve_vault_root_path(vault_root)
-    ensemble_path = Path(root) / timeframe.name / ensemble_dir_name
-    return str(ensemble_path)
+    if weight_hierarchy_group is not None:
+        return str(
+            _ensemble_path_for_create(
+                vault_path=root,
+                timeframe_name=timeframe.name,
+                ensemble_dir_name=ensemble_dir_name,
+                weight_hierarchy_group=weight_hierarchy_group,
+            )
+        )
+    nested = _find_ensemble_path_by_leaf_name(root, ensemble_dir_name)
+    if nested is not None:
+        return str(nested)
+    return str(root / timeframe.name / ensemble_dir_name)
 
 
 def list_ensembles(vault_root: str) -> pd.DataFrame:
@@ -572,7 +676,16 @@ def list_ensembles(vault_root: str) -> pd.DataFrame:
     """
     vault_path = resolve_vault_root(vault_root)
     if not vault_path.exists():
-        return pd.DataFrame(columns=['ensemble_name', 'timeframe', 'direction', 'n_features', 'path'])
+        return pd.DataFrame(
+            columns=[
+                'ensemble_name',
+                'timeframe',
+                'direction',
+                'weight_hierarchy_group',
+                'n_features',
+                'path',
+            ]
+        )
     
     ensembles = []
 
@@ -583,10 +696,15 @@ def list_ensembles(vault_root: str) -> pd.DataFrame:
         ensemble_name, direction = parsed_identity
         features_dir = _get_features_dir(ensemble_dir)
         n_features = len(list(features_dir.glob("*.json"))) if features_dir.exists() else 0
+        parent_name = ensemble_dir.parent.name
+        weight_group = (
+            parent_name if parent_name in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES else None
+        )
         ensembles.append({
             'ensemble_name': ensemble_name,
             'timeframe': timeframe,
             'direction': direction,
+            'weight_hierarchy_group': weight_group,
             'n_features': n_features,
             'path': str(ensemble_dir)
         })
@@ -1096,9 +1214,9 @@ def ensure_vault_cache_coverage(
 def initialize_vault(vault_root: Optional[str] = None) -> None:
     """
     Initialize a new vault directory structure.
-    
+
     Creates the root directory and README.md.
-    The vault root is hardcoded to 'vault' at the project root.
+    The root is ``resolve_vault_root(vault_root)``.
     """
     vault_path = resolve_vault_root(vault_root)
     vault_path.mkdir(parents=True, exist_ok=True)
@@ -1135,6 +1253,30 @@ See `docs/to-do/vault_specs.md` for complete documentation.
 """
         with open(readme_path, 'w', encoding='utf-8') as f:
             f.write(readme_content)
+
+
+def _ensemble_dir_posix_key_relative_to_repo(ensemble_path: Path) -> str:
+    """Stable repo-relative key for ``exclude_feature_stems_by_ensemble`` (posix, no backslashes)."""
+    repo_root = project_root().resolve()
+    try:
+        return ensemble_path.resolve().relative_to(repo_root).as_posix()
+    except ValueError:
+        return ensemble_path.resolve().as_posix()
+
+
+def _exclude_stems_for_ensemble_path(
+    ensemble_path: Path,
+    exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None,
+) -> frozenset[str]:
+    if not exclude_feature_stems_by_ensemble:
+        return frozenset()
+    key = _ensemble_dir_posix_key_relative_to_repo(ensemble_path)
+    for map_key, stems in exclude_feature_stems_by_ensemble.items():
+        if Path(map_key).as_posix() == Path(key).as_posix():
+            return stems
+        if Path(map_key).as_posix() == Path(str(ensemble_path)).as_posix():
+            return stems
+    return frozenset()
 
 
 def validate_ensemble_directory(ensemble_dir: str) -> None:
@@ -1179,7 +1321,9 @@ def validate_ensemble_directory(ensemble_dir: str) -> None:
 def load_ensemble_from_vault(
     ensemble_dir: str,
     refit: bool = False,
-    target_volatility: float = 0.20
+    target_volatility: float = 0.20,
+    *,
+    exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None = None,
 ) -> 'DiversifiedEnsemble':  # type: ignore
     """
     Load a DiversifiedEnsemble from vault directory.
@@ -1195,6 +1339,11 @@ def load_ensemble_from_vault(
         If False, the ensemble-level fitted payload is synthesized from the frozen specs.
     target_volatility : float, default=0.20
         Target volatility for the ensemble
+    exclude_feature_stems_by_ensemble : Mapping[str, frozenset[str]] | None
+        Optional map keyed by repo-relative ensemble directory (posix path, e.g.
+        ``vault/D/group/leaf``) to feature JSON **stems** (without ``.json``) to omit.
+        Used for leave-one-feature-out ablations; must match
+        ``collect_streams_by_group_for_ensemble_dirs`` exclusions.
         
     Returns
     -------
@@ -1215,7 +1364,14 @@ def load_ensemble_from_vault(
     
     features_dir = _get_features_dir(ensemble_path, require_exists=True)
 
-    validated_feature_configs = list(iter_validated_feature_configs(features_dir))
+    exclude_stems = _exclude_stems_for_ensemble_path(
+        ensemble_path, exclude_feature_stems_by_ensemble
+    )
+    validated_feature_configs = [
+        (p, cfg)
+        for p, cfg in iter_validated_feature_configs(features_dir)
+        if p.stem not in exclude_stems
+    ]
     if not validated_feature_configs:
         raise ValueError(f"No feature files found in {features_dir}")
     

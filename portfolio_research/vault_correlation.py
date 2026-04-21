@@ -12,12 +12,12 @@ import pandas as pd
 from ensemble.vault.discovery import iter_vault_feature_members
 from ensemble.vault.feature_files import extract_feature_name
 from feature_extraction.feature_extractor import extract_features_for_bias_node
-from feature_research.bootstrap import find_repo_root
 from feature_research.core_helpers import combo_key, normalize_timeframe_from_bias_spec
 from feature_research.in_sample.data_loader import param_combo_label, populate_cache_if_needed
 from feature_research.research_table_exports import _normalize_ts, _slice_combo_panel
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import build_feature_column_name
+from utils.vault_paths import resolve_vault_prop
 from utils.evaluation.walkforward.selected_params_codec import decode_selected_params_list
 
 
@@ -323,7 +323,6 @@ def build_vault_correlation_long_rows(
     return out
 
 
-def resolve_default_vault_root(start: Path | None = None) -> Path:
-    """Repository ``vault/`` directory."""
-    root = find_repo_root(start or Path(__file__).resolve())
-    return Path(root) / "vault"
+def resolve_default_vault_root() -> Path:
+    """Prop vault root (``TRADING_ALGO_VAULT_*`` / default ``<repo>/vault``)."""
+    return resolve_vault_prop()

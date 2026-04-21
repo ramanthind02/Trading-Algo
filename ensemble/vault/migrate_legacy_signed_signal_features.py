@@ -37,6 +37,7 @@ _REPO_ROOT = _prepend_repo_root_to_syspath()
 
 from ensemble.vault.feature_files import migrate_legacy_signed_signal_feature_files_under_vault  # noqa: E402
 from utils.repo_bootstrap import require_repo_root  # noqa: E402
+from utils.vault_paths import resolve_vault_prop  # noqa: E402
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -45,7 +46,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--vault-root",
         type=Path,
         default=None,
-        help="Directory containing ensemble vault layout (default: <repo>/vault).",
+        help="Directory containing ensemble vault layout (default: resolve_vault_prop()).",
     )
     parser.add_argument(
         "--dry-run",
@@ -58,7 +59,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     _ = require_repo_root(Path(__file__).resolve())
     args = _parse_args(argv)
-    vault_root = (args.vault_root or (_REPO_ROOT / "vault")).resolve()
+    vault_root = (args.vault_root or resolve_vault_prop()).resolve()
     if not vault_root.is_dir():
         print(f"Vault root is not a directory: {vault_root}", file=sys.stderr)
         return 1

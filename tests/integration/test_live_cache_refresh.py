@@ -48,7 +48,7 @@ def test_live_candle_updates_trigger_automatic_refresh(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ensemble_dir = "vault/M/buy_hold_long"
+    ensemble_dir = "vault/M/buy_hold/buy_hold_long"
     if not source_data_available(ensemble_dir):
         pytest.skip("Repository-backed OHLC dataset is missing required buy_hold_long files")
 

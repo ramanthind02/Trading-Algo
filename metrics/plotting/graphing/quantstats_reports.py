@@ -219,9 +219,14 @@ def generate_tearsheet(
         out_path = Path(output_file)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         resolved_out = out_path.resolve()
-        qs_output_path = (
-            win32_extended_path(resolved_out) if os.name == "nt" else str(resolved_out)
-        )
+        path_str = str(resolved_out)
+        # Prefer a normal path for short outputs: some third-party code mishandles ``\\?\``.
+        if os.name == "nt" and len(path_str) < 260:
+            qs_output_path = path_str
+        else:
+            qs_output_path = (
+                win32_extended_path(resolved_out) if os.name == "nt" else path_str
+            )
 
         qs.reports.html(
             strategy_returns,

@@ -16,6 +16,7 @@ from ensemble.vault import feature_files as _vault_feature_files
 from feature_research.config import OOSWindowConfig
 from utils.cache import extract_cross_ticker_names
 from utils.core.enums import Ticker, TimeFrame
+from utils.vault_paths import default_vault_discovery_dirnames
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,12 @@ class ResearchWindow:
 
 @dataclass(frozen=True)
 class FeatureVaultCorrelationConfig:
-    """Gate and paths for ``portfolio_research.run_feature_vault_correlation`` exports."""
+    """Gate and paths for ``portfolio_research.run_feature_vault_correlation`` exports.
+
+    When ``vault_root`` is ``None``, the export uses the **prop** vault
+    (:func:`~portfolio_research.vault_correlation.resolve_default_vault_root`). Set a path to
+    scan ``vault_personal`` or another root.
+    """
 
     enabled: bool = True
     vault_root: Path | None = None
@@ -82,9 +88,12 @@ class PortfolioResearchConfig:
     target_volatility : float
         Target annual volatility for ensembles/portfolio.
     weight_layer_method : str
-        WeightLayer method (e.g. ``equal_signal``, ``inverse_avg_pairwise_corr``, ``hrp_classic``).
+        WeightLayer method (e.g. ``equal_signal``, ``ledoit_wolf_min_corr``, ``hierarchy_equal``).
+        ``load_config()`` uses ``ledoit_wolf_min_corr``; use ``hierarchy_equal`` with
+        ``build_hierarchy_spec_for_ensemble_dirs`` when you want vault group buckets.
     weight_layer_kwargs : Mapping[str, Any]
-        Extra kwargs for WeightLayer: ``fdm_max``, ``group_weight_cap``, ``rho_cut``.
+        Extra kwargs for WeightLayer: ``fdm_max``, ``hierarchy_spec``, ``hierarchy_path``.
+        For ``hierarchy_equal``, pass ``hierarchy_spec`` (nested dict) and/or ``hierarchy_path``.
     max_position_pct : float
         Max position as fraction of capital (e.g. 3.5).
     baseline_mode : str
@@ -106,6 +115,10 @@ class PortfolioResearchConfig:
         If True, abort the portfolio test when vault bias/EWSD cache refresh reports any
         failure. If False (default), print failures and continue (research may still fail
         later if required data is missing).
+    exclude_feature_stems_by_ensemble : Mapping[str, frozenset[str]] | None
+        Repo-relative ensemble directory (posix) → feature JSON stems to omit.
+        Used for leave-one-feature-out; must stay aligned with ``weight_layer_kwargs``
+        hierarchy built via ``build_hierarchy_spec_for_ensemble_dirs`` with the same map.
     """
 
     tickers: list[Ticker]
@@ -134,6 +147,7 @@ class PortfolioResearchConfig:
         default_factory=FeatureVaultCorrelationConfig
     )
     strict_cache_preflight: bool = False
+    exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None = None
 
     def __post_init__(self) -> None:
         if self.baseline_mode not in ("equal_weight", "buy_hold"):
@@ -159,18 +173,26 @@ class PortfolioResearchConfig:
 def _discover_ensemble_dirs(
     allowed_timeframes: Iterable[TimeFrame] | None = None,
 ) -> Mapping[str, str]:
-    """Discover ensemble directories under vault/ for use as defaults.
+    """Discover ensemble directories under default vault roots (prop + personal) for defaults.
 
-    An ensemble folder is any directory under vault/<TF>/ whose leaf directory
-    contains a 'features' subdirectory with at least one *.json file. The name
-    is the leaf directory name; the path is repository-relative.
+    Scans each top-level directory from :func:`utils.vault_paths.default_vault_discovery_dirnames`
+    that exists (typically ``vault/`` and ``vault_personal/``).
+
+    Supports:
+
+    - **Nested:** ``<vault_top>/<TF>/<weight_hierarchy_group>/<ensemble>/features/*.json``
+    - **Legacy flat:** ``<vault_top>/<TF>/<ensemble>/features/*.json``
+
+    The map key is the ensemble leaf directory name; the value is the
+    repository-relative path. If the same leaf name exists in more than one vault,
+    the first vault in discovery order wins and later duplicates are skipped.
 
     When ``allowed_timeframes`` is provided, only those vault timeframe folders
     are considered.
     """
-    vault_root = _PORTFOLIO_RESEARCH_DIR.parent / "vault"
-    if not vault_root.exists():
-        return {}
+    from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
+
+    repo_root = _PORTFOLIO_RESEARCH_DIR.parent
 
     allowed_tf_names = (
         {timeframe.name for timeframe in allowed_timeframes}
@@ -183,27 +205,34 @@ def _discover_ensemble_dirs(
             child.suffix == ".json" for child in features_dir.iterdir()
         )
 
-    timeframe_dirs = [
-        d for d in vault_root.iterdir() if d.is_dir()
-    ]
-    if allowed_tf_names is not None:
-        timeframe_dirs = [
-            timeframe_dir
-            for timeframe_dir in timeframe_dirs
-            if timeframe_dir.name in allowed_tf_names
-        ]
+    ensembles: dict[str, str] = {}
+    for vault_top in default_vault_discovery_dirnames():
+        vault_root = repo_root / vault_top
+        if not vault_root.is_dir():
+            continue
 
-    ensembles = {
-        ensemble_dir.name: str(
-            ensemble_dir.relative_to(_PORTFOLIO_RESEARCH_DIR.parent)
-        )
-        for tf_dir in timeframe_dirs
-        for ensemble_dir in tf_dir.iterdir()
-        if (
-            ensemble_dir.is_dir()
-            and _has_feature_json(ensemble_dir / "features")
-        )
-    }
+        timeframe_dirs = [d for d in vault_root.iterdir() if d.is_dir()]
+        if allowed_tf_names is not None:
+            timeframe_dirs = [
+                timeframe_dir
+                for timeframe_dir in timeframe_dirs
+                if timeframe_dir.name in allowed_tf_names
+            ]
+
+        for tf_dir in timeframe_dirs:
+            for child in sorted(tf_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                candidates: list[Path] = []
+                if child.name in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES:
+                    candidates = sorted(p for p in child.iterdir() if p.is_dir())
+                else:
+                    candidates = [child]
+                for ensemble_dir in candidates:
+                    if _has_feature_json(ensemble_dir / "features"):
+                        key = ensemble_dir.name
+                        if key not in ensembles:
+                            ensembles[key] = str(ensemble_dir.relative_to(repo_root))
 
     return ensembles
 
@@ -301,7 +330,8 @@ def load_config() -> PortfolioResearchConfig:
     use_cache = True
     populate_cache = False
 
-    # Explicit research windows driving portfolio phases.
+    # Explicit research windows: portfolio_test uses these phase splits
+    # (Train: fit+score on train; Validation: fit on train, score on val; Test: fit on train+val, score on test).
     train_window = ResearchWindow(
         start=start,
         end=datetime(2017, 12, 31),
@@ -333,18 +363,19 @@ def load_config() -> PortfolioResearchConfig:
     )
 
     target_volatility = 0.15
-    weight_layer_method = "hrp_classic"
+    # Ledoit–Wolf–shrinkage correlation → inverse column-sum weights (see WeightLayer).
+    weight_layer_method = "ledoit_wolf_min_corr"
     weight_layer_kwargs = {
         "fdm_max": 2.0,
-        "rho_cut": 0.05
     }
     max_position_pct = 3.5
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"
     export_per_timeframe_tearsheets = False
-    export_per_ensemble_tearsheets = False
+    export_per_ensemble_tearsheets = True
     feature_vault_correlation = FeatureVaultCorrelationConfig(enabled=False)
     strict_cache_preflight = False
+
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
@@ -374,4 +405,5 @@ def load_config() -> PortfolioResearchConfig:
         export_per_ensemble_tearsheets=export_per_ensemble_tearsheets,
         feature_vault_correlation=feature_vault_correlation,
         strict_cache_preflight=strict_cache_preflight,
+        exclude_feature_stems_by_ensemble=None,
     )

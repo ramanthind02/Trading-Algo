@@ -20,8 +20,10 @@ All decay metrics are derived from this single time series on demand.
 
 ## Directory Layout
 
+Example under the prop tree (`vault/`); the same structure applies under `vault_personal/` or any `<vault_root>`.
+
 ```
-vault/D/mr_indices_long/
+vault/D/mean_reversion_indices/mr_indices_long/
 ├── ensemble_config.json
 ├── features/
 │   └── turnaroundtuesday_signal_D_mode_tue_wed.json
@@ -79,7 +81,7 @@ Re-saving an already-vaulted model is safe — `FileExistsError` is silenced.
 from ensemble.monitoring_store import initialize_monitoring
 
 path = initialize_monitoring(
-    ensemble_dir='vault/D/mr_indices_long',
+    ensemble_dir='vault/D/mean_reversion_indices/mr_indices_long',
     feature_name='rsi_signal_D',
     model_id='signed_signal_<model_id>',
     signals=signal_series,   # pd.Series with DatetimeIndex
@@ -96,7 +98,7 @@ Raises `FileExistsError` if the file already exists.
 from ensemble.monitoring_store import append_monitoring_data
 
 append_monitoring_data(
-    ensemble_dir='vault/D/mr_indices_long',
+    ensemble_dir='vault/D/mean_reversion_indices/mr_indices_long',
     feature_name='rsi_signal_D',
     model_id='signed_signal_<model_id>',
     signals=live_signals,

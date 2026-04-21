@@ -58,6 +58,7 @@ from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.portfolio import TFPortfolio, GlobalPortfolio
 from deployment.telegram_notifier import TelegramNotifier
 from utils.core.enums import TimeFrame, Ticker
+from utils.vault_paths import resolve_vault_root
 
 
 # ==============================================================================
@@ -245,7 +246,7 @@ def fetch_current_prices(
 # ==============================================================================
 
 def _load_ensembles_for_tf(vault_root: str, tf: TimeFrame) -> list:
-    """Load all ensembles from vault/{tf.name}/ for a single timeframe."""
+    """Load all ensembles from ``vault_root/{tf.name}/`` (flat layout under each TF)."""
     tf_dir = Path(vault_root) / tf.name
     if not tf_dir.exists():
         return []
@@ -276,7 +277,7 @@ def build_portfolio(config: Dict) -> GlobalPortfolio:
     GlobalPortfolio
         Multi-timeframe portfolio with all vault ensembles
     """
-    vault_root = config["portfolio"]["vault_root"]
+    vault_root = str(resolve_vault_root(config["portfolio"]["vault_root"]))
     target_vol = config["portfolio"]["target_volatility"]
     max_pos = config["portfolio"]["max_position_pct"]
     idm_max = config["portfolio"]["idm_max"]
@@ -957,7 +958,10 @@ def main():
 
         # Step 6: Refresh stale bias node caches
         print("\n6. Refreshing bias caches...")
-        refresh_bias_caches(config["portfolio"]["vault_root"], required_tickers)
+        refresh_bias_caches(
+            str(resolve_vault_root(config["portfolio"]["vault_root"])),
+            required_tickers,
+        )
 
         # Step 7: Build cache query and fit portfolio
         print("\n7. Fitting portfolio from cache...")
