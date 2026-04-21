@@ -26,14 +26,19 @@
 
 ```
   vault/
-    D/  (5 daily ensembles)
-      mr_indices_long/          → trades ES, NQ
-      rebalancing_es_tlt_long/  → trades ES (uses TLT as cross-ticker)
-      rebalancing_tlt_es_long/  → trades TLT (uses ES as cross-ticker)
-      seasonal_bonds_long_short/ → trades TLT
-      seasonal_indices_long/    → trades ES
-    M/  (1 monthly ensemble)
-      buy_hold_long/            → trades ES, GC, NQ, RTY, TLT, YM
+    D/   (daily ensembles — each under a manual weight-hierarchy group folder)
+      mean_reversion_indices/
+        mr_indices_long/          → trades ES, NQ
+      es_tlt/
+        rebalancing_es_tlt_long/  → trades ES (uses TLT as cross-ticker)
+        rebalancing_tlt_es_long/  → trades TLT (uses ES as cross-ticker)
+      seasonal/
+        seasonal_bonds_long_short/ → trades TLT
+        seasonal_indices_long/    → trades ES
+      …
+    M/
+      buy_hold/
+        buy_hold_long/            → trades ES, GC, NQ, RTY, TLT, YM
 ```
 
   The script reads every `ensemble_config.json` + `features/*.json` file in the vault. Each feature file defines one bias node (technical        

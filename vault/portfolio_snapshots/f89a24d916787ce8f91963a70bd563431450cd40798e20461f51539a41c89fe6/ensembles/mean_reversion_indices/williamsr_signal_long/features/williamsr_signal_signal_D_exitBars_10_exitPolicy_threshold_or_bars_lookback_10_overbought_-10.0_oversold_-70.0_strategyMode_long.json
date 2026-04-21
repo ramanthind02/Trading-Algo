@@ -1,0 +1,47 @@
+{
+  "feature_name": "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long",
+  "weight_hierarchy_group": "mean_reversion_indices",
+  "created_at": "2026-04-13T06:37:10.569854+00:00",
+  "updated_at": "2026-04-17T22:00:00+00:00",
+  "bias_node_spec": {
+    "module_name": "williamsr_signal",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "lookback": 10,
+      "oversold": -70.0,
+      "overbought": -10.0,
+      "strategy_mode": "long",
+      "exit_policy": "threshold_or_bars",
+      "exit_bars": 10
+    }
+  },
+  "tickers": [
+    "ES",
+    "NQ"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long",
+      "model_name": "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long::signed_signal_williamsr-signal_d_exit-bars_10_exit-policy_threshold-or-bars_lookback_10_overbought_10-0_oversold_70-0_strategy-mode_long",
+      "model_type": "signed_signal",
+      "feature_column": "williamsr_signal_signal_D_exitBars_10_exitPolicy_threshold_or_bars_lookback_10_overbought_-10.0_oversold_-70.0_strategyMode_long",
+      "strategy": "long",
+      "bias_node_spec": {
+        "module_name": "williamsr_signal",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "lookback": 10,
+          "oversold": -70.0,
+          "overbought": -10.0,
+          "strategy_mode": "long",
+          "exit_policy": "threshold_or_bars",
+          "exit_bars": 10
+        }
+      }
+    }
+  ]
+}

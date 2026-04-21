@@ -1,0 +1,7 @@
+peer_ensemble,mean_pearson,mean_spearman
+algomatic_momentum_signal_long_defaults_long,0.01346654639845445,5.13387057902773e-05
+filter_sma200_above_consec_momentum_lb40_cb3_buy_long,-0.08422060575711575,-0.09098928826549449
+gc_sma_above_filter_d_period_200_long,0.01841075777154912,0.00882604660236445
+mr_indices_long,0.16790247173963996,0.17112397699558518
+mr_indices_long_long,0.22477345901010398,0.24692619759347692
+sma_regime_long_short_long_short,0.10041645529591618,0.05922227917221313

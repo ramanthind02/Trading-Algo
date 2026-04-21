@@ -289,7 +289,10 @@ Before running portfolio backtests, refresh the cache for the exact ensemble set
 from ensemble.vault_manager import ensure_vault_cache_coverage
 
 summary = ensure_vault_cache_coverage(
-    vault_ensemble_dirs=("vault/D/rebalancing_es_tlt_long", "vault/M/buy_hold_long"),
+    vault_ensemble_dirs=(
+        "vault/D/es_tlt/rebalancing_es_tlt_long",
+        "vault/M/buy_hold/buy_hold_long",
+    ),
     start_date=datetime(2020, 1, 1),
     end_date=datetime(2024, 12, 31),
 )
@@ -298,7 +301,7 @@ summary = ensure_vault_cache_coverage(
 What this does:
 
 - migrates empty legacy `members` keys out of vault feature files
-- reads bias-node specs from `vault/*/*/features/*.json`
+- reads bias-node specs from nested `<vault_root>/<TF>/<group>/<ensemble>/features/*.json` (and legacy flat `<vault_root>/<TF>/<ensemble>/features/*.json`; prop tree is `vault/`, personal is `vault_personal/` — [[Vault/vault]])
 - rebuilds only missing, stale, or out-of-range `family="bias"` artifacts
 - always ensures daily EWSD coverage for the requested tickers
 
@@ -331,6 +334,12 @@ What the runner now does before fitting the portfolio:
 
 This means you do not need a separate manual bootstrap step before a normal portfolio test run.
 
+### Portfolio inclusion gates (candidate strategy)
+
+After robustness work on a new vault ensemble, use the **inclusion** research phase: per-peer validation forecast correlation, standalone metrics (Sharpe/Sortino/Calmar) for the candidate and each baseline ensemble, portfolio uplift on train / validation / train+validation, and an **optional test-window** check. Thresholds and CSV output live on `ResearchConfig.portfolio_inclusion`; baseline portfolio comes from `portfolio_research.config.load_config()`. CLI: `python -m feature_research.run_inclusion_gates` (default candidate is `eval_bias_spec` from research config; use ``--candidate-mode vault_path`` and a path for an on-disk ensemble).
+
+Full specification: [[Ensemble/portfolio]] (section **Portfolio research — inclusion gates**).
+
 ### Manual portfolio preflight
 
 Use the manual preflight path when:
@@ -346,8 +355,8 @@ from ensemble.vault_manager import ensure_vault_cache_coverage
 
 summary = ensure_vault_cache_coverage(
     vault_ensemble_dirs=(
-        "vault/D/rebalancing_es_tlt_long",
-        "vault/M/buy_hold_long",
+        "vault/D/es_tlt/rebalancing_es_tlt_long",
+        "vault/M/buy_hold/buy_hold_long",
     ),
     start_date=datetime(2020, 1, 1),
     end_date=datetime(2024, 12, 31),
@@ -376,7 +385,7 @@ from ensemble.vault_manager import ensure_vault_cache_coverage
 from utils.core.enums import TimeFrame
 
 ensure_vault_cache_coverage(
-    vault_ensemble_dirs=("vault/D/rebalancing_es_tlt_long",),
+    vault_ensemble_dirs=("vault/D/es_tlt/rebalancing_es_tlt_long",),
     start_date=datetime(2020, 1, 1),
     end_date=datetime(2024, 12, 31),
 )
@@ -459,7 +468,7 @@ from datetime import datetime
 from ensemble.vault_manager import ensure_vault_cache_coverage
 
 summary = ensure_vault_cache_coverage(
-    vault_ensemble_dirs=("vault/D/rebalancing_es_tlt_long",),
+    vault_ensemble_dirs=("vault/D/es_tlt/rebalancing_es_tlt_long",),
     start_date=datetime(2023, 1, 1),
     end_date=datetime(2025, 12, 31),
 )

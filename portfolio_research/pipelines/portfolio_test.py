@@ -478,7 +478,8 @@ def _generate_component_tearsheets(
                 candles_df,
             )
             ensemble_returns = aggregate_intraday_returns_to_daily(ensemble_returns)
-            output_file = output_dir / f"{prefix}{ensemble_name}_tearsheet.html"
+            safe_ensemble_name = _sanitize_tearsheet_name(str(ensemble_name))
+            output_file = output_dir / f"{prefix}{safe_ensemble_name}_tearsheet.html"
             generate_tearsheet(
                 strategy_returns=ensemble_returns,
                 baseline_returns=baseline_returns,
@@ -541,6 +542,7 @@ def _evaluate_phase(
     unique_timeframes: list[TimeFrame],
     *,
     emit_tearsheets: bool = True,
+    run_purpose: Literal["full", "metrics_only"] = "full",
 ) -> tuple[PhaseResult, pd.DataFrame]:
     """Evaluate a portfolio phase: fit on train window, test on test window.
 
@@ -550,6 +552,11 @@ def _evaluate_phase(
     HTML under ``<phase>/<tf_label>/`` when ``config.export_per_ensemble_tearsheets``.
     Composite (multi-window) tearsheets use composite_name e.g. Validation_and_Test_windows →
     Portfolio_{name}_tearsheet.html.
+
+    ``run_purpose="metrics_only"`` (ablation batching): skip TF-level ensemble/base-model
+    prediction materialization, weight-layer CSV, vault snapshot, and cache materialization—only
+    combined global returns are needed. Feature cache still supplies bias nodes; portfolio fit/predict
+    still runs.
     """
     phase_out = config.output_root / output_dir_name
     phase_out.mkdir(parents=True, exist_ok=True)
@@ -624,10 +631,15 @@ def _evaluate_phase(
         tester.fit_from_cache(fit_query.for_timeframe(timeframe))
 
         print(f"  Predicting {tf_label} portfolio...")
+        need_tf_component_predictions = (
+            run_purpose == "full"
+            and emit_tearsheets
+            and config.export_per_ensemble_tearsheets
+        )
         tester.predict_from_cache(
             predict_query.for_timeframe(timeframe),
-            return_ensemble_predictions=True,
-            return_base_model_predictions=True,
+            return_ensemble_predictions=need_tf_component_predictions,
+            return_base_model_predictions=need_tf_component_predictions,
         )
         if tester.positions_df is None:
             raise ValueError(f"No positions produced for timeframe {timeframe.name}")
@@ -671,21 +683,23 @@ def _evaluate_phase(
         predict_start=test_start,
         predict_end=test_end,
     )
-    write_weight_layer_csv(
-        weight_layer_export_df,
-        portfolio_dir / "weight_layer_weights_long.csv",
-    )
-    portfolio_id = global_portfolio.save_to_vault(
-        fit_start=fit_start.to_pydatetime(),
-        fit_end=fit_end.to_pydatetime(),
-    )
+    if run_purpose == "full":
+        write_weight_layer_csv(
+            weight_layer_export_df,
+            portfolio_dir / "weight_layer_weights_long.csv",
+        )
+        portfolio_id = global_portfolio.save_to_vault(
+            fit_start=fit_start.to_pydatetime(),
+            fit_end=fit_end.to_pydatetime(),
+        )
     global_positions_raw = global_portfolio.predict_from_cache(predict_query)
-    materialize_global_portfolio_predictions(
-        portfolio=global_portfolio,
-        query=predict_query,
-        portfolio_id=portfolio_id,
-        world=_phase_world(output_dir_name),
-    )
+    if run_purpose == "full":
+        materialize_global_portfolio_predictions(
+            portfolio=global_portfolio,
+            query=predict_query,
+            portfolio_id=portfolio_id,
+            world=_phase_world(output_dir_name),
+        )
     global_positions_raw["datetime"] = pd.to_datetime(
         global_positions_raw["datetime"]
     ).dt.floor("s")
@@ -798,6 +812,9 @@ def run_portfolio_test_pipeline(config: Any) -> None:
                     path,
                     refit=True,
                     target_volatility=config.target_volatility,
+                    exclude_feature_stems_by_ensemble=getattr(
+                        config, "exclude_feature_stems_by_ensemble", None
+                    ),
                 ),
                 True,
             ),
@@ -886,6 +903,7 @@ def run_single_phase_for_prop_firm(
     *,
     emit_tearsheets: bool = False,
     run_preflight: bool = True,
+    run_purpose: Literal["full", "metrics_only"] = "full",
 ) -> PhaseResult:
     """Run a single portfolio phase with the same windows as ``run_portfolio_test_pipeline``.
 
@@ -894,6 +912,10 @@ def run_single_phase_for_prop_firm(
 
     Set ``run_preflight=False`` when batching multiple phases after a single
     ``run_portfolio_research_cache_preflight(config)`` call.
+
+    ``run_purpose="metrics_only"`` skips vault snapshot, cache materialization, and weight-layer
+    CSV writes, and avoids TF-level ensemble/base-model predictions unless tearsheets need them.
+    Use for ablation batching where only combined returns are required.
     """
     if run_preflight:
         run_portfolio_research_cache_preflight(config)
@@ -905,6 +927,9 @@ def run_single_phase_for_prop_firm(
                     path,
                     refit=True,
                     target_volatility=config.target_volatility,
+                    exclude_feature_stems_by_ensemble=getattr(
+                        config, "exclude_feature_stems_by_ensemble", None
+                    ),
                 ),
                 True,
             ),
@@ -933,6 +958,7 @@ def run_single_phase_for_prop_firm(
             grouped_ensembles=grouped_ensembles,
             unique_timeframes=unique_timeframes,
             emit_tearsheets=emit_tearsheets,
+            run_purpose=run_purpose,
         )
     elif phase == "validation":
         phase_result, _wl = _evaluate_phase(
@@ -946,6 +972,7 @@ def run_single_phase_for_prop_firm(
             grouped_ensembles=grouped_ensembles,
             unique_timeframes=unique_timeframes,
             emit_tearsheets=emit_tearsheets,
+            run_purpose=run_purpose,
         )
     elif phase == "test":
         phase_result, _wl = _evaluate_phase(
@@ -959,6 +986,7 @@ def run_single_phase_for_prop_firm(
             grouped_ensembles=grouped_ensembles,
             unique_timeframes=unique_timeframes,
             emit_tearsheets=emit_tearsheets,
+            run_purpose=run_purpose,
         )
     else:
         raise ValueError(

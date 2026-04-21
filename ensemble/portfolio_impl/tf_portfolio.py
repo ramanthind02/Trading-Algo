@@ -82,6 +82,19 @@ def _vault_ensemble_label(ensemble: object, idx: int) -> str:
     return f"index {idx}"
 
 
+def ensemble_prediction_dict_key(ensemble: object, ensemble_idx: int) -> str:
+    """Stable key for per-ensemble / per-base-model prediction dicts.
+
+    Prefer the vault ensemble directory leaf name (``vault_ensemble_name``) so
+    exports (e.g. tearsheets) match folder names under ``vault/``. Fall back to
+    ``ensemble_{idx}`` when the attribute is missing (non-vault ensembles).
+    """
+    name = getattr(ensemble, "vault_ensemble_name", None)
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return f"ensemble_{ensemble_idx}"
+
+
 def _normalize_candles_datetime_column(candles_df: pd.DataFrame) -> pd.DataFrame:
     """Ensure datetime is only a column; delegate to shared helper."""
     return normalize_candles_datetime_column(candles_df)
@@ -1075,7 +1088,10 @@ class TFPortfolio:
         for ensemble_idx, ensemble_result in ensemble_results:
             if ensemble_result is None:
                 continue
-            
+
+            ensemble_obj = self.ensembles[ensemble_idx]
+            ensemble_key = ensemble_prediction_dict_key(ensemble_obj, ensemble_idx)
+
             if isinstance(ensemble_result, dict):
                 ensemble_pred = ensemble_result.get('ensemble')
                 base_models = ensemble_result.get('base_models', {})
@@ -1103,8 +1119,7 @@ class TFPortfolio:
                 
                 # ALWAYS compute base model predictions (now fast with vectorization)
                 for model_name, model_pred in base_models.items():
-                    ensemble_name = f"ensemble_{ensemble_idx}"
-                    full_model_name = f"{ensemble_name}::{model_name}"
+                    full_model_name = f"{ensemble_key}::{model_name}"
                     # Convert to position fractions (vectorized - O(n+m) complexity)
                     base_model_positions = apply_forecast_risk_management(
                         model_pred,
@@ -1117,8 +1132,6 @@ class TFPortfolio:
                 
                 # ALWAYS compute ensemble-level predictions (now fast with vectorization)
                 if ensemble_pred is not None:
-                    ensemble_name = f"ensemble_{ensemble_idx}"
-                    
                     # Convert to position fractions (vectorized - O(n+m) complexity)
                     ensemble_positions = apply_forecast_risk_management(
                         ensemble_pred,
@@ -1128,12 +1141,11 @@ class TFPortfolio:
                         max_position_pct=self.max_position_pct,
                     )
                     
-                    ensemble_predictions_dict[ensemble_name] = ensemble_positions
+                    ensemble_predictions_dict[ensemble_key] = ensemble_positions
             else:
                 # If ensemble doesn't return dict, it's already aggregated
                 ensemble_pred = ensemble_result
                 if ensemble_pred is not None:
-                    ensemble_name = f"ensemble_{ensemble_idx}"
                     ensemble_positions = apply_forecast_risk_management(
                         ensemble_pred,
                         tf_candles,
@@ -1141,7 +1153,7 @@ class TFPortfolio:
                         idm=self.idm_,
                         max_position_pct=self.max_position_pct,
                     )
-                    ensemble_predictions_dict[ensemble_name] = ensemble_positions
+                    ensemble_predictions_dict[ensemble_key] = ensemble_positions
         
         if not forecast_vectors:
             empty_df = pd.DataFrame(columns=['ticker', 'datetime', 'forecast_score', 'position_fraction'])

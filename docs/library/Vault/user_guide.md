@@ -1,5 +1,7 @@
 # Vault User Guide
 
+**Vault roots:** default prop firm tree is `vault/`; personal trading defaults to `vault_personal/` at the repo root. Env vars and `vault_profile` / explicit paths are documented in [[Vault/vault]]. Examples below use the prop tree unless noted.
+
 ## Short version
 
 Use the vault for persisted feature and portfolio state:
@@ -17,7 +19,7 @@ Do not use it for candles, live cache artifacts, or current forecasts.
 ```python
 from ensemble.vault_manager import initialize_vault
 
-initialize_vault("vault")
+initialize_vault("vault")  # or None for prop default; use vault_personal / resolve_vault_personal() for personal
 ```
 
 ### Create an ensemble directory
@@ -26,13 +28,19 @@ initialize_vault("vault")
 from ensemble.vault_manager import create_ensemble_directory
 from utils.core.enums import Direction, TimeFrame
 
+# Nested under a manual weight-hierarchy group (recommended for new ensembles)
 ensemble_dir = create_ensemble_directory(
-    vault_root="vault",
     timeframe=TimeFrame.D,
     ensemble_name="commodity_breakout",
     direction=Direction.LONG,
+    weight_hierarchy_group="momentum",
 )
+# → vault/D/momentum/commodity_breakout_long
+
+# Omit weight_hierarchy_group for the legacy flat path vault/D/<ensemble_leaf>/
 ```
+
+See [[Vault/vault]] for the list of group folder names.
 
 ### Save a feature
 
@@ -48,7 +56,7 @@ model_id = base_model.save_to_vault(ensemble_dir)
 from ensemble.vault_manager import load_feature_base_models
 
 models = load_feature_base_models(
-    ensemble_dir="vault/D/commodity_breakout_long",
+    ensemble_dir="vault/D/mean_reversion_indices/mr_indices_long",
     feature_name="rsi_signal_D",
     fitted_only=True,
 )
@@ -76,5 +84,6 @@ portfolio_id = global_portfolio.save_to_vault(
 
 - [[Vault/architecture]]
 - [[Vault/vault]]
+- [[Ensemble/weight_layer]] - Manual `hierarchy_equal` groups match vault folder names
 - [[Vault/portfolio_snapshot_usage]]
 - [[Deployment/live_cache_refresh]]

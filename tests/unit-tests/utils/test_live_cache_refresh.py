@@ -68,7 +68,7 @@ def _write_manifest(
         "vault_root": "vault",
         "snapshot_vault_root": "vault",
         "debounce_seconds": debounce_seconds,
-        "active_ensemble_dirs": active_ensemble_dirs or ["vault/M/buy_hold_long"],
+        "active_ensemble_dirs": active_ensemble_dirs or ["vault/M/buy_hold/buy_hold_long"],
         "active_portfolios": active_portfolios
         or [
             {
@@ -97,7 +97,7 @@ def _completed_summary(
         manifest_path=str(manifest_path),
         dirty_keys=dirty_keys,
         affected_portfolios=("live_es",),
-        refreshed_ensemble_dirs=("vault/M/buy_hold_long",),
+        refreshed_ensemble_dirs=("vault/M/buy_hold/buy_hold_long",),
         bias_refresh_summary={"failed": 0},
         materialized_portfolios=(),
         started_at=now,
@@ -299,7 +299,7 @@ def test_failed_live_refresh_cycle_keeps_dirty_keys_and_records_status(
             manifest_path=str(manifest_path),
             dirty_keys=dirty,
             affected_portfolios=(),
-            refreshed_ensemble_dirs=("vault/M/buy_hold_long",),
+            refreshed_ensemble_dirs=("vault/M/buy_hold/buy_hold_long",),
             bias_refresh_summary=None,
             materialized_portfolios=(),
             started_at=now,

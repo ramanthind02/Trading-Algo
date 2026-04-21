@@ -1,0 +1,55 @@
+{
+  "feature_name": "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40",
+  "weight_hierarchy_group": "momentum",
+  "created_at": "2026-04-13T08:42:47.776581+00:00",
+  "updated_at": "2026-04-17T22:00:00+00:00",
+  "bias_node_spec": {
+    "module_name": "filter_gate",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "filter_module": "sma_above_filter",
+      "filter_params": {
+        "period": 200
+      },
+      "signal_module": "consec_momentum",
+      "signal_params": {
+        "lookback": 40,
+        "consecutive_bars": 3,
+        "is_buy": true
+      }
+    }
+  },
+  "tickers": [
+    "ES",
+    "NQ"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true",
+      "model_name": "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true",
+      "model_type": "signed_signal",
+      "feature_column": "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40",
+      "strategy": "long",
+      "bias_node_spec": {
+        "module_name": "filter_gate",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "filter_module": "sma_above_filter",
+          "filter_params": {
+            "period": 200
+          },
+          "signal_module": "consec_momentum",
+          "signal_params": {
+            "lookback": 40,
+            "consecutive_bars": 3,
+            "is_buy": true
+          }
+        }
+      }
+    }
+  ]
+}

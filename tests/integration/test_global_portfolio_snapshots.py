@@ -38,7 +38,7 @@ def test_global_portfolio_snapshot_roundtrip_and_materialization(
     isolated_central_cache: None,
     tmp_path: Path,
 ) -> None:
-    ensemble_dir = "vault/M/buy_hold_long"
+    ensemble_dir = "vault/M/buy_hold/buy_hold_long"
     if not source_data_available(ensemble_dir):
         pytest.skip("Repository-backed OHLC dataset is missing required buy_hold_long files")
 

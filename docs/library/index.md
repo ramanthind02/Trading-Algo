@@ -41,9 +41,11 @@ Production uses native signed-signal bias nodes that emit `-1/0/+1`. Continuous 
 
 - [[Ensemble/base_model]] - Base-model concepts
 - [[Ensemble/weight_layer]] - Weighting layer
-- [[Ensemble/portfolio]] - Portfolio layer
+- [[Ensemble/portfolio]] - Portfolio layer, multi-TF orchestration, **inclusion gates** (adding a candidate strategy)
 
 ## Vault
+
+Default prop tree: `vault/<D|W|M>/<group>/<ensemble>/` (manual weight-hierarchy groups); personal: `vault_personal/...` — see [[Vault/vault]]. Legacy flat `<vault_root>/<TF>/<ensemble>/` remains supported.
 
 - [[Vault/architecture]] - Vault ownership and invariants
 - [[Vault/user_guide]] - Saving and loading features and ensembles

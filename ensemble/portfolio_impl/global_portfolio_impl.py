@@ -5,6 +5,7 @@ import logging
 import json
 from pathlib import Path
 from datetime import datetime
+from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import pandas as pd
@@ -309,6 +310,48 @@ class GlobalPortfolio:
     # predict
     # ------------------------------------------------------------------
 
+    def _encode_predict_vectors_from_candles(
+        self,
+        candles_per_tf: Dict[TimeFrame, pd.DataFrame],
+        daily_volatility_df: pd.DataFrame,
+    ) -> Tuple[List[pd.DataFrame], Dict[str, Dict[str, str]], pd.DataFrame]:
+        """Collect TF forecast streams and encode for the global WeightLayer adapter."""
+        tf_forecast_streams = collect_tf_forecast_streams(
+            self.tf_portfolios,
+            candles_per_tf,
+            daily_volatility_df,
+        )
+
+        forecast_vectors = list(tf_forecast_streams.values())
+        if not forecast_vectors:
+            return [], {}, daily_volatility_df
+
+        reference_grid = build_reference_grid_from_daily_candles(candles_per_tf)
+        daily_grid = build_daily_grid(
+            forecast_vectors=forecast_vectors,
+            reference_index=reference_grid,
+        )
+        forecast_vectors = align_forecast_vectors_to_daily_grid(
+            forecast_vectors=forecast_vectors,
+            daily_grid=daily_grid,
+        )
+
+        encoded_predict_vectors, stream_decode_map = (
+            encode_forecast_vectors_for_global_weight_layer(forecast_vectors)
+        )
+        return encoded_predict_vectors, stream_decode_map, daily_volatility_df
+
+    def encode_predict_vectors_from_cache(
+        self,
+        query: PortfolioCacheQuery,
+    ) -> Tuple[List[pd.DataFrame], Dict[str, Dict[str, str]], pd.DataFrame]:
+        """Collect TF forecasts and encode for global combine (same tensor as ``predict`` pre-decode)."""
+        candles_per_tf = self._load_candles_per_timeframe_from_cache(query)
+        if not candles_per_tf:
+            raise ValueError("No candles available in the central cache for the requested query")
+        daily_volatility_df = _query_volatility_from_cache(query)
+        return self._encode_predict_vectors_from_candles(candles_per_tf, daily_volatility_df)
+
     def predict(
         self,
         candles_per_tf: Dict[TimeFrame, pd.DataFrame],
@@ -340,31 +383,9 @@ class GlobalPortfolio:
                 "Expected columns: ['datetime', 'ticker', 'ewsd_annual_vol']."
             )
 
-        # Step 1 — collect per-TF forecast streams (pre-IDM, instrument-weighted)
-        tf_forecast_streams = collect_tf_forecast_streams(
-            self.tf_portfolios,
+        encoded_predict_vectors, stream_decode_map, _ = self._encode_predict_vectors_from_candles(
             candles_per_tf,
             daily_volatility_df,
-        )
-
-        forecast_vectors = list(tf_forecast_streams.values())
-        if not forecast_vectors:
-            return pd.DataFrame(
-                columns=['ticker', 'datetime', 'forecast_score', 'position_fraction']
-            )
-
-        reference_grid = build_reference_grid_from_daily_candles(candles_per_tf)
-        daily_grid = build_daily_grid(
-            forecast_vectors=forecast_vectors,
-            reference_index=reference_grid,
-        )
-        forecast_vectors = align_forecast_vectors_to_daily_grid(
-            forecast_vectors=forecast_vectors,
-            daily_grid=daily_grid,
-        )
-
-        encoded_predict_vectors, stream_decode_map = (
-            encode_forecast_vectors_for_global_weight_layer(forecast_vectors)
         )
         if not encoded_predict_vectors:
             return pd.DataFrame(
@@ -387,6 +408,65 @@ class GlobalPortfolio:
             )
 
         # Step 3 — apply global instrument weights, IDM, and cap
+        return apply_global_position_constraints(
+            combined,
+            instrument_weights=self.instrument_weights,
+            global_idm=self.global_idm_,
+            max_position_pct=self.max_position_pct,
+        )
+
+    def predict_from_encoded_stream_exclusions(
+        self,
+        encoded_predict_vectors: List[pd.DataFrame],
+        stream_decode_map: Dict[str, Dict[str, str]],
+        daily_volatility_df: pd.DataFrame,
+        *,
+        exclude_stream_ids: frozenset[str],
+        stream_id_to_group: Mapping[str, str] | None = None,
+    ) -> pd.DataFrame:
+        """Combine encoded streams with FDM=1 at decode and frozen ``global_idm_``.
+
+        Fit the portfolio once, then call this with subsets of rows removed from the encoded
+        synthetic ``__GLOBAL__`` frame (``model_name`` is the global stream id). Skips refitting
+        the weight layer.
+
+        When ``stream_id_to_group`` is provided (vault weight-hierarchy group per stream id),
+        each **group** receives equal total weight ``1/n_groups`` among groups present in the
+        frame, with equal split **within** each group; removing streams redistributes only
+        inside that group (and groups that become empty are dropped from the group count).
+
+        When ``stream_id_to_group`` is None, remaining streams share weight equally (legacy).
+        Reuses ``global_idm_`` from ``fit()`` for position scaling.
+        """
+        del daily_volatility_df
+        if not self.is_fitted_:
+            raise RuntimeError(
+                "GlobalPortfolio must be fitted before predict_from_encoded_stream_exclusions()."
+            )
+        if not encoded_predict_vectors:
+            return pd.DataFrame(
+                columns=["ticker", "datetime", "forecast_score", "position_fraction"]
+            )
+        base = encoded_predict_vectors[0]
+        if base.empty:
+            return pd.DataFrame(
+                columns=["ticker", "datetime", "forecast_score", "position_fraction"]
+            )
+        if exclude_stream_ids:
+            filtered = base.loc[~base["model_name"].isin(exclude_stream_ids)].copy()
+        else:
+            filtered = base.copy()
+        if filtered.empty:
+            return pd.DataFrame(
+                columns=["ticker", "datetime", "forecast_score", "position_fraction"]
+            )
+        combined = decode_global_weight_layer_output(
+            [filtered],
+            stream_decode_map,
+            global_weights=None,
+            global_fdm=1.0,
+            stream_id_to_group=stream_id_to_group,
+        )
         return apply_global_position_constraints(
             combined,
             instrument_weights=self.instrument_weights,

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import inspect
@@ -95,9 +97,9 @@ def _resolve_weight_layer_config(wf_cfg: object | None) -> WeightLayerConfig | N
 
     return WeightLayerConfig(
         weighting_method=algorithm_name,
-        rho_cut=configured.rho_cut,
         fdm_max=configured.fdm_max,
-        group_weight_cap=configured.group_weight_cap,
+        hierarchy_spec=configured.hierarchy_spec,
+        hierarchy_path=configured.hierarchy_path,
     )
 
 
@@ -111,9 +113,25 @@ def _resolve_member_prediction_mode(wf_cfg: object | None) -> str | None:
     return str(raw) if isinstance(raw, str) else None
 
 
-def _sanitize_tearsheet_name(name: str) -> str:
-    """Replace characters unsafe for filenames with underscores."""
-    return name.replace(" ", "_").replace("::", "_").replace("/", "_").strip("_") or "signal"
+def _sanitize_tearsheet_name(name: str, *, max_component_len: int = 100) -> str:
+    """Replace characters unsafe for filenames; shorten long stems for Windows path limits.
+
+    A single path component should stay well below 255 characters (``tearsheet.html`` adds
+    length; QuantStats may also reject ``\\\\?\\`` paths with extreme lengths). Long names
+    get truncated with a stable SHA-256 suffix for uniqueness.
+    """
+    base = (
+        str(name)
+        .replace(" ", "_")
+        .replace("::", "_")
+        .replace("/", "_")
+    )
+    base = re.sub(r'[<>:"|?*\\]', "_", base).strip("_") or "signal"
+    if len(base) <= max_component_len:
+        return base
+    digest = hashlib.sha256(str(name).encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+    keep = max(16, max_component_len - len(digest) - 1)
+    return f"{base[:keep]}_{digest}"
 
 
 def _normalize_ticker_label(value: object) -> str:

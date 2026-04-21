@@ -32,19 +32,45 @@ def _member_forecasts() -> list[pd.DataFrame]:
     ]
 
 
+def _hierarchy_three_stream_ids() -> dict[str, object]:
+    return {
+        "type": "group",
+        "id": "root",
+        "children": [
+            {
+                "type": "group",
+                "id": "fast",
+                "children": [
+                    {"type": "leaf", "stream_id": "ewmac_fast::q33"},
+                    {"type": "leaf", "stream_id": "ewmac_fast::q66"},
+                ],
+            },
+            {"type": "leaf", "stream_id": "ewmac_slow::lower"},
+        ],
+    }
+
+
 def test_weight_layer_config_supports_flattened_model_names() -> None:
-    config = WeightLayerConfig(weighting_method="hrp_cluster_equal")
-    assert config.weighting_method == "hrp_cluster_equal"
+    config = WeightLayerConfig(
+        weighting_method="hierarchy_equal",
+        hierarchy_spec=_hierarchy_three_stream_ids(),
+    )
+    assert config.weighting_method == "hierarchy_equal"
 
 
 def test_weight_layer_clusters_flattened_member_names() -> None:
-    weight_layer = WeightLayer(weight_method="hrp_cluster_equal", fdm_max=2.0, rho_cut=0.7)
+    weight_layer = WeightLayer(
+        weight_method="hierarchy_equal",
+        fdm_max=2.0,
+        hierarchy_spec=_hierarchy_three_stream_ids(),
+    )
     forecasts = _member_forecasts()
 
     weight_layer.fit(forecasts, signals=pd.DataFrame())
 
     assignments = weight_layer.get_diagnostics()["tickers"]["ES"]["cluster_assignments"]
-    assert assignments["ewmac_fast::q33"] == assignments["ewmac_fast::q66"]
+    assert assignments["ewmac_fast::q33"].startswith("root/fast/")
+    assert assignments["ewmac_fast::q66"].startswith("root/fast/")
     assert assignments["ewmac_fast::q33"] != assignments["ewmac_slow::lower"]
 
 

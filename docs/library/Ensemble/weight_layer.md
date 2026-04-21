@@ -1,10 +1,8 @@
 # Weight Layer
 
-`WeightLayer` in `ensemble/weight_layer.py` combines the global forecast streams produced by `GlobalPortfolio`.
+`WeightLayer` in `ensemble/weight_layer.py` combines forecast streams at the **global** stage: it assigns weights across base-model streams (per synthetic global ticker) and applies the Forecast Diversification Multiplier (FDM).
 
-The `WeightLayer` implementation itself is unchanged in the global sector cutover.
-`GlobalPortfolio` now adapts multi-ticker/timeframe streams into a synthetic ticker
-(`__GLOBAL__`) and decodes weighted outputs back to real tickers after combine.
+`GlobalPortfolio` adapts multi-ticker/timeframe streams into a synthetic ticker (`__GLOBAL__`) and decodes weighted outputs back to real tickers after combine.
 
 ```text
 Base Models -> DiversifiedEnsemble -> TFPortfolio -> GlobalPortfolio(weight_layer=WeightLayer(...))
@@ -16,33 +14,24 @@ Base Models -> DiversifiedEnsemble -> TFPortfolio -> GlobalPortfolio(weight_laye
 |---|---|
 | `equal_signal` | Equal weight across all signals |
 | `inverse_avg_pairwise_corr` | Weight signals by inverse average positive pairwise correlation |
-| `hrp_cluster_equal` | Build HRP linkage, cut at `rho_cut`, equal weight across groups, equal weight within each group |
-| `hrp_classic` | Classic HRP recursive bisection on the linkage tree |
+| `hierarchy_equal` | Manual nested tree: equal weight among siblings at each branch; leaf weights are the product of branch fractions (see `ensemble/weight_hierarchy.py`) |
 
 `equal_signal` is the default.
 
-## Estimation Stack
+HRP-based methods (`hrp_cluster_equal`, `hrp_classic`) and `optimize_sortino_capped` were removed from the active config surface. Saved snapshots that still reference legacy methods fail deserialization with an explicit error—reload from a current portfolio config or re-fit.
+
+## Estimation stack (correlation and FDM)
 
 For each ticker:
 
-1. Build a date x model forecast matrix.
+1. Build a date × model forecast matrix.
 2. Drop all-empty rows and fill remaining gaps with `0.0`.
-3. Standardize each signal by its full-sample in-sample sample standard deviation.
-4. Fit Ledoit-Wolf covariance on the standardized matrix.
+3. Standardize each signal by its full-sample in-sample standard deviation.
+4. Fit Ledoit–Wolf covariance on the standardized matrix.
 5. Derive correlation from that covariance.
-6. Use full correlation for HRP distance/linkage, and positive-clipped correlation for scoring and FDM.
+6. Use the **positive-clipped** correlation matrix for FDM (and for `inverse_avg_pairwise_corr` scoring). `hierarchy_equal` uses the tree only for weights; correlation is still used for FDM diagnostics.
 
-Distance for clustering:
-
-```text
-d_ij = sqrt((1 - rho_ij) / 2)
-```
-
-Linkage:
-
-```text
-Ward linkage
-```
+Distance and Ward linkage are **not** used for weighting in the current implementation.
 
 ## Weighting
 
@@ -61,26 +50,18 @@ score_i = 1 / (1 + mean_positive_corr_i)
 weight_i = score_i / sum(scores)
 ```
 
-### `hrp_cluster_equal`
+### `hierarchy_equal`
 
-1. Build the full HRP tree.
-2. Cut the tree at `rho_cut`.
-3. Assign equal weight across groups.
-4. Apply `group_weight_cap`.
-5. Split each group equally across members.
+Provide either:
 
-### `hrp_classic`
+- `hierarchy_spec`: nested JSON mapping (root is a `type: "group"` node with `children`), or
+- `hierarchy_path`: path to a JSON file with the same shape.
 
-1. Build the full HRP tree.
-2. Order leaves quasi-diagonally.
-3. Recursively split the ordered tree.
-4. Allocate left/right branches inversely to branch variance using inverse-variance branch weights.
-
-`group_weight_cap` does not apply to `hrp_classic`.
+Leaves may specify `stream_id` directly (`ticker::timeframe::model_name`) or `ticker`, `timeframe`, and `model_name`. The fit step validates that declared leaves match the available model names (strict coverage). See `parse_hierarchy_spec` and `compute_equal_split_weights` in `ensemble/weight_hierarchy.py`.
 
 ## FDM
 
-FDM is based on the raw signal-level positive-clipped correlation matrix for all modes:
+FDM uses the raw signal-level positive-clipped correlation matrix for **all** modes:
 
 ```text
 mean_corr = mean(off_diagonal(signal_corr_positive))
@@ -93,21 +74,28 @@ Single-model and fallback cases use `FDM = 1.0`.
 
 | Parameter | Default | Description |
 |---|---|---|
-| `weighting_method` | `equal_signal` | One of the four modes above |
-| `rho_cut` | `0.70` | Cut threshold for reporting groups and `hrp_cluster_equal` |
+| `weighting_method` | `equal_signal` | One of `equal_signal`, `inverse_avg_pairwise_corr`, `hierarchy_equal` |
 | `fdm_max` | `2.0` | FDM cap |
-| `group_weight_cap` | `0.25` | Hard cap for `hrp_cluster_equal` group weights |
+| `hierarchy_spec` | `None` | Nested dict for `hierarchy_equal` (optional if `hierarchy_path` is set) |
+| `hierarchy_path` | `None` | Filesystem path to hierarchy JSON for `hierarchy_equal` |
+
+Example:
+
+```python
+from ensemble.weight_layer import WeightLayer
+
+WeightLayer(
+    weight_method="hierarchy_equal",
+    fdm_max=2.0,
+    hierarchy_path="path/to/hierarchy.json",
+)
+```
 
 ## Diagnostics
 
 Per ticker, the layer reports:
 
 - `weights`
-- `cluster_assignments`
-- `cluster_weights`
-- `cluster_metrics`
+- `cluster_assignments` / `cluster_weights` / `cluster_metrics` (historical names; for non-clustered modes these summarize per-signal allocation groups)
 - `fdm`
 - `mean_signal_correlation`
-- `mean_cluster_correlation`
-
-The `cluster_*` field names are retained for compatibility with existing reports, but they now represent generic allocation groups for non-clustered modes.

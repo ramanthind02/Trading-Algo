@@ -162,7 +162,7 @@ tf_weekly = TFPortfolio(trading_timeframe=TimeFrame.W, ...)
 # 2. Wrap in GlobalPortfolio with WeightLayer (adapter-driven global combine)
 global_p = GlobalPortfolio(
     tf_portfolios=[tf_daily, tf_weekly],
-    weight_layer=WeightLayer(weight_method="hrp_classic", fdm_max=2.0),
+    weight_layer=WeightLayer(weight_method="equal_signal", fdm_max=2.0),
 )
 
 # 3. Fit from central cache query
@@ -181,6 +181,51 @@ positions = global_p.predict_from_cache(query)
 
 ---
 
+## Portfolio research — inclusion gates
+
+Research-phase workflow for deciding whether to **add a new vault ensemble (candidate)** to an existing portfolio configuration. It reuses the same **train / validation / test** windows as `portfolio_research.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
+
+**Principle:** Gate on **validation data only**; treat the **test** window as a one-shot sanity check after you already accept the candidate on validation.
+
+| Step | What it checks | Default rule (tunable in config) |
+|------|----------------|----------------------------------|
+| **Gate 1 — diversification** | For each **same-`base_tf` peer** ensemble: **Pearson** and **Spearman** correlation of **ensemble-level** validation forecast streams (mean over intersected tickers per peer). | Pass only if **every** peer has finite values with Pearson `< corr_max` and Spearman `< spearman_corr_max` (defaults **0.7**). No same-TF peers → vacuous pass. |
+| **Gate 2 — standalone performance** | Candidate **alone** in `ensemble_dirs`; validation **Sharpe / Sortino / Calmar** on combined returns. | Pass if Sharpe > `sharpe_min` (default **0.3**). |
+| **Standalone vs each baseline** | One row per baseline ensemble + candidate: Sharpe / Sortino / Calmar on **train**, **validation**, and **train+validation** (single-ensemble portfolio each). | Report only (see CSV). |
+| **Uplift** | Full portfolio **without** vs **with** candidate on **train**, **validation**, and **concatenated train+validation**; Sharpe / Sortino / Calmar each window. | Pass if **each** window satisfies `Sharpe_with > Sharpe_without - uplift_slack` (default slack **0.05**). |
+| **Optional test confirmation** | Opt-in: standalone candidate **test** Sharpe vs **validation** Sharpe ratio. | Pass if `Sharpe_test / Sharpe_val > test_sharpe_ratio_min` (default **0.5**). |
+
+> **Correlation estimators:** Gate 1 uses **Pearson** and **Spearman** on aligned **validation** `forecast_score` series per ticker. The live **WeightLayer** FDM uses **Ledoit–Wolf** on **standardized in-sample** pivots at fit time — same economic object (forecasts), different estimator and window. See [[weight_layer]] for production FDM.
+
+### Configuration
+
+- **`PortfolioInclusionConfig`** in `feature_research/config.py`: thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), optional default candidate path/key.
+- **`ResearchConfig.portfolio_inclusion`**: holds defaults; `feature_research.config.load_config()` returns a default `PortfolioInclusionConfig()`.
+- **Baseline portfolio** (tickers, train/validation/test windows, `ensemble_dirs`, weight layer, etc.) still comes from **`portfolio_research.config.load_config()`** — the CLI loads both configs.
+
+### CLI
+
+From the repo root (venv Python), pass a **repo-relative** path to the candidate ensemble directory (same style as `ensemble_dirs` values):
+
+```powershell
+.\.venv\Scripts\python.exe -m feature_research.run_inclusion_gates
+```
+
+With ``portfolio_inclusion.candidate_repo_relative_path`` set in ``feature_research.config.load_config()``, no CLI arguments are required. Optional overrides: ``--candidate-path``, ``--candidate-key``, ``--emit-tearsheets`` / ``--no-emit-tearsheets``, ``--no-preflight``.
+
+### Artifacts
+
+Under `output_root` / `portfolio_inclusion.output_subdir`: `inclusion_<candidate_key>_summary.csv`, `_corr_by_peer_and_ticker.csv` (Pearson + Spearman per peer–ticker), `_standalone_by_ensemble.csv`, `_uplift_by_window.csv`.
+
+### Code entrypoints
+
+- `feature_research/inclusion_gates.py` — `run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …
+- `feature_research/run_inclusion_gates.py` — CLI
+
+**See also:** [[Cache/user_guide]] (portfolio workflow and preflight), [[Vault/user_guide]] (ensemble layout).
+
+---
+
 ## Key Design Decisions
 
 - **Vector output from Ensemble:** one row per (sample, model) → WeightLayer applies weights externally
@@ -190,4 +235,4 @@ positions = global_p.predict_from_cache(query)
 
 ---
 
-**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]]
+**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]] (portfolio workflow; inclusion gates summary cross-linked there)
