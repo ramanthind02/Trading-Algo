@@ -27,10 +27,11 @@ logger = get_logger(__name__)
 _PROP_BOT_TOKEN = "8157808736:AAHhqYe9N_PQ4Ox2Khz-zMbKoytly9ugrGY"
 _PROP_CHAT_ID = "-1002856645393"
 
-# enigma_pa_notifications_bot. chat_id filled in once the user adds the bot
-# to its channel and we read it from getUpdates; overridable via env var.
+# enigma_pa_notifications_bot posting to the "Enigma Signals - Personal
+# Account" channel (chat_id resolved via getUpdates after adding the bot
+# as channel admin). Overridable via env var.
 _PERSONAL_BOT_TOKEN = "8698079967:AAEXjTkAJcHsh1B88E-dRa-YIQVLuQly6NE"
-_PERSONAL_CHAT_ID = ""
+_PERSONAL_CHAT_ID = "-1003955204069"
 
 
 class TelegramNotifier:
