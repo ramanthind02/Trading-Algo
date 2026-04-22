@@ -1,7 +1,7 @@
 {
   "coverage": {
     "end": "2026-04-30T00:00:00",
-    "start": "1999-06-30T00:00:00"
+    "start": "2002-07-31T00:00:00"
   },
   "depends_on": [],
   "descriptor": {
@@ -10,10 +10,10 @@
     "module_name": null,
     "params": {},
     "scope": "live",
-    "ticker": "NQ",
+    "ticker": "TLT",
     "timeframe": "M"
   },
   "lifecycle_state": "fresh",
-  "revision": 8,
+  "revision": 3,
   "source_revision": 0
 }

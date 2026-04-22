@@ -5,8 +5,8 @@
 
   | Profile | Wrapper | Vault | Instruments | Telegram channel | Runs at (ET) |
   |---------|---------|-------|-------------|------------------|--------------|
-  | `prop` | `scripts/enigma_prop_forecast.py` | `vault/` | Micro futures (MES/MNQ/MGC/M2K/MYM, ZN for TLT) | Enigma Notifications | 6:00 PM |
-  | `personal` | `scripts/enigma_personal_forecast.py` | `vault_personal/` | ETF fractional shares (SPY/QQQ/GLD/IWM/DIA/TLT) | Enigma PA Notifications | 3:45 PM |
+  | `prop` | `scripts/enigma_prop_forecast.py` | `vault/` | Micro futures (MES/MNQ/MGC/M2K/MYM, ZN for TLT) | Enigma Signals - Prop Firms | 6:00 PM |
+  | `personal` | `scripts/enigma_personal_forecast.py` | `vault_personal/` | ETF fractional shares (SPY/QQQ/GLD/IWM/DIA/TLT) | Enigma Signals - Personal Account | 3:45 PM |
 
   ### Testing (no Telegram sent)
   ```bash
