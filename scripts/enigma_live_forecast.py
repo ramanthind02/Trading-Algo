@@ -1038,6 +1038,38 @@ def main():
     parser.add_argument("--capital", type=float, help="Override account capital")
     parser.add_argument("--port", type=int, help="Override TWS port (7497=paper, 7496=live)")
     parser.add_argument("--dry-run", action="store_true", help="Print results without sending Telegram")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="(personal profile only) After the signal is sent, rebalance the IB account. "
+             "Runs every pre-flight safety gate; without --approve-via-telegram and without "
+             "--dry-run-execute, this will place orders unattended.",
+    )
+    parser.add_argument(
+        "--dry-run-execute",
+        action="store_true",
+        help="With --execute: run pre-flight + show intents, but do not request approval or place orders.",
+    )
+    parser.add_argument(
+        "--approve-via-telegram",
+        action="store_true",
+        help="With --execute: require a Telegram inline-button approval from a whitelisted user before placing.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Required when --execute + port 7496. Arms live trading; absence means paper-only.",
+    )
+    parser.add_argument(
+        "--allow-rerun",
+        action="store_true",
+        help="With --execute: bypass today's lock file (use only after aborting a prior run).",
+    )
+    parser.add_argument(
+        "--skip-reconciliation",
+        action="store_true",
+        help="With --execute: bypass the yesterday-vs-now position reconciliation check.",
+    )
     args = parser.parse_args()
 
     profile = args.profile
@@ -1371,6 +1403,16 @@ def main():
             print("-" * 40)
             print(message)
             print("-" * 40)
+
+        # Step 12: optional IB auto-execution (personal profile only).
+        from execution.run_execution import run_auto_execution
+        run_auto_execution(
+            args=args,
+            config=config,
+            shares_df=shares_df,
+            capital=capital,
+            profile=profile,
+        )
 
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
