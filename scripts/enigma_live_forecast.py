@@ -1278,6 +1278,23 @@ def main():
             print(f"  {ticker_str}: forecast_score={forecast:.4f}, position_fraction={position_frac:.4f}")
         print("=" * 60)
 
+        # Optional filter: restrict the sizing output to only the tickers we
+        # can actually trade on the target account. The forecast + diversification
+        # math above still uses the full portfolio; this just trims the final
+        # sizing table.
+        tradeable_tickers = config.get("tradeable_tickers")
+        if tradeable_tickers:
+            tradeable_set = set(tradeable_tickers)
+            def _ticker_key(value):
+                return value.name if hasattr(value, "name") else str(value)
+            positions_df = positions_df[
+                positions_df["ticker"].apply(_ticker_key).isin(tradeable_set)
+            ].reset_index(drop=True)
+            latest = latest[
+                latest["ticker"].apply(_ticker_key).isin(tradeable_set)
+            ].reset_index(drop=True)
+            print(f"\n   Restricting sizing output to tradeable tickers: {sorted(tradeable_set)}")
+
         # Step 9: Position sizing (profile-specific)
         position_tickers = set()
         for _, row in latest.iterrows():

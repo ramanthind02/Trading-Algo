@@ -22,6 +22,7 @@
     "max_position_pct": 2.5,
     "idm_max": 2.5
   },
+  "tradeable_tickers": ["ES", "NQ", "GC"],
   "data": {
     "min_lookback_days": 10,
     "max_lookback_days": 365
