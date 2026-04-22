@@ -6,7 +6,7 @@
     "client_id": 1
   },
   "account": {
-    "capital_usd": 25000
+    "capital_usd": 50000
   },
   "instruments": {
     "ES":  {"etf": "SPY", "sec_type": "CONTFUT", "exchange": "CME"},
