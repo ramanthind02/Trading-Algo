@@ -320,6 +320,11 @@ class ResearchConfig:
     tearsheet_target_annual_volatility: float | None = None
     vault_save: VaultSaveConfig | None = None
     sector_allocation_config_path: str | None = None
+    #: When True, :mod:`portfolio_research.run_feature_vault_correlation` may export
+    #: research-vs-vault correlation tables (also requires
+    #: ``PortfolioResearchConfig.feature_vault_correlation.enabled``). See
+    #: ``docs/library/Ensemble/portfolio.md`` and vault correlation docs.
+    portfolio_vault_correlation: bool = False
 
     def __post_init__(self) -> None:
         if self.feature_type is not FeatureType.SIGNED_SIGNAL:
@@ -366,7 +371,7 @@ class ResearchConfig:
 
 def load_config() -> ResearchConfig:
     """Researcher overrides for the main signed-signal feature-research pipeline."""
-    tickers = [Ticker.ES]
+    tickers = [Ticker.GC]
 
     start = datetime(2000, 1, 1)
     end = datetime(2025, 9, 18)
@@ -392,22 +397,17 @@ def load_config() -> ResearchConfig:
     )
     feature_type = FeatureType.SIGNED_SIGNAL
 
-    # RSI short (cross above 75, exit cross below 25 or 3 bars) gated by bearish regime:
-    # ``sma_below_filter`` → 1.0 when close < SMA(200), else 0.0.
-    rsi_short_bearish_spec = build_filter_gate_bias_spec(
-        timeframe,
-        filter_module="sma_below_filter",
-        filter_params={"period": 100},
-        signal_module="rsi_signal",
-        signal_params={
-            "rsi_period": 2,
-            "oversold": 35.0,
-            "overbought": 65.0,
-            "strategy_mode": "short",
-            "exit_policy": "threshold_or_bars",
-            "exit_bars": 3,
+    # Long-only Donchian on GC — single combo for validation / follow-on phases:
+    # ``donchian_long_only_signal_D_entryLookback_40_exitLookback_100_smaPeriod_350``.
+    donchian_long_gc_spec: dict[str, Any] = {
+        "module_name": "donchian_long_only",
+        "timeframes": [timeframe],
+        "params": {
+            "entry_lookback": 40,
+            "exit_lookback": 100,
+            "sma_period": 350,
         },
-    )
+    }
 
     target_col = "log_return_ewsd"
     signed_reports_dir = (
@@ -415,21 +415,21 @@ def load_config() -> ResearchConfig:
         / "in_sample"
         / "results"
         / "signed_signal"
-        / "gc_rsi_signal_short_sma_below_200_rsi2_75_25_exit3"
+        / "gc_donchian_long_only_D_entry40_exit100_sma350"
     )
 
     in_sample_defaults = InSampleDefaultsCatalog(
         continuous=InSamplePhaseDefaultsConfig(
-            bias_spec=copy.deepcopy(rsi_short_bearish_spec),
+            bias_spec=copy.deepcopy(donchian_long_gc_spec),
             target_col=target_col,
-            strategy=Direction.SHORT,
+            strategy=Direction.LONG,
             reports_dir=signed_reports_dir,
             binning_params_overrides={},
         ),
         signed_signal=InSamplePhaseDefaultsConfig(
-            bias_spec=rsi_short_bearish_spec,
+            bias_spec=donchian_long_gc_spec,
             target_col=target_col,
-            strategy=Direction.SHORT,
+            strategy=Direction.LONG,
             reports_dir=signed_reports_dir,
             binning_params_overrides={},
         ),
@@ -437,17 +437,17 @@ def load_config() -> ResearchConfig:
 
     evaluation_defaults = EvaluationDefaultsCatalog(
         continuous=EvaluationPhaseDefaultsConfig(
-            bias_spec=copy.deepcopy(rsi_short_bearish_spec),
+            bias_spec=copy.deepcopy(donchian_long_gc_spec),
         ),
         signed_signal=EvaluationPhaseDefaultsConfig(
-            bias_spec=copy.deepcopy(rsi_short_bearish_spec),
+            bias_spec=copy.deepcopy(donchian_long_gc_spec),
         ),
     )
 
     param_sensitivity = ParamSensitivityConfig()
     vault_save = VaultSaveConfig(
-        direction=Direction.SHORT,
-        ensemble_name="gc_rsi_signal_short_sma_below_200_rsi2_75_25_exit3_d",
+        direction=Direction.LONG,
+        ensemble_name="gc_donchian_long_only_D_entry40_exit100_sma350_d",
         dry_run=False,
     )
 
@@ -474,4 +474,5 @@ def load_config() -> ResearchConfig:
         generate_ticker_tearsheets=False,
         tearsheet_target_annual_volatility=0.15,
         vault_save=vault_save,
+        portfolio_vault_correlation=True,
     )

@@ -63,6 +63,7 @@ def _build_signed_signal_config_rsi_lookback_grid(tmp_path: Path) -> ResearchCon
         generate_ticker_tearsheets=base.generate_ticker_tearsheets,
         vault_save=base.vault_save,
         sector_allocation_config_path=base.sector_allocation_config_path,
+        portfolio_vault_correlation=base.portfolio_vault_correlation,
         evaluation_defaults=None,
     )
 
@@ -115,6 +116,7 @@ def _build_signed_signal_config(tmp_path: Path) -> ResearchConfig:
         generate_ticker_tearsheets=base.generate_ticker_tearsheets,
         vault_save=base.vault_save,
         sector_allocation_config_path=base.sector_allocation_config_path,
+        portfolio_vault_correlation=base.portfolio_vault_correlation,
         evaluation_defaults=None,
     )
 

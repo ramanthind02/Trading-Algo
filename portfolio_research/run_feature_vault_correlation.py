@@ -2,7 +2,8 @@
 
 Loads ``ResearchConfig`` from ``feature_research.config.load_config`` and
 ``PortfolioResearchConfig`` from ``portfolio_research.config.load_config``.
-Correlation export runs only when ``PortfolioResearchConfig.feature_vault_correlation.enabled``.
+Correlation export runs when ``ResearchConfig.portfolio_vault_correlation`` and
+``PortfolioResearchConfig.feature_vault_correlation.enabled`` are both true.
 """
 from __future__ import annotations
 
@@ -45,6 +46,15 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(levelname)s %(name)s: %(message)s",
     )
+    research_cfg = load_feature_research_config()
+    if not research_cfg.portfolio_vault_correlation:
+        logger.info(
+            "feature research: portfolio_vault_correlation is False; set "
+            "ResearchConfig.portfolio_vault_correlation=True in "
+            "feature_research.config.load_config()."
+        )
+        return 0
+
     portfolio_cfg = load_portfolio_research_config()
     fvc = portfolio_cfg.feature_vault_correlation
     if not fvc.enabled:
@@ -53,8 +63,6 @@ def main(argv: list[str] | None = None) -> int:
             "FeatureVaultCorrelationConfig(enabled=True) in portfolio_research.config.load_config()."
         )
         return 0
-
-    research_cfg = load_feature_research_config()
     vault_root: Path = (
         fvc.vault_root if fvc.vault_root is not None else resolve_default_vault_root()
     )

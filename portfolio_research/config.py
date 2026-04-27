@@ -343,7 +343,7 @@ def load_config() -> PortfolioResearchConfig:
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"
     export_per_timeframe_tearsheets = False
     export_per_ensemble_tearsheets = False
-    feature_vault_correlation = FeatureVaultCorrelationConfig(enabled=False)
+    feature_vault_correlation = FeatureVaultCorrelationConfig(enabled=True)
     strict_cache_preflight = False
     # ==========================================================================
     # EDIT ABOVE
