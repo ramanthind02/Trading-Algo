@@ -19,6 +19,7 @@ call "cpython_env\Scripts\activate.bat"
 set "PYTHONPATH=C:\Users\adabla\Trading-Algo"
 
 REM Paper port 7497 by default; change to 7496 for live IB account.
-python scripts\enigma_prop_forecast.py --port 7497
-
-echo [%date% %time%] Prop forecast run completed >> deploy\forecast.log
+echo. >> deploy\forecast.log
+echo [%date% %time%] === Prop forecast run BEGIN === >> deploy\forecast.log
+python scripts\enigma_prop_forecast.py --port 7497 >> deploy\forecast.log 2>&1
+echo [%date% %time%] === Prop forecast run END (exit %errorlevel%) === >> deploy\forecast.log

@@ -4,6 +4,7 @@ Telegram Notifier for Forecast Results
 Sends formatted forecast messages to Telegram channel.
 """
 
+import json
 import os
 import sys
 import requests
@@ -316,6 +317,109 @@ class TelegramNotifier:
         
         return self.send_message(message)
     
+    def send_with_inline_keyboard(
+        self,
+        text: str,
+        buttons: List[Dict[str, str]],
+    ) -> Optional[int]:
+        """Send a message with an inline keyboard. Returns message_id on success.
+
+        Parameters
+        ----------
+        text
+            Message body (Markdown).
+        buttons
+            Iterable of ``{"text": "...", "callback_data": "..."}`` dicts.
+            One row, one button per entry.
+        """
+        if not self.token or not self.chat_id:
+            logger.info(f"Telegram not configured. Would send: {text}")
+            return None
+        try:
+            reply_markup = {"inline_keyboard": [[b] for b in buttons]}
+            response = requests.post(
+                f"{self.base_url}/sendMessage",
+                data={
+                    "chat_id": self.chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                    "reply_markup": json.dumps(reply_markup),
+                },
+                timeout=10,
+            )
+            if response.status_code != 200:
+                logger.error(f"Telegram sendMessage error: {response.status_code} - {response.text}")
+                return None
+            return int(response.json()["result"]["message_id"])
+        except Exception as e:
+            logger.error(f"send_with_inline_keyboard failed: {e}")
+            return None
+
+    def edit_message_text(self, message_id: int, text: str) -> bool:
+        """Edit a previously-sent message, clearing its inline keyboard."""
+        if not self.token or not self.chat_id:
+            return False
+        try:
+            response = requests.post(
+                f"{self.base_url}/editMessageText",
+                data={
+                    "chat_id": self.chat_id,
+                    "message_id": message_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                },
+                timeout=10,
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"edit_message_text failed: {e}")
+            return False
+
+    def answer_callback_query(self, callback_query_id: str, text: str = "") -> bool:
+        """Acknowledge a callback_query so Telegram stops showing the spinner."""
+        if not self.token:
+            return False
+        try:
+            response = requests.post(
+                f"{self.base_url}/answerCallbackQuery",
+                data={"callback_query_id": callback_query_id, "text": text},
+                timeout=10,
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"answer_callback_query failed: {e}")
+            return False
+
+    def get_updates(
+        self,
+        offset: Optional[int] = None,
+        timeout: int = 25,
+        allowed_updates: Optional[List[str]] = None,
+    ) -> List[Dict]:
+        """Long-poll getUpdates. Returns the raw ``result`` list on success."""
+        if not self.token:
+            return []
+        try:
+            params: Dict[str, object] = {"timeout": timeout}
+            if offset is not None:
+                params["offset"] = offset
+            if allowed_updates is not None:
+                params["allowed_updates"] = json.dumps(allowed_updates)
+            # Network timeout must exceed the long-poll timeout.
+            response = requests.get(
+                f"{self.base_url}/getUpdates",
+                params=params,
+                timeout=timeout + 5,
+            )
+            if response.status_code != 200:
+                logger.error(f"getUpdates error: {response.status_code} - {response.text}")
+                return []
+            return response.json().get("result", [])
+        except Exception as e:
+            logger.error(f"get_updates failed: {e}")
+            return []
+
     def test_connection(self) -> bool:
         """
         Test Telegram connection by sending a test message.
