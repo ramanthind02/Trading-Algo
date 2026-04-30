@@ -1065,11 +1065,6 @@ def main():
         action="store_true",
         help="With --execute: bypass today's lock file (use only after aborting a prior run).",
     )
-    parser.add_argument(
-        "--skip-reconciliation",
-        action="store_true",
-        help="With --execute: bypass the yesterday-vs-now position reconciliation check.",
-    )
     args = parser.parse_args()
 
     profile = args.profile

@@ -184,6 +184,15 @@ cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
   `preflight (passed: true)`, and `run_end (status: dry_run)` records.
 - No lock file written (only real placements write the lock).
 
+**Active preflight gates (in order):**
+1. **Lock file** — refuses if today's run already locked. Override: `--allow-rerun`.
+2. **Live-port-requires-flag** — refuses port 7496 unless `--live` is set.
+3. **Account match** — refuses if config `ib_account_id` ∉ IB `managedAccounts`.
+4. **Market hours** — refuses outside 09:35–15:55 ET (IB rejects fractional shares OOH anyway).
+5. **Max orders per run** — refuses batches of >10 intents (catches sizing-bug runaways).
+
+That's it. Position-size and notional caps were removed — IB's own buying-power check is the real financial backstop, and the human-in-the-loop Telegram approval is the second one.
+
 **Common preflight failures and what they mean:**
 | Error contains | Meaning | Fix |
 |----------------|---------|-----|
@@ -192,11 +201,10 @@ cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
 | `port 7496 (LIVE) without --live` | accidentally on live port | switch back to 7497 |
 | `Lock file exists` | Today's run already executed | pass `--allow-rerun` if you really want to re-execute |
 
-> **Tip — exercise meaningful intents on $1K capital.** The 2.5% per-position
-> cap on $1K = $25 max per position; many runs will produce zero intents
-> after the $5 dead-band filter. To force visible intents during testing,
-> bump capital with `--capital 10000` (does NOT change real account size,
-> only the sizing math): `... --execute --dry-run-execute --capital 10000`.
+> **Tip — visible intents on $1K capital.** With current sizing (~9.6%
+> per ETF on a buy-hold signal), $1K capital produces ~$96 per intent.
+> If you want bigger paper trades for a more thorough test, append
+> `--capital 10000` (does NOT change real account size, only the sizing math).
 
 ---
 
@@ -245,24 +253,6 @@ cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
 Should fail preflight at gate #1: `Lock file exists ... pass --allow-rerun`.
 That's correct behavior.
 
-### 5c. Next-day run (proves reconciliation)
-
-The day after Stage 5a, run again:
-
-```bash
-cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
-    --port 7497 --execute --approve-via-telegram --capital 10000
-```
-
-Reconciliation gate compares your current IB positions to
-`positions_latest.json` from yesterday. Should pass silently.
-
-**To prove the gate fires when it should:** between runs, manually buy or
-sell a fractional share of one of the ETFs in TWS, then run again. Preflight
-should fail with `Reconciliation failed: SPY expected X, actual Y`. Pass
-`--skip-reconciliation` once you've manually verified the discrepancy is
-expected.
-
 ### 5d. Cancel-path test
 
 Run again, but tap **❌ Cancel** instead of Approve.
@@ -280,29 +270,6 @@ exits cleanly, audit shows `approval (decision: timed_out)`, no lock.
 
 ---
 
-## Stage 6 — Promote to live trading (when paper is rock solid)
-
-Defer this until you've successfully completed Stage 5a, 5b, 5c, 5d, 5e
-across multiple market days with no surprises.
-
-When ready:
-
-1. Log out of TWS paper, log in to your **live** account.
-2. Edit `configs/live_forecast_config_personal.json`:
-   - `connection.port`: `7496`
-   - `execution.ib_account_id`: your **live** account ID (no longer DU prefix).
-   - Tighten initial caps:
-     - `max_order_notional_usd`: `50` (one-tenth of paper)
-     - `max_batch_notional_usd`: `100`
-3. Run with **both** `--execute` and `--live`:
-   ```bash
-   cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
-       --port 7496 --execute --approve-via-telegram --live
-   ```
-4. **Watch the first live run minute-by-minute.** Verify each fill in TWS in
-   real time. Don't walk away.
-5. After ~2 weeks of clean live runs, restore caps to production levels.
-
 ---
 
 ## Quick-reference command table
@@ -317,7 +284,6 @@ When ready:
 | Auto-execute dry-run | `... enigma_personal_forecast --port 7497 --execute --dry-run-execute` |
 | Auto-execute live (paper) | `... enigma_personal_forecast --port 7497 --execute --approve-via-telegram` |
 | Force-rerun today | append `--allow-rerun` |
-| Skip reconciliation | append `--skip-reconciliation` |
 | Test sizing on $10K | append `--capital 10000` |
 | Watch logs | `tail -f deploy/forecast.log` |
 | View today's audit | `ls logs/execution/$(date +%Y-%m-%d)*` |
@@ -338,5 +304,4 @@ system in one session, run in this order:
 7. **Stage 5a** (first paper trade with approval, ~3 min, market hours).
 8. Wait for **Stage 3c** to fire on its own at 12:45 PM PT and 3:00 PM PT.
 
-That's ~25 minutes of active testing. Promotion to live (Stage 6) waits
-until you've seen Stage 5a–5e clean across several days.
+That's ~25 minutes of active testing.

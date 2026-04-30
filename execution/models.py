@@ -71,14 +71,11 @@ class ExecutionConfig:
     """
 
     ib_account_id: str
-    max_order_notional_usd: float
-    max_batch_notional_usd: float
     max_orders_per_run: int
     min_rebalance_shares: Decimal
     min_rebalance_notional_usd: float
     authorized_telegram_user_ids: List[int]
     approval_timeout_seconds: int
-    require_reconciliation: bool
     order_fill_timeout_seconds: int = 60
     market_open_et: str = "09:35"
     market_close_et: str = "15:55"
@@ -88,14 +85,11 @@ class ExecutionConfig:
     def from_dict(cls, data: dict) -> "ExecutionConfig":
         return cls(
             ib_account_id=str(data["ib_account_id"]),
-            max_order_notional_usd=float(data["max_order_notional_usd"]),
-            max_batch_notional_usd=float(data["max_batch_notional_usd"]),
             max_orders_per_run=int(data["max_orders_per_run"]),
             min_rebalance_shares=Decimal(str(data["min_rebalance_shares"])),
             min_rebalance_notional_usd=float(data["min_rebalance_notional_usd"]),
             authorized_telegram_user_ids=[int(u) for u in data["authorized_telegram_user_ids"]],
             approval_timeout_seconds=int(data["approval_timeout_seconds"]),
-            require_reconciliation=bool(data["require_reconciliation"]),
             order_fill_timeout_seconds=int(data.get("order_fill_timeout_seconds", 60)),
             market_open_et=str(data.get("market_open_et", "09:35")),
             market_close_et=str(data.get("market_close_et", "15:55")),

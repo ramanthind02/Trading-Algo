@@ -29,7 +29,7 @@ import pandas as pd
 
 from deployment.telegram_notifier import TelegramNotifier
 from execution.approval_flow import ApprovalDecision, new_run_id, request_approval
-from execution.audit_log import AuditLog, read_closing_positions, write_closing_positions
+from execution.audit_log import AuditLog, write_closing_positions
 from execution.ib_trade_executor import IBTradeClient
 from execution.models import ExecutionConfig, OrderIntent, OrderResult, OrderStatus
 from execution.order_safety import (
@@ -168,16 +168,10 @@ def _execute(
             ib_port=port,
             live_flag=live_flag,
             managed_accounts=managed_accounts,
-            vault_root=config["portfolio"]["vault_root"],
-            current_positions=current_positions,
             intents=intents,
-            capital_usd=capital,
-            max_position_pct=float(config["portfolio"].get("max_position_pct", 2.5)),
             now_et=datetime.now(_ET),
             lock_file=lock_file,
             allow_rerun=getattr(args, "allow_rerun", False),
-            skip_reconciliation=getattr(args, "skip_reconciliation", False),
-            expected_prior_positions=read_closing_positions(positions_snapshot_path),
         )
         try:
             run_all_preflight_checks(ctx, exec_cfg)

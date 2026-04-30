@@ -14,14 +14,11 @@ def _cfg(
 ) -> ExecutionConfig:
     return ExecutionConfig(
         ib_account_id="DU_TEST",
-        max_order_notional_usd=10_000.0,
-        max_batch_notional_usd=10_000.0,
         max_orders_per_run=100,
         min_rebalance_shares=min_rebalance_shares,
         min_rebalance_notional_usd=min_rebalance_notional_usd,
         authorized_telegram_user_ids=[1],
         approval_timeout_seconds=600,
-        require_reconciliation=True,
     )
 
 
