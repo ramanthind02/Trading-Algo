@@ -18,6 +18,7 @@ Responsibilities here (and nowhere else):
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -42,6 +43,20 @@ from execution.rebalancer import compute_order_intents
 
 logger = logging.getLogger(__name__)
 _ET = ZoneInfo("America/New_York")
+
+
+def _safe_print(text: str) -> None:
+    """Print to stdout, falling back to ASCII if cp1252 can't encode (Windows console).
+
+    On Windows, the default console codepage often can't encode characters like
+    U+2248 ('almost equal'). Rather than crash the entire execute pipeline on
+    a cosmetic glyph, strip non-encodable chars and print a transliterated form.
+    """
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = (sys.stdout.encoding or "ascii")
+        print(text.encode(encoding, errors="replace").decode(encoding, errors="replace"))
 
 
 def run_auto_execution(
@@ -141,7 +156,7 @@ def _execute(
         audit.log_intents(intents)
         print(f"    Order intents: {len(intents)}")
         for i in intents:
-            print(f"      {i.side.value} {i.shares} {i.etf} @~${i.est_price:.2f} ≈ ${i.est_notional:.2f}")
+            _safe_print(f"      {i.side.value} {i.shares} {i.etf} @~${i.est_price:.2f} ~= ${i.est_notional:.2f}")
 
         if not intents:
             print("    Already at target. No orders to place.")
@@ -167,7 +182,7 @@ def _execute(
         try:
             run_all_preflight_checks(ctx, exec_cfg)
             audit.log_preflight(True)
-            print("    Preflight: all checks passed ✓")
+            print("    Preflight: all checks passed.")
         except SafetyViolation as e:
             audit.log_preflight(False, reason=str(e))
             _alert(f"🚨 Preflight failed: {e}")
