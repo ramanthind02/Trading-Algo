@@ -82,6 +82,7 @@ class ExecutionConfig:
     order_fill_timeout_seconds: int = 60
     market_open_et: str = "09:35"
     market_close_et: str = "15:55"
+    allow_any_approver: bool = False
 
     @classmethod
     def from_dict(cls, data: dict) -> "ExecutionConfig":
@@ -98,6 +99,7 @@ class ExecutionConfig:
             order_fill_timeout_seconds=int(data.get("order_fill_timeout_seconds", 60)),
             market_open_et=str(data.get("market_open_et", "09:35")),
             market_close_et=str(data.get("market_close_et", "15:55")),
+            allow_any_approver=bool(data.get("allow_any_approver", False)),
         )
 
 

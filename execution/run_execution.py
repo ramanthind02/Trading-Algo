@@ -193,6 +193,7 @@ def _execute(
                 run_id=run_id,
                 authorized_user_ids=exec_cfg.authorized_telegram_user_ids,
                 timeout_seconds=exec_cfg.approval_timeout_seconds,
+                allow_any_approver=exec_cfg.allow_any_approver,
             )
             audit.log_approval(approver_id=outcome.approver_telegram_id, decision=outcome.decision.value)
             print(f"    Approval: {outcome.decision.value}")

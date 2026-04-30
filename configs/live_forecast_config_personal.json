@@ -28,7 +28,7 @@
   },
   "execution": {
     "_comment": "Safety-gated IB auto-execution. Only used when --execute is passed. ib_account_id MUST match your paper account DUxxxxxxx. authorized_telegram_user_ids MUST list your personal Telegram user id (the bot will log rejects from any other id).",
-    "ib_account_id": "REPLACE_WITH_IB_PAPER_ACCOUNT_ID",
+    "ib_account_id": "DUO799747",
     "ib_client_id": 3,
     "max_order_notional_usd": 250,
     "max_batch_notional_usd": 500,
@@ -36,6 +36,7 @@
     "min_rebalance_shares": "0.01",
     "min_rebalance_notional_usd": 5,
     "authorized_telegram_user_ids": [],
+    "allow_any_approver": true,
     "approval_timeout_seconds": 600,
     "require_reconciliation": true,
     "order_fill_timeout_seconds": 60,

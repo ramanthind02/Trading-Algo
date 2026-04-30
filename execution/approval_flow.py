@@ -55,13 +55,22 @@ def request_approval(
     authorized_user_ids: List[int],
     timeout_seconds: int,
     poll_chunk_seconds: int = 25,
+    allow_any_approver: bool = False,
 ) -> ApprovalOutcome:
     """Post the approval message and poll for a matching callback_query.
 
     Returns as soon as a valid approve/cancel callback arrives, or after
     ``timeout_seconds`` elapse.
+
+    Whitelist behaviour
+    -------------------
+    By default, only ``authorized_user_ids`` may approve. An empty list
+    fails closed (refuses to send the message) so we never auto-trade with
+    no whitelist by accident. To intentionally accept any approver, pass
+    ``allow_any_approver=True`` — the approver's user id is still recorded
+    on the outcome and audited.
     """
-    if not authorized_user_ids:
+    if not allow_any_approver and not authorized_user_ids:
         logger.error("No authorized user IDs configured; refusing to request approval.")
         return ApprovalOutcome(ApprovalDecision.CANCELLED)
 
@@ -97,7 +106,7 @@ def request_approval(
             data = str(cb.get("data", ""))
             cb_id = str(cb.get("id", ""))
 
-            if user_id not in authorized_set:
+            if not allow_any_approver and user_id not in authorized_set:
                 logger.warning(f"Ignoring callback from unauthorized user {user_id}")
                 notifier.answer_callback_query(cb_id, "Not authorized.")
                 continue

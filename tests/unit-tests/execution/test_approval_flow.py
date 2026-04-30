@@ -174,6 +174,39 @@ def test_run_ids_are_unique() -> None:
     assert len(ids) == 100
 
 
+def test_allow_any_approver_accepts_unlisted_user() -> None:
+    run_id = new_run_id()
+    notifier = _FakeNotifier(updates_queue=[[_callback(1, "cb1", f"approve:{run_id}", 999)]])
+
+    out = request_approval(
+        notifier,
+        message_text="test",
+        run_id=run_id,
+        authorized_user_ids=[],
+        timeout_seconds=1,
+        poll_chunk_seconds=1,
+        allow_any_approver=True,
+    )
+
+    assert out.decision == ApprovalDecision.APPROVED
+    assert out.approver_telegram_id == 999
+
+
+def test_allow_any_approver_with_empty_whitelist_still_sends() -> None:
+    notifier = _FakeNotifier(updates_queue=[])
+    out = request_approval(
+        notifier,
+        message_text="test",
+        run_id="R",
+        authorized_user_ids=[],
+        timeout_seconds=1,
+        poll_chunk_seconds=1,
+        allow_any_approver=True,
+    )
+    assert out.decision == ApprovalDecision.TIMED_OUT
+    assert len(notifier.sent_payloads) == 1  # message WAS sent (unlike default refuse-to-send)
+
+
 def test_approve_after_noise_update() -> None:
     """First batch has an irrelevant update; second batch has the approve."""
     run_id = new_run_id()
