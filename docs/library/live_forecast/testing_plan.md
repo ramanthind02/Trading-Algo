@@ -21,6 +21,12 @@ in parentheses.
 - [ ] Top-bar of TWS shows `DUO799747`.
 - [ ] API enabled in TWS: *Edit → Global Configuration → API → Settings →
       "Enable ActiveX and Socket Clients"* and Socket port = `7497`.
+- [ ] **Bypass order precautions for API orders**: *Edit → Global
+      Configuration → API → Precautions → "Bypass Order Precautions for
+      API Orders"*. Without this, TWS pops up a confirmation dialog on the
+      first API order and silently rejects it (status = `Inactive`, no
+      error code). Alternatively, click **Yes** on the popup the first
+      time it appears — the setting persists across sessions.
 - [ ] Trusted IPs include `127.0.0.1`.
 - [ ] Internet up; can reach `api.telegram.org`.
 
