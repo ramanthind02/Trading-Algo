@@ -170,15 +170,20 @@ class IBTradeClient(EClient, EWrapper):
 
     @staticmethod
     def _build_mkt_order(intent: OrderIntent, account: str) -> Order:
+        """Build a whole-share MKT order.
+
+        IB API rejected both fractional ``totalQuantity`` (error 10243) and
+        ``cashQty`` (error 10244) on this account, so we round to whole shares.
+        Enabling fractional shares is an account-level permission in Client
+        Portal; once turned on, switch this to ``totalQuantity = Decimal(...)``.
+        """
         o = Order()
         o.action = intent.side.value
         o.orderType = "MKT"
-        o.totalQuantity = Decimal(str(intent.shares))  # ibapi accepts Decimal for fractional
+        o.totalQuantity = Decimal(str(int(round(float(intent.shares)))))
         o.tif = "DAY"
         o.outsideRth = False
         o.account = account
-        # IB rejects trades w/ inbound eTradeOnly/firmQuoteOnly defaults in some API versions;
-        # explicit False avoids "Order rejected - reason: The VOL/eTradeOnly/firmQuoteOnly ..." rejects.
         o.eTradeOnly = False
         o.firmQuoteOnly = False
         return o

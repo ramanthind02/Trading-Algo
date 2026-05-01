@@ -153,13 +153,22 @@ def _execute(
             prices=prices,
             config=exec_cfg,
         )
+        # IB account rejects fractional orders → executor places whole-share
+        # quantities. Drop intents whose share budget rounds to zero so we
+        # don't ship 0-quantity orders that IB will refuse anyway.
+        intents = [i for i in intents if int(round(float(i.shares))) >= 1]
         audit.log_intents(intents)
-        print(f"    Order intents: {len(intents)}")
+        print(f"    Order intents: {len(intents)} (after whole-share filter)")
         for i in intents:
-            _safe_print(f"      {i.side.value} {i.shares} {i.etf} @~${i.est_price:.2f} ~= ${i.est_notional:.2f}")
+            whole = int(round(float(i.shares)))
+            _safe_print(
+                f"      {i.side.value} {whole} {i.etf} @~${i.est_price:.2f} "
+                f"~= ${whole * i.est_price:.2f}"
+            )
 
         if not intents:
-            print("    Already at target. No orders to place.")
+            print("    Already at target (or all share budgets <1 whole share). No orders to place.")
+            print("    Tip: re-run with --capital 50000 if you want test-sized whole-share orders.")
             audit.log_end(status="no_op")
             return
 
@@ -296,9 +305,9 @@ def _place_orders(
         if result.status in {OrderStatus.REJECTED, OrderStatus.ERROR, OrderStatus.TIMED_OUT}:
             remaining = intents[idx + 1:]
             if remaining:
-                msg = f"⚠ {intent.etf} ended {result.status.value}; cancelling remaining {len(remaining)} orders."
+                msg = f"WARNING: {intent.etf} ended {result.status.value}; cancelling remaining {len(remaining)} orders."
                 logger.warning(msg)
-                print(f"      {msg}")
+                _safe_print(f"      {msg}")
                 break
     return results
 
