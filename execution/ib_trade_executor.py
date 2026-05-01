@@ -170,17 +170,17 @@ class IBTradeClient(EClient, EWrapper):
 
     @staticmethod
     def _build_mkt_order(intent: OrderIntent, account: str) -> Order:
-        """Build a whole-share MKT order.
+        """Build a fractional-share MKT order using ``totalQuantity``.
 
-        IB API rejected both fractional ``totalQuantity`` (error 10243) and
-        ``cashQty`` (error 10244) on this account, so we round to whole shares.
-        Enabling fractional shares is an account-level permission in Client
-        Portal; once turned on, switch this to ``totalQuantity = Decimal(...)``.
+        Requires the IB account (and its API channel) to be enabled for
+        fractional-share trading. If error 10243 fires, the live account this
+        paper inherits from has not yet propagated fractional permission to
+        the API path.
         """
         o = Order()
         o.action = intent.side.value
         o.orderType = "MKT"
-        o.totalQuantity = Decimal(str(int(round(float(intent.shares)))))
+        o.totalQuantity = Decimal(str(intent.shares))
         o.tif = "DAY"
         o.outsideRth = False
         o.account = account

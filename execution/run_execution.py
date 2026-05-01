@@ -153,22 +153,16 @@ def _execute(
             prices=prices,
             config=exec_cfg,
         )
-        # IB account rejects fractional orders → executor places whole-share
-        # quantities. Drop intents whose share budget rounds to zero so we
-        # don't ship 0-quantity orders that IB will refuse anyway.
-        intents = [i for i in intents if int(round(float(i.shares))) >= 1]
         audit.log_intents(intents)
-        print(f"    Order intents: {len(intents)} (after whole-share filter)")
+        print(f"    Order intents: {len(intents)}")
         for i in intents:
-            whole = int(round(float(i.shares)))
             _safe_print(
-                f"      {i.side.value} {whole} {i.etf} @~${i.est_price:.2f} "
-                f"~= ${whole * i.est_price:.2f}"
+                f"      {i.side.value} {i.shares} {i.etf} @~${i.est_price:.2f} "
+                f"~= ${i.est_notional:.2f}"
             )
 
         if not intents:
-            print("    Already at target (or all share budgets <1 whole share). No orders to place.")
-            print("    Tip: re-run with --capital 50000 if you want test-sized whole-share orders.")
+            print("    Already at target. No orders to place.")
             audit.log_end(status="no_op")
             return
 
