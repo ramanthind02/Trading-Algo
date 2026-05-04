@@ -165,7 +165,8 @@ class BaseModel:
 
         feature_series = pd.Series(values, index=pd.DatetimeIndex(index), name=column_name, dtype=float)
         if feature_series.index.duplicated().any():
-            feature_series = feature_series.groupby(level=0).mean().clip(-1, 1)
+            feature_series = feature_series.groupby(level=0).mean()
+        feature_series = feature_series.clip(-2.0, 2.0)
         self.feature_column = column_name
         self._latest_feature_series = feature_series
         return feature_series

@@ -7,6 +7,7 @@ import os
 import shutil
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Union
 
@@ -185,7 +186,7 @@ def save_eda_report(
     report_type = "continuous" if isinstance(report, ContinuousEDAReport) else "signed_signal"
     metadata_payload = {
         "feature_name": report.metadata.feature_name,
-        "param_combo": report.metadata.param_combo,
+        "param_combo": _to_jsonable(report.metadata.param_combo),
         "timeframe": report.metadata.timeframe.name,
         "ticker": report.metadata.ticker.name,
         "timestamp": report.metadata.timestamp.isoformat(),
@@ -242,7 +243,11 @@ def load_eda_report(report_path: Path) -> Union[ContinuousEDAReport, RuleBasedED
 
 def _param_combo_hash(param_combo: dict) -> str:
     """Deterministic hash for a parameter-combination dictionary."""
-    normalized = json.dumps(param_combo, sort_keys=True, separators=(",", ":"))
+    normalized = json.dumps(
+        _to_jsonable(param_combo),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     return hashlib.md5(normalized.encode("utf-8")).hexdigest()[:8]
 
 
@@ -274,6 +279,8 @@ def _to_jsonable(value: Any) -> Any:
         return str(value)
     if isinstance(value, (TimeFrame, Ticker)):
         return value.name
+    if isinstance(value, Enum):
+        return value.value
     if isinstance(value, pd.Series):
         return {
             "index": [str(idx) for idx in value.index],

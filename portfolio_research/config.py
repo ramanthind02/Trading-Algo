@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 import logging
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -16,11 +17,98 @@ from ensemble.vault import feature_files as _vault_feature_files
 from feature_research.config import OOSWindowConfig
 from utils.cache import extract_cross_ticker_names
 from utils.core.enums import Ticker, TimeFrame
+from utils.futures_micro_specs import canonical_listed_micro_futures
 from utils.vault_paths import default_vault_discovery_dirnames
 
 logger = logging.getLogger(__name__)
 
 _PORTFOLIO_RESEARCH_DIR = Path(__file__).resolve().parent
+
+
+class LeverageMode(Enum):
+    """Controls how margin/leverage is applied in the futures contract simulation.
+
+    FINITE
+        Leverage is tied to the starting account size.  Each bar the engine checks
+        that total initial margin ≤ ``account_capital`` and flags any breach.
+
+    INFINITE
+        No margin / leverage constraint is enforced.  Contracts are still rounded
+        to integers; the account is treated as having unlimited buying power.
+    """
+
+    FINITE = "finite"
+    INFINITE = "infinite"
+
+
+@dataclass(frozen=True)
+class FuturesInstrumentSpec:
+    """Per-instrument futures metadata for the contract simulation layer.
+
+    Parameters
+    ----------
+    multiplier : float
+        Dollar value per index point (e.g. 2.0 for MNQ, 5.0 for MES, 10.0 for MGC).
+    margin_long : float
+        Maintenance margin per contract for a long position (USD).
+    margin_short : float
+        Maintenance margin per contract for a short position (USD).
+    product_code : str
+        Exchange product code (e.g. ``"MNQ"``, ``"MES"``, ``"MGC"``).
+    """
+
+    multiplier: float
+    margin_long: float
+    margin_short: float
+    product_code: str = ""
+
+    def __post_init__(self) -> None:
+        if self.multiplier <= 0:
+            raise ValueError(f"FuturesInstrumentSpec.multiplier must be positive, got {self.multiplier}")
+        if self.margin_long < 0 or self.margin_short < 0:
+            raise ValueError("Margin values must be non-negative")
+
+
+@dataclass(frozen=True)
+class FuturesSimConfig:
+    """Optional futures-contract simulation layer for portfolio research.
+
+    When attached to ``PortfolioResearchConfig``, the pipeline runs a parallel
+    contract-discrete PnL path alongside the standard fractional-return path and
+    writes diagnostic CSVs to ``output_root / "futures_sim/"``.
+
+    Parameters
+    ----------
+    enabled : bool
+        Set False to skip the entire simulation (zero overhead).
+    account_capital : float
+        Starting account size in USD used to convert ``position_fraction`` to
+        contract counts: ``contracts = round(position_fraction * capital /
+        contract_value)``.
+    instrument_specs : Mapping[str, FuturesInstrumentSpec]
+        Research ticker → futures spec.  Keys must match ``config.tickers`` names
+        (e.g. ``"ES"``, ``"NQ"``, ``"GC"``).  Tickers not in this map are skipped
+        in the contract path (fractional returns are still computed for them).
+    leverage_mode : LeverageMode
+        ``FINITE`` enforces margin checks; ``INFINITE`` skips them.
+    emit_tracking_error_csv : bool
+        Write ``futures_sim/{phase}_tracking_error.csv`` with per-bar discrete vs
+        fractional return diff, cumulative tracking error, and summary stats.
+    emit_diagnostics_csv : bool
+        Write ``futures_sim/{phase}_diagnostics.csv`` with per-bar contract counts,
+        notional values, margin usage, and leverage-breach flags.
+    """
+
+    enabled: bool = False
+    account_capital: float = 100_000.0
+    instrument_specs: Mapping[str, FuturesInstrumentSpec] = field(default_factory=dict)
+    leverage_mode: LeverageMode = LeverageMode.FINITE
+    emit_tracking_error_csv: bool = True
+    emit_diagnostics_csv: bool = True
+
+    def __post_init__(self) -> None:
+        if self.account_capital <= 0:
+            raise ValueError(f"FuturesSimConfig.account_capital must be positive, got {self.account_capital}")
 
 
 @dataclass(frozen=True)
@@ -148,6 +236,7 @@ class PortfolioResearchConfig:
     )
     strict_cache_preflight: bool = False
     exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None = None
+    futures_sim: FuturesSimConfig = field(default_factory=FuturesSimConfig)
 
     def __post_init__(self) -> None:
         if self.baseline_mode not in ("equal_weight", "buy_hold"):
@@ -362,7 +451,7 @@ def load_config() -> PortfolioResearchConfig:
         tickers,
     )
 
-    target_volatility = 0.15
+    target_volatility = 0.07
     # Ledoit–Wolf–shrinkage correlation → inverse column-sum weights (see WeightLayer).
     weight_layer_method = "ledoit_wolf_min_corr"
     weight_layer_kwargs = {
@@ -372,13 +461,36 @@ def load_config() -> PortfolioResearchConfig:
     baseline_mode = "equal_weight"
     output_root = _PORTFOLIO_RESEARCH_DIR / "results"
     export_per_timeframe_tearsheets = False
-    export_per_ensemble_tearsheets = True
-    feature_vault_correlation = FeatureVaultCorrelationConfig(enabled=False)
+    export_per_ensemble_tearsheets = False
+    feature_vault_correlation = FeatureVaultCorrelationConfig(enabled=True)
     strict_cache_preflight = False
 
     # ==========================================================================
     # EDIT ABOVE
     # ==========================================================================
+
+    # ------------------------------------------------------------------
+    # Futures contract simulation (optional; set enabled=True to run)
+    # Maps research ticker name → micro-futures spec (canonical table in
+    # ``utils.futures_micro_specs``). Margins are illustrative.
+    # ------------------------------------------------------------------
+    _micro = canonical_listed_micro_futures()
+    futures_sim = FuturesSimConfig(
+        enabled=True,
+        account_capital=100_000.0,
+        instrument_specs={
+            k: FuturesInstrumentSpec(
+                multiplier=_micro[k].micro_dollars_per_point,
+                margin_long=_micro[k].illustrative_margin_long_usd,
+                margin_short=_micro[k].illustrative_margin_short_usd,
+                product_code=_micro[k].micro_symbol,
+            )
+            for k in ("NQ", "ES", "GC")
+        },
+        leverage_mode=LeverageMode.FINITE,
+        emit_tracking_error_csv=True,
+        emit_diagnostics_csv=True,
+    )
 
     return PortfolioResearchConfig(
         tickers=tickers,
@@ -406,4 +518,5 @@ def load_config() -> PortfolioResearchConfig:
         feature_vault_correlation=feature_vault_correlation,
         strict_cache_preflight=strict_cache_preflight,
         exclude_feature_stems_by_ensemble=None,
+        futures_sim=futures_sim,
     )

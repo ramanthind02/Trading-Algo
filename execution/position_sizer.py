@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 import json
 from enum import Enum
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Sequence
 from dataclasses import dataclass
 
 
@@ -244,6 +244,57 @@ class PositionSizer:
             capital=capital,
             contract_specs=contract_specs,
             rounding_method=rounding_method
+        )
+
+    @classmethod
+    def from_listed_micro(
+        cls,
+        capital: float,
+        prices: Dict[str, float],
+        *,
+        research_tickers: Optional[Sequence[str]] = None,
+        rounding_method: RoundingMethod = RoundingMethod.ROUND,
+    ) -> 'PositionSizer':
+        """Build a sizer using :mod:`utils.futures_micro_specs` micro $/point values.
+
+        Parameters
+        ----------
+        capital
+            Account capital in USD.
+        prices
+            Research-ticker last prices (e.g. ``ES`` continuous), same keys as vault.
+        research_tickers
+            If given, only these tickers are included when present in ``prices`` and
+            the canonical table. If ``None``, every price key that has a canonical
+            micro row is included.
+        rounding_method
+            Applied by :meth:`calculate_positions` (default matches Enigma ``round``).
+        """
+        from utils.futures_micro_specs import canonical_listed_micro_futures
+
+        table = canonical_listed_micro_futures()
+        if research_tickers is None:
+            candidates = [t for t in prices if t in table]
+        else:
+            candidates = [t for t in research_tickers if t in table and t in prices]
+        if not candidates:
+            raise ValueError(
+                'from_listed_micro: no tickers with both a canonical micro row and a price'
+            )
+        contract_specs: Dict[str, ContractSpec] = {
+            t: ContractSpec(
+                ticker=t,
+                price=prices[t],
+                multiplier=table[t].micro_dollars_per_point,
+                fx_rate=1.0,
+                min_tick=0.25,
+            )
+            for t in candidates
+        }
+        return cls(
+            capital=capital,
+            contract_specs=contract_specs,
+            rounding_method=rounding_method,
         )
 
     def calculate_positions(

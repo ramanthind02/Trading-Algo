@@ -36,6 +36,31 @@ logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DAILY_ANN = 252.0
+_INCLUSION_WEIGHT_LAYER_METHOD = "ledoit_wolf_min_corr"
+_INCLUSION_WEIGHT_LAYER_FDM_DEFAULT = 2.0
+
+
+def _normalize_portfolio_config_for_inclusion(
+    config: PortfolioResearchConfig,
+) -> PortfolioResearchConfig:
+    """Force Ledoit–Wolf / min-corr weighting so inclusion runs are comparable and stable.
+
+    Ignores ``weight_layer_method`` and hierarchy-related kwargs from
+    ``portfolio_research.config.load_config()``; preserves ``fdm_max`` when present.
+    """
+    raw_kw = dict(config.weight_layer_kwargs)
+    fdm_raw = raw_kw.get("fdm_max", _INCLUSION_WEIGHT_LAYER_FDM_DEFAULT)
+    try:
+        fdm = float(fdm_raw)
+    except (TypeError, ValueError):
+        fdm = _INCLUSION_WEIGHT_LAYER_FDM_DEFAULT
+    if fdm <= 0.0:
+        fdm = _INCLUSION_WEIGHT_LAYER_FDM_DEFAULT
+    return replace(
+        config,
+        weight_layer_method=_INCLUSION_WEIGHT_LAYER_METHOD,
+        weight_layer_kwargs={"fdm_max": fdm},
+    )
 
 
 def _inject_weight_hierarchy_group_into_features(
@@ -75,7 +100,8 @@ def materialize_inclusion_candidate_from_eval_bias_spec(
 
     Tickers are taken from ``portfolio_config`` so the candidate matches the baseline portfolio
     universe. ``weight_hierarchy_group`` is written into the feature JSON and used when creating
-    the ensemble directory so layout matches grouped vault ensembles (for ``hierarchy_equal``).
+    the ensemble directory so layout matches grouped vault ensembles (path layout only; inclusion
+    still combines streams with ``ledoit_wolf_min_corr``).
     """
     from ensemble.vault.manager import create_ensemble_directory
     from feature_research.save_feature_to_vault import _normalize_bias_spec_for_model
@@ -557,6 +583,10 @@ def run_portfolio_inclusion(
     Provide exactly one of ``candidate_repo_relative_path`` or ``candidate_ensemble_dir`` (e.g. temp
     dir from :func:`materialize_inclusion_candidate_from_eval_bias_spec`).
 
+    **WeightLayer:** always ``ledoit_wolf_min_corr`` with ``fdm_max`` taken from
+    ``portfolio_config.weight_layer_kwargs`` (default 2.0), independent of
+    ``portfolio_config.weight_layer_method``.
+
     When ``inclusion_config.emit_tearsheets`` is True (default), writes six HTML tearsheets under
     ``tearsheets_output_dir`` or ``portfolio_config.output_root / inclusion_tearsheets_<candidate_key>``.
     """
@@ -579,6 +609,8 @@ def run_portfolio_inclusion(
     cand_resolved = Path(candidate_path).resolve()
     if any(Path(p).resolve() == cand_resolved for p in baseline_dirs.values()):
         raise ValueError("Candidate ensemble path matches an existing ensemble_dirs path.")
+
+    portfolio_config = _normalize_portfolio_config_for_inclusion(portfolio_config)
 
     merged_dirs = {**baseline_dirs, ck: candidate_path}
 

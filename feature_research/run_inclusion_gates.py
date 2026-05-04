@@ -12,6 +12,10 @@ Default: ``portfolio_inclusion.candidate_mode = "eval_bias_spec"`` — the candi
 ``--candidate-path`` (or set ``candidate_repo_relative_path`` / ``vault_save``) to test a saved
 ensemble instead. By default, six HTML portfolio tearsheets are written; use ``--no-emit-tearsheets``
 to skip.
+
+Baseline + candidate portfolio phases always use WeightLayer ``ledoit_wolf_min_corr`` (Ledoit–Wolf
+shrinkage, inverse column-sum weights); ``fdm_max`` is taken from ``portfolio_research`` config
+(see :func:`feature_research.inclusion_gates.run_portfolio_inclusion`).
 """
 from __future__ import annotations
 

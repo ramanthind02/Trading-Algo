@@ -1,0 +1,13 @@
+{
+  "timeframe": "M",
+  "ensemble_name": "buy_hold",
+  "direction": "long",
+  "tickers": [
+    "ES",
+    "GC",
+    "NQ",
+    "RTY"
+  ],
+  "created_at": "2026-03-05T06:58:27.371744+00:00",
+  "updated_at": "2026-03-05T06:58:27.371761+00:00"
+}

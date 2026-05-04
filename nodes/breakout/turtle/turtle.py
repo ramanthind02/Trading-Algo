@@ -18,7 +18,9 @@ class TurtleTrading(BiasNode):
     - direction='short': -1 or 0
     - direction='long_short': 1, 0, or -1
 
-    Classic rules: entry on breakout, exit on stop channel. Re-entry allowed on any new breakout.
+    Classic rules: entry on breakout (current bar **high** above entry channel for longs,
+    **low** below entry channel for shorts), exit on stop channel (**low** / **high** vs
+    stop channel). Re-entry allowed on any new breakout.
     """
 
     lookback_param_names: ClassVar[frozenset[str]] = frozenset({"entry_lookback", "stop_lookback"})
@@ -98,21 +100,23 @@ class TurtleTrading(BiasNode):
 
         entry_high, entry_low = self._calculate_donchian_channel(self.entry_lookback)
         stop_high, stop_low = self._calculate_donchian_channel(self.stop_lookback)
-        current_price = candle.close
+        bar_high = float(candle.high)
+        bar_low = float(candle.low)
+        fill_ref = float(candle.close)
 
         if self.current_position == 0:
-            if current_price > entry_high and self.direction in ("long", "long_short"):
+            if bar_high > entry_high and self.direction in ("long", "long_short"):
                 self.current_position = 1
-                self.entry_price = current_price
-            elif current_price < entry_low and self.direction in ("short", "long_short"):
+                self.entry_price = fill_ref
+            elif bar_low < entry_low and self.direction in ("short", "long_short"):
                 self.current_position = -1
-                self.entry_price = current_price
+                self.entry_price = fill_ref
         elif self.current_position == 1:
-            if current_price < stop_low:
+            if bar_low < stop_low:
                 self.current_position = 0
                 self.entry_price = None
         elif self.current_position == -1:
-            if current_price > stop_high:
+            if bar_high > stop_high:
                 self.current_position = 0
                 self.entry_price = None
 

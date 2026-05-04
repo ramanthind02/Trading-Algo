@@ -16,6 +16,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 import pandas as pd
@@ -23,12 +24,14 @@ import pandas as pd
 if TYPE_CHECKING:
     from feature_research.config import ResearchConfig
 
+from feature_research.bias_spec_catalog import first_bias_spec
+
 
 class SupportsBiasCachePopulation(Protocol):
     """Subset of config used by cache bootstrap / bias coverage helpers."""
 
     tickers: list[Ticker]
-    bias_spec: dict[str, Any]
+    bias_spec: dict[str, Any] | list[dict[str, Any]]
     start: datetime
     end: datetime
 
@@ -39,7 +42,10 @@ from utils.cache import ArtifactScope
 from utils.cache.runtime.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.helpers import load_data_multi_ticker
-from utils.cache.runtime.feature_pipeline_support import expand_param_grid as _expand_bias_param_grid
+from utils.cache.runtime.feature_pipeline_support import (
+    NESTED_GRID_PARAM_KEYS,
+    expand_param_grid as _expand_bias_param_grid,
+)
 from utils.data.cross_ticker_store import extract_cross_ticker_names
 
 
@@ -77,28 +83,52 @@ def _normalize_bias_module_key(module_name: object) -> str:
     return str(module_name or "").replace("_", "").lower()
 
 
-def expand_bias_specs(bias_spec: dict[str, Any]) -> list[dict[str, Any]]:
-    """Expand a bias_spec with list-valued params into one spec per param combo.
+def expand_bias_specs(
+    bias_spec: dict[str, Any] | list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Expand bias_spec(s) with list-valued params into one spec per parameter combination.
+
+    Supports:
+
+    - **Catalog:** ``bias_spec`` is a non-empty ``list[dict]`` — expand each entry and
+      concatenate (e.g. raw breakout + gated breakout branches).
+    - **Multi-module:** ``module_name`` is a list of taxonomy keys sharing the same
+      ``params`` grid — Cartesian product (e.g. ``filter_gate`` vs ``filter_gate_entry_only``).
 
     Parameters
     ----------
-    bias_spec : dict[str, Any]
-        Bias specification with optional list-valued params.
+    bias_spec : dict[str, Any] | list[dict[str, Any]]
+        Single spec or ordered catalog of specs.
 
     Returns
     -------
     list[dict[str, Any]]
-        List of fully expanded specs, one per parameter combination.
+        Fully expanded specs.
     """
+    if isinstance(bias_spec, list):
+        return [spec for branch in bias_spec for spec in expand_bias_specs(branch)]
+
     params = bias_spec.get("params", {})
     if not isinstance(params, dict):
         params = {}
     combos = _expand_bias_param_grid(params)
+    module_names = bias_spec.get("module_name")
+    timeframes = bias_spec.get("timeframes", [TimeFrame.D])
+    if isinstance(module_names, list):
+        return [
+            {
+                "module_name": mn,
+                "params": combo,
+                "timeframes": timeframes,
+            }
+            for mn in module_names
+            for combo in combos
+        ]
     return [
         {
             "module_name": bias_spec["module_name"],
             "params": combo,
-            "timeframes": bias_spec.get("timeframes", [TimeFrame.D]),
+            "timeframes": timeframes,
         }
         for combo in combos
     ]
@@ -162,7 +192,7 @@ def _cache_requirements_for_bias_spec(
 
     bootstrap_tickers = [*primary_tickers, *dependency_tickers]
     timeframes = _normalize_timeframes(
-        selected_bias_spec,
+        first_bias_spec(selected_bias_spec),
         include_daily_ewsd=include_daily_ewsd,
     )
     return primary_tickers, dependency_tickers, bootstrap_tickers, timeframes
@@ -181,7 +211,7 @@ def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
     pd.DataFrame
         OHLCV data with DatetimeIndex, sorted by datetime.
     """
-    timeframes = config.bias_spec.get("timeframes", [TimeFrame.D])
+    timeframes = first_bias_spec(config.bias_spec).get("timeframes", [TimeFrame.D])
     raw_timeframe = timeframes[0] if isinstance(timeframes, list) else timeframes
     timeframe = TimeFrame[raw_timeframe] if isinstance(raw_timeframe, str) else raw_timeframe
 
@@ -219,6 +249,17 @@ def _sanitize_path_label(raw: str) -> str:
     cleaned = _INVALID_PATH_CHARS.sub("_", raw)
     cleaned = cleaned.strip(" .")
     return cleaned if cleaned else "combo"
+
+
+def expanded_combo_param_value(combo: dict[str, Any], key: str) -> Any | None:
+    """Resolve *key* from an expanded param dict (top-level or composite nested blobs)."""
+    if key in combo:
+        return combo[key]
+    for nk in NESTED_GRID_PARAM_KEYS:
+        blob = combo.get(nk)
+        if isinstance(blob, dict) and key in blob:
+            return blob[key]
+    return None
 
 
 def param_combo_label(combo: dict[str, Any]) -> str:
@@ -266,6 +307,20 @@ def param_combo_label(combo: dict[str, Any]) -> str:
         return sanitized
     digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:32]
     return _sanitize_path_label(f"combo_{digest}")
+
+
+def expanded_spec_combo_label(single_spec: Mapping[str, Any]) -> str:
+    """Unique label for one expanded bias row (composite ``module_name`` + params).
+
+    Params alone can match across gate variants (e.g. ``filter_gate`` vs
+    ``filter_gate_entry_only``); prefixing ``module_name`` keeps paths and Power BI keys distinct.
+    """
+    mod = single_spec.get("module_name")
+    mod_token = str(mod) if mod is not None else "unknown"
+    params = single_spec.get("params", {})
+    pdict = params if isinstance(params, dict) else {}
+    body = param_combo_label(pdict)
+    return f"{mod_token}__{body}" if body else mod_token
 
 
 def permutation_combo_display_name(params: dict[str, Any] | None) -> str:

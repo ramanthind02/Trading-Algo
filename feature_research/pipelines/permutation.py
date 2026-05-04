@@ -9,6 +9,7 @@ import pandas as pd
 from feature_research.config import FeatureType, ResearchConfig
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
+    first_bias_spec,
     load_candles_for_config,
     populate_cache_if_needed,
 )
@@ -209,7 +210,7 @@ def run_permutation_pipeline(
     # Feature shuffle is the intended "vector shuffle" for signal alignment.
     suite = run_permutation_test_suite(
         candles_df=candles_df,
-        feature_spec=perm_load_config.bias_spec,
+        feature_spec=first_bias_spec(perm_load_config.bias_spec),
         target=target,
         param_grid=param_grid,
         objective_func=objective_func,

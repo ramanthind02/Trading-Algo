@@ -226,6 +226,105 @@ Under `output_root` / `portfolio_inclusion.output_subdir`: `inclusion_<candidate
 
 ---
 
+---
+
+## Futures Contract Simulation (`portfolio_research.futures_sim`)
+
+An optional parallel simulation path that converts `position_fraction` signals to **integer futures contracts** and produces tearsheets and diagnostics alongside the standard log-return tearsheets.  Activated by setting `futures_sim.enabled = True` in `portfolio_research.config.load_config()`.
+
+### Purpose
+
+The standard research pipeline works in fractional-return space (`position_fraction × instrument_return`, summed across tickers).  That is the *most accurate* continuous backtest, but it does not model the rounding that occurs when trading real micro-futures contracts.  The sim layer answers:
+
+- How many contracts would we have held each bar, and what was the actual dollar PnL?
+- How large is the rounding-induced tracking error vs the fractional baseline?
+- Were there days where margin requirements exceeded account capital?
+
+### Configuration
+
+All parameters live in `PortfolioResearchConfig.futures_sim` (`FuturesSimConfig`):
+
+```python
+from portfolio_research.config import (
+    FuturesSimConfig, FuturesInstrumentSpec, LeverageMode
+)
+
+futures_sim = FuturesSimConfig(
+    enabled=True,                      # flip to activate
+    account_capital=100_000.0,         # USD starting size
+    leverage_mode=LeverageMode.FINITE, # or INFINITE to skip margin checks
+    emit_diagnostics_csv=True,
+    emit_tracking_error_csv=True,
+    instrument_specs={
+        "NQ": FuturesInstrumentSpec(
+            multiplier=2.0,            # MNQ: $2/point
+            margin_long=3_653.0,       # maintenance margin per contract
+            margin_short=3_576.0,
+            product_code="MNQ",
+        ),
+        "ES": FuturesInstrumentSpec(
+            multiplier=5.0,            # MES: $5/point
+            margin_long=2_413.0,
+            margin_short=2_265.0,
+            product_code="MES",
+        ),
+        "GC": FuturesInstrumentSpec(
+            multiplier=10.0,           # MGC: $10/oz (10 troy oz)
+            margin_long=2_817.0,
+            margin_short=2_817.0,
+            product_code="MGC",
+        ),
+    },
+)
+```
+
+`LeverageMode.FINITE` flags any bar where `|contracts| × margin_per_contract > account_capital`.  `LeverageMode.INFINITE` skips the check (useful for large-capital sensitivity analysis).
+
+### Sizing formula
+
+```
+contract_value = price × multiplier
+contracts      = round(position_fraction × account_capital / contract_value)
+```
+
+Rounding is `round()` (banker's rounding to nearest integer).  The sign of `contracts` tracks direction (positive = long, negative = short).
+
+### PnL convention
+
+Both legs use **simple returns** so the comparison is dollar-for-dollar:
+
+| Path | Formula |
+|---|---|
+| Discrete | `contracts × (next_close − close) × multiplier` |
+| Fractional | `position_fraction × account_capital × simple_return` |
+
+Daily % returns for tearsheets = `daily_USD_PnL / account_capital`, so all QuantStats metrics (Sharpe, drawdown, etc.) are directly comparable to the standard portfolio tearsheets.
+
+### Outputs
+
+All written to `output_root / {phase} / futures_sim /`:
+
+| File | Content |
+|---|---|
+| `{phase}_diagnostics.csv` | Per-bar per-ticker: position_fraction, price, contracts, notional, margin_required, margin_available, leverage_breach, discrete_pnl, fractional_pnl |
+| `{phase}_tracking_error.csv` | Per-date aggregate: discrete_total_pnl, fractional_total_pnl, discrete_pct_return, fractional_pct_return, daily_tracking_error_usd, daily_tracking_error_pct, cumulative_te_usd, annualised_te_vol_usd, any_leverage_breach |
+| `{phase}_tracking_error_summary.html` | Self-contained HTML: portfolio-level summary table, cumulative TE sparkline chart, per-ticker breakdown, interpretation guide |
+| `{phase}_discrete_tearsheet.html` | Standard QuantStats HTML tearsheet driven by `discrete_pct_return` (strategy) vs `fractional_pct_return` (baseline); identical format to regular portfolio tearsheets |
+
+### Interpreting tracking error
+
+- **Tracking error** arises purely from integer rounding of contracts.  A positive cumulative TE means discrete contracts outperformed the fractional path on net; negative means rounding cost performance.
+- **Annualised TE vol** = `std(daily_TE_USD) × √252`.  Divide by annualised USD PnL vol to see rounding error as a fraction of strategy risk.
+- **Margin breach days** indicate the account size is too small for the implied position size.  Fix by increasing `account_capital` or reducing `max_position_pct` in the main config.
+
+### Code entrypoints
+
+- `portfolio_research/futures_sim.py` — `run_futures_sim()` (main function), `_simulate_ticker_bars()`, `_emit_discrete_tearsheet()`, `_emit_tracking_error_summary()`
+- `portfolio_research/config.py` — `FuturesSimConfig`, `FuturesInstrumentSpec`, `LeverageMode`
+- `portfolio_research/pipelines/portfolio_test.py` — hook in `_evaluate_phase()` after `combined_positions` is clipped, before standard return calculation
+
+---
+
 ## Key Design Decisions
 
 - **Vector output from Ensemble:** one row per (sample, model) → WeightLayer applies weights externally

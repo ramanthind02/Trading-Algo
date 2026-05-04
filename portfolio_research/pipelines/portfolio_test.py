@@ -36,6 +36,7 @@ from ensemble.vault_manager import (
 )
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from portfolio_research.futures_sim import run_futures_sim
 from portfolio_research.weight_layer_export import (
     weight_layer_diagnostics_to_dataframe,
     write_weight_layer_csv,
@@ -710,6 +711,16 @@ def _evaluate_phase(
         "position_fraction"
     ].clip(-config.max_position_pct, config.max_position_pct)
 
+    futures_sim_cfg = getattr(config, "futures_sim", None)
+    if futures_sim_cfg is not None and getattr(futures_sim_cfg, "enabled", False):
+        run_futures_sim(
+            phase_name=phase_title,
+            combined_positions=combined_positions,
+            daily_test_candles=daily_test_candles,
+            sim_config=futures_sim_cfg,
+            output_dir=phase_out,
+        )
+
     combined_strategy_returns = calculate_strategy_returns_from_positions(
         combined_positions,
         daily_test_candles,
@@ -769,6 +780,32 @@ def _evaluate_phase(
             combined_positions=combined_positions.copy(),
         ),
         weight_layer_export_df,
+    )
+
+
+def _run_composite_futures_sim(
+    phase_results: list[PhaseResult],
+    composite_name: str,
+    output_dir: Path,
+    sim_config: Any,
+) -> None:
+    """Concatenate positions and candles across phases and run futures sim for a composite window."""
+    positions = pd.concat(
+        [r.combined_positions for r in phase_results],
+        ignore_index=True,
+    ).drop_duplicates(subset=["ticker", "datetime"]).sort_values(["ticker", "datetime"]).reset_index(drop=True)
+
+    candles = pd.concat(
+        [r.daily_test_candles for r in phase_results],
+        ignore_index=True,
+    ).drop_duplicates(subset=["ticker", "datetime"]).sort_values(["ticker", "datetime"]).reset_index(drop=True)
+
+    run_futures_sim(
+        phase_name=composite_name,
+        combined_positions=positions,
+        daily_test_candles=candles,
+        sim_config=sim_config,
+        output_dir=output_dir,
     )
 
 
@@ -893,6 +930,21 @@ def run_portfolio_test_pipeline(config: Any) -> None:
         "Train_Validation_and_Test_windows",
         combined_portfolio_dir,
     )
+
+    futures_sim_cfg = getattr(config, "futures_sim", None)
+    if futures_sim_cfg is not None and getattr(futures_sim_cfg, "enabled", False):
+        _run_composite_futures_sim(
+            phase_results=[validation_result, test_result],
+            composite_name="Validation_and_Test_windows",
+            output_dir=combined_dir,
+            sim_config=futures_sim_cfg,
+        )
+        _run_composite_futures_sim(
+            phase_results=[train_result, validation_result, test_result],
+            composite_name="Train_Validation_and_Test_windows",
+            output_dir=combined_dir,
+            sim_config=futures_sim_cfg,
+        )
 
     print(f"\nDone. Artifacts written to {config.output_root}\n")
 

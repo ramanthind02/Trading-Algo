@@ -17,7 +17,6 @@ from .cache_paths import (
 )
 from .central_cache_models import ArtifactScope
 from utils.core.enums import TimeFrame
-from utils.vault_paths import resolve_vault_root
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +292,7 @@ def _scan_active_live_base_model_identities(
     ensemble_dirs: Optional[Iterable[str]] = None,
 ) -> set[BaseModelMaterializationIdentity]:
     from ensemble.vault_manager import _resolve_ensemble_path
+    from utils.vault_paths import resolve_vault_root
 
     resolved_vault_root = resolve_vault_root(vault_root)
     target_ensemble_dirs: list[Path]

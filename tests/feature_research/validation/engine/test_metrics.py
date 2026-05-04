@@ -43,9 +43,12 @@ def test_empty_metric_name_raises_value_error() -> None:
 
 
 def test_metric_selection_is_deterministic() -> None:
-    assert resolve_objective_metric("sharpe") is resolve_objective_metric("sharpe")
-    assert resolve_objective_metric("sortino") is resolve_objective_metric("sortino")
-    assert resolve_objective_metric("mean_return") is resolve_objective_metric("mean_return")
+    """Callables may be fresh lambdas; behavior on the same inputs must match."""
+    s = pd.Series([0.02, -0.01, 0.015, -0.005])
+    for name in ("sharpe", "sortino", "mean_return"):
+        a = resolve_objective_metric(name)
+        b = resolve_objective_metric(name)
+        assert a(s) == b(s)
 
 
 def test_mean_return_empty_series_returns_zero() -> None:
@@ -60,13 +63,15 @@ def test_mean_return_all_nan_series_returns_zero() -> None:
     assert metric(pd.Series([float("nan"), float("nan")])) == 0.0
 
 
-def test_sharpe_zero_variance_returns_zero() -> None:
+def test_sharpe_zero_variance_returns_infinity() -> None:
+    """Positive mean with zero volatility yields an infinite Sharpe under the ratio helper."""
     metric = resolve_objective_metric("sharpe")
 
-    assert metric(pd.Series([0.01, 0.01, 0.01])) == 0.0
+    assert metric(pd.Series([0.01, 0.01, 0.01])) == float("inf")
 
 
-def test_sortino_no_downside_returns_zero() -> None:
+def test_sortino_no_downside_returns_infinity() -> None:
+    """No below-target returns → zero downside vol → ratio convention is ``inf``."""
     metric = resolve_objective_metric("sortino")
 
-    assert metric(pd.Series([0.01, 0.02, 0.03])) == 0.0
+    assert metric(pd.Series([0.01, 0.02, 0.03])) == float("inf")

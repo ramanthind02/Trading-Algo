@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from nodes.regime.sma.sma_regime_signal import SmaRegimeSignalNode
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import PositionMode, Ticker, TimeFrame
 from utils.core.models import Candle
 
 
@@ -38,6 +38,16 @@ def test_sma_regime_short_when_close_below_sma() -> None:
         node.add_candle(_candle(100.0, i))
     out = node.add_candle(_candle(99.0, 3))
     assert out[0] == pytest.approx(-1.0)
+
+
+def test_sma_regime_long_only_zero_when_close_below_sma() -> None:
+    node = SmaRegimeSignalNode(
+        Ticker.ES, TimeFrame.D, period=3, mode=PositionMode.LONG_ONLY
+    )
+    for i in range(3):
+        node.add_candle(_candle(100.0, i))
+    out = node.add_candle(_candle(99.0, 3))
+    assert out[0] == pytest.approx(0.0)
 
 
 def test_sma_regime_warmup_emits_zero() -> None:

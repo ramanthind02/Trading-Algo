@@ -5,9 +5,9 @@
 
 ## `DualSignalNode` — confirmation / AND gate
 
-| | |
-|---|---|
-| **Module** | `nodes/composite/dual_signal.py` |
+|                 |                                                           |
+| -----------------| -----------------------------------------------------------|
+| **Module**      | `nodes/composite/dual_signal.py`                          |
 | **When to use** | Emit a direction only when two independent signals agree. |
 
 The node:

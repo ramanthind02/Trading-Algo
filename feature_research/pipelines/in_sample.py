@@ -14,8 +14,10 @@ from feature_research.config import FeatureType, ResearchConfig
 from feature_research.core_helpers import normalize_timeframe_from_bias_spec
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
+    expanded_combo_param_value,
+    expanded_spec_combo_label,
+    first_bias_spec,
     load_features_for_combo,
-    param_combo_label,
     populate_cache_if_needed,
 )
 from feature_research.in_sample.metric_helpers import compute_param_sensitivity_metric
@@ -75,6 +77,12 @@ def _combo_eda_parent_dir(output_dir: Path, label: str, feature_name: str) -> Pa
             return output_dir / seg
 
     return output_dir / digest[:8]
+
+
+def _bias_module_token_from_store_label(label: str) -> str:
+    """Leading token before the first ``__`` in :func:`expanded_spec_combo_label` output."""
+    i = label.find("__")
+    return label[:i] if i != -1 else label
 
 
 def _param_sensitivity_by_ticker_rows_for_combo(
@@ -152,15 +160,20 @@ def run_eda_pipeline(
     config = replace(config, start=tr_start, end=tr_end)
 
     expanded = expand_bias_specs(config.bias_spec)
-    timeframe = normalize_timeframe_from_bias_spec(config.bias_spec)
+    meta_spec = first_bias_spec(config.bias_spec)
+    timeframe = normalize_timeframe_from_bias_spec(meta_spec)
     results: dict[str, Path] = {}
 
     print(f"\n{'='*64}")
     feature_type_label = config.feature_type.name
-    print(
-        f"EDA Pipeline: {config.bias_spec['module_name'].upper()} "
-        f"({feature_type_label})"
-    )
+    if isinstance(config.bias_spec, list):
+        branch_modules = ", ".join(
+            str(s.get("module_name")) for s in config.bias_spec
+        )
+        eda_module_label = f"MULTI[{branch_modules}]"
+    else:
+        eda_module_label = str(meta_spec["module_name"]).upper()
+    print(f"EDA Pipeline: {eda_module_label} ({feature_type_label})")
     print(f"Tickers : {[t.name for t in config.tickers]}")
     print(f"Period  : {config.start.date()} -> {config.end.date()}  (training_window_bounds)")
     print(
@@ -177,7 +190,9 @@ def run_eda_pipeline(
 
     combo_store: dict[str, tuple[pd.Series, pd.Series, str, pd.Series, dict[str, object]]] = {}
     varying_params = [
-        key for key, values in config.bias_spec["params"].items() if isinstance(values, list) and len(values) > 1
+        key
+        for key, values in meta_spec.get("params", {}).items()
+        if isinstance(values, list) and len(values) > 1
     ]
     metric_rows: list[dict[str, object]] = []
     sensitivity_rows: list[dict[str, object]] = []
@@ -186,7 +201,7 @@ def run_eda_pipeline(
     print(f"Loading data for {len(expanded)} combos...")
     for single_spec in expanded:
         combo = single_spec["params"]
-        label = param_combo_label(combo)
+        label = expanded_spec_combo_label(single_spec)
         data = load_features_for_combo(single_spec, config)
         if data is None:
             print(f"  [{label}] SKIP -- no data")
@@ -243,14 +258,27 @@ def run_eda_pipeline(
             )
 
             if varying_params and n_observations >= 5 and isfinite(t_stat_v):
-                row = {
-                    f"param{k + 1}_value": combo[key]
-                    for k, key in enumerate(varying_params)
-                }
-                row["t_stat"] = t_stat_v
-                metric_rows.append(row)
+                resolved = [
+                    expanded_combo_param_value(combo, key) for key in varying_params
+                ]
+                if all(v is not None for v in resolved):
+                    row = {
+                        f"param{k + 1}_value": resolved[k]
+                        for k in range(len(varying_params))
+                    }
+                    row["t_stat"] = t_stat_v
+                    metric_rows.append(row)
 
-    label_param_pairs = [(label, params) for label, (_, _, _, _, params) in sorted(combo_store.items())]
+    label_param_pairs = [
+        (
+            label,
+            {
+                **dict(params),
+                "bias_composite_module": _bias_module_token_from_store_label(label),
+            },
+        )
+        for label, (_, _, _, _, params) in sorted(combo_store.items())
+    ]
     if config.feature_type == FeatureType.SIGNED_SIGNAL:
         pbi_paths = write_param_sensitivity_powerbi_tables(
             sensitivity_rows,
@@ -281,7 +309,9 @@ def run_eda_pipeline(
         ps_df = pd.DataFrame(metric_rows)
         ps_cfg = config.param_sensitivity
         fixed_params = {
-            key: values for key, values in config.bias_spec["params"].items() if key not in varying_params
+            key: values
+            for key, values in meta_spec.get("params", {}).items()
+            if key not in varying_params
         }
         print(
             f"\nParam sensitivity pre-selection: {len(combo_store)} combos → "
@@ -297,23 +327,31 @@ def run_eda_pipeline(
                 plot_3d_mode="heatmap_slices",
                 smoothing_self_weight=ps_cfg.smoothing_self_weight,
             )
-            selected_labels: set[str] = {
-                param_combo_label({**fixed_params, **dict(zip(varying_params, values))})
-                for values in ps_report.top_k_combinations
-            }
+            selected_labels: set[str] = set()
+            for values in ps_report.top_k_combinations:
+                target_varying = dict(zip(varying_params, values))
+                for lbl, (_, _, _, _, pstored) in combo_store.items():
+                    if all(
+                        expanded_combo_param_value(pstored, vk) == vv
+                        for vk, vv in target_varying.items()
+                    ):
+                        selected_labels.add(lbl)
             print(f"Pre-selection complete: {len(selected_labels)}/{len(combo_store)} combos selected")
         except Exception as exc:
             print(f"Pre-selection failed ({exc}); falling back to top-{max_eda_combos} by raw metric")
             sorted_rows = sorted(metric_rows, key=lambda row: row.get("t_stat", float("-inf")), reverse=True)
-            selected_labels = {
-                param_combo_label(
-                    {
-                        **fixed_params,
-                        **{varying_params[k]: row[f"param{k + 1}_value"] for k in range(len(varying_params))},
-                    }
-                )
-                for row in sorted_rows[:max_eda_combos]
-            }
+            selected_labels = set()
+            for row in sorted_rows[:max_eda_combos]:
+                target_varying = {
+                    varying_params[k]: row[f"param{k + 1}_value"]
+                    for k in range(len(varying_params))
+                }
+                for lbl, (_, _, _, _, pstored) in combo_store.items():
+                    if all(
+                        expanded_combo_param_value(pstored, vk) == vv
+                        for vk, vv in target_varying.items()
+                    ):
+                        selected_labels.add(lbl)
     else:
         selected_labels = set(combo_store.keys())
 
@@ -324,7 +362,7 @@ def run_eda_pipeline(
     )
     for single_spec in expanded:
         combo = single_spec["params"]
-        label = param_combo_label(combo)
+        label = expanded_spec_combo_label(single_spec)
         if label not in combo_store or label not in selected_labels:
             continue
 

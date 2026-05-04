@@ -4,9 +4,11 @@ Continuous-node binning / EDA research is configured separately in
 ``feature_research.binning.config``.
 
 **Bias specs in ``load_config()``:** Prefer a plain dict literal for ``module_name``,
-``timeframes``, and ``params`` so you can see and edit values in one place. The small
-``build_*_bias_spec`` helpers below remain for tests and scripts that need the composite
-shape without duplicating keys; they are optional for day-to-day research edits.
+``timeframes``, and ``params`` so you can see and edit values in one place. Do **not** add
+thin ``build_*_bias_spec`` helpers that only wrap a single module + params dict with no
+extra validation or shared logic—those hide the live combo and add indirection for no
+benefit. Reserve ``build_*`` helpers for composite nodes (e.g. filter gates) or other
+specs where one function genuinely centralizes a non-trivial shape.
 """
 from __future__ import annotations
 
@@ -27,11 +29,15 @@ from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from utils.core.enums import (
     Direction,
     DirectionInput,
+    PositionMode,
     Ticker,
     TimeFrame,
     coerce_direction,
 )
 from utils.vault_paths import VaultProfile, resolve_vault_root, resolve_vault_root_for_profile
+
+from feature_research.bias_spec_catalog import first_bias_spec
+from nodes.regime.sma.stacked_sma_long_only import stacked_sma_period_combos
 
 _FEATURE_RESEARCH_DIR = Path(__file__).resolve().parent
 DEFAULT_TIMEFRAME: TimeFrame = TimeFrame.D
@@ -70,21 +76,52 @@ def build_filter_gate_bias_spec(
     }
 
 
-def build_sma_regime_bias_spec(
+def build_filter_gate_entry_only_bias_spec(
     timeframe: TimeFrame,
     *,
-    period: int | list[int],
+    filter_module: str,
+    filter_params: dict[str, Any],
+    signal_module: str,
+    signal_params: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a ``bias_spec`` for :class:`~nodes.regime.sma.sma_regime_signal.SmaRegimeSignalNode`.
+    """Build a ``bias_spec`` for :class:`~nodes.composite.filter_gate_entry_only.FilterGateEntryOnlyNode`.
 
-    Long when ``close > SMA(period)``, short when ``close < SMA(period)`` (see node docstring).
-    ``period`` may be a scalar or a list for grid expansion.
+    Same shape as :func:`build_filter_gate_bias_spec`; filter applies only on **entry** (see node docstring).
     """
     return {
-        "module_name": "sma_regime_signal",
+        "module_name": "filter_gate_entry_only",
         "timeframes": [timeframe],
-        "params": {"period": period},
+        "params": {
+            "filter_module": filter_module,
+            "filter_params": dict(filter_params),
+            "signal_module": signal_module,
+            "signal_params": dict(signal_params),
+        },
     }
+
+
+def build_gc_atr_donchian_validation_filter_gate_spec(timeframe: TimeFrame) -> dict[str, Any]:
+    """Scalar entry-only gate for validation / OOS / vault / inclusion (one combo, no grid).
+
+    ATR% **low** tail (``percentile_tail="low"``), entry-only gating. In-sample uses the wider grid
+    in :func:`load_config`.
+    """
+    return build_filter_gate_entry_only_bias_spec(
+        timeframe,
+        filter_module="atr_percentile_filter",
+        filter_params={
+            "atr_period": 10,
+            "lookback": 126,
+            "max_rank_fraction": 0.2,
+            "rank_metric": "atr_pct",
+            "percentile_tail": "low",
+        },
+        signal_module="donchian_long_only",
+        signal_params={
+            "channel_lookback": 20,
+            "sma_period": 350,
+        },
+    )
 
 
 def build_objective_metric_presets(tf: TimeFrame = TimeFrame.D) -> dict[str, ObjectiveMetricSpec]:
@@ -210,7 +247,8 @@ class BinningAnalysisConfig:
 
 @dataclass(frozen=True)
 class InSamplePhaseDefaultsConfig:
-    bias_spec: dict[str, Any]
+    #: Single spec or ordered catalog (list of specs); see :func:`expand_bias_specs`.
+    bias_spec: dict[str, Any] | list[dict[str, Any]]
     target_col: str
     strategy: DirectionInput
     reports_dir: Path
@@ -272,7 +310,7 @@ class PortfolioSourceConfig:
     tickers: tuple[Ticker, ...] | None = None
     ensemble_dirs: dict[str, str] | None = None
     target_volatility: float = 0.15
-    weight_layer_method: str = "hierarchy_equal"
+    weight_layer_method: str = "ledoit_wolf_min_corr"
     weight_layer_kwargs: dict[str, Any] = field(default_factory=lambda: {"fdm_max": 2.0})
     max_position_pct: float = 3.5
     baseline_mode: str = "equal_weight"
@@ -308,7 +346,9 @@ class PortfolioInclusionConfig:
     Baseline portfolio tickers, windows, and ``ensemble_dirs`` come from
     ``portfolio_research.config.load_config()``; this config controls candidate source, output
     layout under :attr:`ResearchConfig.output_root`, preflight, and whether HTML tearsheets are
-    written.
+    written. Stream combination always uses ``ledoit_wolf_min_corr`` (see
+    :func:`feature_research.inclusion_gates.run_portfolio_inclusion`), regardless of
+    ``PortfolioResearchConfig.weight_layer_method``.
 
     **Candidate source:** ``candidate_mode="eval_bias_spec"`` (default) materializes a one-feature
     ensemble from :attr:`ResearchConfig.eval_bias_spec` — the same frozen combo as evaluation /
@@ -434,6 +474,11 @@ class ResearchConfig:
     )
     vault_save: VaultSaveConfig | None = None
     sector_allocation_config_path: str | None = None
+    #: When True, :mod:`portfolio_research.run_feature_vault_correlation` may export
+    #: research-vs-vault correlation tables (also requires
+    #: ``PortfolioResearchConfig.feature_vault_correlation.enabled``). See
+    #: ``docs/library/Ensemble/portfolio.md`` and vault correlation docs.
+    portfolio_vault_correlation: bool = False
 
     def __post_init__(self) -> None:
         if self.feature_type is not FeatureType.SIGNED_SIGNAL:
@@ -448,14 +493,17 @@ class ResearchConfig:
         return self.in_sample_defaults.for_feature_type(self.feature_type)
 
     @property
-    def bias_spec(self) -> dict[str, Any]:
+    def bias_spec(self) -> dict[str, Any] | list[dict[str, Any]]:
         return self._phase_defaults.bias_spec
 
     @property
     def eval_bias_spec(self) -> dict[str, Any]:
-        if self.evaluation_defaults is not None:
-            return self.evaluation_defaults.for_feature_type(self.feature_type).bias_spec
-        return self._phase_defaults.bias_spec
+        raw = (
+            self.evaluation_defaults.for_feature_type(self.feature_type).bias_spec
+            if self.evaluation_defaults is not None
+            else self._phase_defaults.bias_spec
+        )
+        return first_bias_spec(raw)
 
     @property
     def target_col(self) -> str:
@@ -562,11 +610,10 @@ def inferred_inclusion_candidate_path(research: ResearchConfig) -> str | None:
 
 def load_config() -> ResearchConfig:
     """Researcher overrides for the main signed-signal feature-research pipeline."""
-    # Match ``vault/D/mean_reversion_indices/zscore_rsi_signal_r14_z100_os-2_ob2_exitThrBars5_long`` feature JSON.
-    tickers = [Ticker.ES, Ticker.NQ]
+    tickers = [Ticker.ES]
 
     start = datetime(2000, 1, 1)
-    end = datetime(2025, 9, 18)
+    end = datetime(2026, 1, 1)
     timeframe = DEFAULT_TIMEFRAME
     objective_metric_presets = build_objective_metric_presets(timeframe)
 
@@ -574,7 +621,9 @@ def load_config() -> ResearchConfig:
         train_start=datetime(2000, 1, 1),
         train_end=datetime(2018, 12, 31),
         test_start=datetime(2019, 1, 1),
-        test_end=datetime(2022, 12, 31),
+        # Temporarily: full post-train tail through dataset end (overlaps calendar with OOS test;
+        # OOS phase still fits through ``oos_window.train_end`` — see ``_effective_oos_window``).
+        test_end=end,
     )
     oos_window = OOSWindowConfig(
         train_start=datetime(2000, 1, 1),
@@ -589,19 +638,51 @@ def load_config() -> ResearchConfig:
     )
     feature_type = FeatureType.SIGNED_SIGNAL
 
-    # ``zscore_rsi_signal_signal_D_exitBars_10_...`` — same params as
-    # ``vault/D/mean_reversion_indices/zscore_rsi_signal_r14_z100_os-2_ob2_exitThrBars5_long/features/*.json``.
-    zscore_rsi_mr_long_spec: dict[str, Any] = {
-        "module_name": "zscore_rsi_signal",
-        "timeframes": [timeframe.name],
+    # In-sample: four-period stacked SMA
+    # (``period_1`` < ``period_2`` < ``period_3`` < ``period_4`` — fast → slow) —
+    # :class:`~nodes.regime.sma.stacked_sma_long_only.StackedSmaLongOnlyNode`, ``LONG_SHORT``.
+    # **12** evenly spaced anchors on **[8, 256]**, each snapped to an **even** integer →
+    # ``C(12,4) == 495`` strictly increasing quadruples (~500–600 band; the next step is
+    # ``_stacked_ma_n_cand = 13`` → ``C(13,4) == 715``).
+    _stacked_ma_n_cand = 13
+    _stacked_ma_lo, _stacked_ma_hi = 8, 256
+    _stacked_ma_even_candidates: tuple[int, ...] = tuple(
+        sorted(
+            {
+                int(round(_stacked_ma_lo + (_stacked_ma_hi - _stacked_ma_lo) * k / (_stacked_ma_n_cand - 1)))
+                // 2
+                * 2
+                for k in range(_stacked_ma_n_cand)
+            }
+        )
+    )
+    _stacked_4p_quads = stacked_sma_period_combos(4, _stacked_ma_even_candidates)
+    stacked_sma_4p_is_catalog: list[dict[str, Any]] = [
+        {
+            "module_name": "stacked_sma_long_only",
+            "timeframes": [timeframe],
+            "params": {
+                "period_1": int(p1),
+                "period_2": int(p2),
+                "period_3": int(p3),
+                "period_4": int(p4),
+                "mode": PositionMode.LONG_SHORT,
+            },
+        }
+        for p1, p2, p3, p4 in _stacked_4p_quads
+    ]
+
+    # Validation / OOS / ``save_feature_to_vault`` / inclusion: median quad from the same grid.
+    _stacked_4p_v1, _stacked_4p_v2, _stacked_4p_v3, _stacked_4p_v4 = _stacked_4p_quads[len(_stacked_4p_quads) // 2]
+    stacked_sma_val_eval_bias_spec: dict[str, Any] = {
+        "module_name": "stacked_sma_long_only",
+        "timeframes": [timeframe],
         "params": {
-            "rsi_period": 5,
-            "zscore_period": 60,
-            "oversold": -1.75,
-            "overbought": 2.25,
-            "strategy_mode": "long",
-            "exit_policy": "threshold_or_bars",
-            "exit_bars": 10,
+            "period_1": int(8),
+            "period_2": int(194),
+            "period_3": int(214),
+            "period_4": int(234),
+            "mode": PositionMode.LONG_SHORT,
         },
     }
 
@@ -611,19 +692,19 @@ def load_config() -> ResearchConfig:
         / "in_sample"
         / "results"
         / "signed_signal"
-        / "zscore_rsi_long_rsi5_z60_exit10_ob225_os-175"
+        / "stacked_sma_long_only_4ma_even_8_256_12cand_495quads_long_short"
     )
 
     in_sample_defaults = InSampleDefaultsCatalog(
         continuous=InSamplePhaseDefaultsConfig(
-            bias_spec=copy.deepcopy(zscore_rsi_mr_long_spec),
+            bias_spec=copy.deepcopy(stacked_sma_4p_is_catalog),
             target_col=target_col,
             strategy=Direction.LONG,
             reports_dir=signed_reports_dir,
             binning_params_overrides={},
         ),
         signed_signal=InSamplePhaseDefaultsConfig(
-            bias_spec=zscore_rsi_mr_long_spec,
+            bias_spec=copy.deepcopy(stacked_sma_4p_is_catalog),
             target_col=target_col,
             strategy=Direction.LONG,
             reports_dir=signed_reports_dir,
@@ -633,27 +714,25 @@ def load_config() -> ResearchConfig:
 
     evaluation_defaults = EvaluationDefaultsCatalog(
         continuous=EvaluationPhaseDefaultsConfig(
-            bias_spec=copy.deepcopy(zscore_rsi_mr_long_spec),
+            bias_spec=copy.deepcopy(stacked_sma_val_eval_bias_spec),
         ),
         signed_signal=EvaluationPhaseDefaultsConfig(
-            bias_spec=copy.deepcopy(zscore_rsi_mr_long_spec),
+            bias_spec=copy.deepcopy(stacked_sma_val_eval_bias_spec),
         ),
     )
 
     param_sensitivity = ParamSensitivityConfig()
     vault_save = VaultSaveConfig(
         direction=Direction.LONG,
-        existing_ensemble_dir=(
-            "vault/D/mean_reversion_indices/zscore_rsi_signal_r14_z100_os-2_ob2_exitThrBars5_long"
-        ),
+        ensemble_name="gc_fge_atr10_lb126_r02_ch20_s350_low_d",
+        weight_hierarchy_group="momentum",
         dry_run=False,
     )
     portfolio_source = PortfolioSourceConfig(
         tickers=tuple(tickers),
     )
-    # Inclusion: eval_bias_spec materialization uses this bucket for ``hierarchy_equal`` layout.
     portfolio_inclusion = PortfolioInclusionConfig(
-        ephemeral_weight_hierarchy_group="mean_reversion_indices",
+        ephemeral_weight_hierarchy_group="momentum",
     )
 
     binning_params = BinningAnalysisConfig(
@@ -681,4 +760,5 @@ def load_config() -> ResearchConfig:
         portfolio_source=portfolio_source,
         portfolio_inclusion=portfolio_inclusion,
         vault_save=vault_save,
+        portfolio_vault_correlation=True,
     )

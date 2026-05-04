@@ -20,7 +20,7 @@ import pytest
 
 from utils.cache.runtime.bias_node_cache import BiasNodeCache, CacheMissError
 from utils.cache.runtime.cache_paths import default_live_artifact_cache_dir
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import PositionMode, Ticker, TimeFrame
 
 
 @pytest.fixture
@@ -294,6 +294,23 @@ class TestCachePathStructure:
 
         module_dir = os.path.join(temp_cache_dir, 'rsi')
         assert os.path.isdir(module_dir)
+
+    def test_enum_param_changes_cache_path(self, temp_cache_dir) -> None:
+        """Enum params must not be dropped from the suffix (LONG_ONLY vs LONG_SHORT)."""
+        base = dict(
+            module_name="sma_regime_signal",
+            params={"period": 252, "mode": PositionMode.LONG_ONLY},
+            ticker=Ticker.ES,
+            tf=TimeFrame.D,
+            cache_dir=temp_cache_dir,
+        )
+        cache_lo = BiasNodeCache(**base)
+        cache_ls = BiasNodeCache(
+            **{**base, "params": {"period": 252, "mode": PositionMode.LONG_SHORT}},
+        )
+        assert cache_lo.cache_path != cache_ls.cache_path
+        assert "long_only" in cache_lo.cache_path.replace("\\", "/")
+        assert "long_short" in cache_ls.cache_path.replace("\\", "/")
 
     def test_different_params_different_files(self, temp_cache_dir, sample_data):
         """Test that different params create different cache files."""
