@@ -1,23 +1,49 @@
-## How the Live Trading Script Works                                                                                                          
-                                                                                                                                             
-  ### Testing (no Telegram sent, prints what it would send)   
-  ```python
-  python scripts/tws_live_forecast.py --dry-run --port 7497
+## How the Live Trading Script Works
+
+  The pipeline is driven by `scripts/enigma_live_forecast.py`. It supports two
+  profiles, each with a thin wrapper entrypoint:
+
+  | Profile | Wrapper | Vault | Instruments | Telegram channel | Runs at (ET) |
+  |---------|---------|-------|-------------|------------------|--------------|
+  | `prop` | `scripts/enigma_prop_forecast.py` | `vault/` | Micro futures (MES/MNQ/MGC/M2K/MYM, ZN for TLT) | Enigma Signals - Prop Firms | 6:00 PM |
+  | `personal` | `scripts/enigma_personal_forecast.py` | `vault_personal/` | ETF fractional shares (SPY/QQQ/GLD/IWM/DIA/TLT) | Enigma Signals - Personal Account | 3:45 PM |
+
+  ### Testing (no Telegram sent)
+  ```bash
+  python scripts/enigma_prop_forecast.py     --dry-run --port 7497
+  python scripts/enigma_personal_forecast.py --dry-run --port 7497
   ```
 
   ### Production (sends Telegram)
-  ```python
-  python scripts/tws_live_forecast.py --port 7497
+  ```bash
+  python scripts/enigma_prop_forecast.py     --port 7497
+  python scripts/enigma_personal_forecast.py --port 7497
   ```
 
   ### Override capital
-  ```python
-  python scripts/tws_live_forecast.py --dry-run --port 7497 --capital 5000
+  ```bash
+  python scripts/enigma_prop_forecast.py --dry-run --port 7497 --capital 5000
   ```
 
-  - --port 7497 = paper trading, --port 7496 = live trading
-  - --dry-run = everything runs identically except the Telegram message is printed to console instead of sent
-  - --capital = base value of account to trade
+  - `--port 7497` = paper trading, `--port 7496` = live trading
+  - `--dry-run` prints the Telegram message instead of sending
+  - `--capital` overrides the account capital in the config
+
+  ### Key differences between profiles
+
+  **Prop profile** (runs *after* the daily candle closes at 5:00 PM ET):
+  - Uses IB's official daily bars (no partial-candle synthesis)
+  - Sizes micro futures contracts -- `notional_per_contract = price * point_value`
+  - Reads from `vault/` (the prop-firm portfolio)
+
+  **Personal profile** (runs *before* the US equity close at 4:00 PM ET):
+  - Synthesizes a partial daily candle for today from 15-min intraday bars
+    (O = first, H = max, L = min, C = latest, V = sum). This is because IB's
+    official daily bar for today isn't available yet, but waiting until after
+    close would miss the window for fractional-share ETF trading.
+  - Sizes ETF fractional shares from `config.instruments[ticker].etf` mapping
+  - Reads from `vault_personal/` (the personal-account portfolio)
+
   ---
 
 ### Step-by-step flow
@@ -172,19 +198,26 @@ The script is meant to run once per day after market close. Futures settle at 5:
 ### Windows (Task Scheduler)
 
 1. Run `deploy/setup_scheduled_task.bat` as Administrator (one-time setup)
-2. This creates a scheduled task `TradingAlgo\DailyForecast` that runs `deploy/run_daily_forecast.bat` at 5:30 PM daily
+2. Two scheduled tasks are created under `TradingAlgo\`:
+   - `TradingAlgo\PropForecast` -- runs `deploy/run_prop_forecast.bat` at 3:00 PM PT (6:00 PM ET)
+   - `TradingAlgo\PersonalForecast` -- runs `deploy/run_personal_forecast.bat` at 12:45 PM PT (3:45 PM ET)
 3. Output is logged to `deploy/forecast.log`
 
 ```bat
-REM Verify the task exists
-schtasks /query /tn "TradingAlgo\DailyForecast"
+REM Verify the tasks exist
+schtasks /query /tn "TradingAlgo\PropForecast"
+schtasks /query /tn "TradingAlgo\PersonalForecast"
 
 REM Trigger a manual run
-schtasks /run /tn "TradingAlgo\DailyForecast"
+schtasks /run /tn "TradingAlgo\PropForecast"
+schtasks /run /tn "TradingAlgo\PersonalForecast"
 
-REM Remove the task
-schtasks /delete /tn "TradingAlgo\DailyForecast" /f
+REM Remove a task
+schtasks /delete /tn "TradingAlgo\PropForecast" /f
 ```
+
+If you're not in Pacific Time, edit the `/st` values in `setup_scheduled_task.bat`
+to match your local timezone before running it.
 
 ### Linux (cron)
 
@@ -192,9 +225,11 @@ schtasks /delete /tn "TradingAlgo\DailyForecast" /f
 # Edit crontab
 crontab -e
 
-# Add this line (5:30 PM ET = 21:30 UTC during EST, 22:30 UTC during EDT)
-# Adjust for your timezone. This example assumes the server is set to US/Eastern.
-30 17 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/tws_live_forecast.py --port 7497 >> deploy/forecast.log 2>&1
+# Personal forecast: 3:45 PM ET = 19:45 UTC (EST) / 20:45 UTC (EDT)
+# Prop forecast:     6:00 PM ET = 22:00 UTC (EST) / 23:00 UTC (EDT)
+# Example assumes the server is set to US/Eastern timezone.
+45 15 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/enigma_personal_forecast.py --port 7497 >> deploy/forecast.log 2>&1
+0 18 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/enigma_prop_forecast.py --port 7497 >> deploy/forecast.log 2>&1
 ```
 
 Notes for Linux:

@@ -4,6 +4,7 @@ Telegram Notifier for Forecast Results
 Sends formatted forecast messages to Telegram channel.
 """
 
+import json
 import os
 import sys
 import requests
@@ -22,31 +23,76 @@ from utils.core.enums import TimeFrame
 
 logger = get_logger(__name__)
 
+# Bot credentials. Prop-firm bot is the legacy default; personal-account bot
+# is a separate bot to keep the two signal streams in different channels.
+_PROP_BOT_TOKEN = "8157808736:AAHhqYe9N_PQ4Ox2Khz-zMbKoytly9ugrGY"
+_PROP_CHAT_ID = "-1002856645393"
+
+# enigma_pa_notifications_bot posting to the "Enigma Signals - Personal
+# Account" channel (chat_id resolved via getUpdates after adding the bot
+# as channel admin). Overridable via env var.
+_PERSONAL_BOT_TOKEN = "8698079967:AAEXjTkAJcHsh1B88E-dRa-YIQVLuQly6NE"
+_PERSONAL_CHAT_ID = "-1003955204069"
+
+
 class TelegramNotifier:
     """
     Telegram bot for sending forecast notifications.
-    
+
     Formats prediction results and sends them to a Telegram channel.
+    Use :meth:`for_prop_firms` and :meth:`for_personal_account` classmethods
+    to get a notifier bound to the correct bot/channel.
     """
-    
+
     def __init__(self, token: Optional[str] = None, chat_id: Optional[str] = None):
         """
         Initialize Telegram notifier.
-        
+
         Parameters
         ----------
         token : str, optional
-            Telegram bot token (if None, gets from env var)
+            Telegram bot token (if None, falls back to ``TELEGRAM_BOT_TOKEN``
+            env var, then the prop-firm bot default)
         chat_id : str, optional
-            Telegram chat ID (if None, gets from env var)
+            Telegram chat ID (if None, falls back to ``TELEGRAM_CHAT_ID`` env
+            var, then the prop-firm channel default)
         """
-        self.token = token or os.environ.get("TELEGRAM_BOT_TOKEN", "8157808736:AAHhqYe9N_PQ4Ox2Khz-zMbKoytly9ugrGY")
-        self.chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID", "-1002856645393")
-        
+        self.token = token or os.environ.get("TELEGRAM_BOT_TOKEN", _PROP_BOT_TOKEN)
+        self.chat_id = chat_id or os.environ.get("TELEGRAM_CHAT_ID", _PROP_CHAT_ID)
+
         if not self.token or not self.chat_id:
             logger.warning("Telegram token or chat_id not configured. Messages will be logged only.")
-        
+
         self.base_url = f"https://api.telegram.org/bot{self.token}"
+
+    @classmethod
+    def for_prop_firms(cls) -> "TelegramNotifier":
+        """Notifier bound to the prop-firm signal channel (Enigma Notifications)."""
+        token = os.environ.get("TELEGRAM_PROP_BOT_TOKEN", _PROP_BOT_TOKEN)
+        chat_id = os.environ.get("TELEGRAM_PROP_CHAT_ID", _PROP_CHAT_ID)
+        return cls(token=token, chat_id=chat_id)
+
+    @classmethod
+    def for_personal_account(cls) -> "TelegramNotifier":
+        """Notifier bound to the personal-account signal channel (Enigma PA Notifications).
+
+        The personal chat_id must be configured (via ``TELEGRAM_PERSONAL_CHAT_ID``
+        env var or the ``_PERSONAL_CHAT_ID`` module constant). If unset, the
+        notifier logs rather than sending so we never cross-post into the
+        prop-firm channel by accident.
+        """
+        token = os.environ.get("TELEGRAM_PERSONAL_BOT_TOKEN", _PERSONAL_BOT_TOKEN)
+        chat_id = os.environ.get("TELEGRAM_PERSONAL_CHAT_ID", _PERSONAL_CHAT_ID)
+        instance = cls.__new__(cls)
+        instance.token = token
+        instance.chat_id = chat_id
+        instance.base_url = f"https://api.telegram.org/bot{token}"
+        if not chat_id:
+            logger.warning(
+                "Personal-account chat_id is unset; messages will be logged only. "
+                "Set TELEGRAM_PERSONAL_CHAT_ID to enable sends."
+            )
+        return instance
     
     def send_forecast_update(
         self, 
@@ -271,6 +317,109 @@ class TelegramNotifier:
         
         return self.send_message(message)
     
+    def send_with_inline_keyboard(
+        self,
+        text: str,
+        buttons: List[Dict[str, str]],
+    ) -> Optional[int]:
+        """Send a message with an inline keyboard. Returns message_id on success.
+
+        Parameters
+        ----------
+        text
+            Message body (Markdown).
+        buttons
+            Iterable of ``{"text": "...", "callback_data": "..."}`` dicts.
+            One row, one button per entry.
+        """
+        if not self.token or not self.chat_id:
+            logger.info(f"Telegram not configured. Would send: {text}")
+            return None
+        try:
+            reply_markup = {"inline_keyboard": [[b] for b in buttons]}
+            response = requests.post(
+                f"{self.base_url}/sendMessage",
+                data={
+                    "chat_id": self.chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                    "reply_markup": json.dumps(reply_markup),
+                },
+                timeout=10,
+            )
+            if response.status_code != 200:
+                logger.error(f"Telegram sendMessage error: {response.status_code} - {response.text}")
+                return None
+            return int(response.json()["result"]["message_id"])
+        except Exception as e:
+            logger.error(f"send_with_inline_keyboard failed: {e}")
+            return None
+
+    def edit_message_text(self, message_id: int, text: str) -> bool:
+        """Edit a previously-sent message, clearing its inline keyboard."""
+        if not self.token or not self.chat_id:
+            return False
+        try:
+            response = requests.post(
+                f"{self.base_url}/editMessageText",
+                data={
+                    "chat_id": self.chat_id,
+                    "message_id": message_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                },
+                timeout=10,
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"edit_message_text failed: {e}")
+            return False
+
+    def answer_callback_query(self, callback_query_id: str, text: str = "") -> bool:
+        """Acknowledge a callback_query so Telegram stops showing the spinner."""
+        if not self.token:
+            return False
+        try:
+            response = requests.post(
+                f"{self.base_url}/answerCallbackQuery",
+                data={"callback_query_id": callback_query_id, "text": text},
+                timeout=10,
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"answer_callback_query failed: {e}")
+            return False
+
+    def get_updates(
+        self,
+        offset: Optional[int] = None,
+        timeout: int = 25,
+        allowed_updates: Optional[List[str]] = None,
+    ) -> List[Dict]:
+        """Long-poll getUpdates. Returns the raw ``result`` list on success."""
+        if not self.token:
+            return []
+        try:
+            params: Dict[str, object] = {"timeout": timeout}
+            if offset is not None:
+                params["offset"] = offset
+            if allowed_updates is not None:
+                params["allowed_updates"] = json.dumps(allowed_updates)
+            # Network timeout must exceed the long-poll timeout.
+            response = requests.get(
+                f"{self.base_url}/getUpdates",
+                params=params,
+                timeout=timeout + 5,
+            )
+            if response.status_code != 200:
+                logger.error(f"getUpdates error: {response.status_code} - {response.text}")
+                return []
+            return response.json().get("result", [])
+        except Exception as e:
+            logger.error(f"get_updates failed: {e}")
+            return []
+
     def test_connection(self) -> bool:
         """
         Test Telegram connection by sending a test message.
