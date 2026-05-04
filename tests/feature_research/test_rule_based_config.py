@@ -19,4 +19,4 @@ def test_load_config_defaults() -> None:
 def test_reports_dir_includes_feature_type() -> None:
     config = load_config()
     assert "signed_signal" in str(config.reports_dir)
-    assert "cyclical_rsi_signal" in str(config.reports_dir)
+    assert "gc_donchian_atr_gate_explore" in str(config.reports_dir)

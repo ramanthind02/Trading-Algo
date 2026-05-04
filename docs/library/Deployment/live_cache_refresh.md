@@ -26,6 +26,8 @@ What it does **not** do:
 
 ## Manifest contract
 
+`vault_root` and `snapshot_vault_root` are strings passed to `utils.vault_paths.resolve_vault_root` (repo-relative dirnames such as `vault` or `vault_personal`, or absolute paths). `active_ensemble_dirs` entries must be repo-relative and use the matching top-level folder.
+
 Path:
 
 ```text
@@ -42,7 +44,7 @@ Example:
   "snapshot_vault_root": "vault",
   "debounce_seconds": 2,
   "active_ensemble_dirs": [
-    "vault/M/buy_hold_long"
+    "vault/M/buy_hold/buy_hold_long"
   ],
   "active_portfolios": [
     {

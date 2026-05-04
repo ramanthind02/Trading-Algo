@@ -2,11 +2,16 @@
 ATR percentile filter — binary low-volatility gate from rank within a rolling window.
 
 Computes SMA(ATR) over ``atr_period`` true ranges, then ranks the current reading
-(``atr`` or ``atrPct``) against the last ``lookback`` values. Emits ``1.0`` when
-the empirical bottom fraction is at or below ``max_rank_fraction`` (e.g. ``0.3``
-= current metric is in the lowest ~30% of the window), else ``0.0``.
+(``atr`` or ``atrPct``) against the last ``lookback`` values.
 
-Intended for ``filter_gate`` / ``filter_and_signal`` (non-zero = gate open).
+- ``percentile_tail="low"`` (default): emits ``1.0`` when ``rank_frac <= max_rank_fraction``
+  (current reading is among the lower tail of the window — typically **low vol** in ATR%).
+- ``percentile_tail="high"``: emits ``1.0`` when ``rank_frac >= 1 - max_rank_fraction``
+  (current reading is among the upper tail — typically **high vol**).
+
+Here ``rank_frac`` is the share of window values **strictly below** the current reading.
+
+Intended for ``filter_gate`` / ``filter_gate_entry_only`` / ``filter_and_signal`` (non-zero = gate open).
 """
 
 from __future__ import annotations
@@ -29,6 +34,27 @@ def _coerce_rank_metric(raw: str) -> str:
     raise ValueError(f'rank_metric must be "atr" or "atr_pct", got "{raw}".')
 
 
+def _coerce_percentile_tail(raw: str) -> str:
+    key = str(raw).strip().lower()
+    if key in {"low", "bottom"}:
+        return "low"
+    if key in {"high", "top"}:
+        return "high"
+    raise ValueError(
+        f'percentile_tail must be "low" or "high", got "{raw}".'
+    )
+
+
+def _gate_from_rank(
+    rank_frac: float,
+    max_rank_fraction: float,
+    percentile_tail: str,
+) -> float:
+    if percentile_tail == "low":
+        return 1.0 if rank_frac <= max_rank_fraction else 0.0
+    return 1.0 if rank_frac >= (1.0 - max_rank_fraction) else 0.0
+
+
 def _strict_less_rank_fraction(window: np.ndarray, current: float) -> float:
     """Share of window values strictly below ``current`` in ``[0, 1]`` (``n>=2``)."""
     n = int(window.shape[0])
@@ -43,8 +69,9 @@ class AtrPercentileFilterNode(BiasNode):
     Low-volatility gate: current ATR (or ATR%) is in the bottom fraction of its
     rolling history.
 
-    ``max_rank_fraction=0.3`` → gate open when at most ~30% of window values are
-    strictly below the current reading (current is among the lower third).
+    ``max_rank_fraction=0.3`` with ``percentile_tail="low"`` → gate open when at most
+    ~30% of window values are strictly below the current reading. With
+    ``percentile_tail="high"``, gate open when at least ~70% are below (upper tail).
     """
 
     lookback_param_names: ClassVar[frozenset[str]] = frozenset({"atr_period", "lookback"})
@@ -57,6 +84,7 @@ class AtrPercentileFilterNode(BiasNode):
         lookback: int = 252,
         max_rank_fraction: float = 0.3,
         rank_metric: str = "atr_pct",
+        percentile_tail: str = "low",
     ) -> None:
         super().__init__(ticker, tf)
 
@@ -71,6 +99,7 @@ class AtrPercentileFilterNode(BiasNode):
         self.lookback = lookback
         self.max_rank_fraction = float(max_rank_fraction)
         self._rank_metric = _coerce_rank_metric(rank_metric)
+        self._percentile_tail = _coerce_percentile_tail(percentile_tail)
 
         self.module_name = "atr_percentile_filter"
         self.output_features = ["signal"]
@@ -79,6 +108,7 @@ class AtrPercentileFilterNode(BiasNode):
             "lookback": lookback,
             "max_rank_fraction": self.max_rank_fraction,
             "rank_metric": self._rank_metric,
+            "percentile_tail": self._percentile_tail,
         }
         self.front_bad = atr_period + lookback - 1
 
@@ -123,6 +153,6 @@ class AtrPercentileFilterNode(BiasNode):
 
         arr = np.asarray(self._metric_history, dtype=np.float64)
         rank_frac = _strict_less_rank_fraction(arr, metric)
-        out = 1.0 if rank_frac <= self.max_rank_fraction else 0.0
+        out = _gate_from_rank(rank_frac, self.max_rank_fraction, self._percentile_tail)
         self.output.append(out)
         return [out]

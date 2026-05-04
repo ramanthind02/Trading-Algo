@@ -9,6 +9,8 @@ import pytest
 from ensemble.weight_layer import (
     WeightLayer,
     WeightLayerConfig,
+    deserialize_weight_layer_state,
+    serialize_weight_layer_state,
     _correlation_multiplier_from_corr_matrix,
 )
 
@@ -37,17 +39,32 @@ def _make_returns(values: list[float]) -> pd.Series:
     return pd.Series(values, index=pd.date_range("2020-01-01", periods=len(values), freq="D"))
 
 
+def _minimal_hierarchy_spec() -> dict[str, object]:
+    return {
+        "type": "group",
+        "id": "root",
+        "children": [
+            {"type": "leaf", "stream_id": "a"},
+            {"type": "leaf", "stream_id": "b"},
+        ],
+    }
+
+
 def test_weight_layer_config_accepts_new_modes_and_rejects_legacy_ones() -> None:
-    for method in (
-        "equal_signal",
-        "inverse_avg_pairwise_corr",
-        "hrp_cluster_equal",
-        "hrp_classic",
-    ):
+    for method in ("equal_signal", "inverse_avg_pairwise_corr"):
         assert WeightLayerConfig(weighting_method=method).weighting_method == method
+
+    spec = _minimal_hierarchy_spec()
+    assert (
+        WeightLayerConfig(weighting_method="hierarchy_equal", hierarchy_spec=spec).weighting_method
+        == "hierarchy_equal"
+    )
 
     with pytest.raises(ValueError, match="weighting_method must be one of"):
         WeightLayerConfig(weighting_method="cluster_equal")
+
+    with pytest.raises(ValueError, match="hierarchy_equal requires"):
+        WeightLayerConfig(weighting_method="hierarchy_equal")
 
 
 def test_weight_layer_config_rejects_invalid_optimize_sortino_weighting_method() -> None:
@@ -58,6 +75,11 @@ def test_weight_layer_config_rejects_invalid_optimize_sortino_weighting_method()
 def test_weight_layer_rejects_removed_risk_tilt_alpha_kwarg() -> None:
     with pytest.raises(ValueError, match="risk_tilt_alpha is no longer supported"):
         WeightLayer(weight_method="equal_signal", risk_tilt_alpha=0.5)
+
+
+def test_weight_layer_rejects_unknown_kwargs() -> None:
+    with pytest.raises(TypeError, match="unexpected keyword"):
+        WeightLayer(weight_method="equal_signal", rho_cut=0.7)
 
 
 def test_equal_signal_weights_all_models_equally() -> None:
@@ -107,8 +129,23 @@ def test_inverse_avg_pairwise_corr_overweights_least_correlated_signal() -> None
     ]["score"]
 
 
-def test_hrp_cluster_equal_groups_correlated_members_and_equal_weights_groups() -> None:
-    layer = WeightLayer(weight_method="hrp_cluster_equal", rho_cut=0.7, group_weight_cap=1.0)
+def test_hierarchy_equal_splits_groups_and_matches_manual_tree() -> None:
+    spec: dict[str, object] = {
+        "type": "group",
+        "id": "root",
+        "children": [
+            {
+                "type": "group",
+                "id": "fast",
+                "children": [
+                    {"type": "leaf", "stream_id": "fast_1"},
+                    {"type": "leaf", "stream_id": "fast_2"},
+                ],
+            },
+            {"type": "leaf", "stream_id": "slow_1"},
+        ],
+    }
+    layer = WeightLayer(weight_method="hierarchy_equal", hierarchy_spec=spec)
     forecasts = _make_forecasts(
         {
             "fast_1": [1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
@@ -123,55 +160,61 @@ def test_hrp_cluster_equal_groups_correlated_members_and_equal_weights_groups() 
     diag = layer.get_diagnostics()["tickers"]["ES"]
     assignments = diag["cluster_assignments"]
 
-    assert assignments["fast_1"] == assignments["fast_2"]
-    assert assignments["fast_1"] != assignments["slow_1"]
+    assert assignments["fast_1"].startswith("root/fast/")
+    assert assignments["fast_2"].startswith("root/fast/")
+    assert assignments["slow_1"].startswith("root/")
     assert weights["fast_1"] == pytest.approx(0.25)
     assert weights["fast_2"] == pytest.approx(0.25)
     assert weights["slow_1"] == pytest.approx(0.50)
-    assert sorted(diag["cluster_weights"].values()) == pytest.approx([0.5, 0.5])
 
 
-def test_hrp_cluster_equal_respects_group_weight_cap() -> None:
-    layer = WeightLayer(weight_method="hrp_cluster_equal", rho_cut=0.7, group_weight_cap=0.55)
+def test_hierarchy_equal_strict_rejects_extra_forecast_streams() -> None:
+    spec: dict[str, object] = {
+        "type": "group",
+        "id": "root",
+        "children": [
+            {"type": "leaf", "stream_id": "a"},
+            {"type": "leaf", "stream_id": "b"},
+        ],
+    }
+    layer = WeightLayer(weight_method="hierarchy_equal", hierarchy_spec=spec)
     forecasts = _make_forecasts(
         {
-            "a1": [1, 0, 1, 0, 1, 0],
-            "a2": [1, 0, 1, 0, 1, 0],
-            "b1": [0, 1, 0, 1, 0, 1],
-            "b2": [0, 1, 0, 1, 0, 1],
-            "c1": [0.2, 0.4, 0.2, 0.4, 0.2, 0.4],
+            "a": [1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            "b": [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+            "c": [0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
         }
     )
 
-    layer.fit(forecasts, signals=pd.DataFrame())
-
-    cluster_weights = layer.get_diagnostics()["tickers"]["ES"]["cluster_weights"]
-    assert max(cluster_weights.values()) <= 0.55 + 1e-9
+    with pytest.raises(ValueError, match="not in hierarchy"):
+        layer.fit(forecasts, signals=pd.DataFrame())
 
 
-def test_hrp_classic_produces_non_trivial_branch_allocation() -> None:
-    layer = WeightLayer(weight_method="hrp_classic", rho_cut=0.7)
-    rng = np.random.default_rng(42)
-    shared = rng.normal(size=400)
-    forecasts = _make_forecasts(
-        {
-            "clustered_a": (shared + rng.normal(scale=0.05, size=400)).tolist(),
-            "clustered_b": (shared + rng.normal(scale=0.05, size=400)).tolist(),
-            "diverse_a": rng.normal(size=400).tolist(),
-            "diverse_b": rng.normal(size=400).tolist(),
-        }
+def test_deserialize_raises_on_legacy_hrp_snapshot() -> None:
+    payload = {
+        "config": {"weighting_method": "hrp_classic", "fdm_max": 2.0},
+        "state": {"fdm": {}, "is_fitted": False},
+    }
+    with pytest.raises(ValueError, match="removed"):
+        deserialize_weight_layer_state(payload)
+
+
+def test_serialize_roundtrip_preserves_hierarchy_spec() -> None:
+    spec: dict[str, object] = {
+        "type": "group",
+        "id": "root",
+        "children": [
+            {"type": "leaf", "stream_id": "x"},
+            {"type": "leaf", "stream_id": "y"},
+        ],
+    }
+    layer = WeightLayer(
+        config=WeightLayerConfig(weighting_method="hierarchy_equal", hierarchy_spec=spec)
     )
-
-    layer.fit(forecasts, signals=pd.DataFrame())
-
-    weights = layer.weights_["ES"]
-    diag = layer.get_diagnostics()["tickers"]["ES"]
-    clustered_weight = weights["clustered_a"] + weights["clustered_b"]
-    diverse_weight = weights["diverse_a"] + weights["diverse_b"]
-
-    assert weights.sum() == pytest.approx(1.0)
-    assert diverse_weight > clustered_weight
-    assert len(diag["cluster_weights"]) >= 2
+    blob = serialize_weight_layer_state(layer)
+    restored = deserialize_weight_layer_state(blob)
+    assert restored._wl_config.weighting_method == "hierarchy_equal"
+    assert restored._wl_config.hierarchy_spec == spec
 
 
 def test_fit_ignores_returns_input_for_new_modes() -> None:
@@ -188,9 +231,9 @@ def test_fit_ignores_returns_input_for_new_modes() -> None:
         index=series_returns.index,
     )
 
-    no_returns = WeightLayer(weight_method="inverse_avg_pairwise_corr", rho_cut=0.7)
-    series_layer = WeightLayer(weight_method="inverse_avg_pairwise_corr", rho_cut=0.7)
-    frame_layer = WeightLayer(weight_method="inverse_avg_pairwise_corr", rho_cut=0.7)
+    no_returns = WeightLayer(weight_method="inverse_avg_pairwise_corr")
+    series_layer = WeightLayer(weight_method="inverse_avg_pairwise_corr")
+    frame_layer = WeightLayer(weight_method="inverse_avg_pairwise_corr")
 
     no_returns.fit(forecasts, signals=pd.DataFrame(), returns=None)
     series_layer.fit(forecasts, signals=pd.DataFrame(), returns=series_returns)
@@ -201,7 +244,7 @@ def test_fit_ignores_returns_input_for_new_modes() -> None:
 
 
 def test_constant_or_short_history_inputs_fall_back_to_equal_weights_and_fdm_one() -> None:
-    short_layer = WeightLayer(weight_method="hrp_classic")
+    short_layer = WeightLayer(weight_method="equal_signal")
     short_forecasts = [
         pd.DataFrame(
             {
@@ -215,7 +258,7 @@ def test_constant_or_short_history_inputs_fall_back_to_equal_weights_and_fdm_one
     ]
     short_layer.fit(short_forecasts, signals=pd.DataFrame())
 
-    constant_layer = WeightLayer(weight_method="hrp_classic")
+    constant_layer = WeightLayer(weight_method="equal_signal")
     constant_forecasts = _make_forecasts(
         {
             "model_a": [1.0] * 12,
@@ -239,7 +282,7 @@ def test_fdm_uses_raw_signal_correlations_and_respects_cap() -> None:
     rng = np.random.default_rng(42)
     model_a = rng.normal(size=80)
     model_b = rng.normal(size=80)
-    layer = WeightLayer(weight_method="hrp_classic", fdm_max=1.3)
+    layer = WeightLayer(weight_method="equal_signal", fdm_max=1.3)
     forecasts = _make_forecasts({"model_a": model_a.tolist(), "model_b": model_b.tolist()})
 
     layer.fit(forecasts, signals=pd.DataFrame())
@@ -276,5 +319,3 @@ def test_combine_returns_datetime_level_forecasts() -> None:
 
     assert list(combined.columns) == ["ticker", "datetime", "forecast_score"]
     assert len(combined) == 3
-
-

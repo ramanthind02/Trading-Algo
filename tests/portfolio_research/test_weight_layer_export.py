@@ -25,7 +25,7 @@ def test_unfitted_diagnostics_yields_empty_typed_frame() -> None:
 def test_global_streams_parsed_without_hardcoded_model_names() -> None:
     diagnostics = {
         "is_fitted": True,
-        "weight_method": "hrp_cluster_equal",
+        "weight_method": "hierarchy_equal",
         "fdm_max": 2.0,
         "tickers": {
             "__GLOBAL__": {

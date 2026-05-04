@@ -78,15 +78,30 @@ def test_load_config_defaults() -> None:
 def test_load_config_signed_signal_specs_use_registered_modules() -> None:
     """Shape + taxonomy only — changing ``load_config()`` node grids does not require test edits."""
     config = load_config()
-    for label, spec in (
-        ("in_sample", config.bias_spec),
-        ("eval", config.eval_bias_spec),
-    ):
+    in_specs = (
+        config.bias_spec
+        if isinstance(config.bias_spec, list)
+        else [config.bias_spec]
+    )
+    for spec in in_specs:
         mod = spec.get("module_name")
-        assert isinstance(mod, str) and mod.strip(), f"{label}: module_name required"
-        assert mod in CANONICAL_MODULE_IMPORTS, f"{label}: unknown module {mod!r}"
-        assert isinstance(spec.get("params"), dict), f"{label}: params must be a dict"
-        assert spec.get("timeframes"), f"{label}: timeframes required"
+        if isinstance(mod, list):
+            assert mod, "in_sample: module_name list non-empty"
+            for m in mod:
+                assert str(m).strip(), f"in_sample: module {m!r}"
+                assert m in CANONICAL_MODULE_IMPORTS, f"in_sample: unknown module {m!r}"
+        else:
+            assert isinstance(mod, str) and mod.strip(), "in_sample: module_name required"
+            assert mod in CANONICAL_MODULE_IMPORTS, f"in_sample: unknown module {mod!r}"
+        assert isinstance(spec.get("params"), dict), "in_sample: params must be a dict"
+        assert spec.get("timeframes"), "in_sample: timeframes required"
+
+    es = config.eval_bias_spec
+    emod = es.get("module_name")
+    assert isinstance(emod, str) and emod.strip(), "eval: module_name required"
+    assert emod in CANONICAL_MODULE_IMPORTS, f"eval: unknown module {emod!r}"
+    assert isinstance(es.get("params"), dict), "eval: params must be a dict"
+    assert es.get("timeframes"), "eval: timeframes required"
 
 
 def test_load_config_permutation_has_objective_metric() -> None:
@@ -319,7 +334,7 @@ def test_load_config_includes_validation_window() -> None:
     assert config.validation_window.train_start == datetime(2000, 1, 1)
     assert config.validation_window.train_end == datetime(2018, 12, 31)
     assert config.validation_window.test_start == datetime(2019, 1, 1)
-    assert config.validation_window.test_end == datetime(2022, 12, 31)
+    assert config.validation_window.test_end == config.end
 
 
 def test_load_config_has_flat_eval_fields() -> None:

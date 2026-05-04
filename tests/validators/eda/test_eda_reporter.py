@@ -37,7 +37,7 @@ from feature_selection.eda.eda_reporter import (
     save_eda_report,
 )
 from feature_selection.eda.rule_based_eda import compute_per_level_stats
-from utils.core.enums import Ticker, TimeFrame
+from utils.core.enums import PositionMode, Ticker, TimeFrame
 
 
 def _metadata(feature_name: str = "feat") -> EDAMetadata:
@@ -233,6 +233,13 @@ def test_param_combo_hash_deterministic() -> None:
     hash_b = _param_combo_hash({"c": [1, 2, 3], "b": 2, "a": 1})
     assert hash_a == hash_b
     assert len(hash_a) == 8
+
+
+def test_param_combo_hash_serializes_position_mode_enum() -> None:
+    h_enum = _param_combo_hash({"period": 252, "mode": PositionMode.LONG_ONLY})
+    h_str = _param_combo_hash({"mode": "long_only", "period": 252})
+    assert len(h_enum) == 8
+    assert h_enum == h_str
 
 
 def test_per_level_stats_use_strategy_returns_for_short_leg() -> None:

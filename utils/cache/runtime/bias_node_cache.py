@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -225,10 +226,16 @@ class BiasNodeCache:
         # e.g., {'spanFast': 16, 'spanSlow': 64} -> 'spanFast_16_spanSlow_64'
         parts = []
         for key, value in sorted(self.params.items()):
-            # Only include if key and value are simple
-            if isinstance(value, (int, float, str, bool)):
-                # Truncate long values
+            # Enums (e.g. PositionMode) must participate in the suffix; otherwise
+            # e.g. {period: 252, mode: LONG_ONLY} and {period: 252, mode: LONG_SHORT}
+            # both become ``period_252`` and share one parquet (wrong feature data).
+            if isinstance(value, Enum):
+                value_str = str(value.value)
+            elif isinstance(value, (int, float, str, bool)):
                 value_str = str(value)
+            else:
+                value_str = ""
+            if value_str:
                 if len(value_str) > 10:
                     value_str = value_str[:10]
                 parts.append(f"{key}_{value_str}")

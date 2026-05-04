@@ -334,7 +334,9 @@ def test_run_portfolio_test_multi_timeframe_combines_caps_and_prefixes_outputs(
             return weekly_candles.copy()
         raise AssertionError(f"Unexpected timeframe: {timeframe}")
 
-    def _mock_load_ensemble_from_vault(path: str, refit: bool, target_volatility: float):
+    def _mock_load_ensemble_from_vault(
+        path: str, refit: bool, target_volatility: float, **kwargs: object
+    ):
         if "/W/" in path:
             return _DummyEnsemble(TimeFrame.W)
         return _DummyEnsemble(TimeFrame.D)
@@ -523,7 +525,9 @@ def test_run_portfolio_test_skips_tf_and_ensemble_tearsheets_when_disabled(
             return weekly_candles.copy()
         raise AssertionError(f"Unexpected timeframe: {timeframe}")
 
-    def _mock_load_ensemble_from_vault(path: str, refit: bool, target_volatility: float):
+    def _mock_load_ensemble_from_vault(
+        path: str, refit: bool, target_volatility: float, **kwargs: object
+    ):
         if "/W/" in path:
             return _DummyEnsemble(TimeFrame.W)
         return _DummyEnsemble(TimeFrame.D)
@@ -638,7 +642,9 @@ def test_run_portfolio_test_single_timeframe_still_materializes_global_portfolio
             return daily_candles.copy()
         raise AssertionError(f"Unexpected timeframe: {timeframe}")
 
-    def _mock_load_ensemble_from_vault(path: str, refit: bool, target_volatility: float):
+    def _mock_load_ensemble_from_vault(
+        path: str, refit: bool, target_volatility: float, **kwargs: object
+    ):
         return _DummyEnsemble(TimeFrame.D)
 
     def _mock_calculate_strategy_returns_from_positions(

@@ -2,8 +2,13 @@
 
 Loads ``ResearchConfig`` from ``feature_research.config.load_config`` and
 ``PortfolioResearchConfig`` from ``portfolio_research.config.load_config``.
+
 Correlation export runs when ``ResearchConfig.portfolio_vault_correlation`` and
 ``PortfolioResearchConfig.feature_vault_correlation.enabled`` are both true.
+
+When ``FeatureVaultCorrelationConfig.vault_root`` is unset, the export walks the **prop** vault
+(``resolve_default_vault_root`` / ``TRADING_ALGO_VAULT_*``). Set ``vault_root`` explicitly to
+correlate against ``vault_personal`` or another root.
 """
 from __future__ import annotations
 

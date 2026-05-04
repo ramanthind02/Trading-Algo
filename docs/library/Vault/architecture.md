@@ -7,9 +7,17 @@
 
 The vault owns:
 
-- working ensemble directories
+- working ensemble directories (nested or flat; see below)
 - feature control files
 - portfolio snapshots
+
+### Ensemble directory layout
+
+**Preferred (nested):** `<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble_leaf>/`
+
+Groups align with the manual global weight hierarchy (`ensemble/vault/constants.py`). Each feature JSON carries a `weight_hierarchy_group` field that should match its folder when using nested storage.
+
+**Legacy (flat):** `<vault_root>/<TF>/<ensemble_leaf>/` — still discovered by `ensemble.vault.discovery` and portfolio research config; new work should prefer nested paths for consistency with the weight layer.
 
 The central cache owns:
 
@@ -65,7 +73,7 @@ Stable identity comes from:
 
 Portfolio snapshots live under:
 
-`vault/portfolio_snapshots/<portfolio_id>/`
+`<vault_root>/portfolio_snapshots/<portfolio_id>/`
 
 They store frozen copies of the referenced ensemble files so deployment does not depend on the mutable working vault.
 

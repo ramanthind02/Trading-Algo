@@ -170,7 +170,7 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 
 - `ensemble/portfolio.py` exposes `PortfolioCacheQuery`
 - `TFPortfolio` and `GlobalPortfolio` support `fit_from_cache(...)` and `predict_from_cache(...)`
-- `GlobalPortfolio.save_to_vault(...)` persists frozen snapshots under `vault/portfolio_snapshots/<portfolio_id>/`
+- `GlobalPortfolio.save_to_vault(...)` persists frozen snapshots under `<vault_root>/portfolio_snapshots/<portfolio_id>/` (see [[Vault/vault]] for prop vs `vault_personal`)
 - `load_global_portfolio_snapshot(...)` reconstructs a `GlobalPortfolio` from the snapshot-local frozen ensemble files
 - `materialize_global_portfolio_predictions(...)` writes portfolio and base-model parquet outputs under `.cache/trading_algo/central_cache/materialized/<scope>/`
 - `prune_inactive_base_model_materializations(...)` scans the current working vault and removes stale base-model parquet files only
@@ -183,7 +183,7 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 - `utils.cache.ingest_source_candles.ingest_source_candles(...)` remains only as a deprecated compatibility alias
 - `utils.cache.cache_manager.CacheManager.ensure_vault_cache_coverage(...)` is the canonical refresh entrypoint
 - `ensemble.vault_manager.ensure_vault_cache_coverage(...)` is a thin wrapper for ensemble-oriented callers
-- the refresh flow reads current `vault/*/*/features/*.json` files instead of older control-file assumptions
+- the refresh flow reads current vault feature files (`<vault_root>/<TF>/<group>/<ensemble>/features/*.json` when nested, or legacy `<vault_root>/<TF>/<ensemble>/features/*.json`) instead of older control-file assumptions
 - refresh assumes the required candle coverage already exists in the central cache; it does not auto-ingest from `data/ohlc_data`
 - the portfolio research runner is one explicit caller that performs bootstrap first, then invokes the refresh flow
 - all vault-selected artifacts use `ArtifactDescriptor(family="bias", scope=ArtifactScope.LIVE, ...)`

@@ -13,7 +13,6 @@ import pandas as pd
 from .cache_paths import (
     default_live_materialized_cache_dir,
     default_research_materialized_cache_dir,
-    resolve_relative_path,
     win32_extended_path,
 )
 from .central_cache_models import ArtifactScope
@@ -293,13 +292,9 @@ def _scan_active_live_base_model_identities(
     ensemble_dirs: Optional[Iterable[str]] = None,
 ) -> set[BaseModelMaterializationIdentity]:
     from ensemble.vault_manager import _resolve_ensemble_path
+    from utils.vault_paths import resolve_vault_root
 
-    resolved_vault_root = resolve_relative_path(
-        vault_root,
-        prefer_existing_candidate=True,
-        include_project_root=True,
-        project_root_fallback="candidate",
-    )
+    resolved_vault_root = resolve_vault_root(vault_root)
     target_ensemble_dirs: list[Path]
     if ensemble_dirs is not None:
         target_ensemble_dirs = [
@@ -370,15 +365,30 @@ def _base_model_identity_from_key(
     if "::" not in key:
         raise ValueError(f"Invalid TF base-model key '{key}'")
     ensemble_token, model_name = key.split("::", 1)
-    if not ensemble_token.startswith("ensemble_"):
-        raise ValueError(f"Invalid TF base-model key '{key}'")
-    ensemble_idx = int(ensemble_token.removeprefix("ensemble_"))
-    if ensemble_idx >= len(tf_portfolio.ensembles):
-        raise ValueError(
-            f"Base-model key '{key}' references ensemble index {ensemble_idx}, "
-            f"but TF portfolio {tf_portfolio_index} only has {len(tf_portfolio.ensembles)} ensembles"
-        )
-    ensemble = tf_portfolio.ensembles[ensemble_idx]
+    ensemble: Any | None = None
+    if ensemble_token.startswith("ensemble_"):
+        try:
+            ensemble_idx = int(ensemble_token.removeprefix("ensemble_"))
+        except ValueError as exc:
+            raise ValueError(f"Invalid TF base-model key '{key}'") from exc
+        if ensemble_idx >= len(tf_portfolio.ensembles):
+            raise ValueError(
+                f"Base-model key '{key}' references ensemble index {ensemble_idx}, "
+                f"but TF portfolio {tf_portfolio_index} only has {len(tf_portfolio.ensembles)} ensembles"
+            )
+        ensemble = tf_portfolio.ensembles[ensemble_idx]
+    else:
+        # Lazy import: tf_portfolio must not be imported at module load (circular via utils.cache __init__).
+        from ensemble.portfolio_impl.tf_portfolio import ensemble_prediction_dict_key
+
+        for idx, ens in enumerate(tf_portfolio.ensembles):
+            if ensemble_prediction_dict_key(ens, idx) == ensemble_token:
+                ensemble = ens
+                break
+        if ensemble is None:
+            raise ValueError(
+                f"Invalid TF base-model key '{key}': unknown ensemble prefix '{ensemble_token}'"
+            )
     timeframe = (
         getattr(ensemble, "vault_timeframe", None)
         or getattr(getattr(ensemble, "base_tf", None), "name", None)

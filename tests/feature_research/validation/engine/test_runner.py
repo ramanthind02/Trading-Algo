@@ -805,9 +805,18 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
             }
         ]
     )
+    hierarchy_spec: dict[str, object] = {
+        "type": "group",
+        "id": "root",
+        "children": [
+            {"type": "leaf", "stream_id": "a"},
+            {"type": "leaf", "stream_id": "b"},
+        ],
+    }
     existing = WeightLayerConfig(
         weighting_method=WeightLayerAlgorithm.EQUAL_SIGNAL.value,
-        rho_cut=0.65,
+        fdm_max=1.8,
+        hierarchy_spec=hierarchy_spec,
     )
 
     captured: dict[str, object] = {}
@@ -836,7 +845,7 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
                 (),
                 {
                     "objective_metric_name": "sharpe",
-                    "weight_layer_algorithm": WeightLayerAlgorithm.HRP_CLASSIC,
+                    "weight_layer_algorithm": WeightLayerAlgorithm.HIERARCHY_EQUAL,
                     "weight_layer_config": existing,
                 },
             )(),
@@ -854,8 +863,9 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
 
     forwarded = captured.get("weight_layer_config")
     assert isinstance(forwarded, WeightLayerConfig)
-    assert forwarded.weighting_method == WeightLayerAlgorithm.HRP_CLASSIC.value
-    assert forwarded.rho_cut == pytest.approx(0.65)
+    assert forwarded.weighting_method == WeightLayerAlgorithm.HIERARCHY_EQUAL.value
+    assert forwarded.fdm_max == pytest.approx(1.8)
+    assert forwarded.hierarchy_spec == hierarchy_spec
 
 
 def test_run_portfolio_simulation_handles_invalid_selected_params_json() -> None:

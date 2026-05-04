@@ -1,0 +1,808 @@
+{
+  "created_at": "2026-04-20T03:39:59.605698+00:00",
+  "fit_window": {
+    "end": "2022-12-31T00:00:00+00:00",
+    "start": "2000-01-01T00:00:00+00:00"
+  },
+  "global_portfolio": {
+    "config": {
+      "idm_max": 2.5,
+      "instrument_weights": null,
+      "max_position_pct": 3.5
+    },
+    "fitted_state": {
+      "global_adapter_diagnostics": {
+        "stream_decode_map": {
+          "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": {
+            "original_model_name": "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": {
+            "original_model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": {
+            "original_model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "ticker": "ES",
+            "timeframe": "D"
+          },
+          "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "ES",
+            "timeframe": "M"
+          },
+          "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5": {
+            "original_model_name": "sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5",
+            "ticker": "GC",
+            "timeframe": "D"
+          },
+          "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "GC",
+            "timeframe": "M"
+          },
+          "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2": {
+            "original_model_name": "algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": {
+            "original_model_name": "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": {
+            "original_model_name": "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": {
+            "original_model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": {
+            "original_model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "ticker": "NQ",
+            "timeframe": "D"
+          },
+          "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": {
+            "original_model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "ticker": "NQ",
+            "timeframe": "M"
+          }
+        },
+        "stream_weights": {
+          "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": 0.06283442458377109,
+          "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": 0.04996945192127052,
+          "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.09482967596256617,
+          "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.05796999499260909,
+          "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5": 0.13984005034392452,
+          "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.10308899314200749,
+          "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2": 0.13424676174945938,
+          "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": 0.06294542439534609,
+          "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": 0.10072022075731002,
+          "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": 0.05255595543940598,
+          "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.08700707738127916,
+          "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.053991969331050535
+        },
+        "synthetic_ticker": "__GLOBAL__",
+        "ticker_rollups": {
+          "ES": 0.26560354746021686,
+          "GC": 0.24292904348593203,
+          "NQ": 0.4914674090538512
+        },
+        "timeframe_rollups": {
+          "D": 0.7849490425343328,
+          "M": 0.2150509574656671
+        }
+      },
+      "global_eligibility_diagnostics": {
+        "min_activity_ratio": 0.02,
+        "min_effective_obs": 21,
+        "min_obs": 252,
+        "mode": "diagnostics_only_no_filtering",
+        "tickers": {
+          "ES": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+              "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+              "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.22669418644650843,
+                "effective_obs": 1318,
+                "eligible": true,
+                "model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.3238734090127279,
+                "effective_obs": 1881,
+                "eligible": true,
+                "model_name": "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9659442724458205,
+                "effective_obs": 5612,
+                "eligible": true,
+                "model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9967320261437909,
+                "effective_obs": 5791,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 5814
+              }
+            ],
+            "n_models_after": 4,
+            "n_models_before": 4
+          },
+          "GC": {
+            "eligible_models": [
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.6212590299277606,
+                "effective_obs": 3611,
+                "eligible": true,
+                "model_name": "sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9967320261437909,
+                "effective_obs": 5791,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 5814
+              }
+            ],
+            "n_models_after": 2,
+            "n_models_before": 2
+          },
+          "NQ": {
+            "eligible_models": [
+              "algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2",
+              "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+              "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+              "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+              "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+            ],
+            "model_stats": [
+              {
+                "activity_ratio": 0.21843825249398005,
+                "effective_obs": 1270,
+                "eligible": true,
+                "model_name": "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.17973856209150327,
+                "effective_obs": 1044,
+                "eligible": true,
+                "model_name": "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.16804265565875473,
+                "effective_obs": 976,
+                "eligible": true,
+                "model_name": "algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.33144134846921225,
+                "effective_obs": 1926,
+                "eligible": true,
+                "model_name": "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9659442724458205,
+                "effective_obs": 5612,
+                "eligible": true,
+                "model_name": "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+                "obs": 5814
+              },
+              {
+                "activity_ratio": 0.9967320261437909,
+                "effective_obs": 5791,
+                "eligible": true,
+                "model_name": "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+                "obs": 5814
+              }
+            ],
+            "n_models_after": 6,
+            "n_models_before": 6
+          }
+        }
+      },
+      "global_eligible_models_by_ticker": {
+        "ES": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+          "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+        ],
+        "GC": [
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5"
+        ],
+        "NQ": [
+          "algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2",
+          "buy_hold_signal_M::rule_based_3__M::ensemble_0",
+          "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+          "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+          "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+          "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0"
+        ]
+      },
+      "global_idm": 1.934461083263875,
+      "global_tf_weights_compat": {
+        "D": 0.7849490425343328,
+        "M": 0.2150509574656671
+      },
+      "instruments": [
+        "ES",
+        "GC",
+        "NQ"
+      ],
+      "is_fitted": true,
+      "mean_instrument_return_correlation": 0.25722679664606307,
+      "weight_layer_diagnostics": {
+        "fdm_max": 2.0,
+        "is_fitted": true,
+        "summary": {
+          "max_fdm": 2.0,
+          "mean_clusters_per_ticker": 12.0,
+          "mean_fdm": 2.0,
+          "mean_models_per_ticker": 12.0,
+          "min_fdm": 2.0,
+          "n_tickers": 1,
+          "total_models": 12
+        },
+        "tickers": {
+          "__GLOBAL__": {
+            "cluster_assignments": {
+              "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": "cluster_1",
+              "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": "cluster_2",
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_3",
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_4",
+              "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5": "cluster_5",
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_6",
+              "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2": "cluster_7",
+              "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": "cluster_8",
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": "cluster_9",
+              "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": "cluster_10",
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_11",
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_12"
+            },
+            "cluster_metrics": {
+              "cluster_1": {
+                "avg_positive_corr": 0.17430461971381617,
+                "member_count": 1,
+                "score": 0.851567798688985,
+                "ulcer_index": null
+              },
+              "cluster_10": {
+                "avg_positive_corr": 0.22617297447035822,
+                "member_count": 1,
+                "score": 0.8155456210670008,
+                "ulcer_index": null
+              },
+              "cluster_11": {
+                "avg_positive_corr": 0.10062189025110099,
+                "member_count": 1,
+                "score": 0.9085772406106292,
+                "ulcer_index": null
+              },
+              "cluster_12": {
+                "avg_positive_corr": 0.2177396045392789,
+                "member_count": 1,
+                "score": 0.8211936248705167,
+                "ulcer_index": null
+              },
+              "cluster_2": {
+                "avg_positive_corr": 0.24258567955533222,
+                "member_count": 1,
+                "score": 0.8047734787655503,
+                "ulcer_index": null
+              },
+              "cluster_3": {
+                "avg_positive_corr": 0.08482230044666401,
+                "member_count": 1,
+                "score": 0.9218099587261994,
+                "ulcer_index": null
+              },
+              "cluster_4": {
+                "avg_positive_corr": 0.19655946762436755,
+                "member_count": 1,
+                "score": 0.8357294618924256,
+                "ulcer_index": null
+              },
+              "cluster_5": {
+                "avg_positive_corr": 0.028259565407408708,
+                "member_count": 1,
+                "score": 0.9725170896939704,
+                "ulcer_index": null
+              },
+              "cluster_6": {
+                "avg_positive_corr": 0.07074299619356739,
+                "member_count": 1,
+                "score": 0.9339309279210279,
+                "ulcer_index": null
+              },
+              "cluster_7": {
+                "avg_positive_corr": 0.033224636277697235,
+                "member_count": 1,
+                "score": 0.9678437436437901,
+                "ulcer_index": null
+              },
+              "cluster_8": {
+                "avg_positive_corr": 0.1738369340609027,
+                "member_count": 1,
+                "score": 0.8519070843515617,
+                "ulcer_index": null
+              },
+              "cluster_9": {
+                "avg_positive_corr": 0.07454478492058125,
+                "member_count": 1,
+                "score": 0.9306266374685436,
+                "ulcer_index": null
+              }
+            },
+            "cluster_weights": {
+              "cluster_1": 0.06283442458377109,
+              "cluster_10": 0.05255595543940598,
+              "cluster_11": 0.08700707738127916,
+              "cluster_12": 0.053991969331050535,
+              "cluster_2": 0.04996945192127052,
+              "cluster_3": 0.09482967596256617,
+              "cluster_4": 0.05796999499260909,
+              "cluster_5": 0.13984005034392452,
+              "cluster_6": 0.10308899314200749,
+              "cluster_7": 0.13424676174945938,
+              "cluster_8": 0.06294542439534609,
+              "cluster_9": 0.10072022075731002
+            },
+            "fdm": 2.0,
+            "mean_cluster_correlation": 0.1352846211217563,
+            "mean_signal_correlation": 0.1352846211217563,
+            "models": [
+              "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+              "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5",
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+              "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2",
+              "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+              "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0"
+            ],
+            "n_models": 12,
+            "weights": {
+              "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": 0.06283442458377109,
+              "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": 0.04996945192127052,
+              "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.09482967596256617,
+              "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.05796999499260909,
+              "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5": 0.13984005034392452,
+              "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.10308899314200749,
+              "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2": 0.13424676174945938,
+              "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": 0.06294542439534609,
+              "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": 0.10072022075731002,
+              "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": 0.05255595543940598,
+              "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.08700707738127916,
+              "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.053991969331050535
+            }
+          }
+        },
+        "weight_method": "ledoit_wolf_min_corr"
+      }
+    },
+    "tf_portfolios": [
+      {
+        "config": {
+          "idm_max": 2.5,
+          "instrument_weights": null,
+          "max_position_pct": 3.5,
+          "sector_allocation_config_path": null,
+          "target_volatility": 0.15,
+          "trading_timeframe": "D",
+          "use_cache": true
+        },
+        "ensembles": [
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "b40bb3ace2ce5f1c35e0f3d6b70e5e94ab4241a63ab881d65b0a6bec92a51311",
+              "features/turnaroundtuesday_signal_D_mode_tue_wed.json": "5c1e061894f4fa29228f8d7786269c470671cba6efc2100ed80b7df7e11141ea"
+            },
+            "ensemble_name": "mr_indices_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3": 0.22430830039525693
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/mean_reversion_indices/mr_indices_long",
+            "source_ensemble_dir": "vault\\D\\mean_reversion_indices\\mr_indices_long",
+            "timeframe": "mean_reversion_indices"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "79972bc4473c0e2c266c413953b93c5106fde75feb77a4acc342dc57f718d113",
+              "features/ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3.json": "32bcd6f435d4f4fb5ab7b5864649f9f441c24cac6dacbab32d5a1a9cd2b68538"
+            },
+            "ensemble_name": "mr_indices_long_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3": 0.1815985946420729
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/mean_reversion_indices/mr_indices_long_long",
+            "source_ensemble_dir": "vault\\D\\mean_reversion_indices\\mr_indices_long_long",
+            "timeframe": "mean_reversion_indices"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "79e1ab6455c8b8affd3c9e81431199d02b96dac41ee035cdad3c2d2d9779911f",
+              "features/algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2.json": "bdbb2601712785721cc1f479ffa2232cdc8e4389cb0908ff93110127a75721e6"
+            },
+            "ensemble_name": "algomatic_momentum_signal_long_defaults_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2": 0.18423364075537987
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/momentum/algomatic_momentum_signal_long_defaults_long",
+            "source_ensemble_dir": "vault\\D\\momentum\\algomatic_momentum_signal_long_defaults_long",
+            "timeframe": "momentum"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "8d6336c051fedb33b315fa897d2942c156329be16b59eeb0847f2a8176ac2a6d",
+              "features/filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40.json": "4b04d1fa6c1ca7d20efcf96e99086f71790df942e8bf3743a6899ea5652137b6"
+            },
+            "ensemble_name": "filter_sma200_above_consec_momentum_lb40_cb3_buy_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true": 0.3231225296442688
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/momentum/filter_sma200_above_consec_momentum_lb40_cb3_buy_long",
+            "source_ensemble_dir": "vault\\D\\momentum\\filter_sma200_above_consec_momentum_lb40_cb3_buy_long",
+            "timeframe": "momentum"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "682936f5b48ef05c466716b835ad35a0464af1a7abb77da3fcc42b248856960c",
+              "features/sma_regime_signal_signal_D_period_200.json": "30c8c885846514cc53346d4ac2ef2cb007881345ec6eefee04f7a307c86653e1"
+            },
+            "ensemble_name": "sma_regime_long_short_long_short",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200": 0.9563021519543259
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/momentum/sma_regime_long_short_long_short",
+            "source_ensemble_dir": "vault\\D\\momentum\\sma_regime_long_short_long_short",
+            "timeframe": "momentum"
+          },
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "6be690820a3edf866d8d5ff610a245b978e58f2581f1b154d1b1b1b49a0e2f32",
+              "features/sma_above_filter_signal_D_period_200.json": "ae48f798510256bf19ee5f98f9cf42c5972b68b348699f996d16135ec5336562"
+            },
+            "ensemble_name": "gc_sma_above_filter_d_period_200_long",
+            "fitted_state": {
+              "base_tf": "D",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200": 0.6335252435783879
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/momentum_gc/gc_sma_above_filter_d_period_200_long",
+            "source_ensemble_dir": "vault\\D\\momentum_gc\\gc_sma_above_filter_d_period_200_long",
+            "timeframe": "momentum_gc"
+          }
+        ],
+        "fitted_state": {
+          "idm": null,
+          "instruments": null,
+          "is_fitted": true,
+          "mean_return_correlation": null
+        }
+      },
+      {
+        "config": {
+          "idm_max": 2.5,
+          "instrument_weights": null,
+          "max_position_pct": 3.5,
+          "sector_allocation_config_path": null,
+          "target_volatility": 0.15,
+          "trading_timeframe": "M",
+          "use_cache": true
+        },
+        "ensembles": [
+          {
+            "copied_file_hashes": {
+              "ensemble_config.json": "0a420d5295199ceb6cef30f245dfa73c8cccabb79e68a6e92cec37ee678c93a8",
+              "features/buy_hold_signal_M.json": "2af28074bba8dc04f49c0ced029cdf6c2596b8b3b21e3b7232adc8f3ab80a950"
+            },
+            "ensemble_name": "buy_hold_long",
+            "fitted_state": {
+              "base_tf": "M",
+              "exposure_fractions": null,
+              "feature_names": null,
+              "instrument_weights": null,
+              "is_fitted": true,
+              "model_exposure_fractions": {
+                "buy_hold_signal_M::rule_based_3": 1.0
+              },
+              "n_tickers": null,
+              "retry_on_cache_miss": false,
+              "target_volatility": 0.15,
+              "target_volatility_fitted": 0.15,
+              "unique_tickers": null,
+              "use_cache": true,
+              "weights": null
+            },
+            "snapshot_ensemble_relpath": "ensembles/buy_hold/buy_hold_long",
+            "source_ensemble_dir": "vault\\M\\buy_hold\\buy_hold_long",
+            "timeframe": "buy_hold"
+          }
+        ],
+        "fitted_state": {
+          "idm": null,
+          "instruments": null,
+          "is_fitted": true,
+          "mean_return_correlation": null
+        }
+      }
+    ],
+    "weight_layer": {
+      "class_name": "ClusteredWeightLayer",
+      "config": {
+        "fdm_max": 2.0,
+        "hierarchy_path": null,
+        "hierarchy_spec": null,
+        "weighting_method": "ledoit_wolf_min_corr"
+      },
+      "state": {
+        "cluster_assignments": {
+          "__GLOBAL__": {
+            "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": "cluster_1",
+            "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": "cluster_2",
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_3",
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_4",
+            "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5": "cluster_5",
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_6",
+            "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2": "cluster_7",
+            "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": "cluster_8",
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": "cluster_9",
+            "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": "cluster_10",
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": "cluster_11",
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": "cluster_12"
+          }
+        },
+        "cluster_metrics": {
+          "__GLOBAL__": {
+            "cluster_1": {
+              "avg_positive_corr": 0.17430461971381617,
+              "member_count": 1,
+              "score": 0.851567798688985,
+              "ulcer_index": null
+            },
+            "cluster_10": {
+              "avg_positive_corr": 0.22617297447035822,
+              "member_count": 1,
+              "score": 0.8155456210670008,
+              "ulcer_index": null
+            },
+            "cluster_11": {
+              "avg_positive_corr": 0.10062189025110099,
+              "member_count": 1,
+              "score": 0.9085772406106292,
+              "ulcer_index": null
+            },
+            "cluster_12": {
+              "avg_positive_corr": 0.2177396045392789,
+              "member_count": 1,
+              "score": 0.8211936248705167,
+              "ulcer_index": null
+            },
+            "cluster_2": {
+              "avg_positive_corr": 0.24258567955533222,
+              "member_count": 1,
+              "score": 0.8047734787655503,
+              "ulcer_index": null
+            },
+            "cluster_3": {
+              "avg_positive_corr": 0.08482230044666401,
+              "member_count": 1,
+              "score": 0.9218099587261994,
+              "ulcer_index": null
+            },
+            "cluster_4": {
+              "avg_positive_corr": 0.19655946762436755,
+              "member_count": 1,
+              "score": 0.8357294618924256,
+              "ulcer_index": null
+            },
+            "cluster_5": {
+              "avg_positive_corr": 0.028259565407408708,
+              "member_count": 1,
+              "score": 0.9725170896939704,
+              "ulcer_index": null
+            },
+            "cluster_6": {
+              "avg_positive_corr": 0.07074299619356739,
+              "member_count": 1,
+              "score": 0.9339309279210279,
+              "ulcer_index": null
+            },
+            "cluster_7": {
+              "avg_positive_corr": 0.033224636277697235,
+              "member_count": 1,
+              "score": 0.9678437436437901,
+              "ulcer_index": null
+            },
+            "cluster_8": {
+              "avg_positive_corr": 0.1738369340609027,
+              "member_count": 1,
+              "score": 0.8519070843515617,
+              "ulcer_index": null
+            },
+            "cluster_9": {
+              "avg_positive_corr": 0.07454478492058125,
+              "member_count": 1,
+              "score": 0.9306266374685436,
+              "ulcer_index": null
+            }
+          }
+        },
+        "cluster_weights": {
+          "__GLOBAL__": {
+            "cluster_1": 0.06283442458377109,
+            "cluster_10": 0.05255595543940598,
+            "cluster_11": 0.08700707738127916,
+            "cluster_12": 0.053991969331050535,
+            "cluster_2": 0.04996945192127052,
+            "cluster_3": 0.09482967596256617,
+            "cluster_4": 0.05796999499260909,
+            "cluster_5": 0.13984005034392452,
+            "cluster_6": 0.10308899314200749,
+            "cluster_7": 0.13424676174945938,
+            "cluster_8": 0.06294542439534609,
+            "cluster_9": 0.10072022075731002
+          }
+        },
+        "fdm": {
+          "__GLOBAL__": 2.0
+        },
+        "is_fitted": true,
+        "mean_cluster_correlation": {
+          "__GLOBAL__": 0.1352846211217563
+        },
+        "mean_signal_correlation": {
+          "__GLOBAL__": 0.1352846211217563
+        },
+        "model_names": {
+          "__GLOBAL__": [
+            "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+            "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5",
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0",
+            "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2",
+            "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3",
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1",
+            "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4",
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0",
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0"
+          ]
+        },
+        "weights": {
+          "__GLOBAL__": {
+            "ES::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": 0.06283442458377109,
+            "ES::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": 0.04996945192127052,
+            "ES::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.09482967596256617,
+            "ES::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.05796999499260909,
+            "GC::D::sma_above_filter_signal_D_period_200::signed_signal_sma-above-filter_d_period_200__D::ensemble_5": 0.13984005034392452,
+            "GC::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.10308899314200749,
+            "NQ::D::algomatic_momentum_signal_signal_D_exitBars_5_momentumLookback_10_rsiMax_90.0_rsiPeriod_2::signed_signal_algomatic-momentum-signal_d_exit-bars_5_momentum-lookback_10_rsi-max_90-0_rsi-period_2__D::ensemble_2": 0.13424676174945938,
+            "NQ::D::filter_gate_signal_D_filterModule_sma_above_filter_filterParams_period_200_signalModule_consec_momentum_signalParams_consecutiveBars_3_isBuy_True_lookback_40::signed_signal_filter-gate_d_filter-module_sma-above-filter_filter-params_period-200_signal-module_consec-momentum_signal-params_lookback-40-consecutive-bars-3-is-buy-true__D::ensemble_3": 0.06294542439534609,
+            "NQ::D::ibs_lower_band_signal_D_bandHighLookback_10_bandWidthMult_2.5_hlMeanLookback_25_ibsEntryMax_0.3::signed_signal_ibs-lower-band_d_band-high-lookback_10_band-width-mult_2-5_hl-mean-lookback_25_ibs-entry-max_0-3__D::ensemble_1": 0.10072022075731002,
+            "NQ::D::sma_regime_signal_signal_D_period_200::signed_signal_sma-regime-signal_d_period_200__D::ensemble_4": 0.05255595543940598,
+            "NQ::D::turnaroundtuesday_signal_D_mode_tue_wed::rule_based_3__D::ensemble_0": 0.08700707738127916,
+            "NQ::M::buy_hold_signal_M::rule_based_3__M::ensemble_0": 0.053991969331050535
+          }
+        }
+      }
+    }
+  },
+  "portfolio_id": "6acfc7da3d70fe91aed2a29e3d13928a7d8f90ed16f9a2dec1652a94d923bc02",
+  "schema_version": "1.0"
+}

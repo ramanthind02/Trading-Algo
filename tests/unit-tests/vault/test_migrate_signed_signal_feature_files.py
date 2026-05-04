@@ -34,7 +34,10 @@ def test_migrate_legacy_signed_signal_strips_binning_keys() -> None:
             }
         ],
     }
-    path = Path("vault/D/mr_indices_long/features/turnaroundtuesday_signal_D_mode_tue_wed.json")
+    path = Path(
+        "vault/D/mean_reversion_indices/mr_indices_long/features/"
+        "turnaroundtuesday_signal_D_mode_tue_wed.json"
+    )
     assert migrate_legacy_signed_signal_feature_config(legacy, feature_file=path) is True
     validate_signed_signal_feature_config(legacy, feature_file=path)
     m0 = legacy["base_models"][0]

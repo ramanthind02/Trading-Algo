@@ -54,9 +54,17 @@ def _effective_oos_window(config: "ResearchConfig") -> OOSWindowConfig:
         )
     if config.validation_window is None:
         return oos
+    vw = config.validation_window
+    # Fit-through date for OOS: include validation holdout only while it ends before true OOS
+    # test. If validation test_end extends into (or past) the OOS test window, keep using
+    # ``oos.train_end`` so train_end < test_start still holds (temporary long validation spans).
+    proposed_train_end = vw.test_end
+    train_end = (
+        oos.train_end if proposed_train_end >= oos.test_start else proposed_train_end
+    )
     return OOSWindowConfig(
-        train_start=config.validation_window.train_start,
-        train_end=config.validation_window.test_end,
+        train_start=vw.train_start,
+        train_end=train_end,
         test_start=oos.test_start,
         test_end=oos.test_end,
     )

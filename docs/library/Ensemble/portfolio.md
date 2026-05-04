@@ -162,7 +162,7 @@ tf_weekly = TFPortfolio(trading_timeframe=TimeFrame.W, ...)
 # 2. Wrap in GlobalPortfolio with WeightLayer (adapter-driven global combine)
 global_p = GlobalPortfolio(
     tf_portfolios=[tf_daily, tf_weekly],
-    weight_layer=WeightLayer(weight_method="hrp_classic", fdm_max=2.0),
+    weight_layer=WeightLayer(weight_method="equal_signal", fdm_max=2.0),
 )
 
 # 3. Fit from central cache query
@@ -181,6 +181,150 @@ positions = global_p.predict_from_cache(query)
 
 ---
 
+## Portfolio research — inclusion gates
+
+Research-phase workflow for deciding whether to **add a new vault ensemble (candidate)** to an existing portfolio configuration. It reuses the same **train / validation / test** windows as `portfolio_research.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
+
+**Principle:** Gate on **validation data only**; treat the **test** window as a one-shot sanity check after you already accept the candidate on validation.
+
+| Step | What it checks | Default rule (tunable in config) |
+|------|----------------|----------------------------------|
+| **Gate 1 — diversification** | For each **same-`base_tf` peer** ensemble: **Pearson** and **Spearman** correlation of **ensemble-level** validation forecast streams (mean over intersected tickers per peer). | Pass only if **every** peer has finite values with Pearson `< corr_max` and Spearman `< spearman_corr_max` (defaults **0.7**). No same-TF peers → vacuous pass. |
+| **Gate 2 — standalone performance** | Candidate **alone** in `ensemble_dirs`; validation **Sharpe / Sortino / Calmar** on combined returns. | Pass if Sharpe > `sharpe_min` (default **0.3**). |
+| **Standalone vs each baseline** | One row per baseline ensemble + candidate: Sharpe / Sortino / Calmar on **train**, **validation**, and **train+validation** (single-ensemble portfolio each). | Report only (see CSV). |
+| **Uplift** | Full portfolio **without** vs **with** candidate on **train**, **validation**, and **concatenated train+validation**; Sharpe / Sortino / Calmar each window. | Pass if **each** window satisfies `Sharpe_with > Sharpe_without - uplift_slack` (default slack **0.05**). |
+| **Optional test confirmation** | Opt-in: standalone candidate **test** Sharpe vs **validation** Sharpe ratio. | Pass if `Sharpe_test / Sharpe_val > test_sharpe_ratio_min` (default **0.5**). |
+
+> **Correlation estimators:** Gate 1 uses **Pearson** and **Spearman** on aligned **validation** `forecast_score` series per ticker. The live **WeightLayer** FDM uses **Ledoit–Wolf** on **standardized in-sample** pivots at fit time — same economic object (forecasts), different estimator and window. See [[weight_layer]] for production FDM.
+
+### Configuration
+
+- **`PortfolioInclusionConfig`** in `feature_research/config.py`: thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), optional default candidate path/key.
+- **`ResearchConfig.portfolio_inclusion`**: holds defaults; `feature_research.config.load_config()` returns a default `PortfolioInclusionConfig()`.
+- **Baseline portfolio** (tickers, train/validation/test windows, `ensemble_dirs`, weight layer, etc.) still comes from **`portfolio_research.config.load_config()`** — the CLI loads both configs.
+
+### CLI
+
+From the repo root (venv Python), pass a **repo-relative** path to the candidate ensemble directory (same style as `ensemble_dirs` values):
+
+```powershell
+.\.venv\Scripts\python.exe -m feature_research.run_inclusion_gates
+```
+
+With ``portfolio_inclusion.candidate_repo_relative_path`` set in ``feature_research.config.load_config()``, no CLI arguments are required. Optional overrides: ``--candidate-path``, ``--candidate-key``, ``--emit-tearsheets`` / ``--no-emit-tearsheets``, ``--no-preflight``.
+
+### Artifacts
+
+Under `output_root` / `portfolio_inclusion.output_subdir`: `inclusion_<candidate_key>_summary.csv`, `_corr_by_peer_and_ticker.csv` (Pearson + Spearman per peer–ticker), `_standalone_by_ensemble.csv`, `_uplift_by_window.csv`.
+
+### Code entrypoints
+
+- `feature_research/inclusion_gates.py` — `run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …
+- `feature_research/run_inclusion_gates.py` — CLI
+
+**See also:** [[Cache/user_guide]] (portfolio workflow and preflight), [[Vault/user_guide]] (ensemble layout).
+
+---
+
+---
+
+## Futures Contract Simulation (`portfolio_research.futures_sim`)
+
+An optional parallel simulation path that converts `position_fraction` signals to **integer futures contracts** and produces tearsheets and diagnostics alongside the standard log-return tearsheets.  Activated by setting `futures_sim.enabled = True` in `portfolio_research.config.load_config()`.
+
+### Purpose
+
+The standard research pipeline works in fractional-return space (`position_fraction × instrument_return`, summed across tickers).  That is the *most accurate* continuous backtest, but it does not model the rounding that occurs when trading real micro-futures contracts.  The sim layer answers:
+
+- How many contracts would we have held each bar, and what was the actual dollar PnL?
+- How large is the rounding-induced tracking error vs the fractional baseline?
+- Were there days where margin requirements exceeded account capital?
+
+### Configuration
+
+All parameters live in `PortfolioResearchConfig.futures_sim` (`FuturesSimConfig`):
+
+```python
+from portfolio_research.config import (
+    FuturesSimConfig, FuturesInstrumentSpec, LeverageMode
+)
+
+futures_sim = FuturesSimConfig(
+    enabled=True,                      # flip to activate
+    account_capital=100_000.0,         # USD starting size
+    leverage_mode=LeverageMode.FINITE, # or INFINITE to skip margin checks
+    emit_diagnostics_csv=True,
+    emit_tracking_error_csv=True,
+    instrument_specs={
+        "NQ": FuturesInstrumentSpec(
+            multiplier=2.0,            # MNQ: $2/point
+            margin_long=3_653.0,       # maintenance margin per contract
+            margin_short=3_576.0,
+            product_code="MNQ",
+        ),
+        "ES": FuturesInstrumentSpec(
+            multiplier=5.0,            # MES: $5/point
+            margin_long=2_413.0,
+            margin_short=2_265.0,
+            product_code="MES",
+        ),
+        "GC": FuturesInstrumentSpec(
+            multiplier=10.0,           # MGC: $10/oz (10 troy oz)
+            margin_long=2_817.0,
+            margin_short=2_817.0,
+            product_code="MGC",
+        ),
+    },
+)
+```
+
+`LeverageMode.FINITE` flags any bar where `|contracts| × margin_per_contract > account_capital`.  `LeverageMode.INFINITE` skips the check (useful for large-capital sensitivity analysis).
+
+### Sizing formula
+
+```
+contract_value = price × multiplier
+contracts      = round(position_fraction × account_capital / contract_value)
+```
+
+Rounding is `round()` (banker's rounding to nearest integer).  The sign of `contracts` tracks direction (positive = long, negative = short).
+
+### PnL convention
+
+Both legs use **simple returns** so the comparison is dollar-for-dollar:
+
+| Path | Formula |
+|---|---|
+| Discrete | `contracts × (next_close − close) × multiplier` |
+| Fractional | `position_fraction × account_capital × simple_return` |
+
+Daily % returns for tearsheets = `daily_USD_PnL / account_capital`, so all QuantStats metrics (Sharpe, drawdown, etc.) are directly comparable to the standard portfolio tearsheets.
+
+### Outputs
+
+All written to `output_root / {phase} / futures_sim /`:
+
+| File | Content |
+|---|---|
+| `{phase}_diagnostics.csv` | Per-bar per-ticker: position_fraction, price, contracts, notional, margin_required, margin_available, leverage_breach, discrete_pnl, fractional_pnl |
+| `{phase}_tracking_error.csv` | Per-date aggregate: discrete_total_pnl, fractional_total_pnl, discrete_pct_return, fractional_pct_return, daily_tracking_error_usd, daily_tracking_error_pct, cumulative_te_usd, annualised_te_vol_usd, any_leverage_breach |
+| `{phase}_tracking_error_summary.html` | Self-contained HTML: portfolio-level summary table, cumulative TE sparkline chart, per-ticker breakdown, interpretation guide |
+| `{phase}_discrete_tearsheet.html` | Standard QuantStats HTML tearsheet driven by `discrete_pct_return` (strategy) vs `fractional_pct_return` (baseline); identical format to regular portfolio tearsheets |
+
+### Interpreting tracking error
+
+- **Tracking error** arises purely from integer rounding of contracts.  A positive cumulative TE means discrete contracts outperformed the fractional path on net; negative means rounding cost performance.
+- **Annualised TE vol** = `std(daily_TE_USD) × √252`.  Divide by annualised USD PnL vol to see rounding error as a fraction of strategy risk.
+- **Margin breach days** indicate the account size is too small for the implied position size.  Fix by increasing `account_capital` or reducing `max_position_pct` in the main config.
+
+### Code entrypoints
+
+- `portfolio_research/futures_sim.py` — `run_futures_sim()` (main function), `_simulate_ticker_bars()`, `_emit_discrete_tearsheet()`, `_emit_tracking_error_summary()`
+- `portfolio_research/config.py` — `FuturesSimConfig`, `FuturesInstrumentSpec`, `LeverageMode`
+- `portfolio_research/pipelines/portfolio_test.py` — hook in `_evaluate_phase()` after `combined_positions` is clipped, before standard return calculation
+
+---
+
 ## Key Design Decisions
 
 - **Vector output from Ensemble:** one row per (sample, model) → WeightLayer applies weights externally
@@ -190,4 +334,4 @@ positions = global_p.predict_from_cache(query)
 
 ---
 
-**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]]
+**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]] (portfolio workflow; inclusion gates summary cross-linked there)

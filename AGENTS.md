@@ -22,7 +22,7 @@
 - `ensemble/`: forecast diversification, weighting, and portfolio combination layers.
 - `execution/`: conversion from forecast fractions to tradeable contract quantities.
 - `utils/`: shared data models, enums, cache manager, and common utilities.
-- `vault/`: persisted validated features and control artifacts.
+- **Vault(s):** default prop firm tree is `vault/`; personal trading uses `vault_personal/` at the repo root unless overridden by env (`TRADING_ALGO_VAULT_PROP`, `TRADING_ALGO_VAULT_ROOT`, `TRADING_ALGO_VAULT_PERSONAL`). Persisted validated features and control artifacts live under `<vault_root>/<D|W|M>/` with nested manual-group layout `/<weight_hierarchy_group>/<ensemble_leaf>/` (e.g. `mean_reversion_indices`, `buy_hold`, `es_tlt`, `seasonal`, `momentum`); legacy flat `<vault_root>/<TF>/<ensemble_leaf>/` remains supported. See `docs/library/Vault/vault.md`.
 - `deployment/`: production-facing forecast and training pipeline components.
 
 ## Base Model And Validation Workflow

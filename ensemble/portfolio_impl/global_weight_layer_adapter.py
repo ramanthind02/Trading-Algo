@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Collection, Mapping
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -9,6 +11,40 @@ import pandas as pd
 from utils.core.enums import TimeFrame
 
 _GLOBAL_WEIGHT_LAYER_TICKER = "__GLOBAL__"
+_UNKNOWN_GROUP = "__unknown__"
+
+
+def build_group_equal_stream_weights(
+    stream_ids: Collection[str],
+    stream_id_to_group: Mapping[str, str],
+) -> pd.Series:
+    """Equal total weight per group (1/n_groups), split equally among streams in each group.
+
+    Only groups that have at least one stream in ``stream_ids`` receive a share. When streams
+    are removed from a group, that group's budget is redistributed only among the remaining
+    streams in that group; if a group becomes empty it is dropped and remaining groups each get
+    ``1 / n_groups`` with the new group count.
+    """
+    ids = sorted({str(s) for s in stream_ids if str(s)})
+    if not ids:
+        return pd.Series(dtype=float)
+
+    by_group: dict[str, list[str]] = defaultdict(list)
+    for sid in ids:
+        g = stream_id_to_group.get(sid, _UNKNOWN_GROUP)
+        by_group[str(g)].append(sid)
+
+    active_groups = sorted(by_group.keys())
+    n_groups = len(active_groups)
+    w_per_group = 1.0 / n_groups if n_groups else 0.0
+    weights: dict[str, float] = {}
+    for g in active_groups:
+        streams = by_group[g]
+        n_s = len(streams)
+        w_each = w_per_group / n_s if n_s else 0.0
+        for sid in streams:
+            weights[sid] = w_each
+    return pd.Series(weights, dtype=float)
 
 
 def build_global_model_name(
@@ -130,8 +166,15 @@ def decode_global_weight_layer_output(
     stream_decode_map: Dict[str, Dict[str, str]],
     global_weights: Optional[pd.Series],
     global_fdm: float = 1.0,
+    stream_id_to_group: Optional[Mapping[str, str]] = None,
 ) -> pd.DataFrame:
-    """Decode synthetic global outputs back to ticker-level forecast scores."""
+    """Decode synthetic global outputs back to ticker-level forecast scores.
+
+    If ``stream_id_to_group`` is set, weights are **equal per vault weight-hierarchy group**
+    (each group gets ``1/n_groups`` among groups present in the frame), with equal split
+    within each group. Otherwise ``global_weights`` is used, or flat equal weight across
+    streams when ``global_weights`` is None.
+    """
     if not encoded_vectors:
         return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
 
@@ -139,15 +182,22 @@ def decode_global_weight_layer_output(
     if combined.empty:
         return pd.DataFrame(columns=["ticker", "datetime", "forecast_score"])
 
-    resolved_weights = global_weights
-    if resolved_weights is None:
-        available_models = combined["model_name"].unique()
-        n_models = len(available_models)
-        equal_weight = 1.0 / n_models if n_models > 0 else 1.0
-        resolved_weights = pd.Series(
-            {model: equal_weight for model in available_models},
-            dtype=float,
+    available_models = combined["model_name"].unique()
+
+    if stream_id_to_group is not None:
+        resolved_weights = build_group_equal_stream_weights(
+            available_models,
+            stream_id_to_group,
         )
+    else:
+        resolved_weights = global_weights
+        if resolved_weights is None:
+            n_models = len(available_models)
+            equal_weight = 1.0 / n_models if n_models > 0 else 1.0
+            resolved_weights = pd.Series(
+                {model: equal_weight for model in available_models},
+                dtype=float,
+            )
 
     weighted = combined.copy()
     weighted["weight"] = weighted["model_name"].map(resolved_weights)

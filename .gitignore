@@ -7,9 +7,10 @@ __pycache__/
 *.so
 # Cython build outputs
 utils/cython_*.c
-utils/cython_*.html
 utils/compute/cython/*.c
-utils/compute/cython/*.html
+
+# HTML artifacts (QuantStats / portfolio tearsheets / prop-firm reports / any static export)
+*.html
 
 # Distribution / packaging
 .Python

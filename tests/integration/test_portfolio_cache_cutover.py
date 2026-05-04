@@ -19,7 +19,7 @@ from utils.core.enums import TimeFrame
 def test_monthly_buy_hold_portfolio_runs_from_central_cache(
     isolated_central_cache: None,
 ) -> None:
-    ensemble_dir = "vault/M/buy_hold_long"
+    ensemble_dir = "vault/M/buy_hold/buy_hold_long"
     tickers = get_ensemble_tickers(ensemble_dir)
     start = datetime(2022, 1, 31)
     end = datetime(2022, 6, 30)

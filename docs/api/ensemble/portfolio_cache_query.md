@@ -41,7 +41,7 @@
 - Legacy candle-frame methods (`fit`, `predict`, `fit_from_candles`, `predict_from_candles`) remain available as migration shims.
 
 ## Snapshot and materialization contract
-- `GlobalPortfolio.save_to_vault(...)` writes frozen snapshot files under `vault/portfolio_snapshots/<portfolio_id>/`.
+- `GlobalPortfolio.save_to_vault(...)` writes frozen snapshot files under `<vault_root>/portfolio_snapshots/<portfolio_id>/` (default `vault_root` is the prop dirname `vault`; use `vault_personal` or env — see `docs/library/Vault/vault.md`).
 - `load_global_portfolio_snapshot(...)` reloads the snapshot from those frozen copies instead of the mutable working vault.
 - `materialize_global_portfolio_predictions(...)` writes portfolio-level rows and active base-model rows into `.cache/trading_algo/central_cache/materialized/<scope>/`.
 - `PortfolioWorld` values are `train`, `val`, `test`, and `live`.

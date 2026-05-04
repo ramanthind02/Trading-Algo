@@ -74,6 +74,20 @@ def test_discover_ensemble_dirs_uses_vault_relative_paths(tmp_path: Path, monkey
     assert discovered["example_ensemble_long"].startswith(expected)
 
 
+def test_discover_ensemble_dirs_supports_nested_weight_group_folders(tmp_path: Path, monkeypatch) -> None:
+    vault_root = tmp_path / "vault"
+    nested = vault_root / "D" / "momentum" / "my_strat_long" / "features"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "feature.json").write_text("{}", encoding="utf-8")
+
+    import portfolio_research.config as cfg
+
+    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+
+    discovered = cfg._discover_ensemble_dirs()
+    assert Path(discovered["my_strat_long"]) == Path("vault/D/momentum/my_strat_long")
+
+
 def _patch_feature_iter(
     monkeypatch: pytest.MonkeyPatch,
     handler: object,
@@ -111,8 +125,8 @@ def test_filter_ensemble_dirs_for_portfolio_tickers_drops_cross_ticker_deps(
     _patch_feature_iter(monkeypatch, _iter)
     out = filter_ensemble_dirs_for_portfolio_tickers(
         {
-            "tlt_cross": "vault/D/rebalancing_es_tlt_long",
-            "es_local": "vault/D/mr_indices_long",
+            "tlt_cross": "vault/D/es_tlt/rebalancing_es_tlt_long",
+            "es_local": "vault/D/mean_reversion_indices/mr_indices_long",
         },
         [Ticker.ES],
     )
@@ -143,8 +157,8 @@ def test_filter_drops_rebalancing_when_primary_ticker_missing(
     _patch_feature_iter(monkeypatch, _iter)
     out = filter_ensemble_dirs_for_portfolio_tickers(
         {
-            "tlt_primary": "vault/D/rebalancing_tlt_es_long",
-            "es_only": "vault/D/mr_indices_long",
+            "tlt_primary": "vault/D/es_tlt/rebalancing_tlt_es_long",
+            "es_only": "vault/D/mean_reversion_indices/mr_indices_long",
         },
         [Ticker.ES, Ticker.NQ],
     )
@@ -165,7 +179,7 @@ def test_filter_keeps_ensemble_when_extra_tickers_only_in_config_metadata(
     _patch_feature_iter(monkeypatch, _iter)
     out = filter_ensemble_dirs_for_portfolio_tickers(
         {
-            "wide_universe": "vault/M/buy_hold_long",
+            "wide_universe": "vault/M/buy_hold/buy_hold_long",
         },
         [Ticker.ES, Ticker.NQ],
     )
@@ -173,9 +187,19 @@ def test_filter_keeps_ensemble_when_extra_tickers_only_in_config_metadata(
 
 
 def test_filter_drops_single_instrument_feature_without_that_ticker(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Bonds/TLT-only features must not pass when TLT is absent (no cross_tickers)."""
+
+    import portfolio_research.config as cfg
+
+    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+    for rel in (
+        "vault/D/seasonal/seasonal_bonds_long_short/features",
+        "vault/D/mean_reversion_indices/mr_indices_long/features",
+    ):
+        (tmp_path / Path(rel)).mkdir(parents=True, exist_ok=True)
 
     def _iter(features_dir: Path):
         path_s = str(features_dir).replace("\\", "/")
@@ -193,8 +217,8 @@ def test_filter_drops_single_instrument_feature_without_that_ticker(
     _patch_feature_iter(monkeypatch, _iter)
     out = filter_ensemble_dirs_for_portfolio_tickers(
         {
-            "bonds": "vault/D/seasonal_bonds_long_short",
-            "es_feat": "vault/D/mr_indices_long",
+            "bonds": "vault/D/seasonal/seasonal_bonds_long_short",
+            "es_feat": "vault/D/mean_reversion_indices/mr_indices_long",
         },
         [Ticker.ES],
     )

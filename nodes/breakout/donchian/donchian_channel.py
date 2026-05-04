@@ -16,8 +16,8 @@ class DonchianChannel(BiasNode):
     Implements the Donchian Channel strategy as a bias node.
     
     The Donchian Channel strategy is always in the market and uses a single channel:
-    - Long when price breaks above the highest high of the lookback period
-    - Short when price breaks below the lowest low of the lookback period
+    - Long when the bar **high** breaks above the prior window's highest high
+    - Short when the bar **low** breaks below the prior window's lowest low
     
     Unlike the Turtle Trading strategy, this implementation:
     1. Is always in the market (no flat state)
@@ -149,19 +149,19 @@ class DonchianChannel(BiasNode):
 
         # Calculate Donchian channel
         highest_high, lowest_low = self.calculate_donchian_channel(self.lookback)
-        
-        # Current price
-        current_price = candle.close
-        
-        # Check for position changes
+
+        bar_high = float(candle.high)
+        bar_low = float(candle.low)
+
+        # Check for position changes (intrabar breakout: high / low vs prior channel)
         if self.current_position == 1:  # Currently long
-            # Switch to short if price breaks below the channel low
-            if current_price < lowest_low:
+            # Switch to short if the bar trades through the channel low
+            if bar_low < lowest_low:
                 self.current_position = -1
-        
+
         elif self.current_position == -1:  # Currently short
-            # Switch to long if price breaks above the channel high
-            if current_price > highest_high:
+            # Switch to long if the bar trades through the channel high
+            if bar_high > highest_high:
                 self.current_position = 1
         
         # Return the numeric position
@@ -175,27 +175,38 @@ class DonchianChannelLongOnly(BiasNode):
     Long-only Donchian Channel breakout with optional SMA regime filter.
 
     Strategy behavior:
-    - Enter long when close breaks above Donchian high (``entry_lookback`` window).
-    - Exit to flat when close breaks below Donchian low (``exit_lookback`` window).
+    - Enter long when bar **high** breaks above Donchian high (``entry_lookback`` window).
+    - Exit to flat when bar **low** breaks below Donchian low (``exit_lookback`` window).
     - Never enters short.
     - Optional regime filter: when ``sma_period`` is a positive integer (>= 2),
       longs are only allowed when close > SMA(sma_period). If regime is bearish,
       signal is flat. Use ``None`` or ``0`` to disable the filter.
+    - Optional ``channel_lookback``: when set, uses the same lookback for both entry
+      and exit channels (symmetric Donchian). Overrides ``entry_lookback`` /
+      ``exit_lookback`` for grid-friendly single-axis search.
     """
 
     lookback_param_names: ClassVar[frozenset[str]] = frozenset(
-        {"entry_lookback", "exit_lookback", "sma_period"}
+        {"channel_lookback", "entry_lookback", "exit_lookback", "sma_period"}
     )
 
     def __init__(
         self,
         ticker: Ticker,
         tf: TimeFrame,
-        entry_lookback: int,
-        exit_lookback: int,
+        entry_lookback: int = 20,
+        exit_lookback: int = 20,
         sma_period: Optional[int] = None,
+        channel_lookback: Optional[int] = None,
     ) -> None:
         super().__init__(ticker, tf)
+
+        if channel_lookback is not None:
+            ch = int(channel_lookback)
+            if ch < 1:
+                raise ValueError("channel_lookback must be a positive integer when set.")
+            entry_lookback = ch
+            exit_lookback = ch
 
         if not (entry_lookback > 0):
             raise ValueError("entry_lookback must be a positive integer.")
@@ -220,6 +231,11 @@ class DonchianChannelLongOnly(BiasNode):
             "entry_lookback": entry_lookback,
             "exit_lookback": exit_lookback,
             "sma_period": raw_sma_period,
+            **(
+                {"channel_lookback": int(channel_lookback)}
+                if channel_lookback is not None
+                else {}
+            ),
         }
 
         # Need enough bars for both Donchian windows + current bar; if SMA regime is
@@ -307,9 +323,12 @@ class DonchianChannelLongOnly(BiasNode):
         _, lowest_low = self.calculate_donchian_channel(self.exit_lookback)
         regime_allows_longs = self._compute_sma_regime_allowed(close_price)
 
-        if self.current_position == 1 and (close_price < lowest_low or not regime_allows_longs):
+        bar_high = float(candle.high)
+        bar_low = float(candle.low)
+
+        if self.current_position == 1 and (bar_low < lowest_low or not regime_allows_longs):
             self.current_position = 0
-        elif self.current_position == 0 and close_price > highest_high and regime_allows_longs:
+        elif self.current_position == 0 and bar_high > highest_high and regime_allows_longs:
             self.current_position = 1
 
         position = float(self.current_position)

@@ -2,7 +2,7 @@
 
 Settings live in :func:`feature_research.config.load_config` under ``ResearchConfig.vault_save``
 (:class:`~feature_research.config.VaultSaveConfig`): ensemble target, optional ``tickers``
-override, ``dry_run``, etc.
+override, ``vault_profile`` (prop vs personal when ``vault_root`` is unset), ``dry_run``, etc.
 
 Always materializes :attr:`~feature_research.config.ResearchConfig.eval_bias_spec` (scalar
 hyperparameters: ``evaluation_defaults`` when set, else in-sample defaults). List-valued params
@@ -54,15 +54,19 @@ from feature_research.bootstrap import ensure_repo_root_on_syspath
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 import argparse
+import dataclasses
 import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from ensemble.vault_manager import create_ensemble_directory, initialize_vault
-from feature_research.config import VaultSaveConfig, load_config
+from feature_research.config import (
+    VaultSaveConfig,
+    load_config,
+    vault_save_effective_vault_root,
+)
 from feature_selection.base_models.feature_base_model import BaseModel
 from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.vault_paths import resolve_vault_root
 
 
 def _params_contain_grid(params: object) -> bool:
@@ -108,10 +112,10 @@ def _resolve_ensemble_dir(
     name = (vault_save.ensemble_name or "").strip()
     if not name:
         raise ValueError("vault_save.ensemble_name is required when existing_ensemble_dir is unset.")
+    root = vault_save_effective_vault_root(vault_save)
     if dry_run:
-        vault_path = resolve_vault_root(vault_save.vault_root)
         preview = (
-            vault_path
+            root
             / timeframe.name
             / f"{name}_{coerce_direction(direction, field_name='direction').value}"
         )
@@ -121,7 +125,7 @@ def _resolve_ensemble_dir(
         name,
         direction,
         tickers=tickers,
-        vault_root=vault_save.vault_root,
+        vault_root=str(root),
     )
 
 
@@ -143,6 +147,15 @@ def _build_override_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print only (overrides vault_save.dry_run=True).",
     )
+    parser.add_argument(
+        "--vault-profile",
+        choices=("prop", "personal"),
+        default=None,
+        help=(
+            "When vault_save.vault_root is unset, use this profile's default root "
+            "(prop=firm vault, personal=personal vault). Overrides vault_save.vault_profile."
+        ),
+    )
     return parser
 
 
@@ -159,6 +172,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     research = load_config()
     vault_save = research.vault_save
+    if args.vault_profile is not None and vault_save is not None:
+        vault_save = dataclasses.replace(vault_save, vault_profile=args.vault_profile)
     if vault_save is None:
         print(
             "Set vault_save=VaultSaveConfig(...) on ResearchConfig in "
@@ -190,7 +205,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     dry_run = _effective_dry_run(vault_save=vault_save, args=args)
 
     if vault_save.init_vault and not dry_run:
-        initialize_vault(vault_save.vault_root)
+        initialize_vault(str(vault_save_effective_vault_root(vault_save)))
 
     ensemble_dir = _resolve_ensemble_dir(
         vault_save=vault_save,
@@ -205,7 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "strategy": direction,
     }
 
-    print("Vault root:", str(resolve_vault_root(vault_save.vault_root)))
+    print("Vault root:", str(vault_save_effective_vault_root(vault_save)))
     print("Ensemble dir:", ensemble_dir)
     print("Bias spec:")
     print(json.dumps(bias_spec, indent=2, default=str))
