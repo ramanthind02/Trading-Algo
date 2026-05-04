@@ -58,6 +58,10 @@ from ensemble.vault_manager import load_ensemble_from_vault
 from ensemble.portfolio import TFPortfolio, GlobalPortfolio
 from deployment.telegram_notifier import TelegramNotifier
 from utils.core.enums import TimeFrame, Ticker
+from utils.futures_micro_specs import (
+    listed_micro_futures_row,
+    micro_contract_fractional_and_whole,
+)
 from utils.vault_paths import resolve_vault_root
 
 
@@ -694,20 +698,6 @@ def compute_fetch_lookback(
 # POSITION SIZING
 # ==============================================================================
 
-# Futures contract specifications: CME/CBOT/COMEX micro contracts.
-# point_value: dollar P&L per 1.00 point move per micro contract.
-# For TLT (bond ETF), we map to ZN (10Y Treasury Note future) as the closest
-# liquid futures proxy; ZN has no micro variant, so we use the full contract.
-FUTURES_CONTRACT_SPECS: Dict[str, Dict[str, Any]] = {
-    "ES":  {"micro": "MES", "mini": "ES",  "micro_point_value": 5.0,    "mini_point_value": 50.0,  "exchange": "CME"},
-    "NQ":  {"micro": "MNQ", "mini": "NQ",  "micro_point_value": 2.0,    "mini_point_value": 20.0,  "exchange": "CME"},
-    "YM":  {"micro": "MYM", "mini": "YM",  "micro_point_value": 0.5,    "mini_point_value": 5.0,   "exchange": "CBOT"},
-    "RTY": {"micro": "M2K", "mini": "RTY", "micro_point_value": 5.0,    "mini_point_value": 50.0,  "exchange": "CME"},
-    "GC":  {"micro": "MGC", "mini": "GC",  "micro_point_value": 10.0,   "mini_point_value": 100.0, "exchange": "COMEX"},
-    "TLT": {"micro": "ZN",  "mini": "ZN",  "micro_point_value": 1000.0, "mini_point_value": 1000.0, "exchange": "CBOT"},
-}
-
-
 def calculate_futures_contracts(
     positions_df: pd.DataFrame,
     prices: Dict[str, float],
@@ -715,7 +705,7 @@ def calculate_futures_contracts(
 ) -> pd.DataFrame:
     """Convert position fractions to micro futures contract quantities.
 
-    ``notional_per_contract = price * micro_point_value``.
+    ``notional_per_contract = price * micro_dollars_per_point`` (canonical table).
     ``contracts_fractional = target_dollars / notional_per_contract``.
     ``contracts_whole = round(contracts_fractional)``.
 
@@ -729,7 +719,7 @@ def calculate_futures_contracts(
         ticker = row["ticker"]
         ticker_str = ticker.name if hasattr(ticker, "name") else str(ticker)
 
-        spec = FUTURES_CONTRACT_SPECS.get(ticker_str)
+        spec = listed_micro_futures_row(ticker_str)
         if spec is None:
             continue
         if ticker_str not in prices:
@@ -738,15 +728,17 @@ def calculate_futures_contracts(
         forecast_score = row.get("forecast_score", 0.0)
         position_fraction = row.get("position_fraction", 0.0)
         futures_price = prices[ticker_str]
-        point_value = spec["micro_point_value"]
-        contract_symbol = spec["micro"]
+        point_value = spec.micro_dollars_per_point
+        contract_symbol = spec.micro_symbol
 
+        contracts_fractional, contracts_whole = micro_contract_fractional_and_whole(
+            futures_index_price=futures_price,
+            position_fraction=position_fraction,
+            capital_usd=capital_usd,
+            micro_dollars_per_point=point_value,
+        )
         notional_per_contract = futures_price * point_value
         target_dollars = position_fraction * capital_usd
-        contracts_fractional = (
-            target_dollars / notional_per_contract if notional_per_contract > 0 else 0.0
-        )
-        contracts_whole = int(round(contracts_fractional))
         actual_notional = contracts_whole * notional_per_contract
         actual_pct = (actual_notional / capital_usd * 100) if capital_usd > 0 else 0.0
 

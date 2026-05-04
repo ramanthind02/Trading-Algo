@@ -1,15 +1,15 @@
 """
 Tests for TWS Live Forecast Pipeline
 
-Simple, readable tests for key functions in tws_live_forecast.py.
-These tests do NOT require a live TWS connection.
+Simple, readable tests for key functions in ``enigma_live_forecast.py``
+(legacy name: ``tws_live_forecast``). These tests do NOT require a live TWS connection.
 """
 
 import pytest
 import pandas as pd
 from datetime import datetime
 
-from scripts.tws_live_forecast import (
+from scripts.enigma_live_forecast import (
     create_futures_contract,
     create_etf_contract,
     calculate_etf_shares,
@@ -165,13 +165,12 @@ class TestTelegramFormatting:
         })
 
     def test_telegram_message_contains_key_info(self, sample_shares_df):
-        """Telegram message should contain capital and positions."""
+        """Telegram message should contain capital and positions (personal / ETF layout)."""
         capital = 10000.0
 
-        message = format_telegram_message(sample_shares_df, capital)
+        message = format_telegram_message(sample_shares_df, capital, profile="personal")
 
-        # Should contain header
-        assert "TWS LIVE FORECAST" in message
+        assert "ENIGMA ALGOS FORECAST" in message
 
         # Should contain capital
         assert "$10,000.00" in message
@@ -188,7 +187,7 @@ class TestTelegramFormatting:
         """Message should indicate bullish/bearish signals."""
         capital = 10000.0
 
-        message = format_telegram_message(sample_shares_df, capital)
+        message = format_telegram_message(sample_shares_df, capital, profile="personal")
 
         # ES has +1.5 forecast -> Strong Bull
         assert "Strong Bull" in message

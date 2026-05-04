@@ -17,6 +17,7 @@ from ensemble.vault import feature_files as _vault_feature_files
 from feature_research.config import OOSWindowConfig
 from utils.cache import extract_cross_ticker_names
 from utils.core.enums import Ticker, TimeFrame
+from utils.futures_micro_specs import canonical_listed_micro_futures
 from utils.vault_paths import default_vault_discovery_dirnames
 
 logger = logging.getLogger(__name__)
@@ -470,31 +471,21 @@ def load_config() -> PortfolioResearchConfig:
 
     # ------------------------------------------------------------------
     # Futures contract simulation (optional; set enabled=True to run)
-    # Maps research ticker name → micro-futures spec.
-    # Margins are illustrative; update to current exchange requirements.
+    # Maps research ticker name → micro-futures spec (canonical table in
+    # ``utils.futures_micro_specs``). Margins are illustrative.
     # ------------------------------------------------------------------
+    _micro = canonical_listed_micro_futures()
     futures_sim = FuturesSimConfig(
         enabled=True,
         account_capital=100_000.0,
         instrument_specs={
-            "NQ": FuturesInstrumentSpec(
-                multiplier=2.0,
-                margin_long=3_653.0,
-                margin_short=3_576.0,
-                product_code="MNQ",
-            ),
-            "ES": FuturesInstrumentSpec(
-                multiplier=5.0,
-                margin_long=2_413.0,
-                margin_short=2_265.0,
-                product_code="MES",
-            ),
-            "GC": FuturesInstrumentSpec(
-                multiplier=10.0,
-                margin_long=2_817.0,
-                margin_short=2_817.0,
-                product_code="MGC",
-            ),
+            k: FuturesInstrumentSpec(
+                multiplier=_micro[k].micro_dollars_per_point,
+                margin_long=_micro[k].illustrative_margin_long_usd,
+                margin_short=_micro[k].illustrative_margin_short_usd,
+                product_code=_micro[k].micro_symbol,
+            )
+            for k in ("NQ", "ES", "GC")
         },
         leverage_mode=LeverageMode.FINITE,
         emit_tracking_error_csv=True,
