@@ -29,6 +29,10 @@ class ActiveLivePortfolioConfig:
     volatility_timeframe: TimeFrame
     replay_window_days: int
     research_run_id: str | None = None
+    ensemble_dirs: tuple[str, ...] | None = None
+    target_volatility: float = 0.20
+    max_position_pct: float = 2.5
+    idm_max: float = 2.5
 
 
 @dataclass(frozen=True)
@@ -36,7 +40,6 @@ class LiveCacheRefreshManifest:
     version: str
     enabled: bool
     vault_root: str
-    snapshot_vault_root: str
     debounce_seconds: float
     active_ensemble_dirs: tuple[str, ...]
     active_portfolios: tuple[ActiveLivePortfolioConfig, ...]
@@ -126,6 +129,31 @@ def _parse_active_portfolio(payload: dict[str, Any]) -> ActiveLivePortfolioConfi
     if research_run_id is not None and not isinstance(research_run_id, str):
         raise ValueError(f"Active live portfolio '{name}' research_run_id must be a string or null")
 
+    raw_ensemble_dirs = payload.get("ensemble_dirs")
+    ensemble_dirs: tuple[str, ...] | None
+    if raw_ensemble_dirs is None:
+        ensemble_dirs = None
+    else:
+        if not isinstance(raw_ensemble_dirs, list) or any(
+            not isinstance(item, str) or not str(item).strip() for item in raw_ensemble_dirs
+        ):
+            raise ValueError(
+                f"Active live portfolio '{name}' ensemble_dirs must be a list of non-empty strings when set"
+            )
+        ensemble_dirs = tuple(dict.fromkeys(str(item) for item in raw_ensemble_dirs))
+
+    target_volatility = payload.get("target_volatility", 0.20)
+    if not isinstance(target_volatility, (int, float)) or float(target_volatility) <= 0.0:
+        raise ValueError(f"Active live portfolio '{name}' target_volatility must be a positive number")
+
+    max_position_pct = payload.get("max_position_pct", 2.5)
+    if not isinstance(max_position_pct, (int, float)) or float(max_position_pct) <= 0.0:
+        raise ValueError(f"Active live portfolio '{name}' max_position_pct must be a positive number")
+
+    idm_max = payload.get("idm_max", 2.5)
+    if not isinstance(idm_max, (int, float)) or float(idm_max) <= 0.0:
+        raise ValueError(f"Active live portfolio '{name}' idm_max must be a positive number")
+
     return ActiveLivePortfolioConfig(
         name=name,
         portfolio_id=portfolio_id,
@@ -142,6 +170,10 @@ def _parse_active_portfolio(payload: dict[str, Any]) -> ActiveLivePortfolioConfi
         ),
         replay_window_days=replay_window_days,
         research_run_id=research_run_id,
+        ensemble_dirs=ensemble_dirs,
+        target_volatility=float(target_volatility),
+        max_position_pct=float(max_position_pct),
+        idm_max=float(idm_max),
     )
 
 
@@ -167,7 +199,6 @@ def load_live_cache_refresh_manifest(
 
     enabled = _require_bool(payload, "enabled")
     vault_root = _require_string(payload, "vault_root")
-    snapshot_vault_root = _require_string(payload, "snapshot_vault_root")
     debounce_seconds = payload.get("debounce_seconds", _DEFAULT_DEBOUNCE_SECONDS)
     if not isinstance(debounce_seconds, (int, float)) or float(debounce_seconds) <= 0.0:
         raise ValueError("Live cache refresh manifest field 'debounce_seconds' must be > 0")
@@ -195,7 +226,6 @@ def load_live_cache_refresh_manifest(
         version=version,
         enabled=enabled,
         vault_root=vault_root,
-        snapshot_vault_root=snapshot_vault_root,
         debounce_seconds=float(debounce_seconds),
         active_ensemble_dirs=active_ensemble_dirs,
         active_portfolios=active_portfolios,
@@ -284,6 +314,31 @@ def _latest_common_end(
     return min(coverage_ends).to_pydatetime()
 
 
+def _instrument_returns_from_central_store(
+    store: Any,
+    tickers: tuple[str, ...],
+    start: datetime,
+    end: datetime,
+) -> pd.DataFrame:
+    daily_frames = [
+        store.query_candles(Ticker[ticker], TimeFrame.D, start=start, end=end)
+        .reset_index()[["datetime", "ticker", "close"]]
+        for ticker in tickers
+    ]
+    if not daily_frames:
+        return pd.DataFrame()
+    all_daily = pd.concat(daily_frames, ignore_index=True)
+    all_daily["datetime"] = pd.to_datetime(all_daily["datetime"]).dt.normalize()
+    returns = (
+        all_daily.sort_values(["ticker", "datetime"])
+        .assign(ret=lambda frame: frame.groupby("ticker")["close"].pct_change())
+        .pivot(index="datetime", columns="ticker", values="ret")
+        .fillna(0.0)
+    )
+    returns.columns = [str(col) for col in returns.columns]
+    return returns
+
+
 def _summary_dict(summary: Any) -> dict[str, Any]:
     if hasattr(summary, "__dataclass_fields__"):
         payload = asdict(summary)
@@ -315,9 +370,9 @@ def _run_live_cache_refresh_cycle(
     from ensemble.portfolio import (
         PortfolioCacheQuery,
         PortfolioWorld,
-        load_global_portfolio_snapshot,
+        build_global_portfolio_from_ensemble_dirs,
+        materialize_global_portfolio_predictions,
     )
-    from utils.cache.runtime.portfolio_materialization import materialize_global_portfolio_predictions
 
     started_at = _utc_now_iso()
     resolved_manifest_path = str(
@@ -430,10 +485,21 @@ def _run_live_cache_refresh_cycle(
         materialized_portfolios: list[dict[str, Any]] = []
         for portfolio in affected_portfolios:
             query = queries[portfolio.name]
-            global_portfolio = load_global_portfolio_snapshot(
-                portfolio_id=portfolio.portfolio_id,
-                vault_root=manifest.snapshot_vault_root,
+            ensemble_dirs = portfolio.ensemble_dirs or manifest.active_ensemble_dirs
+            global_portfolio = build_global_portfolio_from_ensemble_dirs(
+                ensemble_dirs,
+                active_timeframes=tuple(portfolio.timeframes),
+                target_volatility=portfolio.target_volatility,
+                max_position_pct=portfolio.max_position_pct,
+                idm_max=portfolio.idm_max,
             )
+            instrument_returns = _instrument_returns_from_central_store(
+                store,
+                portfolio.tickers,
+                query.start,
+                query.end,
+            )
+            global_portfolio.fit_from_cache(query, instrument_returns)
             materialization = materialize_global_portfolio_predictions(
                 portfolio=global_portfolio,
                 query=query,
@@ -443,6 +509,7 @@ def _run_live_cache_refresh_cycle(
                 scope=ArtifactScope.LIVE,
                 vault_root=manifest.vault_root,
                 cache_root=str(store.cache_dir),
+                ensemble_dirs=ensemble_dirs,
             )
             materialized_portfolios.append(
                 {

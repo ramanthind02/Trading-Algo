@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from .portfolio_impl.global_portfolio_impl import (
     GlobalPortfolio,
-    load_global_portfolio_snapshot,
     materialize_global_portfolio_predictions,
     prune_inactive_base_model_materializations,
+)
+from .portfolio_impl.vault_portfolio_loader import (
+    build_global_portfolio_from_ensemble_dirs,
+    discover_ensemble_dirs_in_vault,
 )
 from .portfolio_impl.portfolio_cache import PortfolioCacheQuery
 from .portfolio_impl.tf_portfolio import (
@@ -28,7 +31,8 @@ __all__ = [
     "PortfolioWorld",
     "TFPortfolio",
     "_forecast_to_activity_signal",
-    "load_global_portfolio_snapshot",
+    "build_global_portfolio_from_ensemble_dirs",
+    "discover_ensemble_dirs_in_vault",
     "materialize_global_portfolio_predictions",
     "prune_inactive_base_model_materializations",
 ]

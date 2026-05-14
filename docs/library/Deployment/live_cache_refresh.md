@@ -1,9 +1,9 @@
 # Live Cache Refresh
 
 > [!summary]
-> When `ArtifactScope.LIVE` candles are written into the central cache, the runtime can automatically refresh stale live bias artifacts and rematerialize live base-model and portfolio predictions. This is an inference-only path. It does not refit models and it does not create new portfolio snapshots.
+> When `ArtifactScope.LIVE` candles are written into the central cache, the runtime can automatically refresh stale live bias artifacts and rematerialize live base-model and portfolio predictions. Base-model **vault** JSON is not refit here; the portfolio step rebuilds a `GlobalPortfolio` from the working vault and runs `fit_from_cache` / `predict_from_cache` on the configured replay window (no separate frozen snapshot tree).
 
-Related: [[Cache/architecture]], [[Cache/user_guide]], [[Deployment/live_multi_timeframe]], [[Vault/portfolio_snapshot_usage]].
+Related: [[Cache/architecture]], [[Cache/user_guide]], [[Deployment/live_multi_timeframe]], [[Vault/vault]].
 
 ## What it does
 
@@ -13,20 +13,18 @@ With a valid `deployment/config/live_cache_refresh.json` in place:
 - only `ArtifactScope.LIVE` writes participate
 - dirty `(ticker, timeframe)` updates are coalesced and debounced in-process
 - the refresh cycle rebuilds stale live bias artifacts through `ensure_vault_cache_coverage(...)`
-- the cycle then loads each affected `GlobalPortfolio` snapshot by `portfolio_id`
+- the cycle then builds each affected `GlobalPortfolio` from `active_ensemble_dirs` (or per-portfolio `ensemble_dirs`), runs `fit_from_cache` on the replay-window query, and materializes live predictions
 - live predictions are materialized into `.cache/trading_algo/central_cache/materialized/live/...`
 - stale base-model materialization parquet files that no longer belong to the working vault are pruned
 
 What it does **not** do:
 
-- no `fit_from_cache(...)`
-- no base-model refits
-- no new `portfolio_id` snapshots
+- no base-model refits inside vault feature JSON (bias refresh only rebuilds missing/stale **cache** artifacts)
 - no research-scope orchestration
 
 ## Manifest contract
 
-`vault_root` and `snapshot_vault_root` are strings passed to `utils.vault_paths.resolve_vault_root` (repo-relative dirnames such as `vault` or `vault_personal`, or absolute paths). `active_ensemble_dirs` entries must be repo-relative and use the matching top-level folder.
+`vault_root` is a string passed to `utils.vault_paths.resolve_vault_root` (repo-relative dirnames such as `vault` or `vault_personal`, or absolute paths). `active_ensemble_dirs` entries must be repo-relative and use the matching top-level folder.
 
 Path:
 
@@ -41,7 +39,6 @@ Example:
   "version": "1",
   "enabled": true,
   "vault_root": "vault",
-  "snapshot_vault_root": "vault",
   "debounce_seconds": 2,
   "active_ensemble_dirs": [
     "vault/M/buy_hold/buy_hold_long"
@@ -49,7 +46,7 @@ Example:
   "active_portfolios": [
     {
       "name": "buy_hold_live",
-      "portfolio_id": "gp_6fa6c3d7...",
+      "portfolio_id": "prop_live_portfolio",
       "tickers": ["ES", "NQ", "ZN"],
       "timeframes": ["M"],
       "volatility_timeframe": "D",
@@ -64,26 +61,27 @@ Field meanings:
 
 - `version`: manifest schema version. Current value is `"1"`.
 - `enabled`: global on/off switch for automatic live refresh.
-- `vault_root`: working vault root used for bias refresh and stale base-model cleanup.
-- `snapshot_vault_root`: vault root that contains immutable `portfolio_snapshots/<portfolio_id>/...`.
+- `vault_root`: working vault root used for bias refresh, portfolio assembly, and stale base-model cleanup.
 - `debounce_seconds`: coalescing window for repeated candle writes. Default deployment value is `2`.
-- `active_ensemble_dirs`: working-vault ensemble dirs used for live bias refresh.
-- `active_portfolios`: deployed live portfolio snapshots to materialize.
+- `active_ensemble_dirs`: default working-vault ensemble dirs used for live bias refresh and (unless overridden) for assembling each `GlobalPortfolio`.
+- `active_portfolios`: deployed live portfolio definitions to materialize.
 
 Per active portfolio:
 
 - `name`: operator-facing label used in status output.
-- `portfolio_id`: immutable saved `GlobalPortfolio` snapshot id.
+- `portfolio_id`: stable string key used in materialized parquet rows and filenames (choose one per deployed portfolio).
 - `tickers`: live traded instrument set.
-- `timeframes`: trading timeframes used by the portfolio snapshot.
+- `timeframes`: trading timeframes for the portfolio.
 - `volatility_timeframe`: required volatility lineage timeframe, usually `D`.
 - `replay_window_days`: bounded lookback window for live re-materialization. Use `62` in examples unless the deployment needs something else.
 - `research_run_id`: optional row tag written into materialized parquet outputs.
+- `ensemble_dirs` (optional): list of repo-relative ensemble directories for this portfolio; defaults to manifest `active_ensemble_dirs` when omitted.
+- `target_volatility`, `max_position_pct`, `idm_max` (optional): portfolio construction parameters (defaults `0.20`, `2.5`, `2.5`).
 
 Operational meaning:
 
-- `active_ensemble_dirs` point at the **working vault**
-- `portfolio_id` points at an **immutable snapshot**
+- `active_ensemble_dirs` point at the **working vault** ensembles used for bias refresh and (by default) portfolio assembly
+- `portfolio_id` is a **stable operator-chosen id** for cache outputs, not a content hash
 - the manifest is the explicit source of truth for the active live set in v1
 
 ## Minimal operator workflow

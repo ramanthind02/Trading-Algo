@@ -28,6 +28,7 @@ import argparse
 import time
 import logging
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
@@ -54,8 +55,11 @@ from ibapi.contract import Contract
 
 # Project imports
 from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
-from ensemble.vault_manager import load_ensemble_from_vault
-from ensemble.portfolio import TFPortfolio, GlobalPortfolio
+from ensemble.portfolio import (
+    GlobalPortfolio,
+    build_global_portfolio_from_ensemble_dirs,
+    discover_ensemble_dirs_in_vault,
+)
 from deployment.telegram_notifier import TelegramNotifier
 from utils.core.enums import TimeFrame, Ticker
 from utils.futures_micro_specs import (
@@ -77,6 +81,16 @@ DEFAULT_CONFIG_PATH_PERSONAL = "configs/live_forecast_config_personal.json"
 # ==============================================================================
 # DATA FETCHING
 # ==============================================================================
+
+
+def _ib_historical_duration_for_daily_lookback(lookback_days: int) -> str:
+    """Map a desired daily bar count to an IB ``durationStr`` (TWS rule: >365 days → years)."""
+    if lookback_days <= 0:
+        return "1 D"
+    if lookback_days <= 365:
+        return f"{lookback_days} D"
+    years = max(2, (lookback_days + 364) // 365)
+    return f"{years} Y"
 
 def create_futures_contract(symbol: str, exchange: str) -> Contract:
     """Create a continuous futures contract for data fetching."""
@@ -126,7 +140,9 @@ def fetch_historical_candles(
     instrument_info : dict
         Instrument config with keys: sec_type, exchange, etf
     lookback_days : int
-        Number of days of history to fetch
+        Calendar span to approximate: IB is queried with ``ND`` (≤365) or
+        ``NY`` years (>365 rule), then the returned series is trimmed to at most
+        this many **rows** (sorted by session date).
 
     Returns
     -------
@@ -135,11 +151,15 @@ def fetch_historical_candles(
     """
     contract = _create_contract_from_config(ticker, instrument_info)
 
+    duration = _ib_historical_duration_for_daily_lookback(lookback_days)
+    if not duration.endswith(" D") or duration != f"{lookback_days} D":
+        print(f"    IB durationStr={duration!r} (TWS caps single request at 365 D; trim to {lookback_days} rows)")
+
     # Request historical data
     req_id = client.request_historical_data(
         contract,
         end_date_time="",  # Current time
-        duration=f"{lookback_days} D",
+        duration=duration,
         bar_size="1 day",
         what_to_show="TRADES",
         use_rth=1,
@@ -175,6 +195,8 @@ def fetch_historical_candles(
 
     df = pd.DataFrame(rows)
     df = df.sort_values("datetime").reset_index(drop=True)
+    if len(df) > lookback_days:
+        df = df.iloc[-lookback_days:].reset_index(drop=True)
 
     print(f"  {ticker}: Fetched {len(df)} bars, last date: {df['datetime'].iloc[-1].strftime('%Y-%m-%d') if len(df) > 0 else 'N/A'}")
 
@@ -187,11 +209,19 @@ def fetch_partial_daily_candle(
     instrument_info: Dict,
     intraday_bar_size: str = "15 mins",
 ) -> pd.DataFrame:
-    """Build a synthetic *partial* daily candle for today from intraday bars.
+    """Build a synthetic *partial* daily bar from intraday history (session-only).
 
-    Used by the personal-account profile which runs before the official daily
-    candle closes. Fetches intraday bars for today only, then aggregates them
-    into a single OHLCV row dated today. O=first, H=max, L=min, C=latest, V=sum.
+    Used by the personal-account profile before the official daily close. IB
+    returns all bars in the ``duration`` window; with ``use_rth=0`` this
+    includes **extended and overnight** hours where the contract allows them.
+
+    **Open (O)** is the **open of the chronologically first** intraday bar in
+    the returned series (IB's session boundary for that symbol). **High/low**
+    are extrema over all returned bars; **close** is the last bar's close;
+    **volume** is the sum of bar volumes.
+
+    This frame is **not** written to the central cache — it is merged only
+    for the current run via :class:`PortfolioCacheQuery.daily_candle_overlay`.
 
     Returns a 1-row DataFrame shaped like :func:`fetch_historical_candles`
     output, or an empty frame if no intraday bars are returned.
@@ -206,7 +236,7 @@ def fetch_partial_daily_candle(
         duration="1 D",
         bar_size=intraday_bar_size,
         what_to_show="TRADES",
-        use_rth=1,
+        use_rth=0,
         format_date=1,
         keep_up_to_date=False,
     )
@@ -219,7 +249,7 @@ def fetch_partial_daily_candle(
             print(f"  Warning: No intraday bars for {ticker}")
         return pd.DataFrame()
 
-    rows = []
+    rows: List[Dict[str, Any]] = []
     for bar in client.historical_bars:
         rows.append({
             "dt": pd.to_datetime(bar.date),
@@ -323,39 +353,6 @@ def fetch_current_prices(
 # PORTFOLIO LOADING
 # ==============================================================================
 
-def _load_ensembles_for_tf(vault_root: str, tf: TimeFrame) -> list:
-    """Load all ensembles from ``vault_root/{tf.name}/``.
-
-    Supports both the preferred nested layout
-    (``vault_root/{tf}/{weight_group}/{ensemble}/``) and the legacy flat
-    layout (``vault_root/{tf}/{ensemble}/``).
-    """
-    from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
-
-    tf_dir = Path(vault_root) / tf.name
-    if not tf_dir.exists():
-        return []
-
-    ensembles = []
-    for child in sorted(tf_dir.iterdir()):
-        if not child.is_dir():
-            continue
-        if child.name in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES:
-            # Nested: iterate ensembles under this weight group.
-            candidates = sorted(d for d in child.iterdir() if d.is_dir())
-        else:
-            # Legacy flat: ``child`` is the ensemble leaf itself.
-            candidates = [child]
-        for ens_dir in candidates:
-            try:
-                ens = load_ensemble_from_vault(str(ens_dir))
-                ensembles.append(ens)
-                print(f"    Loaded: {ens_dir.name}")
-            except Exception as e:
-                print(f"    Warning: Skipping {ens_dir.name}: {e}")
-    return ensembles
-
-
 def build_portfolio(config: Dict) -> GlobalPortfolio:
     """
     Build a GlobalPortfolio with auto-loaded TFPortfolio instances from vault.
@@ -371,38 +368,28 @@ def build_portfolio(config: Dict) -> GlobalPortfolio:
         Multi-timeframe portfolio with all vault ensembles
     """
     vault_root = str(resolve_vault_root(config["portfolio"]["vault_root"]))
-    target_vol = config["portfolio"]["target_volatility"]
-    max_pos = config["portfolio"]["max_position_pct"]
-    idm_max = config["portfolio"]["idm_max"]
+    target_vol = float(config["portfolio"]["target_volatility"])
+    max_pos = float(config["portfolio"]["max_position_pct"])
+    idm_max = float(config["portfolio"]["idm_max"])
 
-    tf_portfolios = []
-    for tf in [TimeFrame.D, TimeFrame.M]:
+    for tf in (TimeFrame.D, TimeFrame.M):
         print(f"  Loading {tf.name} ensembles...")
-        ensembles = _load_ensembles_for_tf(vault_root, tf)
-        if not ensembles:
-            print(f"    No ensembles found for {tf.name}, skipping")
-            continue
-
-        tf_p = TFPortfolio(
-            ensembles=ensembles,
-            trading_timeframe=tf,
-            target_volatility=target_vol,
-            max_position_pct=max_pos,
-            idm_max=idm_max,
-        )
-        tf_portfolios.append(tf_p)
-        print(f"    {tf.name}: {len(ensembles)} ensemble(s) loaded")
-
-    if not tf_portfolios:
+    dirs = discover_ensemble_dirs_in_vault(vault_root, (TimeFrame.D, TimeFrame.M))
+    if not dirs:
         raise ValueError(f"No ensembles found in vault root: {vault_root}")
-
-    portfolio = GlobalPortfolio(
-        tf_portfolios=tf_portfolios,
+    print(f"  Discovered {len(dirs)} ensemble directory(ies) under {vault_root}")
+    portfolio = build_global_portfolio_from_ensemble_dirs(
+        dirs,
+        active_timeframes=(TimeFrame.D, TimeFrame.M),
+        target_volatility=target_vol,
         max_position_pct=max_pos,
         idm_max=idm_max,
     )
-    total_ensembles = sum(len(tp.ensembles) for tp in tf_portfolios)
-    print(f"  GlobalPortfolio created: {len(tf_portfolios)} timeframe(s), {total_ensembles} total ensemble(s)")
+    total_ensembles = sum(len(tp.ensembles) for tp in portfolio.tf_portfolios)
+    print(
+        f"  GlobalPortfolio created: {len(portfolio.tf_portfolios)} timeframe(s), "
+        f"{total_ensembles} total ensemble(s)"
+    )
     return portfolio
 
 
@@ -480,6 +467,7 @@ def ensure_cache_ready(required_tickers: Set[str]) -> Dict[str, Any]:
 def upsert_tws_candles(
     daily_candles: pd.DataFrame,
     required_tickers: Set[str],
+    instruments: Dict[str, Any] | None = None,
 ) -> None:
     """Upsert fetched TWS daily bars into central cache and resample to monthly.
 
@@ -489,10 +477,19 @@ def upsert_tws_candles(
         All fetched daily candles with 'ticker' column.
     required_tickers : Set[str]
         Ticker names to upsert.
+    instruments : dict, optional
+        Config ``instruments`` map (per-ticker ``sec_type``). Used to apply
+        junction ratio alignment and append-only filtering (all IB appends) via
+        :func:`prepare_ib_rows_for_central_cache_append`.
     """
     from utils.cache.runtime.central_cache import CentralCacheStore
+    from utils.cache.runtime.central_cache_errors import ArtifactMissingError
+    from utils.cache.runtime.ib_candle_ratio_align import (
+        prepare_ib_rows_for_central_cache_append,
+    )
 
     store = CentralCacheStore.get_instance()
+    inst_map: Dict[str, Any] = instruments if instruments is not None else {}
 
     for ticker_str in sorted(required_tickers):
         ticker_mask = daily_candles["ticker"].astype(str) == ticker_str
@@ -503,8 +500,43 @@ def upsert_tws_candles(
             ticker_enum = Ticker[ticker_str]
         except KeyError:
             continue
-        store.upsert_candles(ticker_enum, TimeFrame.D, ticker_candles)
-        print(f"    {ticker_str} D: upserted {len(ticker_candles)} bars")
+        inst_raw = inst_map.get(ticker_str)
+        inst: Dict[str, Any] = inst_raw if isinstance(inst_raw, dict) else {}
+        sec_type = str(inst.get("sec_type", "CONTFUT"))
+        apply_ratio = True
+
+        try:
+            existing = store.query_candles(ticker_enum, TimeFrame.D)
+        except ArtifactMissingError:
+            existing = pd.DataFrame()
+
+        append_result = prepare_ib_rows_for_central_cache_append(
+            existing,
+            ticker_candles,
+            apply_junction_ratio=apply_ratio,
+        )
+        to_write = append_result.candles_df
+        if to_write.empty:
+            reason = append_result.skip_reason or "empty"
+            print(
+                f"    {ticker_str} D: skip upsert ({reason}; "
+                f"ib_rows={append_result.rows_in}, kept={append_result.rows_kept})"
+            )
+            continue
+
+        if append_result.rows_kept < append_result.rows_in:
+            print(
+                f"    {ticker_str} D: append-only kept {append_result.rows_kept}/"
+                f"{append_result.rows_in} IB rows (cache end before new sessions)"
+            )
+        if append_result.applied_ratio and append_result.ratio is not None:
+            print(
+                f"    {ticker_str} D: ratio-aligned to cache anchor "
+                f"(r={append_result.ratio:.8f})"
+            )
+
+        store.upsert_candles(ticker_enum, TimeFrame.D, to_write)
+        print(f"    {ticker_str} D: upserted {len(to_write)} bars")
 
     for ticker_str in sorted(required_tickers):
         try:
@@ -525,6 +557,114 @@ def upsert_tws_candles(
         monthly = resample_daily_to_monthly(full_daily)
         if not monthly.empty:
             store.upsert_candles(ticker_enum, TimeFrame.M, monthly)
+
+
+def sync_ib_fetched_dailies_into_central_cache(
+    *,
+    config: Dict[str, Any],
+    required_tickers: Set[str],
+    client: IBDataClient,
+    profile: str,
+) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    """Fetch IB daily history for required instruments and merge into central cache.
+
+    Upserts daily bars, refreshes monthly aggregates, and fills ``CrossTickerDataStore``
+    for every ticker present in the returned runtime daily frame (same as the live
+    forecast pipeline). Session-only partial dailies are built only for the
+    ``personal`` profile and are **not** written to cache (overlay only).
+    """
+    from utils.data.cross_ticker_store import CrossTickerDataStore
+
+    print("\n4. Fetching historical data...")
+    instruments = config["instruments"]
+    data_cfg = config.get("data") or {}
+    min_lb = data_cfg.get("min_lookback_days", 10) if isinstance(data_cfg, dict) else 10
+    max_lb = data_cfg.get("max_lookback_days", 365) if isinstance(data_cfg, dict) else 365
+
+    all_candles: List[pd.DataFrame] = []
+    for ticker in sorted(required_tickers):
+        if ticker not in instruments:
+            continue
+        lookback = compute_fetch_lookback(ticker, max_lookback=max_lb, min_lookback=min_lb)
+        print(f"  {ticker}: fetching {lookback} days")
+        candles = fetch_historical_candles(
+            client,
+            ticker,
+            instruments[ticker],
+            lookback_days=lookback,
+        )
+        if not candles.empty:
+            all_candles.append(candles)
+
+    if not all_candles:
+        raise ValueError("No historical data fetched for any instrument.")
+
+    daily_candles = pd.concat(all_candles, ignore_index=True)
+    print(
+        f"Total daily candles fetched: {len(daily_candles)} across "
+        f"{daily_candles['ticker'].nunique()} instruments"
+    )
+
+    daily_for_cache = (
+        _strip_rows_for_current_ny_calendar_day(daily_candles)
+        if profile == "personal"
+        else daily_candles.copy()
+    )
+
+    partial_overlay_df: pd.DataFrame | None = None
+    if profile == "personal":
+        print("\n4b. Session-only partial daily bar (15-min aggregation, incl. extended hours)...")
+        partial_frames: List[pd.DataFrame] = []
+        for ticker in sorted(required_tickers):
+            if ticker not in instruments:
+                continue
+            partial = fetch_partial_daily_candle(
+                client,
+                ticker,
+                instruments[ticker],
+                intraday_bar_size="15 mins",
+            )
+            if partial.empty:
+                continue
+            partial_frames.append(partial)
+        if partial_frames:
+            partial_overlay_df = pd.concat(partial_frames, ignore_index=True)
+            print(f"  Built {len(partial_frames)} session-only partial row(s) (not written to cache).")
+        else:
+            print("  No partial rows built (no intraday bars returned).")
+        ny_today = _ny_calendar_today_naive().normalize()
+        print(
+            f"  Daily merge check (personal): NY calendar date = {ny_today.date()} — "
+            "completed IB dailies for that date were stripped before cache upsert; "
+            "intraday-built partial row(s), if any, supply today's O/H/L/C for the run."
+        )
+
+    runtime_daily = (
+        pd.concat([daily_for_cache, partial_overlay_df], ignore_index=True)
+        .sort_values(["ticker", "datetime"])
+        .reset_index(drop=True)
+        if partial_overlay_df is not None and not partial_overlay_df.empty
+        else daily_for_cache.copy()
+    )
+
+    print("\n5. Upserting complete daily candles into cache (no session-only partials)...")
+    upsert_tws_candles(daily_for_cache, required_tickers, instruments=instruments)
+
+    print("\n   Populating cross-ticker data store...")
+    ct_store = CrossTickerDataStore.get_instance()
+    for ticker_name in sorted(runtime_daily["ticker"].unique()):
+        ticker_str = str(ticker_name)
+        try:
+            ct_ticker = Ticker[ticker_str]
+        except KeyError:
+            continue
+        if ct_store.is_loaded(ct_ticker, TimeFrame.D):
+            continue
+        ticker_mask = runtime_daily["ticker"] == ticker_name
+        ct_store.set_data(ct_ticker, TimeFrame.D, runtime_daily.loc[ticker_mask].copy())
+        print(f"   Cross-ticker {ticker_str}: loaded from runtime daily frame")
+
+    return runtime_daily, partial_overlay_df
 
 
 def refresh_bias_caches(
@@ -605,16 +745,37 @@ def refresh_bias_caches(
     return summary
 
 
+def _ny_calendar_today_naive() -> pd.Timestamp:
+    """Today's calendar date in America/New_York as a naive midnight Timestamp."""
+    return pd.Timestamp(datetime.now(tz=ZoneInfo("America/New_York")).date())
+
+
+def _strip_rows_for_current_ny_calendar_day(rows: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows dated *today* in NY for ``datetime`` (incomplete official dailies)."""
+    if rows.empty or "datetime" not in rows.columns:
+        return rows
+    cutoff = _ny_calendar_today_naive().normalize()
+    dt_norm = pd.to_datetime(rows["datetime"]).dt.normalize()
+    return rows.loc[dt_norm != cutoff].copy()
+
+
 def build_cache_query(
     required_tickers: Set[str],
+    *,
+    data_config: Dict[str, Any] | None = None,
+    daily_overlay: pd.DataFrame | None = None,
 ) -> tuple:
     """Build PortfolioCacheQuery and instrument_returns from cached candles.
 
-    Returns (query, instrument_returns) tuple.
+    Optional ``daily_overlay`` rows are merged for this run only (not read
+    from disk). ``prediction_daily_max_bars`` (default 500 from ``data_config``)
+    limits the **daily** candle history passed into fit/predict; monthly
+    candles still use the full ``start``/``end`` window.
     """
     from utils.cache.runtime.central_cache import CentralCacheStore
     from utils.cache.runtime.central_cache_models import ArtifactScope
     from ensemble.portfolio import PortfolioCacheQuery
+    from ensemble.portfolio_impl.portfolio_cache import _query_candles_from_cache
 
     store = CentralCacheStore.get_instance()
 
@@ -633,8 +794,17 @@ def build_cache_query(
     if not starts:
         raise ValueError("No candle coverage in cache")
 
-    query_start = max(starts)
-    query_end = min(ends)
+    query_start = max(pd.Timestamp(s) for s in starts).to_pydatetime()
+    query_end = min(pd.Timestamp(e) for e in ends).to_pydatetime()
+
+    if daily_overlay is not None and not daily_overlay.empty:
+        overlay_end = pd.to_datetime(daily_overlay["datetime"]).max()
+        query_end = max(pd.Timestamp(query_end), pd.Timestamp(overlay_end)).to_pydatetime()
+
+    raw_max = (data_config or {}).get("prediction_daily_max_bars", 500)
+    max_daily = max(0, int(raw_max)) if raw_max is not None else 500
+
+    overlay_arg = daily_overlay if daily_overlay is not None and not daily_overlay.empty else None
 
     query = PortfolioCacheQuery(
         tickers=tuple(sorted(required_tickers)),
@@ -642,26 +812,22 @@ def build_cache_query(
         end=query_end,
         timeframes=(TimeFrame.D, TimeFrame.M),
         scope=ArtifactScope.LIVE,
+        daily_candle_overlay=overlay_arg,
+        prediction_daily_max_bars=max_daily,
     )
 
-    frames = []
-    for ticker_str in sorted(required_tickers):
-        try:
-            ticker_enum = Ticker[ticker_str]
-        except KeyError:
-            continue
-        candles = store.query_candles(
-            ticker_enum, TimeFrame.D,
-            start=query_start, end=query_end,
-        ).reset_index()
-        if not candles.empty:
-            candles = candles.set_index("datetime")["close"].rename(ticker_str)
-            frames.append(candles)
+    merged_d = _query_candles_from_cache(query, TimeFrame.D)
 
-    if not frames:
+    ret_frames: List[pd.Series] = []
+    for ticker_str in sorted(required_tickers):
+        sub = merged_d.loc[merged_d["ticker"].astype(str) == ticker_str].sort_values("datetime")
+        if not sub.empty:
+            ret_frames.append(sub.set_index("datetime")["close"].rename(ticker_str))
+
+    if not ret_frames:
         raise ValueError("No daily candle data in cache for returns computation")
 
-    prices = pd.concat(frames, axis=1).sort_index()
+    prices = pd.concat(ret_frames, axis=1).sort_index()
     instrument_returns = prices.pct_change(fill_method=None).dropna(how="all")
 
     return query, instrument_returns
@@ -1096,6 +1262,8 @@ def main():
     # Apply overrides
     capital = args.capital or config["account"]["capital_usd"]
     port = args.port or config["connection"]["port"]
+    data_cfg = config.get("data") or {}
+    instruments: Dict[str, Any] = config["instruments"]
 
     print("=" * 60)
     header = "Prop Firms (futures)" if profile == "prop" else "Personal Account (ETFs)"
@@ -1162,96 +1330,12 @@ def main():
         # Brief pause to ensure API is fully ready
         time.sleep(1)
 
-        # Step 4: Fetch historical data with smart lookback per ticker
-        print("\n4. Fetching historical data...")
-        all_candles = []
-        instruments = config["instruments"]
-        data_cfg = config["data"]
-        min_lb = data_cfg.get("min_lookback_days", 10)
-        max_lb = data_cfg.get("max_lookback_days", 365)
-
-        for ticker in sorted(required_tickers):
-            if ticker not in instruments:
-                continue
-            lookback = compute_fetch_lookback(ticker, max_lookback=max_lb, min_lookback=min_lb)
-            print(f"  {ticker}: fetching {lookback} days")
-            candles = fetch_historical_candles(
-                client,
-                ticker,
-                instruments[ticker],
-                lookback_days=lookback,
-            )
-            if not candles.empty:
-                all_candles.append(candles)
-
-        if not all_candles:
-            print("ERROR: No historical data fetched for any instrument.")
-            sys.exit(1)
-
-        daily_candles = pd.concat(all_candles, ignore_index=True)
-        print(f"Total daily candles: {len(daily_candles)} across {daily_candles['ticker'].nunique()} instruments")
-
-        # Personal profile: append a synthetic partial daily candle for today
-        # built from 15-min intraday bars. We run the script before the regular
-        # daily close, so IB's daily bar for today isn't available yet.
-        if profile == "personal":
-            print("\n4b. Fetching partial daily candles (15-min aggregation) for today...")
-            partial_frames = []
-            for ticker in sorted(required_tickers):
-                if ticker not in instruments:
-                    continue
-                partial = fetch_partial_daily_candle(
-                    client,
-                    ticker,
-                    instruments[ticker],
-                    intraday_bar_size="15 mins",
-                )
-                if partial.empty:
-                    continue
-                # Drop any existing row for the same date/ticker so we replace
-                # whatever IB returned with the fresher synthetic bar.
-                partial_date = partial["datetime"].iloc[0]
-                mask = (
-                    (daily_candles["ticker"] == ticker)
-                    & (pd.to_datetime(daily_candles["datetime"]).dt.normalize() == partial_date)
-                )
-                daily_candles = daily_candles.loc[~mask]
-                partial_frames.append(partial)
-            if partial_frames:
-                daily_candles = pd.concat(
-                    [daily_candles] + partial_frames, ignore_index=True
-                ).sort_values(["ticker", "datetime"]).reset_index(drop=True)
-                print(
-                    f"  Appended {len(partial_frames)} partial daily candle(s) dated today. "
-                    f"Total daily candles: {len(daily_candles)}."
-                )
-            else:
-                print("  No partial daily candles synthesized (no intraday bars returned).")
-
-        # Step 5: Upsert fetched candles into central cache (+ auto monthly resample)
-        print("\n5. Upserting TWS candles into cache...")
-        upsert_tws_candles(daily_candles, required_tickers)
-
-        # Populate cross-ticker store with ALL fetched tickers.
-        # Ensembles with cross-ticker bias nodes (e.g., rebalancing) look up
-        # data from the cross-ticker store at predict time. We pre-load every
-        # fetched ticker so lookups succeed regardless of camelCase/snake_case
-        # param key differences.
-        print("\n   Populating cross-ticker data store...")
-        from utils.data.cross_ticker_store import CrossTickerDataStore
-
-        ct_store = CrossTickerDataStore.get_instance()
-        for ticker_name in sorted(daily_candles['ticker'].unique()):
-            ticker_str = str(ticker_name)
-            try:
-                ct_ticker = Ticker[ticker_str]
-            except KeyError:
-                continue
-            if ct_store.is_loaded(ct_ticker, TimeFrame.D):
-                continue
-            ticker_mask = daily_candles['ticker'] == ticker_name
-            ct_store.set_data(ct_ticker, TimeFrame.D, daily_candles.loc[ticker_mask].copy())
-            print(f"   Cross-ticker {ticker_str}: loaded from fetched data")
+        runtime_daily, partial_overlay_df = sync_ib_fetched_dailies_into_central_cache(
+            config=config,
+            required_tickers=required_tickers,
+            client=client,
+            profile=profile,
+        )
 
         # Step 6: Refresh stale bias node caches
         print("\n6. Refreshing bias caches...")
@@ -1262,7 +1346,11 @@ def main():
 
         # Step 7: Build cache query and fit portfolio
         print("\n7. Fitting portfolio from cache...")
-        query, instrument_returns = build_cache_query(required_tickers)
+        query, instrument_returns = build_cache_query(
+            required_tickers,
+            data_config=data_cfg,
+            daily_overlay=partial_overlay_df,
+        )
         portfolio.fit_from_cache(query, instrument_returns)
 
         # Log portfolio parameters
@@ -1275,6 +1363,8 @@ def main():
             print(f"    Instruments: {tf_p.instruments_ if tf_p.instruments_ else 'N/A'}")
         print(f"  Global IDM: {portfolio.global_idm_ if portfolio.global_idm_ else 'N/A'}")
         print(f"  Max Position %: {portfolio.max_position_pct}")
+        tv = float(config["portfolio"]["target_volatility"])
+        print(f"  Target volatility (config, annualized): {tv:.1%}")
         print("=" * 60)
 
         # Step 8: Generate forecasts from cache
@@ -1325,10 +1415,10 @@ def main():
         if profile == "prop":
             # Futures sizing: use last-close futures prices from fetched candles
             # (no extra TWS round-trip needed) and compute micro contract counts.
-            print("\n9. Using latest futures prices from fetched candles...")
+            print("\n9. Using latest futures prices from runtime daily frame...")
             futures_prices: Dict[str, float] = {}
             last_closes = (
-                daily_candles.sort_values("datetime").groupby("ticker")["close"].last()
+                runtime_daily.sort_values("datetime").groupby("ticker")["close"].last()
             )
             for ticker_val, close_price in last_closes.items():
                 ticker_str = ticker_val.name if hasattr(ticker_val, "name") else str(ticker_val)
@@ -1339,6 +1429,17 @@ def main():
                 sys.exit(1)
             print("\n10. Calculating futures positions...")
             shares_df = calculate_futures_contracts(positions_df, futures_prices, capital)
+            if (
+                not shares_df.empty
+                and bool((shares_df["contracts_whole"] == 0).all())
+                and bool((shares_df["contracts_fractional"].abs() > 1e-9).any())
+            ):
+                print(
+                    "\n  NOTE: Integer micro sizing rounded every leg to 0 contracts. "
+                    "Target dollars = position_fraction × capital are smaller than ~half "
+                    "of one micro's price×$/point notional, so int(round(fractional contracts)) "
+                    "stays 0. This matches portfolio_research futures_sim (same round rule)."
+                )
         else:
             # ETF sizing: fetch current ETF prices from TWS and compute fractional shares.
             print("\n9. Fetching current ETF prices...")

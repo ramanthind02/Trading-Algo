@@ -66,7 +66,6 @@ def _write_manifest(
         "version": "1",
         "enabled": enabled,
         "vault_root": "vault",
-        "snapshot_vault_root": "vault",
         "debounce_seconds": debounce_seconds,
         "active_ensemble_dirs": active_ensemble_dirs or ["vault/M/buy_hold/buy_hold_long"],
         "active_portfolios": active_portfolios

@@ -170,8 +170,7 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 
 - `ensemble/portfolio.py` exposes `PortfolioCacheQuery`
 - `TFPortfolio` and `GlobalPortfolio` support `fit_from_cache(...)` and `predict_from_cache(...)`
-- `GlobalPortfolio.save_to_vault(...)` persists frozen snapshots under `<vault_root>/portfolio_snapshots/<portfolio_id>/` (see [[Vault/vault]] for prop vs `vault_personal`)
-- `load_global_portfolio_snapshot(...)` reconstructs a `GlobalPortfolio` from the snapshot-local frozen ensemble files
+- `discover_ensemble_dirs_in_vault(...)` and `build_global_portfolio_from_ensemble_dirs(...)` assemble a `GlobalPortfolio` from working-vault ensemble paths
 - `materialize_global_portfolio_predictions(...)` writes portfolio and base-model parquet outputs under `.cache/trading_algo/central_cache/materialized/<scope>/`
 - `prune_inactive_base_model_materializations(...)` scans the current working vault and removes stale base-model parquet files only
 - volatility lineage is resolved from cached EWSD artifacts rather than caller-supplied `daily_volatility_df`

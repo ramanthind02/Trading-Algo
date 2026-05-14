@@ -12,8 +12,7 @@
   "tickers": [
     "ES",
     "GC",
-    "NQ",
-    "RTY"
+    "NQ"
   ],
   "base_models": [
     {

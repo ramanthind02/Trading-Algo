@@ -10,16 +10,11 @@ import pandas as pd
 import pytest
 
 import utils.cache.runtime.live_cache_refresh as live_refresh  # noqa: E402
-from ensemble.portfolio import GlobalPortfolio, PortfolioCacheQuery, TFPortfolio  # noqa: E402
 from ensemble.vault_manager import (  # noqa: E402
     ensure_vault_cache_coverage,
     get_ensemble_tickers,
-    load_ensemble_from_vault,
 )
-from tests.integration._portfolio_cache_helpers import (  # noqa: E402
-    instrument_returns_from_cache,
-    source_data_available,
-)
+from tests.integration._portfolio_cache_helpers import source_data_available  # noqa: E402
 from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
 from utils.cache.runtime.central_cache import CentralCacheStore  # noqa: E402
 from utils.cache.runtime.central_cache_models import (  # noqa: E402
@@ -74,52 +69,7 @@ def test_live_candle_updates_trigger_automatic_refresh(
     assert refresh_summary["failed"] == 0
     store = CentralCacheStore.get_instance()
 
-    ensemble = load_ensemble_from_vault(
-        ensemble_dir,
-        refit=True,
-        target_volatility=0.15,
-    )
-    ensemble.use_cache = True
-    ensemble.retry_on_cache_miss = False
-    for model in ensemble.base_models.values():
-        model.use_cache = True
-
-    tf_portfolio = TFPortfolio(
-        ensembles=[ensemble],
-        trading_timeframe=TimeFrame.M,
-        target_volatility=0.15,
-        max_position_pct=3.5,
-        use_cache=True,
-    )
-    global_portfolio = GlobalPortfolio(
-        tf_portfolios=[tf_portfolio],
-        max_position_pct=3.5,
-    )
-
-    instrument_returns = instrument_returns_from_cache(
-        store=store,
-        tickers=tickers,
-        start=train_start,
-        end=live_end,
-    )
-    train_returns = instrument_returns.loc[
-        (instrument_returns.index >= pd.Timestamp(train_start))
-        & (instrument_returns.index <= pd.Timestamp(train_end))
-    ]
-    train_query = PortfolioCacheQuery(
-        tickers=tuple(ticker.name for ticker in tickers),
-        start=train_start,
-        end=train_end,
-        timeframes=(TimeFrame.M,),
-    )
-    global_portfolio.fit_from_cache(train_query, train_returns)
-
-    snapshot_vault_root = tmp_path / "snapshot_vault"
-    portfolio_id = global_portfolio.save_to_vault(
-        fit_start=train_start,
-        fit_end=train_end,
-        vault_root=str(snapshot_vault_root),
-    )
+    portfolio_id = "buy_hold_live_materialization"
 
     manifest_path = tmp_path / "deployment" / "config" / "live_cache_refresh.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +79,6 @@ def test_live_candle_updates_trigger_automatic_refresh(
                 "version": "1",
                 "enabled": True,
                 "vault_root": "vault",
-                "snapshot_vault_root": str(snapshot_vault_root),
                 "debounce_seconds": 0.05,
                 "active_ensemble_dirs": [ensemble_dir],
                 "active_portfolios": [
@@ -141,6 +90,8 @@ def test_live_candle_updates_trigger_automatic_refresh(
                         "volatility_timeframe": "D",
                         "replay_window_days": 62,
                         "research_run_id": "live_refresh_test",
+                        "target_volatility": 0.15,
+                        "max_position_pct": 3.5,
                     }
                 ],
             },
@@ -159,7 +110,8 @@ def test_live_candle_updates_trigger_automatic_refresh(
         for record in store.list_artifacts(scope=ArtifactScope.LIVE)
         if record.descriptor.family == "bias"
         and record.descriptor.ticker == tickers[0]
-        and record.descriptor.timeframe == TimeFrame.D
+        and record.descriptor.timeframe == TimeFrame.M
+        and record.descriptor.module_name == "buy_hold"
     ]
     assert bias_records
     watched_descriptor = bias_records[0].descriptor
@@ -211,6 +163,18 @@ def test_live_candle_updates_trigger_automatic_refresh(
     last_daily_row["low"] = last_daily_row[["open", "close"]].min(axis=1) - 1.0
 
     store.upsert_candles(tickers[0], TimeFrame.D, last_daily_row)
+
+    last_monthly_row = (
+        store.query_candles(tickers[0], TimeFrame.M, start=live_end, end=live_end)
+        .reset_index()
+        .iloc[[-1]]
+        .copy()
+    )
+    last_monthly_row["open"] = last_monthly_row["open"] + 5.0
+    last_monthly_row["close"] = last_monthly_row["close"] + 5.0
+    last_monthly_row["high"] = last_monthly_row[["open", "close"]].max(axis=1) + 1.0
+    last_monthly_row["low"] = last_monthly_row[["open", "close"]].min(axis=1) - 1.0
+    store.upsert_candles(tickers[0], TimeFrame.M, last_monthly_row)
 
     stale_record = store.describe_artifact(watched_descriptor)
     assert stale_record is not None

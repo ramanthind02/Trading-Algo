@@ -5,9 +5,10 @@ Enigma Personal Forecast Entrypoint
 
 Thin wrapper that invokes the shared forecast pipeline with the personal
 profile: reads ``vault_personal/``, sizes ETF fractional shares (SPY, QQQ,
-GLD, IWM, DIA, TLT), synthesizes a partial "today so far" daily candle from
-15-minute intraday bars (because US equity market hasn't closed yet), and
-posts to the personal-account Telegram channel.
+GLD, IWM, DIA, TLT), builds a **session-only** partial daily row from
+15-minute bars (``use_rth=0`` so extended and overnight data are included;
+**not** written to the central cache), and posts to the personal-account
+Telegram channel.
 
 Designed to run once per day around 3:45 PM ET -- 15 minutes before the US
 equity market close at 4:00 PM ET so orders can be placed while fractional
