@@ -18,7 +18,7 @@ The existing repository should remain operational as the internal research workb
 |---|---|
 | `Trading-Algo` | Internal research/backtesting/training lab. Keeps local data, cache, vault, experimental workflows, and current quant research code operational. |
 | `QuantFoundry-Core` | Shared Python library for strategy contracts, validation, candle/runtime models, cache keys, artifact schemas, and reusable engine components. |
-| `QuantFoundry-API` | SaaS backend: auth integration, user/project/strategy metadata, job submission, queue orchestration, status/results APIs, deployment APIs. |
+| `QuantFoundry-API` | SaaS backend: auth integration, user/project/strategy metadata, job submission, ACA Job orchestration, status/results APIs, deployment APIs. |
 | `QuantFoundry-Worker` | Private batch worker image for executing strategy validation/backtests/signal generation jobs. It imports `QuantFoundry-Core`. |
 | `QuantFoundry-Web` | Public web application for dashboard, research workspace, strategy library, portfolio builder, and deployment UI. |
 
@@ -49,8 +49,7 @@ User Browser
   -> QuantFoundry-API on Azure Container Apps
   -> Azure Database for PostgreSQL for product metadata
   -> Azure Blob Storage for source packages, candle Parquet, and result artifacts
-  -> Azure Service Bus for async job dispatch
-  -> QuantFoundry-Worker on Azure Container Apps Jobs
+  -> QuantFoundry-Worker on Azure Container Apps Jobs, started directly by the API for MVP
 ```
 
 ### 3.1 Hosting Decisions
@@ -59,8 +58,8 @@ User Browser
 |---|---|---|
 | Frontend | Vercel | Simplest frontend deploys, preview environments, rollbacks, custom domains, GitHub integration. |
 | API | Azure Container Apps | Container-native FastAPI deployment with scale controls and managed ingress. |
-| Workers | Azure Container Apps Jobs | Finite queued jobs, scale-to-zero economics, container-based Python stack. |
-| Queue | Azure Service Bus | Durable job buffering and decoupling between API and workers. |
+| Workers | Azure Container Apps Jobs | Finite direct-start jobs, scale-to-zero economics, container-based Python stack. |
+| Queue | Deferred | Azure Service Bus can be added before private beta if direct ACA Job startup needs better backpressure/retries. |
 | Metadata DB | Azure Database for PostgreSQL Flexible Server | Relational ownership/versioning/audit model with JSONB escape hatch. |
 | Artifacts | Azure Blob Storage | Cheap durable storage for Parquet, JSON, source bundles, and backtest outputs. |
 | Secrets | Azure Key Vault | OAuth secrets, API keys, storage credentials if not fully using managed identity. |
@@ -83,7 +82,7 @@ Avoid for MVP unless required:
 
 The MVP should avoid manual Azure portal setup as much as possible. Azure resources should be created and updated through Bicep modules executed by GitHub Actions.
 
-Recommended infrastructure repository layout:
+Recommended infrastructure repository layout for `QuantFoundry-API`:
 
 ```text
 infra/
@@ -91,7 +90,6 @@ infra/
     main.bicep
     modules/
       container_apps.bicep
-      service_bus.bicep
       storage.bicep
       postgres.bicep
       key_vault.bicep
@@ -100,6 +98,17 @@ infra/
     bootstrap_azure.ps1
     deploy_infra.ps1
 ```
+
+Infrastructure should live in the repos that own the deployable surface:
+
+| Repository | Infrastructure/config ownership |
+|---|---|
+| `QuantFoundry-API` | Azure Bicep, API/worker container deployment, Postgres migrations, worker job definitions, storage, Key Vault, monitoring. |
+| `QuantFoundry-Web` | Vercel project config, frontend environment variable docs, preview/prod deploy settings. |
+| `QuantFoundry-Core` | No cloud infrastructure; Python package build/test/release only. |
+| `Trading-Algo` | Internal/local research scripts and data publishing scripts until moved into a dedicated data/ops package. |
+
+A separate `QuantFoundry-Infra` repo is not needed for MVP. It can be introduced later only if infrastructure ownership spans many services and the API repo becomes cluttered.
 
 Recommended GitHub Actions workflows:
 
@@ -123,7 +132,7 @@ Pipeline responsibilities:
 | `ci-api.yml` | Test API, build API container image, push to registry. |
 | `ci-worker.yml` | Test worker, build shared worker image, push to registry. |
 | `ci-web.yml` | Typecheck/build frontend, create Vercel preview. |
-| `deploy-dev.yml` | Deploy Bicep to dev, run DB migrations, deploy API/job image revisions. |
+| `deploy-dev.yml` | Deploy Bicep to dev, run Alembic migrations, deploy API/job image revisions. |
 | `deploy-prod.yml` | Same as dev but requires manual GitHub Environment approval. |
 | `data-publish-dev.yml` | Upload validated candle dataset to dev Blob container. |
 | `data-publish-prod.yml` | Promote an already validated dataset version to prod after approval. |
@@ -259,7 +268,7 @@ User:
   last_login_at
 ```
 
-Google OAuth can be implemented directly or through a hosted auth provider such as Clerk, Auth0, or Microsoft Entra External ID. The API should verify signed tokens and map them to internal users.
+Google OAuth should be implemented through Clerk for MVP. The API should verify Clerk-issued JWTs and map the Clerk subject to internal users.
 
 ### 6.2 Research Project
 
@@ -411,7 +420,7 @@ SignalApiKey:
 
 MVP deployment means daily signal generation and retrieval, not broker order routing.
 
-Signal API keys should be deployment-scoped by default, not one global key per user. A deployment-scoped key limits blast radius: if a key leaks, the user can revoke only that deployment's access without rotating every integration. A later advanced option can add user-level keys with explicit scopes, but MVP should keep keys narrower.
+Signal API keys should be deployment-scoped by default, not one global key per user. MVP should allow one active key per deployment for simplicity. Rotation means creating a replacement key and automatically revoking the prior active key for that deployment. A later advanced option can allow multiple concurrent keys or user-level keys with explicit scopes.
 
 ### 6.8 Rate Limit and Quota Models
 
@@ -452,6 +461,22 @@ RateLimitEvent:
 ```
 
 MVP can start with a simple built-in plan table rather than a billing integration. Stripe/billing can map onto these plans later.
+
+Default limits should live in a versioned config file, for example:
+
+```text
+QuantFoundry-API/config/plans.yml
+```
+
+Initial editable defaults:
+
+| Plan | Monthly backtests | Concurrent jobs | Max tickers/run | Max bars/run | Max lookback | Worker limit | Wall clock |
+|---|---:|---:|---:|---:|---:|---|---:|
+| `internal` | 1000 | 5 | 50 | 250000 | 1000 | 2 vCPU / 4 GiB | 60 min |
+| `beta` | 100 | 2 | 20 | 100000 | 500 | 1 vCPU / 2 GiB | 30 min |
+| `free_preview` | 20 | 1 | 10 | 50000 | 250 | 1 vCPU / 2 GiB | 15 min |
+
+These are starting guesses, not product pricing decisions. They should be easy to edit without schema changes.
 
 ### 6.9 Billing and Payment Models
 
@@ -860,7 +885,7 @@ GET  /api/portfolio-versions/{portfolio_version_id}
 POST /api/deployments
 GET  /api/deployments
 POST /api/deployments/{deployment_id}/stop
-POST /api/deployments/{deployment_id}/signal-api-keys
+POST /api/deployments/{deployment_id}/signal-api-key
 GET  /api/deployments/{deployment_id}/signal-api-keys
 DELETE /api/deployments/{deployment_id}/signal-api-keys/{key_id}
 GET  /api/v1/signals/latest
@@ -875,12 +900,11 @@ MVP key management:
 
 | Action | API |
 |---|---|
-| Create key | `POST /api/deployments/{deployment_id}/signal-api-keys` |
-| List keys | `GET /api/deployments/{deployment_id}/signal-api-keys` returns metadata only, never full secrets. |
+| Create or rotate key | `POST /api/deployments/{deployment_id}/signal-api-key`; creates a new key and revokes the prior active deployment key. |
+| List keys | `GET /api/deployments/{deployment_id}/signal-api-keys` returns current and historical metadata only, never full secrets. |
 | Revoke key | `DELETE /api/deployments/{deployment_id}/signal-api-keys/{key_id}` sets `revoked_at`. |
-| Rotate key | Create a new key, update user integration, then revoke old key. |
 
-The full key secret is only shown once at creation. The database stores a hash and a safe prefix for display. MVP should allow multiple active keys per deployment so users can rotate safely or use separate keys for separate integrations. A hard cap such as 3 to 5 active keys per deployment prevents key sprawl.
+The full key secret is only shown once at creation. The database stores a hash and a safe prefix for display. MVP should enforce one active key per deployment. This is simpler than multi-key management and still supports emergency revocation/replacement.
 
 Signal API does not place trades. It only returns the latest signal snapshot for a running deployment.
 
@@ -894,7 +918,7 @@ Recommended layers:
 |---|---|
 | Edge/frontend | Basic bot protection through Vercel and OAuth-required app access. |
 | API request rate | Per-user/IP limits for validation, backtest submission, results polling, and Signal API requests. |
-| Job admission | Check plan quota before writing jobs to Service Bus. |
+| Job admission | Check plan quota before starting ACA Jobs. |
 | Queue concurrency | Enforce max active/running jobs per user and global worker concurrency. |
 | Worker runtime | Enforce CPU, memory, wall-clock timeout, max tickers, max bars, and max lookback. |
 | Monthly ledger | Track approximate vCPU/GiB seconds and backtest count by billing period. |
@@ -922,7 +946,7 @@ Abuse response should be explicit:
 2. API validates ownership, strategy version, parameters, zones, and quotas.
 3. API writes BacktestRun(status='queued').
 4. API checks cache; if complete hit exists, it attaches artifact and marks run complete.
-5. API sends job message to Service Bus.
+5. API starts an ACA Job execution with the run ID and job payload reference.
 6. ACA Job starts worker container.
 7. Worker loads job payload and strategy source.
 8. Worker loads candle Parquet for tickers/timeframe/date range.
@@ -935,14 +959,14 @@ Abuse response should be explicit:
 
 Workers should be idempotent. Retrying the same job should either overwrite a deterministic staging path safely or create a new attempt path and atomically mark the successful attempt in Postgres.
 
-The initial implementation can choose between two orchestration styles:
+The initial implementation should use direct ACA Job startup:
 
 | Style | Flow | Pros | Cons |
 |---|---|---|---|
 | API starts ACA Job directly | API validates, writes run row, calls Azure to start an ACA Job. | Fewer moving pieces for first prototype. | API is coupled to Azure job API; burst handling/retries/backpressure are weaker. |
 | Queue-first controller | API validates, writes run row, sends Service Bus message; a small controller or event process starts ACA Jobs. | Better backpressure, retries, auditability, burst absorption, and future portability. | One extra component to deploy/observe. |
 
-Recommendation: prototype direct ACA Job start if it materially speeds up the first working path, but design the data model around queue-first semantics (`queued`, `running`, `attempts`, idempotency keys). Move to Service Bus/controller before private beta so API requests are decoupled from Azure job startup and bursts do not tie up web requests.
+Recommendation: start with direct ACA Job startup for MVP simplicity, but preserve queue-friendly status fields (`queued`, `running`, `attempts`, idempotency keys). Add Service Bus/controller later only if bursts, retries, or API coupling become painful.
 
 ## 12. Deployment and Hosted Signal Automation
 
@@ -1067,11 +1091,11 @@ MVP auth should be OAuth/OIDC only.
 
 Recommended choices:
 
-1. Clerk or Auth0 for fastest SaaS auth integration.
+1. Clerk for fastest SaaS auth integration.
 2. Microsoft Entra External ID only if Azure-native identity becomes strategically important.
 3. Direct Google OAuth only if minimizing vendor abstraction is more important than speed.
 
-Current product preference: use Clerk or Auth0 unless review finds a material downside. The user experience should remain Google/OAuth-first either way, with no QuantFoundry-managed passwords.
+Current product decision: use Clerk for MVP unless review finds a material downside. Clerk is optimized for modern frontend SaaS flows, has straightforward hosted auth UI, Google OAuth support, webhooks, and good Vercel ergonomics. The user experience should remain Google/OAuth-first, with no QuantFoundry-managed passwords.
 
 API requirements:
 
@@ -1104,7 +1128,7 @@ Local development should support:
 - API running locally.
 - Worker running locally against a sample job payload.
 - Optional local Postgres.
-- Local Blob emulator or filesystem artifact adapter.
+- Filesystem artifact adapter for local runners. Azurite/direct Blob can be added later when testing cloud storage behavior.
 
 ## 16. Cost Controls
 
@@ -1134,24 +1158,30 @@ Worker compute should be close to serverless economics. A 1 vCPU / 2 GiB worker 
 | Data publishing tests | Dataset validation gates, dev publish, prod promotion dry-run, backadjustment reports. |
 | Deployment automation tests | Scheduled signal generation, latest signal API, notification formatting. |
 
-## 18. Open Technical Decisions
+## 18. Remaining Technical Decisions
 
-These are the main items still worth hashing out before deeper implementation:
+These are the main items still worth hashing out before deeper implementation. The broad platform choices above are now fixed for MVP.
 
-1. Auth provider: choose Clerk vs Auth0 after comparing pricing, Google OAuth UX, FastAPI integration, Vercel integration, and webhook support.
-2. Local artifact abstraction: filesystem first, Azurite, or direct Blob dev container.
-3. Database migration tooling: Alembic with SQLAlchemy models or SQLModel, or raw SQL migrations.
-4. Worker orchestration detail: direct ACA Job start for earliest prototype vs queue-first controller before private beta.
-5. Result artifact format: Parquet-only for time series plus JSON summaries, or Arrow IPC for some paths.
-6. Strategy source package shape: single `source.py` plus metadata JSON vs zipped package with controlled modules.
-7. Warning thresholds: when a run becomes `completed_with_warnings` vs `failed`.
-8. Quota defaults for free/internal/beta users and how these map to future Stripe plans.
-9. Signal API details: API key scoping, rotation, rate limits, response format, and whether it is available on all paid plans.
-10. Portfolio backtest execution strategy: one whole-portfolio job first vs per-strategy fanout plus combine step.
-12. Exact path for extracting reusable logic from `Trading-Algo` into `QuantFoundry-Core`.
-13. Rate limit defaults by plan and which counters should be exact vs approximate.
-14. Whether Telegram is MVP or beta; if MVP, start with platform-managed bot integration.
-15. Whether the daily/weekly hosted signal scheduler is ACA scheduled jobs, GitHub Actions, or an internal API-triggered timer.
+1. Final `QuantFoundry-Core` strategy contract details: exact `CandleData`, `StrategyParams`, metadata schema, and validation strictness.
+2. Data operations v1: daily TWS import, validation, active manifest update, dev/prod promotion, and compaction details.
+3. Result artifact format: Parquet-only for time series plus JSON summaries, or Arrow IPC for some paths.
+4. Strategy source package shape: single `source.py` plus metadata JSON vs zipped package with controlled modules.
+5. Warning thresholds: when a run becomes `completed_with_warnings` vs `failed`.
+6. Signal API response format and rate limits.
+7. Exact path for extracting reusable logic from `Trading-Algo` into `QuantFoundry-Core`.
+8. Rate limit counters: which counters should be exact vs approximate.
+9. Whether the daily hosted signal scheduler is ACA scheduled jobs, GitHub Actions, or an internal API-triggered timer.
+
+Closed MVP decisions:
+
+- Auth provider: Clerk.
+- Database/migrations: SQLAlchemy 2 + Alembic.
+- Local artifacts: filesystem adapter first.
+- Worker orchestration: API directly starts ACA Jobs for MVP.
+- Quotas: editable defaults in `QuantFoundry-API/config/plans.yml`.
+- Signal API keys: one active deployment-scoped key at a time.
+- Portfolio backtests: support both single-strategy and portfolio backtests; implement whole-portfolio worker first, matching the SaaS specs, with fanout later.
+- IaC: Bicep/GitHub Actions live in the owning repos, mainly `QuantFoundry-API` for backend infrastructure and `QuantFoundry-Web` for Vercel config.
 
 ## 19. Near-Term Implementation Order
 
@@ -1159,11 +1189,11 @@ These are the main items still worth hashing out before deeper implementation:
 2. Add output validation, metadata models, cache key generation, and artifact schemas to Core.
 3. Add a local runner that can execute the Core contract against local daily data.
 4. Add API models/endpoints for projects, zones, strategy validation, and strategy version commit.
-5. Add Postgres migrations for the core product schema.
+5. Add SQLAlchemy 2 models and Alembic migrations for the core product schema.
 6. Add Worker package/image scaffold using shared-image runtime-loaded source.
 7. Add backtest submission/status/result APIs.
 8. Update Web to match the Dashboard / Research Workspace / Strategy Library / Portfolio Builder / Deployment structure.
-9. Add cloud deployment scripts for Vercel + Azure Container Apps + ACA Jobs + Service Bus + Blob + Postgres.
+9. Add cloud deployment scripts for Vercel + Azure Container Apps + ACA Jobs + Blob + Postgres.
 10. Add rate limit/quota admission checks before queued compute.
 11. Add market data publishing scripts for weekly TWS updates and quarterly backadjusted dataset versions.
 12. Add hosted deployment scheduler and Signal API for latest portfolio signals.
