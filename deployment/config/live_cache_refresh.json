@@ -2,7 +2,6 @@
   "version": "1",
   "enabled": true,
   "vault_root": "vault",
-  "snapshot_vault_root": "vault",
   "debounce_seconds": 2,
   "active_ensemble_dirs": [],
   "active_portfolios": []

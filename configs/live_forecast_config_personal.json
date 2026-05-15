@@ -6,7 +6,7 @@
     "client_id": 2
   },
   "account": {
-    "capital_usd": 5000
+    "capital_usd": 1000
   },
   "instruments": {
     "ES":  {"etf": "SPY", "sec_type": "CONTFUT", "exchange": "CME"},
@@ -23,8 +23,10 @@
     "idm_max": 2.5
   },
   "data": {
-    "min_lookback_days": 10,
-    "max_lookback_days": 365
+    "_comment_ib_warmup": "min/max both 500 so TWS always fetches 500×1D bars per symbol before cache upsert; personal run then overlays today's synthetic partial daily (15m) for predict.",
+    "min_lookback_days": 500,
+    "max_lookback_days": 500,
+    "prediction_daily_max_bars": 500
   },
   "execution": {
     "_comment": "Safety-gated IB auto-execution. Only used when --execute is passed. ib_account_id MUST match your paper account DUxxxxxxx. authorized_telegram_user_ids MUST list your personal Telegram user id (the bot will log rejects from any other id).",

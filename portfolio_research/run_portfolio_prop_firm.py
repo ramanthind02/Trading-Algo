@@ -6,10 +6,11 @@ and optional target-volatility scaling lives in ``prop_firms.report_config`` (sa
 
 Usage (repo root, Windows)::
 
-    .\\.venv\\Scripts\\python.exe portfolio_research/run_portfolio_prop_firm.py --provider lucid
+    .\\.venv\\Scripts\\python.exe portfolio_research/run_portfolio_prop_firm.py --provider lucid --portfolio-profile prop_firm
     .\\.venv\\Scripts\\python.exe portfolio_research/run_portfolio_prop_firm.py --provider apex --phases validation test
 
-Portfolio windows and ensembles come from ``portfolio_research.config.load_config()``.
+Portfolio windows and ensembles come from ``portfolio_research.config.load_config()``
+or ``load_prop_firm_portfolio_research_config()`` when ``--portfolio-profile prop_firm``.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 from prop_firms.report_config import load_apex_report_config, load_report_config
 
-from portfolio_research.config import load_config
+from portfolio_research.config import load_config, load_prop_firm_portfolio_research_config
 from portfolio_research.portfolio_prop_firm_reports import (
     run_portfolio_prop_firm_portfolio_reports,
 )
@@ -76,9 +77,22 @@ def main() -> None:
         default="vault_portfolio",
         help="Subfolder under report_config.output_dir for report artifacts",
     )
+    parser.add_argument(
+        "--portfolio-profile",
+        choices=("research", "prop_firm"),
+        default="research",
+        help=(
+            "research=default load_config(); prop_firm=ES/NQ/GC prop-aligned vault "
+            "portfolio (no TLT), tau=0.20, equal_signal, $50k futures_sim."
+        ),
+    )
     args = parser.parse_args()
 
-    portfolio_config = load_config()
+    portfolio_config = (
+        load_prop_firm_portfolio_research_config()
+        if args.portfolio_profile == "prop_firm"
+        else load_config()
+    )
     report_config = (
         load_report_config()
         if args.provider == "lucid"

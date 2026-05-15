@@ -110,7 +110,7 @@ def run_experiment() -> None:
             _enable_cache(
                 load_ensemble_from_vault(
                     path,
-                    refit=True,
+                    refit=getattr(base_config, "ensemble_vault_refit", True),
                     target_volatility=base_config.target_volatility,
                     exclude_feature_stems_by_ensemble=getattr(
                         base_config, "exclude_feature_stems_by_ensemble", None

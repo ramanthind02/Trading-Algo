@@ -1,41 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Iterable, Optional
 
 from utils.cache.runtime.central_cache_models import ArtifactScope
-
-
-def save_global_portfolio_snapshot(
-    portfolio: "GlobalPortfolio",
-    *,
-    fit_start: datetime,
-    fit_end: datetime,
-    vault_root: str = "vault",
-) -> str:
-    """Persist an immutable global-portfolio snapshot."""
-    from ensemble.portfolio_impl.portfolio_vault import (
-        save_global_portfolio_snapshot as _save_snapshot,
-    )
-
-    return _save_snapshot(
-        portfolio,
-        fit_start=fit_start,
-        fit_end=fit_end,
-        vault_root=vault_root,
-    )
-
-
-def load_global_portfolio_snapshot(
-    portfolio_id: str,
-    vault_root: str = "vault",
-) -> "GlobalPortfolio":
-    """Load a previously snapshotted GlobalPortfolio by ``portfolio_id``."""
-    from ensemble.portfolio_impl.portfolio_vault import (
-        load_global_portfolio_snapshot as _load_snapshot,
-    )
-
-    return _load_snapshot(portfolio_id=portfolio_id, vault_root=vault_root)
 
 
 def materialize_global_portfolio_predictions(
@@ -46,6 +13,9 @@ def materialize_global_portfolio_predictions(
     world: "PortfolioWorld | str",
     research_run_id: Optional[str] = None,
     scope: ArtifactScope = ArtifactScope.LIVE,
+    vault_root: str = "vault",
+    cache_root: Optional[str] = None,
+    ensemble_dirs: Optional[Iterable[str]] = None,
 ):
     """Materialize portfolio/base-model predictions into the dedicated cache tree."""
     from utils.cache.runtime.portfolio_materialization import (
@@ -59,6 +29,9 @@ def materialize_global_portfolio_predictions(
         world=world,
         research_run_id=research_run_id,
         scope=scope,
+        vault_root=vault_root,
+        cache_root=cache_root,
+        ensemble_dirs=ensemble_dirs,
     )
 
 
@@ -67,6 +40,7 @@ def prune_inactive_base_model_materializations(
     vault_root: str = "vault",
     scope: ArtifactScope = ArtifactScope.LIVE,
     ensemble_dirs: Optional[Iterable[str]] = None,
+    cache_root: Optional[str] = None,
 ):
     """Delete base-model materializations whose identities are no longer active."""
     from utils.cache.runtime.portfolio_materialization import (
@@ -77,6 +51,7 @@ def prune_inactive_base_model_materializations(
         vault_root=vault_root,
         scope=scope,
         ensemble_dirs=ensemble_dirs,
+        cache_root=cache_root,
     )
 
 

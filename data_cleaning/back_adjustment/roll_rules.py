@@ -2,7 +2,7 @@
 
 Each ticker has a RollRule defining when the continuous contract rolls
 from the expiring front-month to the next contract. These rules
-replicate the legacy (Kibot) fixed-date schedule.
+capture the fixed-date fallback schedule.
 """
 from __future__ import annotations
 

@@ -8,6 +8,7 @@ from portfolio_research.config import (
     ResearchWindow,
     filter_ensemble_dirs_for_portfolio_tickers,
     load_config,
+    load_prop_firm_portfolio_research_config,
 )
 from utils.core.enums import Ticker, TimeFrame
 
@@ -235,6 +236,12 @@ def test_load_config_returns_portfolio_research_config() -> None:
     assert config.test_window.end <= config.end
     assert isinstance(config.export_per_timeframe_tearsheets, bool)
     assert isinstance(config.export_per_ensemble_tearsheets, bool)
+    assert config.ensemble_vault_refit is True
+
+
+def test_load_prop_firm_portfolio_research_config_disables_vault_refit() -> None:
+    cfg = load_prop_firm_portfolio_research_config()
+    assert cfg.ensemble_vault_refit is False
 
 
 def test_portfolio_research_config_tearsheet_export_defaults_enabled() -> None:

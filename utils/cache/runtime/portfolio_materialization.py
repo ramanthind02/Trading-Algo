@@ -287,10 +287,18 @@ def _feature_name_from_payload(feature_path: Path, payload: dict[str, Any]) -> s
     )
 
 
+def _infer_timeframe_token_from_ensemble_path(ensemble_dir: Path) -> str:
+    for part in ensemble_dir.parts:
+        if part in ("D", "W", "M"):
+            return part
+    raise ValueError(f"Could not infer vault timeframe from ensemble path: {ensemble_dir}")
+
+
 def _scan_active_live_base_model_identities(
     vault_root: str,
     ensemble_dirs: Optional[Iterable[str]] = None,
 ) -> set[BaseModelMaterializationIdentity]:
+    from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
     from ensemble.vault_manager import _resolve_ensemble_path
     from utils.vault_paths import resolve_vault_root
 
@@ -302,12 +310,20 @@ def _scan_active_live_base_model_identities(
             for ensemble_dir in dict.fromkeys(str(item) for item in ensemble_dirs)
         ]
     else:
-        target_ensemble_dirs = [
-            ensemble_dir
-            for tf_name in ("D", "W", "M")
-            for ensemble_dir in sorted((resolved_vault_root / tf_name).glob("*"))
-            if ensemble_dir.is_dir()
-        ]
+        target_ensemble_dirs = []
+        for tf_name in ("D", "W", "M"):
+            tf_dir = resolved_vault_root / tf_name
+            if not tf_dir.is_dir():
+                continue
+            for child in sorted(tf_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                if child.name in VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES:
+                    target_ensemble_dirs.extend(
+                        d for d in sorted(child.iterdir()) if d.is_dir()
+                    )
+                else:
+                    target_ensemble_dirs.append(child)
 
     identities: set[BaseModelMaterializationIdentity] = set()
     for ensemble_dir in target_ensemble_dirs:
@@ -316,7 +332,7 @@ def _scan_active_live_base_model_identities(
         features_dir = ensemble_dir / "features"
         if not features_dir.exists():
             continue
-        timeframe = ensemble_dir.parent.name
+        timeframe = _infer_timeframe_token_from_ensemble_path(ensemble_dir)
         ensemble_name = ensemble_dir.name
         for feature_path in sorted(features_dir.glob("*.json")):
             payload = json.loads(_read_utf8_text(feature_path))
@@ -513,6 +529,7 @@ def materialize_global_portfolio_predictions(
     scope: ArtifactScope = ArtifactScope.LIVE,
     vault_root: str = "vault",
     cache_root: Optional[str] = None,
+    ensemble_dirs: Optional[Iterable[str]] = None,
 ) -> MaterializationSummary:
     from ensemble.portfolio import PortfolioWorld
 
@@ -538,7 +555,10 @@ def materialize_global_portfolio_predictions(
         dedup_subset=["portfolio_id", "world", "research_run_id", "ticker", "datetime"],
     )
 
-    active_identities = _scan_active_live_base_model_identities(vault_root=vault_root)
+    active_identities = _scan_active_live_base_model_identities(
+        vault_root=vault_root,
+        ensemble_dirs=ensemble_dirs,
+    )
     base_model_files_written = 0
     base_model_rows_written = 0
     base_model_rows_skipped_inactive = 0
@@ -581,6 +601,7 @@ def materialize_global_portfolio_predictions(
         vault_root=vault_root,
         scope=scope,
         cache_root=cache_root,
+        ensemble_dirs=ensemble_dirs,
     )
     return MaterializationSummary(
         portfolio_id=portfolio_id,

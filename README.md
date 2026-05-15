@@ -1,123 +1,56 @@
-## Data Setup — Back-Adjusted Intraday Futures
+## Data Setup - Canonical Norgate Store
 
-Intraday data is too large for git (~2GB across all timeframes). Follow these steps to set up the data locally.
+Trading-Algo uses a canonical candle stack:
+
+1. **Ingestion (raw, immutable)**
+   - `data/norgate/continuous_futures/adjusted/`
+   - `data/norgate/continuous_futures/unadjusted/`
+2. **Normalization (canonical schema)**
+   - `scripts/migrate_norgate_to_ohlc.py` builds `data/ohlc_data/{TICKER}/D|W|M_*.parquet`
+3. **Runtime canonical cache**
+   - `.cache/trading_algo/central_cache/` (queried by live/research pipeline)
+
+The runtime/live layer should never read vendor-specific raw formats directly.
 
 ### Prerequisites
 
-1. **Kibot data**: `kibot_data.zip` in `data/` (contains intraday parquet files for 10 tickers across 15 timeframes)
-2. **Norgate Data Updater (NDU)**: Install and authenticate ([norgatedata.com](https://norgatedata.com)). Must be running on Windows.
-3. **norgatedata package**: `pip install norgatedata`
+- Windows host with Norgate Data Updater running
+- Active Norgate futures subscription
+- Python package: `norgatedata`
 
-### Quick Setup (existing tickers)
+### One-command canonical rebuild
 
-```bash
-# 1. Extract all intraday files from Kibot zip (M1-M30, H1-H4; skips seconds and D/W/M)
-python scripts/extract_kibot_data.py
+From repo root:
 
-# 2. Fetch Norgate reference data (NDU must be running)
-python scripts/fetch_norgate_data.py
-
-# 3. Run back-adjustment on all tickers (adjusts every timeframe per ticker)
-python -m data_cleaning.back_adjustment.orchestrator --all
-
-# 4. Verify
-ls data/intraday_adjusted/ES/     # Should show M1_ES.parquet, M5_ES.parquet, H1_ES.parquet, etc.
-ls data/adjustment_metadata/       # Should show JSON metadata per ticker
+```powershell
+.\.venv\Scripts\python.exe scripts\rebuild_norgate_canonical_store.py
 ```
 
-### Adding a New Ticker
+This will:
 
-When you have Kibot intraday data for a new ticker (e.g., `NG` for Natural Gas):
+- purge runtime cache and prior Norgate snapshots
+- fetch full-history Norgate continuous futures (adjusted + unadjusted)
+- rebuild repository candles (`data/ohlc_data`) from adjusted series
+- bootstrap central cache from rebuilt repository candles
 
-**Step 1: Add the ticker to the Ticker enum** (if not already there)
+### Manual steps
 
-Edit `utils/enums.py` and add the ticker to the `Ticker` enum.
-
-**Step 2: Add a roll rule**
-
-Edit `data_cleaning/back_adjustment/roll_rules.py` and add an entry to `ROLL_RULES`:
-
-```python
-Ticker.NG: RollRule(Ticker.NG, -3, "expiration", "3 days before monthly expiration"),
+```powershell
+.\.venv\Scripts\python.exe scripts\fetch_norgate_data.py
+.\.venv\Scripts\python.exe scripts\migrate_norgate_to_ohlc.py
+.\.venv\Scripts\python.exe -m utils.cache.runtime.bootstrap_source_candles --reset-existing
 ```
 
-Reference: [Kibot rollover rules](https://www.kibot.com/rollover_rules.aspx) for the correct offset and reference point. Use negative offsets for "days before expiration" and positive offsets for "days from month end".
+### IBKR append policy (live)
 
-**Step 3: Add the Norgate symbol mapping**
+When appending IBKR daily bars to central cache:
 
-Edit `scripts/fetch_norgate_data.py` and add the ticker to `TICKER_TO_NORGATE`:
+- append-only (new sessions only)
+- apply **ratio adjustment** at the junction to align incoming OHLC to the current canonical level
+- resample monthly candles from reconciled daily output
 
-```python
-"NG": "&NG_CCB",  # back-adjusted
-```
+See:
 
-The unadjusted mapping is auto-derived (strips `_CCB`). To find the right Norgate symbol, run:
-
-```python
-import norgatedata
-syms = norgatedata.database_symbols('Continuous Futures')
-[s for s in syms if 'NG' in s]  # find your symbol
-```
-
-**Step 4: Place the data and run**
-
-```bash
-# Place the intraday parquets in the input directory
-# Structure: data/intraday_original/{TICKER}/{TF}_{TICKER}.parquet
-mkdir -p data/intraday_original/NG
-cp /path/to/M1_NG.parquet data/intraday_original/NG/M1_NG.parquet
-cp /path/to/M5_NG.parquet data/intraday_original/NG/M5_NG.parquet
-# ... (all available timeframes)
-
-# Re-fetch Norgate data (picks up new ticker)
-python scripts/fetch_norgate_data.py
-
-# Run back-adjustment for the new ticker (adjusts all timeframes)
-python -m data_cleaning.back_adjustment.orchestrator --ticker NG
-
-# Check the comparison report
-cat docs/library/Data/comparisons/NG_comparison.md
-```
-
-**Step 5: Run tests**
-
-```bash
-pytest tests/back_adjustment/ -v
-```
-
-The `test_all_tickers_have_rules` test will fail if you added a Ticker enum member without a corresponding roll rule.
-
-### Architecture
-
-```
-data/kibot_data.zip                    # Source (tracked in git)
-  └─ ohlc_data/{TICKER}/{TF}_{TICKER}.parquet
-       │
-       ▼ extract (extract_kibot_data.py — M1-M30, H1-H4 only)
-data/intraday_original/                # Raw intraday data (gitignored)
-  └─ {TICKER}/{TF}_{TICKER}.parquet
-       │
-       ▼ back-adjust (orchestrator — rolls detected once, applied to all TFs)
-data/intraday_adjusted/                # Adjusted intraday data (gitignored)
-  └─ {TICKER}/{TF}_{TICKER}.parquet
-       │
-       ▼ compare (validator)
-data/norgate/continuous_futures/       # Norgate reference (gitignored)
-  ├─ adjusted/{TICKER}.parquet         #   Back-adjusted daily
-  └─ unadjusted/{TICKER}.parquet       #   Unadjusted with Delivery Month
-```
-
-### Current Tickers
-
-| Ticker | Instrument | Rolls | Notes |
-|--------|-----------|-------|-------|
-| ES | E-mini S&P 500 | 60 | Quarterly |
-| NQ | E-mini Nasdaq | 60 | Quarterly |
-| CL | Crude Oil | 180 | Monthly, negative adjusted prices in 2020 |
-| GC | Gold | 75 | Bi-monthly |
-| BP | British Pound | 60 | Quarterly |
-| EU | Euro FX | 60 | Quarterly |
-| JY | Japanese Yen | 60 | Quarterly |
-| FV | 5-Year T-Note | 60 | Quarterly |
-| TY | 10-Year T-Note | 60 | Quarterly |
-| US | 30-Year T-Bond | 60 | Quarterly |
+- `utils/cache/runtime/ib_candle_ratio_align.py`
+- `scripts/enigma_live_forecast.py`
+- `deployment/config/canonical_source_priority.json`

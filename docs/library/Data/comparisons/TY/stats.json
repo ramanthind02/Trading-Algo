@@ -1,8 +1,0 @@
-{
-  "return_correlation": 0.960929,
-  "mean_return_diff": 0.000532,
-  "max_return_diff": 0.020291,
-  "n_overlapping_days": 5214,
-  "n_divergent_dates": 0,
-  "divergent_dates": []
-}
