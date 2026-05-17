@@ -61,24 +61,12 @@ User Browser
 | Frontend | Vercel | Simplest frontend deploys, preview environments, rollbacks, custom domains, GitHub integration. |
 | API | Azure Container Apps | Container-native FastAPI deployment with scale controls and managed ingress. |
 | Workers | Azure Container Apps Jobs | Finite direct-start jobs, scale-to-zero economics, container-based Python stack. |
-| Queue | Deferred | Azure Service Bus can be added before private beta if direct ACA Job startup needs better backpressure/retries. |
 | Metadata DB | Azure Database for PostgreSQL Flexible Server | Relational ownership/versioning/audit model with JSONB escape hatch. |
 | Artifacts | Azure Blob Storage | Cheap durable storage for Parquet, JSON, source bundles, and backtest outputs. |
 | Secrets | Azure Key Vault | OAuth secrets, API keys, storage credentials if not fully using managed identity. |
 | Observability | Azure Monitor/Application Insights | API/worker logs, job failures, latency, cost and health telemetry. |
-| Infrastructure as Code | Azure Bicep | Native Azure IaC without AKS/Helm complexity. |
+| Infrastructure as Code | Azure Bicep | Native Azure IaC for Azure resources. |
 | CI/CD | GitHub Actions | Build, test, provision, and deploy from repo workflows using OIDC federation. |
-
-Avoid for MVP unless required:
-
-- Azure Front Door.
-- AKS/Kubernetes.
-- Per-strategy container images.
-- Hosted Jupyter notebooks.
-- Broker order routing.
-- User-supplied `requirements.txt`.
-- Private endpoints/NAT/Azure Firewall until security and revenue justify the cost.
-- Helm charts unless the platform moves to Kubernetes later.
 
 ### 3.2 CI/CD and Infrastructure as Code
 
@@ -108,9 +96,9 @@ Infrastructure should live in the repos that own the deployable surface:
 | `QuantFoundry-API` | Azure Bicep, API/worker container deployment, Postgres migrations, worker job definitions, storage, Key Vault, monitoring. |
 | `QuantFoundry-Web` | Vercel project config, frontend environment variable docs, preview/prod deploy settings. |
 | `QuantFoundry-Core` | No cloud infrastructure; Python package build/test/release only. |
-| `Trading-Algo` | Legacy migration source only. Do not add new QuantFoundry product workflows here unless they are temporary migration helpers. |
+| `Trading-Algo` | Legacy migration source only. Do not add new QuantFoundry product workflows here. |
 
-A separate `QuantFoundry-Infra` repo is not needed for MVP. It can be introduced later only if infrastructure ownership spans many services and the API repo becomes cluttered.
+A separate `QuantFoundry-Infra` repo is not part of the MVP.
 
 Each repo should use exactly two primary GitHub Actions workflows: one pull request pipeline and one official pipeline.
 
@@ -131,7 +119,7 @@ Pipeline responsibilities:
 | `QuantFoundry-Web-PullRequest.yml` | Typecheck/build frontend and create Vercel preview. |
 | `QuantFoundry-Web-Official.yml` | After merge to `main`: deploy dev/preview automatically, then prod behind approval or Vercel production gate. |
 
-Authentication should use GitHub Actions OIDC federation into Azure, not long-lived Azure credentials stored as GitHub secrets. Vercel can be connected directly to the `QuantFoundry-Web` repository for preview/prod deploys, or driven through GitHub Actions if tighter release coordination is needed.
+Authentication should use GitHub Actions OIDC federation into Azure, not long-lived Azure credentials stored as GitHub secrets. Vercel is connected directly to the `QuantFoundry-Web` repository for preview/prod deploys.
 
 Initial one-time bootstrap may still require a small manual step:
 
@@ -160,7 +148,6 @@ Execution properties:
 - The strategy receives all available candles up to the current bar.
 - The strategy does not hold server-side state between calls.
 - Output is a per-ticker forecast score clipped to `[-2.0, 2.0]`.
-- Multi-timeframe access, custom dependencies, and user-defined indicator dependency graphs are deferred.
 
 ### 4.1 Shared Worker Image, Per-Job Runtime Isolation
 
@@ -186,8 +173,6 @@ Job B:
 ```
 
 This keeps runtime isolation without the operational cost of building, scanning, pushing, and managing a container image for every strategy version.
-
-Per-strategy images can be revisited later for enterprise users or custom dependency support.
 
 ### 4.2 Security Boundary
 
@@ -395,7 +380,7 @@ PortfolioVersion:
   created_at
 ```
 
-Portfolio versions should be immutable even if rollback UI is deferred.
+Portfolio versions are immutable snapshots.
 
 ### 6.7 Deployment
 
@@ -413,7 +398,7 @@ Deployment:
 SignalApiKey:
   id
   owner_user_id
-  deployment_id       # nullable only if later supporting user-wide keys
+  deployment_id
   name
   key_prefix          # safe display prefix, e.g. qf_sig_live_abc123
   key_hash
@@ -424,9 +409,9 @@ SignalApiKey:
   created_at
 ```
 
-MVP deployment means daily signal generation and retrieval, not broker order routing.
+MVP deployment means daily signal generation and retrieval.
 
-Signal API keys should be deployment-scoped by default, not one global key per user. MVP should allow one active key per deployment for simplicity. Rotation means creating a replacement key and automatically revoking the prior active key for that deployment. A later advanced option can allow multiple concurrent keys or user-level keys with explicit scopes.
+Signal API keys are deployment-scoped, not global per user. MVP allows one active key per deployment for simplicity. Rotation creates a replacement key and automatically revokes the prior active key for that deployment.
 
 ### 6.8 Rate Limit and Quota Models
 
@@ -466,7 +451,7 @@ RateLimitEvent:
   created_at
 ```
 
-MVP can start with a simple built-in plan table rather than a billing integration. Stripe/billing can map onto these plans later.
+MVP starts with a simple built-in plan table. Stripe/billing maps onto these plans when payments are implemented.
 
 Default limits should live in a versioned config file, for example:
 
@@ -591,64 +576,34 @@ deployment-signals/
   deployment=<deployment_id>/date=<yyyy-mm-dd>/signals.json
 ```
 
-## 8. Cache Policy
-
-No dedicated cache layer is included in the MVP. Backtests and signal runs should produce durable result artifacts, but the system should not attempt to reuse prior strategy outputs or maintain research/portfolio caches initially.
-
-Reasons to defer caching:
-
-- Fewer invalidation rules.
-- Fewer artifact lifecycle concerns.
-- Simpler worker orchestration.
-- Easier correctness story while the strategy contract is still evolving.
-- Lower implementation cost.
-
-If repeated parameter sweeps or portfolio recomputation become expensive, cache design can be reintroduced later using completed run artifacts and deterministic input hashes.
-
-## 9. Market Data Operations
+## 8. Market Data Operations
 
 MVP data should be daily futures data only. Separate the research/backtest dataset story from the hosted deployment signal story.
 
-### 9.1 Research and Backtest Data
+### 8.1 Research and Backtest Data
 
-For research and backtesting, do not publish a new dataset every day or week. QuantFoundry should use curated quarterly data releases after contract rollover review and backadjustment.
+For research and backtesting, QuantFoundry reads curated daily futures Parquet files from Blob Storage. These files are updated in place as part of platform data operations. The platform does not expose data-selection controls to users in the MVP.
 
 ```text
-ResearchDataRelease:
-  id
-  release_name              # e.g. 2026Q2-backadjusted
-  source                    # TWS, Norgate, manual import, etc.
-  timeframe                 # D for MVP
-  tickers
-  start_date
-  end_date
-  adjustment_policy
-  validation_summary_json
-  blob_prefix
-  status                    # candidate | dev_published | prod_published | retired
-  created_at
-  promoted_to_dev_at
-  promoted_to_prod_at
+candles/research/timeframe=D/ticker=ES/part.parquet
 ```
 
-Backtest runs may record the research data release used for auditability, but QuantFoundry does not need user-facing dataset version selection in MVP. Users should understand that the platform's available data improves over time.
+Backtests use whatever curated research data is active in the environment at run time. Backtest results should store the run timestamp and input date range, but no dataset-versioning system is included in the MVP.
 
-### 9.2 Quarterly Backadjustment Flow
+### 8.2 Quarterly Backadjustment Flow
 
-Quarterly futures backadjustment should produce a new curated research data release.
+Quarterly futures backadjustment updates the curated research Parquet files.
 
 ```text
 Quarterly rollover review
   -> local raw data landing folder
   -> import latest TWS history as needed
   -> run backadjustment script locally
-  -> compare prior active release vs new adjusted release
   -> produce adjustment report by ticker/contract/roll date
-  -> write complete quarterly backadjusted Parquet release
-  -> publish to dev Blob
+  -> write updated backadjusted Parquet files
+  -> publish to dev Blob path
   -> rerun smoke backtests and data quality checks
-  -> promote to prod
-  -> update active research data release for new backtests
+  -> copy the same files to prod Blob path
 ```
 
 Suggested scripts:
@@ -657,13 +612,13 @@ Suggested scripts:
 scripts/data/import_tws_history.py
 scripts/data/build_continuous_futures.py
 scripts/data/validate_candle_dataset.py
-scripts/data/publish_dataset.py --target dev --dataset-version <version>
-scripts/data/promote_dataset.py --from dev --to prod --dataset-version <version>
+scripts/data/publish_dataset.py --target dev
+scripts/data/promote_dataset.py --from dev --to prod
 ```
 
-This simpler cadence avoids weekly dataset churn and avoids retaining many near-duplicate daily datasets. Keep the current quarterly research release hot; older releases can move to cool/archive or be deleted according to retention needs.
+This keeps data operations simple: the platform has one active research dataset per environment.
 
-### 9.3 Hosted Deployment Live Data
+### 8.3 Hosted Deployment Live Data
 
 Hosted deployments need the most recent candles at signal time. Instead of publishing a new full research dataset every day, scheduled deployment workers should fetch the required lookback window from Interactive Brokers/TWS.
 
@@ -687,11 +642,11 @@ Risks to validate early:
 - Rate limits and pacing violations when many deployments request overlapping symbols.
 - Data adjustment differences between live IB lookback data and quarterly backadjusted research data.
 - Timezone/session-close handling for daily bars.
-- Whether one shared data fetch step can deduplicate overlapping ticker requests before fanout.
+- Whether one shared data fetch step should deduplicate overlapping ticker requests before fanout.
 
-If IB pacing becomes an issue, add a market data prefetch job that fetches each ticker once, stores a short-lived daily candle snapshot, and lets deployment jobs read that snapshot instead of each connecting to IB independently.
+The MVP implementation should prefer a shared data fetch step if direct per-deployment IB requests would exceed pacing limits.
 
-### 9.4 Data Validation Gates
+### 8.4 Data Validation Gates
 
 Before publishing to dev or prod, validation should check:
 
@@ -708,7 +663,7 @@ Before publishing to dev or prod, validation should check:
 
 Validation artifacts should be stored in Blob next to the dataset and summarized in Postgres.
 
-## 10. API Shape
+## 9. API Shape
 
 API paths are illustrative and can change during implementation. During MVP, app-internal APIs used only by `QuantFoundry-Web` do not need URL versioning. Versioning should be reserved for public/external APIs where third-party clients may depend on stable contracts.
 
@@ -720,15 +675,15 @@ Recommended convention:
 | External Signal API | `/api/v1/signals/...` | Users may automate against it, so breaking changes need explicit versioning. |
 | Internal worker/admin APIs | Not public or separately authenticated | Prefer job payload contracts over public endpoints. |
 
-Breaking app API changes should be handled by deploying compatible Web and API revisions together. If a public app API emerges later, add versioning then.
+Breaking app API changes should be handled by deploying compatible Web and API revisions together.
 
-### 10.1 Health
+### 9.1 Health
 
 ```http
 GET /api/health
 ```
 
-### 10.2 Projects and Zones
+### 9.2 Projects and Zones
 
 ```http
 POST /api/projects
@@ -741,7 +696,7 @@ PUT  /api/projects/{project_id}/zones/{zone_id}
 DELETE /api/projects/{project_id}/zones/{zone_id}
 ```
 
-### 10.3 Strategies
+### 9.3 Strategies
 
 ```http
 POST /api/projects/{project_id}/strategies
@@ -764,7 +719,7 @@ Validation response:
 }
 ```
 
-### 10.4 Backtests
+### 9.4 Backtests
 
 ```http
 POST /api/backtests
@@ -801,9 +756,9 @@ Backtests should support both single-strategy and portfolio scopes.
 }
 ```
 
-Single-strategy backtests are the main research loop. Portfolio backtests are required before deployment because users need to validate combined weights, correlations, and aggregate drawdown. Internally, a portfolio backtest can start simple as one worker job for the whole portfolio, then evolve to one job per strategy plus a combine step when scale requires it.
+Single-strategy backtests are the main research loop. Portfolio backtests are required before deployment because users need to validate combined weights, correlations, and aggregate drawdown. MVP portfolio backtests run as one worker job for the whole portfolio.
 
-### 10.5 Portfolios
+### 9.5 Portfolios
 
 ```http
 POST /api/projects/{project_id}/portfolios
@@ -812,7 +767,7 @@ POST /api/portfolios/{portfolio_id}/versions
 GET  /api/portfolio-versions/{portfolio_version_id}
 ```
 
-### 10.6 Deployments and Signals
+### 9.6 Deployments and Signals
 
 ```http
 POST /api/deployments
@@ -841,9 +796,9 @@ The full key secret is only shown once at creation. The database stores a hash a
 
 Signal API does not place trades. It only returns the latest signal snapshot for a running deployment.
 
-### 10.7 Rate Limiting and Abuse Controls
+### 9.7 Rate Limiting and Abuse Controls
 
-Rate limiting must happen before expensive work is queued.
+Rate limiting must happen before expensive work starts.
 
 Recommended layers:
 
@@ -860,7 +815,6 @@ MVP implementation should avoid expensive rate-limit infrastructure if possible:
 
 - Use Postgres-backed quota checks for job admission and monthly usage.
 - Use in-process/API middleware for coarse short-window limits in dev.
-- Add Redis/Valkey or Azure API Management later if API traffic requires distributed high-throughput rate limiting.
 - Keep Signal API key limits separate from web app OAuth user limits.
 
 Abuse response should be explicit:
@@ -872,7 +826,7 @@ Abuse response should be explicit:
 409 Conflict                # concurrent job limit reached
 ```
 
-## 11. Worker Flow
+## 10. Worker Flow
 
 ```text
 1. API receives backtest request.
@@ -891,20 +845,13 @@ Abuse response should be explicit:
 
 Workers should be idempotent. Retrying the same job should either overwrite a deterministic staging path safely or create a new attempt path and atomically mark the successful attempt in Postgres.
 
-The initial implementation should use direct ACA Job startup:
+The MVP implementation uses direct ACA Job startup from the API.
 
-| Style | Flow | Pros | Cons |
-|---|---|---|---|
-| API starts ACA Job directly | API validates, writes run row, calls Azure to start an ACA Job. | Fewer moving pieces for first prototype. | API is coupled to Azure job API; burst handling/retries/backpressure are weaker. |
-| Queue-first controller | API validates, writes run row, sends Service Bus message; a small controller or event process starts ACA Jobs. | Better backpressure, retries, auditability, burst absorption, and future portability. | One extra component to deploy/observe. |
+## 11. Deployment and Hosted Signal Automation
 
-Recommendation: start with direct ACA Job startup for MVP simplicity, but preserve job lifecycle fields (`queued`, `running`, `attempts`, idempotency keys). Add Service Bus/controller later only if bursts, retries, or API coupling become painful.
+MVP deployment means hosted daily signal generation for a committed `PortfolioVersion`.
 
-## 12. Deployment and Hosted Signal Automation
-
-MVP deployment means hosted daily signal generation for a committed `PortfolioVersion`. It does not mean broker order routing.
-
-### 12.1 Deployment Lifecycle
+### 11.1 Deployment Lifecycle
 
 ```text
 User creates portfolio version
@@ -917,7 +864,7 @@ User creates portfolio version
 
 Users should not need to press a browser button every day. Once a deployment is running, scheduled backend automation should produce signals.
 
-### 12.2 Scheduled Signal Runs
+### 11.2 Scheduled Signal Runs
 
 Use an ACA scheduled job for MVP. All running deployments should be evaluated from the same scheduled trigger. The scheduler should fan out ACA Job executions across deployments so users receive signals from the same market data window.
 
@@ -935,18 +882,15 @@ ACA scheduled signal trigger fires
 
 Hosted signal automation depends on IB/TWS candle availability. If fresh candles are unavailable for a trading day, the scheduler should not silently produce stale signals. It should mark affected deployments as `waiting_for_data` or `data_unavailable` and expose that status in the dashboard and API.
 
-### 12.3 Signal Delivery Options
+### 11.3 Signal Delivery
 
-The MVP should support pull-based delivery through the website and Signal API only. Push channels such as Telegram, email, SMS, and broker execution are deferred.
+The MVP supports pull-based delivery through the website and Signal API.
 
 | Delivery | MVP recommendation |
 |---|---|
 | Website dashboard | Required. Show latest signal, timestamp, data source, and deployment status. |
 | Signal API | Required. Users can pull latest signals with deployment-scoped API keys. |
 | CSV/JSON download | Useful and cheap. |
-| Email | Deferred. |
-| Telegram | Deferred. |
-| Broker order routing | Deferred. |
 
 Signal API example:
 
@@ -972,7 +916,7 @@ Authorization: Bearer qf_sig_...
 }
 ```
 
-### 12.4 Hosted Portfolio Runtime
+### 11.4 Hosted Portfolio Runtime
 
 Hosted portfolio signal generation should reuse the same worker image and Core strategy contract as backtests.
 
@@ -986,7 +930,7 @@ Differences from backtesting:
 | Storage | Backtest artifacts | Deployment signal artifacts and latest pointer. |
 | Notifications | None in MVP | User pulls through dashboard or Signal API. |
 
-## 13. Frontend Structure
+## 12. Frontend Structure
 
 Vercel should host `QuantFoundry-Web`.
 
@@ -1016,17 +960,11 @@ Frontend responsibilities:
 
 The frontend must not hold provider secrets or execute strategy code.
 
-## 14. OAuth and Authorization
+## 13. OAuth and Authorization
 
 MVP auth should be OAuth/OIDC only.
 
-Recommended choices:
-
-1. Clerk for fastest SaaS auth integration.
-2. Microsoft Entra External ID only if Azure-native identity becomes strategically important.
-3. Direct Google OAuth only if minimizing vendor abstraction is more important than speed.
-
-Current product decision: use Clerk for MVP unless review finds a material downside. Clerk is optimized for modern frontend SaaS flows, has straightforward hosted auth UI, Google OAuth support, webhooks, and good Vercel ergonomics. The user experience should remain Google/OAuth-first, with no QuantFoundry-managed passwords.
+Current product decision: use Clerk for MVP. The user experience should remain Google/OAuth-first, with no QuantFoundry-managed passwords.
 
 API requirements:
 
@@ -1035,7 +973,7 @@ API requirements:
 - Enforce ownership on every project, strategy, backtest, portfolio, deployment, artifact, and API key.
 - Store only provider identity metadata and no passwords.
 
-## 15. Deployment Environments
+## 14. Deployment Environments
 
 Suggested environments should be kept lean:
 
@@ -1045,13 +983,7 @@ Suggested environments should be kept lean:
 | Dev | Shared cloud development environment with low quotas. |
 | Prod | Customer-facing environment. |
 
-Do not create a standing staging environment for MVP if cost is a concern. Instead:
-
-- Use local integration tests for fast validation.
-- Use Vercel preview deployments for frontend review.
-- Use dev as the cloud integration environment.
-- Use GitHub Environment approvals before prod deployment.
-- Optionally create short-lived preview resources later if needed.
+Do not create a standing staging environment for MVP.
 
 Local development should support:
 
@@ -1061,21 +993,19 @@ Local development should support:
 - Optional local Postgres.
 - Local Blob emulator for integration parity, with a filesystem artifact adapter for fast Core/unit tests.
 
-## 16. Cost Controls
+## 15. Cost Controls
 
 MVP cost controls:
 
 - ACA Jobs scale to zero.
-- No per-strategy image builds.
 - User quotas for concurrent jobs, monthly backtests, tickers, bars, memory, CPU, and timeout.
 - API rate limits prevent polling/submission abuse before jobs start.
 - Logs sampled and retained conservatively.
-- Vercel for frontend instead of Azure Front Door.
 - Small Postgres tier until usage requires scaling.
 
 Worker compute should be close to serverless economics. A 1 vCPU / 2 GiB worker running for 10 minutes is expected to cost only cents before free grants. Fixed platform costs will usually dominate early: Postgres, Vercel Pro, monitoring, registry, and baseline API availability.
 
-## 17. Testing Strategy
+## 16. Testing Strategy
 
 | Layer | Tests |
 |---|---|
@@ -1088,9 +1018,9 @@ Worker compute should be close to serverless economics. A 1 vCPU / 2 GiB worker 
 | Data tests | Quarterly release validation, TWS lookback fetching, backadjustment reports. |
 | Deployment automation tests | Scheduled signal generation, latest signal API, notification formatting. |
 
-## 18. Remaining Technical Decisions
+## 17. Implementation Decisions
 
-These are the main items still worth hashing out before deeper implementation. The broad platform choices above are now fixed for MVP.
+These items need concrete implementation choices during buildout.
 
 1. Final `QuantFoundry-Core` strategy contract details: exact `CandleData`, `StrategyParams`, metadata schema, and validation strictness.
 2. Data operations v1: quarterly research data release scripts and hosted signal IB/TWS lookback fetch design.
@@ -1110,12 +1040,11 @@ Closed MVP decisions:
 - Worker orchestration: API directly starts ACA Jobs for MVP.
 - Quotas: editable defaults in `QuantFoundry-API/config/plans.yml`.
 - Signal API keys: one active deployment-scoped key at a time.
-- Portfolio backtests: support both single-strategy and portfolio backtests; implement whole-portfolio worker first, matching the SaaS specs, with fanout later.
+- Portfolio backtests: support both single-strategy and portfolio backtests; MVP portfolio backtests use one whole-portfolio worker job.
 - IaC: Bicep/GitHub Actions live in the owning repos, mainly `QuantFoundry-API` for backend infrastructure and `QuantFoundry-Web` for Vercel config.
 - Hosted signal scheduler: ACA scheduled job starts the all-deployments run and fans out deployment jobs in parallel.
-- MVP cache: no dedicated cache layer.
 
-## 19. Near-Term Implementation Order
+## 18. Near-Term Implementation Order
 
 1. Update `QuantFoundry-Core` to match the `compute(candles, params)` strategy contract.
 2. Add output validation, metadata models, zone slicing, and artifact schemas to Core.
