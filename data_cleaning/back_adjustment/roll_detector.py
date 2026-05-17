@@ -51,14 +51,14 @@ def detect_roll_dates_from_norgate(
     """Detect rolls using Norgate Delivery Month as reference.
 
     1. Find dates where Norgate's Delivery Month changes (= roll dates).
-    2. Resample the target data (Kibot) to daily.
+    2. Resample the target data (source intraday frame) to daily.
     3. For each Norgate roll date, find the closest date in the target
        data and measure the close-to-close gap.
 
     Parameters
     ----------
     df : pd.DataFrame
-        Target data (Kibot) with columns: datetime, open, high, low, close.
+        target data (source intraday frame) with columns: datetime, open, high, low, close.
     norgate_unadjusted : pd.DataFrame
         Norgate unadjusted continuous futures with columns: Date, Close,
         Delivery Month.

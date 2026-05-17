@@ -2,62 +2,73 @@
 
 ## 1. Overview
 
-The platform organizes research and deployment into three sequential phases: **Research**, **Portfolio**, and **Deployment**. The researcher defines their own data zones and uses them as they see fit — the platform makes no assumptions about how many zones exist or how they are ordered.
+The platform organises research and deployment into four sequential phases: **Strategy Research**, **Portfolio Construction**, **Portfolio Evaluation**, and **Deployment**. The zone model underpinning this flow uses two distinct tiers — a single project-level test zone fixed at project creation, and researcher-defined strategy-level zones within the pre-test window.
 
 ```
-[User-defined Zones] → Strategy Research → Portfolio Composition → Deployment → Live Performance
+Project creation → Strategy Research → Portfolio Construction → Portfolio Evaluation → Deployment → Live
 ```
 
-By default, the platform suggests three zones (Train / Validation / Test) as a starting point. The researcher can rename, add, or remove zones freely.
+Full zone model specification: `docs/SaaS/zone_manager.md`. Robustness test specifications: `docs/SaaS/robustness_tests/`. End-to-end research sequence: `docs/SaaS/research_flow.md`.
 
 ---
 
 ## 2. Data Zones
 
-### 2.1 Zone Definitions
+### 2.1 Two-Tier Zone Model
 
-A zone is a named date range with a single semantic tag: **Train** or **OutOfSample**. This tag is the only distinction the platform makes — it determines which robustness tests are available for that zone. Everything else (number of zones, names, ordering, purpose) is entirely up to the researcher.
+Zones operate at two distinct tiers.
+
+**Tier 1 — Project Test Zone (one per project, fixed at creation)**
+
+A single project-wide holdout window. Fixed when the project is created. No strategy in the project may use this data for fitting, parameter selection, or robustness testing. The project test zone is the exclusive window for portfolio-level evaluation and is opened exactly once — after all strategy research and portfolio construction is complete.
 
 ```
 Zone:
-  id:          uuid
-  name:        str     # user-defined label, e.g. "train", "validation", "test_2022"
-  zone_type:   enum    # Train | OutOfSample
-  start_date:  date
-  end_date:    date
+  project_test_start:   utc_datetime  # inclusive lower bound, fixed at project creation
+  project_test_end:     utc_datetime  # inclusive upper bound, fixed at project creation
 ```
 
-The platform defaults to suggesting three zones on project creation:
+**Tier 2 — Strategy-Level Zones (per strategy, constrained to the pre-test window)**
 
-| Default Name | Default Type | Suggested Purpose |
-|---|---|---|
-| Train | Train | Model development, parameter selection |
-| Validation | OutOfSample | Performance estimation during research |
-| Test | OutOfSample | Final holdout before portfolio commit |
+Each strategy has researcher-defined zones within the window `[data_start, project_test_start)`. Two zone types are supported:
 
-The researcher can rename, reorder, add, or remove zones freely. There is no enforced count or ordering.
+| `zone_type` | Role |
+|---|---|
+| **Train** | Strategy development, parameter sweeps, IS robustness tests, parameter sensitivity, and parameter selection. Fitting is permitted. |
+| **Validation** | OOS evaluation of the individual strategy — checks whether IS performance generalises before the strategy is committed to the portfolio. No fitting permitted. Must fall entirely before `project_test_start`. |
+
+```
+Zone:
+  id:            uuid
+  name:          str             # user-defined label (display only)
+  zone_type:     Train | Validation
+  start_at_utc:  utc_datetime   # inclusive; must be < project_test_start
+  end_at_utc:    utc_datetime   # inclusive; must be < project_test_start
+```
+
+**Important:** Strategy-level Validation is OOS relative to the strategy's own Train zone, but it is inside the pre-test research period. It evaluates individual strategy generalisation. It does not evaluate portfolio performance — that is exclusively the project test zone's job.
 
 ### 2.2 Zone Rules
 
-The only rules the platform enforces:
+- Strategy zone ranges must not overlap pairwise within the same strategy.
+- All strategy zones must have `end_at_utc < project_test_start`.
+- The project test zone is defined once at project creation and cannot be moved after any strategy research begins.
+- Boundaries are UTC-inclusive. The API accepts calendar dates from the user and normalises to UTC before persistence.
 
-- Zones must have valid, non-empty date ranges.
-- Zones within the same project must not overlap.
+### 2.3 Why the Two-Tier Model
 
-No ordering is enforced between zones. No minimum or maximum zone count is enforced. The researcher is responsible for structuring zones in a way that is statistically sound for their research goals.
+The single project test zone ensures all portfolio evaluation happens on data that no strategy in the project has ever seen — directly or indirectly. With per-strategy test zones, a researcher could inadvertently let individual strategy validation overlap with other strategies' training windows, introducing correlation between IS and portfolio evaluation performance.
 
-### 2.3 Why the Train / OutOfSample Distinction Matters
+The two-tier model cleanly separates the concerns: strategy-level zones are the researcher's workspace; the project test zone is the portfolio's unbiased scorecard. See `docs/SaaS/zone_manager.md` §8 for the full contamination doctrine.
 
-The platform provides different robustness tests depending on zone type:
+### 2.4 Default Zone Suggestion
 
-- **Train zones**: fitting-aware tests. The model was fit on this data, so in-sample performance is expected to look inflated. Tests here assess whether the in-sample result is meaningful given that fitting occurred (e.g., permutation tests that account for model complexity).
-- **OutOfSample zones**: standard OOS tests. No fitting occurred here. Tests assess whether OOS performance is statistically significant above chance (e.g., return shuffle, Monte Carlo).
+On project creation the platform suggests:
+- Train zone: first 60% of available data
+- Validation zone: next 20% of available data  
+- Project test zone: final 20% of available data
 
-This is the only assumption the platform makes about a zone's role. All other interpretation is left to the researcher.
-
-### 2.4 Responsibility for Zone Integrity
-
-The platform surfaces zone date ranges and types clearly throughout the UI. The researcher is responsible for defining zones that span varied market regimes and for exercising discipline around how frequently holdout zones are evaluated. The platform does not police zone access.
+The researcher adjusts before starting any research. Once the first strategy training job is submitted, the project test zone boundary is locked.
 
 ---
 
@@ -65,24 +76,17 @@ The platform surfaces zone date ranges and types clearly throughout the UI. The 
 
 ### 3.1 Static (Fixed) Split
 
-The researcher uses all of Zone 1 as a single training window. This is the MVP default and the simplest approach. Zone 2 is used as a fixed validation set. No rolling or expanding windows are involved.
+The researcher uses their Train zone(s) as the training window. This is the MVP default. A strategy developed with a static split has parameters that are selected once and never change — the strategy is fit on IS data, validated on the Validation zone, and committed to the portfolio.
 
-A strategy developed with a static split is tagged `**methodology: static**`.
-
-For static strategies, reoptimization is **manual**. The researcher monitors live performance over time (months to years) and decides independently when to evaluate whether the strategy needs updating or removal.
+A static strategy is tagged `methodology: static`. Reoptimisation is manual — the researcher monitors live performance and decides when to develop an updated version.
 
 ### 3.2 Walk-Forward (Future)
 
-The researcher selects one or more zones to use as the walk-forward window. The platform partitions the selected date range into sequential folds. The first fold defines the initial train window. Each subsequent fold produces an OOS window. All OOS windows are stitched together into a single aggregated validation set for performance evaluation. This aggregated OOS performance is a research-quality estimate — it is not a substitute for a dedicated holdout zone.
+The researcher selects zones to use as the walk-forward window. The platform partitions the selected range into sequential folds. Each fold produces an OOS window. All OOS windows are stitched into a single aggregated validation set.
 
-Walk-forward supports two window modes:
+Walk-forward supports expanding window (train start fixed) and rolling window (fixed-size train slides forward) modes. A strategy developed with walk-forward is tagged `methodology: walk_forward` and carries a reoptimisation schedule.
 
-- **Expanding window**: Train start is always fixed at the beginning; each fold adds more history. Better for strategies that benefit from maximum data (mean reversion, cross-sectional signals).
-- **Rolling window**: Fixed-size train window slides forward; old data is dropped. Better for regime-sensitive strategies where distant history is noise.
-
-A strategy developed with walk-forward is tagged `**methodology: walk_forward`** and carries a reoptimization schedule.
-
-The training methodology is represented as a parameterized config from day one, so walk-forward support is an extension rather than a redesign:
+Walk-forward strategies require periodic refitting as new data arrives, with a cadence decoupled from the portfolio-level refit cadence. See `docs/SaaS/portfolio_deployment.md` §9 for the decoupling architecture.
 
 ```
 TrainingConfig:
@@ -93,9 +97,7 @@ TrainingConfig:
 
 ### 3.3 Purge Gap at Split Boundaries (Future)
 
-When a strategy has a significant `max_lookback`, the first N bars of any OOS window use features that overlap with the preceding IS window, creating a subtle data leakage at the boundary. The fix is a configurable purge gap — those N bars are excluded from performance evaluation (but still used for feature warmup).
-
-This is primarily a concern for higher-complexity ML-based strategies that can overfit to boundary patterns. Simple rule-based or low-complexity strategies are not materially affected. The purge gap will be an **optional, toggleable setting per strategy**, defaulting to off. It is not included in MVP.
+When a strategy has a significant `max_lookback`, the first N bars of any OOS window use features overlapping with the preceding IS window — a subtle data leakage at the boundary. A configurable purge gap excludes those N bars from performance evaluation while still using them for feature warmup. Not included in MVP; primarily relevant for ML-based strategies.
 
 ---
 
@@ -107,23 +109,25 @@ This is primarily a concern for higher-complexity ML-based strategies that can o
 
 ### 4.1 Research Phase (Train Zones)
 
-The researcher develops the strategy using their defined train zones. There are no restrictions on how many times train zone data is accessed. Parameter sweeps and robustness tests run here. Walk-forward folds are also defined within train zone date ranges.
+The researcher develops the strategy using their Train zones. Parameter sweeps, IS robustness tests, parameter sensitivity tests, and parameter selection all happen here. There are no restrictions on how many times Train zone data is accessed. The output of this phase is a selected parameter combination with passed IS robustness tests.
 
-### 4.2 Validation Phase (OOS Zones)
+See `docs/SaaS/robustness_tests/index.md` for the full test sequence.
 
-The researcher evaluates the strategy on OOS zones to estimate out-of-sample performance. Which zones are used for validation vs final holdout is entirely the researcher's decision — the platform makes no distinction between OOS zones beyond the robustness tests it makes available.
+### 4.2 Validation Phase (Validation Zones)
 
-Each evaluation on an OOS zone is an implicit selection decision. The researcher should be aware that repeatedly evaluating the same OOS zone accumulates selection bias over time.
+The researcher evaluates the selected parameter combination on their Validation zone to check OOS generalisation. No fitting occurs on the Validation zone. Each evaluation on the Validation zone carries a selection cost — the researcher should be aware that repeatedly evaluating and adjusting based on validation performance accumulates bias.
 
-### 4.3 Commit Phase
+The output of this phase is a strategy that has passed validation robustness tests and is ready for portfolio consideration.
 
-The researcher decides when to commit a strategy for portfolio consideration. This typically follows satisfactory evaluation on at least one OOS zone designated as a holdout. Timing is entirely user-controlled — some researchers commit after each strategy individually, others batch several strategies and evaluate a combined portfolio view before committing.
+### 4.3 Portfolio Correlation Check
 
-The platform does not enforce a commit gate. Discipline around holdout zone usage is the researcher's responsibility.
+Before committing a strategy to the portfolio, the researcher can inspect how its IS returns correlate with strategies already committed. This is a research aid — it does not gate the commit. A highly correlated new strategy adds little diversification; the researcher weighs this against its standalone merit.
 
-### 4.4 Strategy Versioning
+See `docs/SaaS/ui_ux.md` §3.5 for the UI specification.
 
-A committed strategy is an **immutable snapshot**: source code, parameters, training config, and the zone boundaries active at commit time. If the researcher wants to change the strategy, they create a new version and restart from the Research Phase.
+### 4.4 Commit Phase
+
+The researcher commits the strategy when satisfied with IS and validation results. The commit creates an immutable strategy version snapshot.
 
 ```
 StrategyVersion:
@@ -140,15 +144,27 @@ StrategyVersion:
 
 ---
 
-## 5. Portfolio Composition
+## 5. Portfolio Construction
 
 ### 5.1 Assembling the Portfolio
 
-A portfolio is a collection of committed strategy versions with associated weights. The researcher selects which committed strategies to include and assigns weights (equal-weight or manual).
+A portfolio is a collection of committed strategy versions. The researcher selects which committed strategies to include, assigns instrument weights, and configures the weight layer.
 
-### 5.2 Portfolio Versioning
+### 5.2 Weight Layer Method Selection
 
-Every portfolio deployment creates a new immutable portfolio version. The platform permanently retains all previous versions so the researcher can review historical compositions and, if needed, redeploy an older version.
+Before opening the project test zone, the researcher selects the weight layer method using IS walk-forward cross-validation. The selected method is locked on the portfolio as an immutable config. See `docs/SaaS/weight_layer.md` for the full specification.
+
+### 5.3 Pre-Commitment Registration
+
+Before the project test zone is opened, the researcher must register:
+- Weight layer config (locked)
+- Monitoring config — CUSUM thresholds, rolling Sharpe floor, drawdown cone parameters
+
+These must be registered before any test zone results are viewed. Registering them after viewing results is contamination.
+
+### 5.4 Portfolio Versioning
+
+Every portfolio deployment creates a new immutable portfolio version. The platform retains all previous versions for audit and reproducibility.
 
 ```
 Portfolio:
@@ -161,30 +177,34 @@ PortfolioVersion:
   version_number:    int
   created_at:        timestamp
   strategies:        list[(strategy_id, strategy_version_id, weight)]
-  zone_snapshot:     ZoneConfig     # snapshot of zone boundaries at version creation
+  zone_snapshot:     ZoneConfig
+  weight_layer_config: WeightLayerConfig
+  monitoring_config:   MonitoringConfig
   deployed_at:       timestamp | None
   retired_at:        timestamp | None
 ```
 
-**Rollback** is re-deploying a previous `PortfolioVersion`. This creates a new deployment record pointing to the old strategy set — it does not modify the historical version record.
+---
 
-> **MVP scope note**: Portfolio versioning with rollback is noted as a future feature. MVP may track the current active portfolio only. The data model above is designed to support versioning from day one so that adding the UI and rollback logic later requires no schema changes.
+## 6. Portfolio Evaluation (Project Test Zone)
 
-### 5.3 Zone 3 at the Portfolio Level
+When the researcher has assembled the portfolio and is satisfied with portfolio construction, they open the project test zone. This is a one-time action.
 
-When the researcher evaluates Zone 3 at the portfolio level (multiple strategies combined), the platform runs all strategies across Zone 3 data and aggregates the results into a combined portfolio performance view. This is the closest available estimate to live performance before deployment.
+The platform evaluates the combined portfolio on `[project_test_start, project_test_end]`. Tests cover portfolio-level monitoring (CUSUM, rolling Sharpe, drawdown cone), correlation realisation, IDM accuracy, contribution concentration, and portfolio Sharpe degradation.
+
+The only action the project test zone permits is culling strategies triggered by pre-specified monitoring rules. All other results are diagnostic information. See `docs/SaaS/robustness_tests/portfolio_holdout.md` for the full specification.
 
 ---
 
-## 6. Deployment & Live Performance
+## 7. Deployment & Live Performance
 
-### 6.1 Deploying a Portfolio Version
+### 7.1 Deploying a Portfolio Version
 
-Deploying creates a live instance of a specific `PortfolioVersion`. The platform begins routing live market data through all included strategies and producing live position signals.
+After the researcher is satisfied with portfolio holdout results, they run the final fit (incorporating holdout data) and deploy. Deploying creates a live instance and begins daily signal generation. See `docs/SaaS/portfolio_deployment.md` for the full deployment workflow.
 
-### 6.2 Live Performance Tracking
+### 7.2 Live Performance Tracking
 
-Live performance is tracked **per portfolio version**. When the researcher updates the portfolio and deploys a new version, the previous version's live performance record is closed and a new one begins. This allows direct comparison of performance across versions.
+Live performance is tracked per portfolio version. When the portfolio is updated and a new version deployed, the previous version's live performance record closes and a new one begins.
 
 ```
 LivePerformanceRecord:
@@ -196,77 +216,48 @@ LivePerformanceRecord:
   position_log:          timeseries
 ```
 
-Live performance is the platform's primary scorecard. It is displayed prominently and is the only truly unbiased evaluation of a strategy — Zone 3 is an estimate; live data is the ground truth.
+Live performance is the platform's primary long-term scorecard. It is the only truly unbiased evaluation — project test zones are estimates; live data is ground truth.
 
-### 6.3 Manual Strategy Review (Static Methodology)
+### 7.3 Manual Strategy Review (Static Methodology)
 
-For strategies tagged `methodology: static`, reoptimization is entirely manual. The platform surfaces live performance metrics to help the researcher evaluate whether a strategy is degrading. The researcher independently decides when to:
+For static strategies, the researcher monitors live performance via the monitoring dashboard. The platform surfaces CUSUM, rolling Sharpe, and drawdown cone alerts. The researcher decides when to remove a strategy or start a new research cycle.
 
-- Remove the strategy from the portfolio
-- Start a new research cycle and develop an updated version
-- Replace the strategy in the portfolio with the new version (new portfolio version + deployment)
+### 7.4 Walk-Forward Auto-Reoptimisation (Future)
 
-### 6.4 Walk-Forward Auto-Reoptimization (Future)
-
-For strategies tagged `methodology: walk_forward`, the platform runs reoptimization automatically on the configured schedule:
-
-1. Zone 1 expands to include new data up to the schedule boundary.
-2. The strategy is retrained using the walk-forward config.
-3. The result is validated against Zone 2 (also expanded if applicable).
-4. The researcher is notified and presented with the new version's performance vs. the current deployed version.
-5. The researcher **approves or rejects** the new version before it is deployed. No automatic deployment without explicit approval.
-
-If the researcher approves, a new strategy version is committed and a new portfolio version is created and deployed.
+For walk-forward strategies, the platform runs reoptimisation automatically on the configured schedule. The researcher approves or rejects each new version before it is deployed — no automatic deployment without explicit approval.
 
 ---
 
-## 7. Jupyter Integration
+## 8. Jupyter Integration
 
-The Jupyter environment is a first-class research tool with full SDK access to the platform ecosystem.
+The Jupyter environment provides full SDK access for custom analysis.
 
-### 7.1 Capabilities
+**Capabilities:**
+- Load any committed strategy version, inspect source, params, and training config
+- Load any portfolio version, inspect composition and weights
+- Query candle data by UTC range with zone-aware labels
+- Pull live performance records for any portfolio version
+- Run custom analysis: factor analysis, regime analysis, correlation studies
 
-- **Strategy access**: load any committed strategy version, inspect source code, params, and training config
-- **Portfolio access**: load any portfolio version, inspect composition and weights
-- **Cache access**: retrieve cached strategy outputs without re-running compute
-- **Data access**: query Zone 1/2/3 candle data directly via SDK (zone-aware — SDK labels which zone a date range falls into)
-- **Live performance**: pull live performance records for any portfolio version
-- **Custom analysis**: run arbitrary research — factor analysis, regime analysis, correlation studies — using platform data
-
-### 7.2 Zone Awareness
-
-The SDK data query methods surface which zone a requested date range falls into. This is informational only in MVP — the platform does not block access to any zone from a notebook. The researcher sees a clear label and is responsible for not contaminating holdout data during active strategy development.
-
-```python
-# Example SDK usage (illustrative, not final API)
-from platform_sdk import Strategy, Portfolio, DataClient
-
-client = DataClient(project_id="...")
-candles = client.get_candles(ticker="ES", start="2018-01-01", end="2020-12-31")
-# SDK response includes: zone_labels={"2018-01-01..2019-12-31": "train", "2020-01-01..2020-12-31": "validation"}
-```
+**Zone awareness:** SDK data queries surface which zone a date range intersects. The platform does not block access to any zone from a notebook — the researcher sees a clear label and is responsible for not using project test zone data during active strategy development.
 
 ---
 
-## 8. MVP Scope
-
+## 9. MVP Scope
 
 | Feature | MVP | Future |
 |---|---|---|
-| User-defined zones (name, type, date range) | ✅ | |
-| Train / OutOfSample zone type tag | ✅ | |
-| Default 3-zone suggestion (Train / Validation / Test) | ✅ | |
-| No enforced zone count or ordering | ✅ | |
+| Two-tier zone model (project test + strategy train/validation) | ✅ | |
+| Project test zone fixed at creation | ✅ | |
+| Strategy zone types: Train / Validation | ✅ | |
 | Robustness tests scoped by zone type | ✅ | |
 | Strategy research, validate, commit flow | ✅ | |
 | Static (fixed split) training methodology | ✅ | |
 | Strategy versioning (immutable snapshots) | ✅ | |
-| Portfolio composition | ✅ | |
+| Portfolio composition and weight layer selection | ✅ | |
+| Portfolio holdout evaluation | ✅ | |
 | Deployment and live performance tracking | ✅ | |
-| Portfolio versioning and rollback | | ✅ |
-| Walk-forward methodology (user selects zone, expanding + rolling) | | ✅ |
-| Walk-forward auto-reoptimization with approval gate | | ✅ |
-| Purge gap at split boundaries (optional, toggleable) | | ✅ |
+| Walk-forward methodology | | ✅ |
+| Walk-forward auto-reoptimisation with approval gate | | ✅ |
+| Purge gap at split boundaries | | ✅ |
 | Jupyter SDK with zone-aware data access | | ✅ |
-
-

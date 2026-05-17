@@ -39,7 +39,9 @@ def test_monthly_buy_hold_portfolio_runs_from_central_cache(
         end_date=end,
     )
     assert refresh_summary["failed"] == 0
-    assert refresh_summary["rebuilt"] >= len(tickers) * 2
+    handled = refresh_summary["rebuilt"] + refresh_summary.get("validated", 0)
+    assert handled == refresh_summary["total_tasks"]
+    assert refresh_summary["total_tasks"] >= len(tickers)
 
     store = CentralCacheStore.get_instance()
     ewsd_descriptor = ArtifactDescriptor(

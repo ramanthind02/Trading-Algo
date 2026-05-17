@@ -8,15 +8,15 @@ class ChartManager {
     this.hasMore = false;
     this.earliestTimestamp = null;
     this.htf = ['H4', 'D', 'W', 'M'];
-    this.kibotSeries = null;
-    this.kibotVisible = false;
+    this.rawOverlaySeries = null;
+    this.rawOverlayVisible = false;
     this.domElement = document.getElementById('tvchart');
 
     this.initializeChart();
     this._initTickerSelector();
     this._initLoadMore();
     this._initDateRange();
-    this._initKibotToggle();
+    this._initRawOverlayToggle();
   }
 
   initializeChart() {
@@ -59,13 +59,13 @@ class ChartManager {
     this.currentTicker = ticker;
     this.candles = [];
     this._clearDateRange();
-    this._removeKibotSeries();
-    this.kibotVisible = false;
+    this._removeRawOverlaySeries();
+    this.rawOverlayVisible = false;
 
     const resp = await fetch(`/timeframes/${ticker}`);
     const timeframes = await resp.json();
     this._buildSwitcher(timeframes);
-    await this._resetKibot();
+    await this._resetRawOverlay();
 
     await this._fetchAndRender();
   }
@@ -100,7 +100,7 @@ class ChartManager {
     this.currentInterval = tf;
     this.candles = [];
     this._clearDateRange();
-    await this._resetKibot();
+    await this._resetRawOverlay();
     this._fetchAndRender();
   }
 
@@ -202,44 +202,44 @@ class ChartManager {
     document.getElementById('cap_warning').textContent = '';
   }
 
-  // ── Kibot / Raw comparison overlay ───────────────────────────
+  // ── Reference / Raw comparison overlay ───────────────────────────
 
   _dailyTimeframes = ['D', 'W', 'M'];
 
-  _initKibotToggle() {
-    const btn = document.getElementById('kibot_toggle_btn');
+  _initRawOverlayToggle() {
+    const btn = (document.getElementById('raw_overlay_toggle_btn'));
     if (!btn) return;
-    btn.addEventListener('click', () => this._toggleKibot());
+    btn.addEventListener('click', () => this._toggleRawOverlay());
   }
 
-  async _resetKibot() {
-    this._removeKibotSeries();
-    this.kibotVisible = false;
-    const btn = document.getElementById('kibot_toggle_btn');
+  async _resetRawOverlay() {
+    this._removeRawOverlaySeries();
+    this.rawOverlayVisible = false;
+    const btn = (document.getElementById('raw_overlay_toggle_btn'));
     if (!btn) return;
     const label = this._dailyTimeframes.includes(this.currentInterval)
-      ? 'Compare Kibot' : 'Compare Raw';
+      ? 'Compare Reference' : 'Compare Raw';
     btn.textContent = label;
-    btn.classList.remove('kibot-active');
+    btn.classList.remove('raw-overlay-active');
 
     // Probe server to check if comparison data exists for this ticker/tf
     try {
-      const resp = await fetch(`/candles/${this.currentTicker}/${this.currentInterval}/kibot?count=1`);
+      const resp = await fetch(`/candles/${this.currentTicker}/${this.currentInterval}/raw_overlay?count=1`);
       btn.style.display = resp.ok ? 'inline-block' : 'none';
     } catch {
       btn.style.display = 'none';
     }
   }
 
-  async _toggleKibot() {
-    const btn = document.getElementById('kibot_toggle_btn');
-    if (this.kibotVisible) {
-      this._removeKibotSeries();
+  async _toggleRawOverlay() {
+    const btn = (document.getElementById('raw_overlay_toggle_btn'));
+    if (this.rawOverlayVisible) {
+      this._removeRawOverlaySeries();
       const label = this._dailyTimeframes.includes(this.currentInterval)
-        ? 'Compare Kibot' : 'Compare Raw';
+        ? 'Compare Reference' : 'Compare Raw';
       btn.textContent = label;
-      btn.classList.remove('kibot-active');
-      this.kibotVisible = false;
+      btn.classList.remove('raw-overlay-active');
+      this.rawOverlayVisible = false;
       return;
     }
 
@@ -249,39 +249,39 @@ class ChartManager {
     const params = new URLSearchParams();
     params.set('count', '5000');
     const qs = params.toString();
-    const url = `/candles/${this.currentTicker}/${this.currentInterval}/kibot?${qs}`;
+    const url = `/candles/${this.currentTicker}/${this.currentInterval}/raw_overlay?${qs}`;
 
     try {
       const resp = await fetch(url);
       if (!resp.ok) {
-        btn.textContent = 'No Kibot data';
+        btn.textContent = 'No Reference data';
         btn.disabled = false;
         return;
       }
       const data = await resp.json();
 
-      this.kibotSeries = this.chart.addLineSeries({
+      this.rawOverlaySeries = this.chart.addLineSeries({
         color: 'orange',
         lineWidth: 2,
       });
-      this.kibotSeries.setData(data.candles);
+      this.rawOverlaySeries.setData(data.candles);
 
-      this.kibotVisible = true;
+      this.rawOverlayVisible = true;
       btn.textContent = this._dailyTimeframes.includes(this.currentInterval)
-        ? 'Hide Kibot' : 'Hide Raw';
-      btn.classList.add('kibot-active');
+        ? 'Hide Reference' : 'Hide Raw';
+      btn.classList.add('raw-overlay-active');
     } catch {
       const label = this._dailyTimeframes.includes(this.currentInterval)
-        ? 'Compare Kibot' : 'Compare Raw';
+        ? 'Compare Reference' : 'Compare Raw';
       btn.textContent = label;
     }
     btn.disabled = false;
   }
 
-  _removeKibotSeries() {
-    if (this.kibotSeries) {
-      this.chart.removeSeries(this.kibotSeries);
-      this.kibotSeries = null;
+  _removeRawOverlaySeries() {
+    if (this.rawOverlaySeries) {
+      this.chart.removeSeries(this.rawOverlaySeries);
+      this.rawOverlaySeries = null;
     }
   }
 
@@ -358,3 +358,5 @@ class ChartManager {
 // ── Bootstrap ─────────────────────────────────────────────────────
 
 const manager = new ChartManager();
+
+

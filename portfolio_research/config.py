@@ -6,8 +6,8 @@ and OOSWindowConfig so portfolio in-sample and OOS periods stay aligned.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from enum import Enum
 import logging
 from pathlib import Path
@@ -207,6 +207,12 @@ class PortfolioResearchConfig:
         Repo-relative ensemble directory (posix) → feature JSON stems to omit.
         Used for leave-one-feature-out; must stay aligned with ``weight_layer_kwargs``
         hierarchy built via ``build_hierarchy_spec_for_ensemble_dirs`` with the same map.
+    ensemble_vault_refit : bool
+        When True (default research), vault ensembles load with ``refit=True`` and are
+        **re-fit on cache** inside each phase (walk-forward research). When False (prop-firm
+        profile), matches live ``enigma_live_forecast``: ``refit=False`` so frozen vault
+        fitted payloads drive forecasts — discrete micro exposure then aligns with live
+        sizing for the same τ / weight layer / ticker set.
     """
 
     tickers: list[Ticker]
@@ -236,6 +242,7 @@ class PortfolioResearchConfig:
     )
     strict_cache_preflight: bool = False
     exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None = None
+    ensemble_vault_refit: bool = True
     futures_sim: FuturesSimConfig = field(default_factory=FuturesSimConfig)
 
     def __post_init__(self) -> None:
@@ -518,5 +525,80 @@ def load_config() -> PortfolioResearchConfig:
         feature_vault_correlation=feature_vault_correlation,
         strict_cache_preflight=strict_cache_preflight,
         exclude_feature_stems_by_ensemble=None,
+        ensemble_vault_refit=True,
         futures_sim=futures_sim,
+    )
+
+
+def load_prop_firm_portfolio_research_config(
+    *,
+    research_end: datetime | None = None,
+) -> PortfolioResearchConfig:
+    """Portfolio research config aligned with **live prop** ``live_forecast_config_prop.json``.
+
+    - **Universe:** ``ES``, ``NQ``, ``GC`` only (prop ``tradeable_tickers``). No ``TLT`` /
+      ``RTY`` in the research ticker list, so vault ensembles that require those symbols
+      are dropped by :func:`filter_ensemble_dirs_for_portfolio_tickers` (same rule as
+      narrowing the book to micros you actually trade).
+    - **Risk / combine:** ``target_volatility=0.20``, ``max_position_pct=2.5``,
+      ``WeightLayer`` ``equal_signal`` with ``fdm_max=2.0`` (matches live
+      ``GlobalPortfolio`` defaults).
+    - **Discrete sim:** ``futures_sim.account_capital=50_000`` and micro specs for
+      ES/NQ/GC only.
+
+    - **Vault fit mode:** ``ensemble_vault_refit=False`` matches live Enigma
+      (``load_ensemble_from_vault(..., refit=False)`` frozen JSON fits). Default research
+      uses ``refit=True`` walk-forward refits on cache.
+
+    ``research_end`` defaults to **today** (naive midnight) and updates ``end``,
+    ``test_window.end``, and ``oos_window.test_end`` so the pipeline runs through the
+    latest requested calendar day.
+
+    Artifacts go under ``results/prop_firm_profile`` to avoid clobbering the default
+    research ``results/`` tree.
+    """
+    base = load_config()
+    end_dt = research_end or datetime.combine(date.today(), datetime.min.time())
+    tickers = [Ticker.ES, Ticker.NQ, Ticker.GC]
+    ensemble_dirs = base.ensemble_dirs
+    _micro = canonical_listed_micro_futures()
+    futures_sim = FuturesSimConfig(
+        enabled=True,
+        account_capital=50_000.0,
+        instrument_specs={
+            k: FuturesInstrumentSpec(
+                multiplier=_micro[k].micro_dollars_per_point,
+                margin_long=_micro[k].illustrative_margin_long_usd,
+                margin_short=_micro[k].illustrative_margin_short_usd,
+                product_code=_micro[k].micro_symbol,
+            )
+            for k in ("NQ", "ES", "GC")
+        },
+        leverage_mode=LeverageMode.FINITE,
+        emit_tracking_error_csv=True,
+        emit_diagnostics_csv=True,
+    )
+    oos = base.oos_window
+    oos_new = (
+        replace(oos, test_end=end_dt)
+        if oos is not None
+        else None
+    )
+    return replace(
+        base,
+        tickers=tickers,
+        ensemble_dirs=ensemble_dirs,
+        end=end_dt,
+        test_window=ResearchWindow(start=base.test_window.start, end=end_dt),
+        oos_window=oos_new,
+        target_volatility=0.20,
+        max_position_pct=2.5,
+        weight_layer_method="equal_signal",
+        weight_layer_kwargs={"fdm_max": 2.0},
+        futures_sim=futures_sim,
+        feature_vault_correlation=replace(base.feature_vault_correlation, enabled=False),
+        output_root=_PORTFOLIO_RESEARCH_DIR / "results" / "prop_firm_profile",
+        export_per_timeframe_tearsheets=False,
+        export_per_ensemble_tearsheets=False,
+        ensemble_vault_refit=False,
     )

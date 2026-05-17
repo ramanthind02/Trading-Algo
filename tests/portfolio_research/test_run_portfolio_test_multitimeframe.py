@@ -50,9 +50,6 @@ class _DummyGlobalPortfolio:
         self.is_fitted = True
         return self
 
-    def save_to_vault(self, fit_start, fit_end, vault_root: str = "vault"):  # noqa: ANN001
-        return f"dummy::{fit_start:%Y%m%d}::{fit_end:%Y%m%d}"
-
     def predict_from_cache(self, query):  # noqa: ANN001
         self.predict_queries.append(query)
         datetimes = pd.date_range(query.start, query.end, freq="D")

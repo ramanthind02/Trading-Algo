@@ -5,8 +5,10 @@
 This document captures the current technical plan for turning the existing `Trading-Algo` research system into the QuantFoundry SaaS platform. It complements:
 
 - `docs/SaaS/data_flow.md` - research, portfolio, deployment, and zone lifecycle.
+- `docs/SaaS/zone_manager.md` - zone types, UTC slicing contract, Core vs API responsibilities, snapshots.
 - `docs/SaaS/strategy_spec.md` - user strategy contract and runtime expectations.
 - `docs/SaaS/ui_ux.md` - product navigation and MVP user surfaces.
+- `docs/SaaS/metrics_library.md` - canonical return conventions, KPI computation boundaries, UTC series, QuantStats posture, NumPy-centric implementation.
 
 The guiding product goal is to let independent traders build, validate, combine, and deploy systematic strategies without needing to build the surrounding infrastructure themselves.
 
@@ -17,7 +19,7 @@ The existing repository should remain operational as the internal research workb
 | Repository | Role |
 |---|---|
 | `Trading-Algo` | Internal research/backtesting/training lab. Keeps local data, cache, vault, experimental workflows, and current quant research code operational. |
-| `QuantFoundry-Core` | Shared Python library for strategy contracts, validation, candle/runtime models, cache keys, artifact schemas, and reusable engine components. |
+| `QuantFoundry-Core` | Shared Python library for strategy contracts, validation, candle/runtime models, cache keys, artifact schemas, zone splitting (`zone_manager` module), and reusable engine components. |
 | `QuantFoundry-API` | SaaS backend: auth integration, user/project/strategy metadata, job submission, ACA Job orchestration, status/results APIs, deployment APIs. |
 | `QuantFoundry-Worker` | Private batch worker image for executing strategy validation/backtests/signal generation jobs. It imports `QuantFoundry-Core`. |
 | `QuantFoundry-Web` | Public web application for dashboard, research workspace, strategy library, portfolio builder, and deployment UI. |
@@ -285,24 +287,24 @@ ResearchProject:
 
 ### 6.3 Zone
 
-The backend should support arbitrary non-overlapping zones. The UI can initially present a guided Train / Validation / Test layout.
+The backend should support arbitrary non-overlapping zones. The UI presents a guided Train / Validation / Test layout by default; researchers may add multiple zones of the same type, including multiple test zones.
 
 ```text
 Zone:
   id
   project_id
   name
-  zone_type        # Train | OutOfSample
-  start_date
-  end_date
+  zone_type        # Train | Validation | Test
+  start_at_utc     # timestamptz; inclusive lower bound per zone_manager.md
+  end_at_utc       # timestamptz; inclusive upper bound per zone_manager.md
   created_at
 ```
 
 Rules:
 
-- Date range must be valid and non-empty.
-- Zones in the same project must not overlap.
+- UTC range must be valid, non-empty, and non-overlapping with any other zone in the project.
 - No enforced count or ordering in the backend.
+- API accepts user-friendly date inputs where appropriate but persists normalized UTC instants consistent with `docs/SaaS/zone_manager.md`.
 
 ### 6.4 Strategy and Strategy Version
 

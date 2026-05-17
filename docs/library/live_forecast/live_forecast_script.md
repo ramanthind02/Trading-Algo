@@ -37,12 +37,11 @@
   - Reads from `vault/` (the prop-firm portfolio)
 
   **Personal profile** (runs *before* the US equity close at 4:00 PM ET):
-  - Synthesizes a partial daily candle for today from 15-min intraday bars
-    (O = first, H = max, L = min, C = latest, V = sum). This is because IB's
-    official daily bar for today isn't available yet, but waiting until after
-    close would miss the window for fractional-share ETF trading.
+  - Builds a **session-only** partial row from 15-min bars with extended/overnight data (`use_rth=0`); **not** written to the central cache
   - Sizes ETF fractional shares from `config.instruments[ticker].etf` mapping
   - Reads from `vault_personal/` (the personal-account portfolio)
+
+  **IB session grid (RTH vs extended):** TWS “Financial instrument description” snapshots for **NQ (CME, US/Central)** and **SPY (ARCA, US/Eastern)**, plus how to extrapolate to other futures/ETFs we use, live in `docs/library/live_forecast/prop_vs_personal_workflows.md` under **IB TWS “Financial instrument description” (reference)**.
 
   ---
 
@@ -100,14 +99,16 @@
 
   Each ticker is fetched as either CONTFUT (futures: ES, NQ, YM, RTY, GC) or STK (ETF: TLT), based on sec_type in the config.
 
-  **Step 5 -- Persist TWS data into the central cache**
+  **Step 5 -- Persist only completed daily candles**
 
-  `upsert_tws_candles()` does two things:
+  `upsert_tws_candles()` receives **completed** daily bars only (for the personal
+  profile, any row dated **today** in the America/New_York calendar is stripped
+  before upsert so incomplete IB dailies are not cached). Session-only partial
+  rows for the current run are merged in memory via `PortfolioCacheQuery.daily_candle_overlay`.
 
-  1. Daily candles: Calls `CentralCacheStore.upsert_candles()` per ticker -- this merges new bars with existing cached bars (deduplicates by   
-  date, keeps latest). The merged result is written to `.cache/.../candles/{ticker}/D.parquet`.
+  1. Daily candles: `upsert_tws_candles()` first calls `prepare_ib_rows_for_central_cache_append()` (`utils/cache/runtime/ib_candle_ratio_align.py`): **append-only** rows (strictly after the cache’s last session), then a **junction ratio** on OHLC for `CONTFUT` so the new tail matches the last Norgate-backed close. Then `CentralCacheStore.upsert_candles()` merges (deduplicates by date, keeps latest). The merged result is written to `.cache/.../candles/{ticker}/D.parquet`.
   1. Monthly candles: Reads the full cached daily series back from the cache, resamples to monthly (OHLCV aggregation), and upserts the      
-  monthly candles. This ensures monthly bars are always derived from the complete history, not just the TWS fetch window.
+  monthly candles. This ensures monthly bars are always derived from the **cached** complete history, not from session-only partials.
 
   When candles are upserted, the cache automatically marks all dependent bias node artifacts as STALE (via `mark_dependents_stale()`).
 

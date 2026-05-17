@@ -333,7 +333,13 @@ class CacheManager:
         end_date: datetime | None = None,
         reset_existing: bool = False,
     ) -> dict[str, Any]:
-        """Load repository-backed candles into the runtime cache explicitly."""
+        """Load repository-backed candles into the runtime cache explicitly.
+
+        Rows are **merged** via ``upsert_candles`` (not a full replace) so any
+        newer history already in cache (e.g. from Interactive Brokers) is kept
+        for dates beyond the parquet file end, while overlapping dates prefer the
+        latest write per timestamp.
+        """
         requested_tickers = list(tickers) if tickers is not None else list(Ticker)
         requested_timeframes = (
             list(timeframes)
@@ -375,7 +381,9 @@ class CacheManager:
                     )
                     if candles_df.empty:
                         raise ValueError("No source candles found in requested range")
-                    store.set_candles(ticker, timeframe, candles_df)
+                    # Merge into any existing cache (e.g. Interactive Brokers upserts) so
+                    # repo parquets extend history without discarding newer bars past the file end.
+                    store.upsert_candles(ticker, timeframe, candles_df)
                     details.append(
                         {
                             "ticker": ticker.name,

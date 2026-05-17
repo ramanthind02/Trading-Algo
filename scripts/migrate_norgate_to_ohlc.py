@@ -1,226 +1,117 @@
-"""Migrate ohlc_data from Kibot to Norgate back-adjusted continuous futures.
-
-Reads daily Norgate parquets, converts to Kibot schema, generates W/M
-aggregates, and writes to data/ohlc_data/. Skips tickers not available
-in Norgate (NG, TLT). Backs up existing Kibot data first.
-
-Hybrid splice: Kibot data before Norgate start date is preserved so we
-don't lose pre-2005 history. Norgate data replaces everything from its
-first available date onward.
-"""
+#!/usr/bin/env python3
+"""Build repository candle store from Norgate-only continuous futures."""
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pandas as pd
 
-from fetch_norgate_data import TICKER_TO_NORGATE
+from scripts.fetch_norgate_data import TICKER_TO_NORGATE
 
 ROOT = Path(__file__).resolve().parent.parent
-NORGATE_DIR = ROOT / "data" / "norgate" / "continuous_futures" / "adjusted"
+NORGATE_ADJ_DIR = ROOT / "data" / "norgate" / "continuous_futures" / "adjusted"
 OHLC_DIR = ROOT / "data" / "ohlc_data"
-BACKUP_DIR = ROOT / "data" / "ohlc_data_kibot_backup"
-
-KIBOT_ONLY = {"NG", "TLT"}
 
 
-def backup_existing_data(ohlc_dir: Path, backup_dir: Path) -> None:
-    """Back up existing ohlc_data to a sibling directory. Skip if already done."""
-    if backup_dir.exists():
-        print(f"Backup already exists at {backup_dir}, skipping.")
-        return
-    print(f"Backing up {ohlc_dir} -> {backup_dir} ...")
-    shutil.copytree(ohlc_dir, backup_dir)
-    print("Backup complete.")
+def _normalize_daily_frame(norgate_df: pd.DataFrame) -> pd.DataFrame:
+    """Convert Norgate daily columns to Trading-Algo candle schema."""
+    df = norgate_df.rename(
+        columns={
+            "Date": "datetime",
+            "Open": "open",
+            "High": "high",
+            "Low": "low",
+            "Close": "close",
+            "Volume": "volume",
+        }
+    ).copy()
+    required = ["datetime", "open", "high", "low", "close"]
+    missing = [col for col in required if col not in df.columns]
+    if missing:
+        raise ValueError(f"Missing columns from Norgate frame: {missing}")
 
+    if "volume" not in df.columns:
+        df["volume"] = 0
 
-def convert_norgate_daily(norgate_df: pd.DataFrame) -> pd.DataFrame:
-    """Convert Norgate daily DataFrame to Kibot schema.
-
-    Norgate columns: Date, Open, High, Low, Close, Volume, Delivery Month, Open Interest
-    Kibot columns:   datetime, open, high, low, close, volume, timestamp
-    """
-    df = norgate_df.rename(columns={
-        "Date": "datetime",
-        "Open": "open",
-        "High": "high",
-        "Low": "low",
-        "Close": "close",
-        "Volume": "volume",
-    })
-    df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
-
-    # Cast to match Kibot dtypes
-    for col in ("open", "high", "low", "close"):
-        df[col] = df[col].astype("float64")
-    df["volume"] = df["volume"].astype("int64")
-
-    # datetime as string YYYY-MM-DD
-    df["datetime"] = pd.to_datetime(df["datetime"]).dt.strftime("%Y-%m-%d")
-
-    # Unix timestamp (UTC midnight)
-    df["timestamp"] = (
-        pd.to_datetime(df["datetime"]).astype("int64") // 10**9
-    ).astype("int64")
-
-    return df.sort_values("timestamp").reset_index(drop=True)
-
-
-def aggregate_to_weekly(daily_df: pd.DataFrame) -> pd.DataFrame:
-    """Resample daily candles to weekly (W-SUN) matching Kibot convention."""
-    df = daily_df.copy()
-    df["_dt"] = pd.to_datetime(df["datetime"])
-    df = df.set_index("_dt")
-
-    weekly = df.resample("W-SUN").agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum",
-    }).dropna(subset=["open"])
-
-    weekly = weekly.reset_index()
-    weekly["datetime"] = weekly["_dt"].dt.strftime("%Y-%m-%d")
-    weekly["timestamp"] = (
-        weekly["_dt"].astype("int64") // 10**9
-    ).astype("int64")
-    weekly = weekly.drop(columns=["_dt"])
+    out = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
+    out["datetime"] = pd.to_datetime(out["datetime"]).dt.tz_localize(None)
+    out = out.sort_values("datetime").drop_duplicates(subset=["datetime"], keep="last")
 
     for col in ("open", "high", "low", "close"):
-        weekly[col] = weekly[col].astype("float64")
-    weekly["volume"] = weekly["volume"].astype("int64")
+        out[col] = out[col].astype("float64")
+    out["volume"] = out["volume"].fillna(0).astype("int64")
 
-    return weekly[["datetime", "open", "high", "low", "close", "volume", "timestamp"]].reset_index(drop=True)
+    out["timestamp"] = (out["datetime"].astype("int64") // 10**9).astype("int64")
+    out["datetime"] = out["datetime"].dt.strftime("%Y-%m-%d")
+    return out.reset_index(drop=True)
 
 
-def aggregate_to_monthly(daily_df: pd.DataFrame) -> pd.DataFrame:
-    """Resample daily candles to monthly (ME = month-end) matching Kibot convention."""
-    df = daily_df.copy()
-    df["_dt"] = pd.to_datetime(df["datetime"])
-    df = df.set_index("_dt")
-
-    monthly = df.resample("ME").agg({
-        "open": "first",
-        "high": "max",
-        "low": "min",
-        "close": "last",
-        "volume": "sum",
-    }).dropna(subset=["open"])
-
-    monthly = monthly.reset_index()
-    monthly["datetime"] = monthly["_dt"].dt.strftime("%Y-%m-%d")
-    monthly["timestamp"] = (
-        monthly["_dt"].astype("int64") // 10**9
-    ).astype("int64")
-    monthly = monthly.drop(columns=["_dt"])
-
+def _aggregate(daily_df: pd.DataFrame, frequency: str) -> pd.DataFrame:
+    dt = pd.to_datetime(daily_df["datetime"])
+    agg = (
+        daily_df.assign(_dt=dt)
+        .set_index("_dt")
+        .resample(frequency)
+        .agg(
+            {
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum",
+            }
+        )
+        .dropna(subset=["open"]) 
+        .reset_index()
+    )
+    agg["datetime"] = agg["_dt"].dt.strftime("%Y-%m-%d")
+    agg["timestamp"] = (agg["_dt"].astype("int64") // 10**9).astype("int64")
+    agg = agg.drop(columns=["_dt"])
     for col in ("open", "high", "low", "close"):
-        monthly[col] = monthly[col].astype("float64")
-    monthly["volume"] = monthly["volume"].astype("int64")
+        agg[col] = agg[col].astype("float64")
+    agg["volume"] = agg["volume"].astype("int64")
+    return agg[["datetime", "open", "high", "low", "close", "volume", "timestamp"]].reset_index(drop=True)
 
-    return monthly[["datetime", "open", "high", "low", "close", "volume", "timestamp"]].reset_index(drop=True)
 
-
-def _write_parquet(df: pd.DataFrame, path: Path) -> None:
-    """Write DataFrame as parquet with fastparquet engine."""
+def _write(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(path, index=False, engine="fastparquet")
 
 
-def migrate_ticker(ticker: str, norgate_path: Path, ohlc_dir: Path, backup_dir: Path) -> dict:
-    """Migrate a single ticker with hybrid splice.
+def rebuild_ticker(ticker: str) -> dict[str, object]:
+    src = NORGATE_ADJ_DIR / f"{ticker}.parquet"
+    if not src.exists():
+        raise FileNotFoundError(f"Missing Norgate adjusted parquet: {src}")
 
-    Pre-Norgate Kibot data is preserved, then Norgate data replaces
-    everything from its first available date onward.
-    """
-    norgate_df = pd.read_parquet(norgate_path)
-    norgate_daily = convert_norgate_daily(norgate_df)
+    norgate_df = pd.read_parquet(src)
+    daily = _normalize_daily_frame(norgate_df)
+    weekly = _aggregate(daily, "W-SUN")
+    monthly = _aggregate(daily, "ME")
 
-    # Determine Norgate start date for splice cutoff
-    norgate_start = norgate_daily["datetime"].iloc[0]  # string YYYY-MM-DD
-
-    # Load Kibot backup daily data (pre-migration original)
-    kibot_path = backup_dir / ticker / f"D_{ticker}.parquet"
-    kibot_rows = 0
-    if kibot_path.exists():
-        kibot_df = pd.read_parquet(kibot_path)
-        # Keep only Kibot rows strictly before Norgate start date
-        kibot_pre = kibot_df[kibot_df["datetime"] < norgate_start].copy()
-        kibot_rows = len(kibot_pre)
-
-        if kibot_rows > 0:
-            # Scale Kibot prices to match Norgate back-adjusted level at splice.
-            # Kibot is unadjusted; Norgate is back-adjusted. The ratio at the
-            # splice date represents the cumulative roll adjustment.
-            kibot_on_splice = kibot_df[kibot_df["datetime"] == norgate_start]
-            norgate_on_splice = norgate_daily[norgate_daily["datetime"] == norgate_start]
-
-            if not kibot_on_splice.empty and not norgate_on_splice.empty:
-                kibot_close = float(kibot_on_splice["close"].iloc[0])
-                norgate_close = float(norgate_on_splice["close"].iloc[0])
-                if kibot_close > 0:
-                    scale = norgate_close / kibot_close
-                    for col in ("open", "high", "low", "close"):
-                        kibot_pre[col] = kibot_pre[col] * scale
-                    print(f"    Splice scale factor: {scale:.4f}x (Kibot {kibot_close:.2f} -> Norgate {norgate_close:.2f})")
-                else:
-                    print(f"    WARNING: Kibot close is zero on {norgate_start}, skipping scale")
-            else:
-                print(f"    WARNING: No overlap on {norgate_start}, splicing without scaling")
-
-            # Splice: scaled Kibot pre-2005 + Norgate 2005+
-            daily = pd.concat([kibot_pre, norgate_daily], ignore_index=True)
-        else:
-            daily = norgate_daily
-    else:
-        daily = norgate_daily
-
-    daily = daily.sort_values("timestamp").reset_index(drop=True)
-
-    weekly = aggregate_to_weekly(daily)
-    monthly = aggregate_to_monthly(daily)
-
-    ticker_dir = ohlc_dir / ticker
-    _write_parquet(daily, ticker_dir / f"D_{ticker}.parquet")
-    _write_parquet(weekly, ticker_dir / f"W_{ticker}.parquet")
-    _write_parquet(monthly, ticker_dir / f"M_{ticker}.parquet")
+    tdir = OHLC_DIR / ticker
+    _write(daily, tdir / f"D_{ticker}.parquet")
+    _write(weekly, tdir / f"W_{ticker}.parquet")
+    _write(monthly, tdir / f"M_{ticker}.parquet")
 
     return {
         "ticker": ticker,
-        "daily_rows": len(daily),
-        "weekly_rows": len(weekly),
-        "monthly_rows": len(monthly),
-        "kibot_pre_rows": kibot_rows,
-        "date_range": f"{daily['datetime'].iloc[0]} to {daily['datetime'].iloc[-1]}",
+        "daily": len(daily),
+        "weekly": len(weekly),
+        "monthly": len(monthly),
+        "start": daily["datetime"].iloc[0],
+        "end": daily["datetime"].iloc[-1],
     }
 
 
 def main() -> None:
-    backup_existing_data(OHLC_DIR, BACKUP_DIR)
-
-    results: list[dict] = []
-    skipped: list[str] = []
-
-    for ticker in sorted(TICKER_TO_NORGATE):
-        norgate_path = NORGATE_DIR / f"{ticker}.parquet"
-        if not norgate_path.exists():
-            print(f"  SKIP: {ticker} — Norgate file not found at {norgate_path}")
-            skipped.append(ticker)
-            continue
-
-        summary = migrate_ticker(ticker, norgate_path, OHLC_DIR, BACKUP_DIR)
-        results.append(summary)
-        kibot_note = f" (Kibot pre-splice: {summary['kibot_pre_rows']})" if summary["kibot_pre_rows"] > 0 else ""
-        print(f"  OK: {ticker} — D:{summary['daily_rows']} W:{summary['weekly_rows']} M:{summary['monthly_rows']} ({summary['date_range']}){kibot_note}")
-
-    print(f"\n{'='*60}")
-    print(f"Migrated: {len(results)} tickers")
-    print(f"Skipped (no Norgate): {skipped}")
-    print(f"Kibot-only (untouched): {sorted(KIBOT_ONLY)}")
-    print(f"\nBackup at: {BACKUP_DIR}")
-    print("Remember to clear the runtime cache (.cache/trading_algo/central_cache/) after verifying.")
+    results = [rebuild_ticker(ticker) for ticker in sorted(TICKER_TO_NORGATE)]
+    print("=" * 60)
+    print("Norgate-only repository candle rebuild complete")
+    for row in results:
+        print(
+            f"  {row['ticker']}: D={row['daily']} W={row['weekly']} M={row['monthly']} "
+            f"({row['start']} -> {row['end']})"
+        )
 
 
 if __name__ == "__main__":

@@ -199,7 +199,7 @@ def _emit_discrete_tearsheet(
         output_file=str(out_path),
         mode="html",
     )
-    print(f"  [futures_sim] discrete tearsheet → {out_path}")
+    print(f"  [futures_sim] discrete tearsheet -> {out_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +383,7 @@ def _emit_tracking_error_summary(
     """)
 
     out_path.write_text(html, encoding="utf-8")
-    print(f"  [futures_sim] TE summary → {out_path}")
+    print(f"  [futures_sim] TE summary -> {out_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +528,7 @@ def run_futures_sim(
     if sim_config.emit_diagnostics_csv:
         diag_path = sim_dir / f"{safe_phase}_diagnostics.csv"
         diag_df.to_csv(diag_path, index=False)
-        print(f"  [futures_sim] diagnostics → {diag_path}")
+        print(f"  [futures_sim] diagnostics -> {diag_path}")
 
     if sim_config.emit_tracking_error_csv:
         te_path = sim_dir / f"{safe_phase}_tracking_error.csv"
@@ -536,7 +536,7 @@ def run_futures_sim(
         n_breaches = int(daily["any_leverage_breach"].sum())
         cum_te = float(daily["cumulative_te_usd"].iloc[-1])
         print(
-            f"  [futures_sim] tracking error → {te_path} "
+            f"  [futures_sim] tracking error -> {te_path} "
             f"| cumTE={cum_te:+,.0f} USD | annTE_vol={te_vol:.0f} USD/yr "
             f"| margin_breaches={n_breaches}d"
         )

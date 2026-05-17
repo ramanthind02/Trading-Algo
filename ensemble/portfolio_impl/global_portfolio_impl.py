@@ -1,10 +1,9 @@
-"""Global multi-timeframe portfolio (``GlobalPortfolio`` and snapshot helpers)."""
+"""Global multi-timeframe portfolio (``GlobalPortfolio``)."""
 from __future__ import annotations
 
 import logging
 import json
 from pathlib import Path
-from datetime import datetime
 from collections.abc import Mapping
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
@@ -122,7 +121,6 @@ class GlobalPortfolio:
         self.global_eligible_models_by_ticker_: Dict[str, Set[str]] = {}
         self.global_eligibility_diagnostics_: Dict[str, Any] = {}
         self.is_fitted_: bool = False
-        self.portfolio_id_: Optional[str] = None
 
     def _load_candles_per_timeframe_from_cache(
         self,
@@ -497,22 +495,6 @@ class GlobalPortfolio:
             return payload
         return result
 
-    def save_to_vault(
-        self,
-        fit_start: datetime,
-        fit_end: datetime,
-        vault_root: str = "vault",
-    ) -> str:
-        """Persist an immutable portfolio snapshot and return its ``portfolio_id``."""
-        from .portfolio_vault import save_global_portfolio_snapshot
-
-        return save_global_portfolio_snapshot(
-            self,
-            fit_start=fit_start,
-            fit_end=fit_end,
-            vault_root=vault_root,
-        )
-
     # ------------------------------------------------------------------
     # diagnostics
     # ------------------------------------------------------------------
@@ -564,16 +546,6 @@ class GlobalPortfolio:
 Portfolio = TFPortfolio
 
 
-def load_global_portfolio_snapshot(
-    portfolio_id: str,
-    vault_root: str = "vault",
-) -> GlobalPortfolio:
-    """Load a previously snapshotted GlobalPortfolio by ``portfolio_id``."""
-    from .portfolio_vault import load_global_portfolio_snapshot as _load_global_portfolio_snapshot
-
-    return _load_global_portfolio_snapshot(portfolio_id=portfolio_id, vault_root=vault_root)
-
-
 def materialize_global_portfolio_predictions(
     portfolio: GlobalPortfolio,
     query: PortfolioCacheQuery,
@@ -581,6 +553,9 @@ def materialize_global_portfolio_predictions(
     world: PortfolioWorld | str,
     research_run_id: Optional[str] = None,
     scope: ArtifactScope = ArtifactScope.LIVE,
+    vault_root: str = "vault",
+    cache_root: Optional[str] = None,
+    ensemble_dirs: Optional[Iterable[str]] = None,
 ):
     """Materialize portfolio/base-model predictions into the dedicated cache tree."""
     from utils.cache.runtime.portfolio_materialization import (
@@ -594,6 +569,9 @@ def materialize_global_portfolio_predictions(
         world=world,
         research_run_id=research_run_id,
         scope=scope,
+        vault_root=vault_root,
+        cache_root=cache_root,
+        ensemble_dirs=ensemble_dirs,
     )
 
 
@@ -601,6 +579,7 @@ def prune_inactive_base_model_materializations(
     vault_root: str = "vault",
     scope: ArtifactScope = ArtifactScope.LIVE,
     ensemble_dirs: Optional[Iterable[str]] = None,
+    cache_root: Optional[str] = None,
 ):
     """Delete base-model materializations whose identities are no longer active in the live vault."""
     from utils.cache.runtime.portfolio_materialization import (
@@ -611,4 +590,5 @@ def prune_inactive_base_model_materializations(
         vault_root=vault_root,
         scope=scope,
         ensemble_dirs=ensemble_dirs,
+        cache_root=cache_root,
     )

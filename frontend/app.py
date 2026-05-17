@@ -9,11 +9,7 @@ from flask_cors import CORS
 ROOT_DIR = Path(__file__).resolve().parent.parent
 INTRADAY_DIR = ROOT_DIR / "data" / "intraday_adjusted"
 DAILY_DIR = ROOT_DIR / "data" / "ohlc_data"
-KIBOT_BACKUP_DIR = ROOT_DIR / "data" / "ohlc_data_kibot_backup"
-INTRADAY_ORIGINAL_DIR = ROOT_DIR / "data" / "intraday_original"
-
-# Tickers not migrated to Norgate — backup is identical to current data
-KIBOT_ONLY_TICKERS = {"NG", "TLT"}
+INTRADAY_RAW_DIR = ROOT_DIR / "data" / "intraday_original"
 
 INTRADAY_TFS = [
     "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10",
@@ -25,8 +21,6 @@ app = Flask(__name__, static_folder=".")
 CORS(app)
 
 
-# ── Static file serving ─────────────────────────────────────────────
-
 @app.route("/")
 def index():
     return send_from_directory(".", "index.html")
@@ -37,21 +31,17 @@ def static_files(filename: str):
     return send_from_directory(".", filename)
 
 
-# ── REST endpoints ───────────────────────────────────────────────────
-
 @app.route("/tickers")
 def tickers():
-    """Return sorted list of tickers that have data in either directory."""
     ticker_set: set[str] = set()
-    for d in (INTRADAY_DIR, DAILY_DIR):
-        if d.exists():
-            ticker_set.update(p.name for p in d.iterdir() if p.is_dir())
+    for directory in (INTRADAY_DIR, DAILY_DIR):
+        if directory.exists():
+            ticker_set.update(path.name for path in directory.iterdir() if path.is_dir())
     return jsonify(sorted(ticker_set))
 
 
 @app.route("/timeframes/<ticker>")
 def timeframes(ticker: str):
-    """Return ordered list of available timeframes for a ticker."""
     available: list[str] = []
     for tf in INTRADAY_TFS:
         path = INTRADAY_DIR / ticker / f"{tf}_{ticker}.parquet"
@@ -64,34 +54,22 @@ def timeframes(ticker: str):
     return jsonify(available)
 
 
-# ── Candle data endpoint ──────────────────────────────────────────────
-
 MAX_CANDLES = 5000
 DEFAULT_CANDLES = 500
 
 
 def _resolve_parquet_path(ticker: str, tf: str) -> Path | None:
-    """Return the parquet file path for a ticker/timeframe, or None."""
     if tf in INTRADAY_TFS:
-        p = INTRADAY_DIR / ticker / f"{tf}_{ticker}.parquet"
+        path = INTRADAY_DIR / ticker / f"{tf}_{ticker}.parquet"
     elif tf in DAILY_TFS:
-        p = DAILY_DIR / ticker / f"{tf}_{ticker}.parquet"
+        path = DAILY_DIR / ticker / f"{tf}_{ticker}.parquet"
     else:
         return None
-    return p if p.exists() else None
+    return path if path.exists() else None
 
 
 @app.route("/candles/<ticker>/<tf>")
 def candles(ticker: str, tf: str):
-    """Return paginated candle data as JSON.
-
-    Query params
-    ------------
-    count  : int  – number of candles (default 500, max 5000)
-    before : int  – unix timestamp; return candles before this time
-    from   : str  – ISO date (YYYY-MM-DD); start of date range
-    to     : str  – ISO date (YYYY-MM-DD); end of date range
-    """
     path = _resolve_parquet_path(ticker, tf)
     if path is None:
         return jsonify({"error": "not found"}), 404
@@ -102,7 +80,6 @@ def candles(ticker: str, tf: str):
     date_to = request.args.get("to")
 
     if date_from or date_to:
-        # Date-range mode
         if date_from:
             ts_from = int(pd.Timestamp(date_from).timestamp())
             df = df[df["timestamp"] >= ts_from]
@@ -115,7 +92,6 @@ def candles(ticker: str, tf: str):
         if capped:
             df = df.tail(MAX_CANDLES)
     else:
-        # Pagination mode (most-recent-N or before-cursor)
         count = min(int(request.args.get("count", DEFAULT_CANDLES)), MAX_CANDLES)
         before = request.args.get("before")
         total_in_range = len(df)
@@ -140,37 +116,32 @@ def candles(ticker: str, tf: str):
     earliest_ts = records[0]["time"] if records else None
     has_more = earliest_ts is not None and earliest_ts > _first_timestamp(path)
 
-    resp: dict = {
+    response: dict[str, object] = {
         "candles": records,
         "total_available": total_in_range,
         "has_more": has_more,
         "earliest_timestamp": earliest_ts,
     }
     if date_from or date_to:
-        resp["capped"] = capped
+        response["capped"] = capped
         if capped:
-            resp["cap"] = MAX_CANDLES
+            response["cap"] = MAX_CANDLES
 
-    return jsonify(resp)
+    return jsonify(response)
 
 
-@app.route("/candles/<ticker>/<tf>/kibot")
-def candles_kibot(ticker: str, tf: str):
-    """Return comparison overlay data (Kibot backup for D/W/M, raw original for intraday)."""
-    if tf in DAILY_TFS:
-        if ticker in KIBOT_ONLY_TICKERS:
-            return jsonify({"error": "Ticker was not migrated to Norgate"}), 404
-        path = KIBOT_BACKUP_DIR / ticker / f"{tf}_{ticker}.parquet"
-    elif tf in INTRADAY_TFS:
-        path = INTRADAY_ORIGINAL_DIR / ticker / f"{tf}_{ticker}.parquet"
-    else:
-        return jsonify({"error": "Invalid timeframe"}), 400
+@app.route("/candles/<ticker>/<tf>/raw_overlay")
+def candles_raw_overlay(ticker: str, tf: str):
+    """Return optional intraday raw overlay for visual QA."""
+    if tf not in INTRADAY_TFS:
+        return jsonify({"error": "Raw overlay is intraday-only"}), 400
+
+    path = INTRADAY_RAW_DIR / ticker / f"{tf}_{ticker}.parquet"
     if not path.exists():
-        return jsonify({"error": "No Kibot backup for this ticker/tf"}), 404
+        return jsonify({"error": "No raw overlay data for this ticker/timeframe"}), 404
 
     df = pd.read_parquet(path)
 
-    # Apply same date filtering as main candles endpoint
     date_from = request.args.get("from")
     date_to = request.args.get("to")
     if date_from:
@@ -194,7 +165,6 @@ def candles_kibot(ticker: str, tf: str):
 
 
 def _first_timestamp(path: Path) -> int:
-    """Return the first timestamp in a parquet file (cheap read)."""
     df_head = pd.read_parquet(path, columns=["timestamp"]).head(1)
     return int(df_head.iloc[0]["timestamp"])
 

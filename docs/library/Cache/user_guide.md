@@ -53,6 +53,17 @@ Notes:
 - do not write runtime candles back into `data/ohlc_data`
 - if `deployment/config/live_cache_refresh.json` is enabled, LIVE candle writes also schedule the async live refresh flow for tracked `(ticker, timeframe)` keys
 
+### IBKR `CONTFUT` vs Norgate `&*_CCB` (live append)
+
+Repository dailies in `data/ohlc_data/` are built from **Norgate continuous back-adjusted** futures symbols (e.g. `&ES_CCB`); see [[Data/NORGATE_MIGRATION]] and [[Data/norgate]]. The TWS live path fetches **Interactive Brokers continuous futures** (`secType=CONTFUT` in `scripts/enigma_live_forecast.py`), which use **IB’s own roll and adjustment rules** — they will not match Norgate levels bar-for-bar on the same calendar date.
+
+When `upsert_tws_candles` writes IB dailies into `CentralCacheStore`:
+
+1. **Append-only:** only sessions **strictly after** the current cache’s last daily timestamp are kept, so a long IB lookback does not bulk-overwrite Norgate-backed overlap (see `prepare_ib_rows_for_central_cache_append` in `utils/cache/runtime/ib_candle_ratio_align.py`).
+2. **Junction ratio:** the appended block's `open/high/low/close` are multiplied by a single factor `last_close_cache / first_new_ib_close` so the first new close lines up with the last pre-existing close; relative moves within the block are unchanged. Ratio alignment is applied for every IB append batch.
+
+`upsert_candles` itself remains a generic merge-by-timestamp; the IB-specific policy lives in the TWS upsert helper above.
+
 ### Explicit bootstrap from the repository source dataset
 
 Use the bootstrap helper when you want a one-time write from `data/ohlc_data` into the runtime cache.

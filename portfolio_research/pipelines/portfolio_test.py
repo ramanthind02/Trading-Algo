@@ -689,10 +689,7 @@ def _evaluate_phase(
             weight_layer_export_df,
             portfolio_dir / "weight_layer_weights_long.csv",
         )
-        portfolio_id = global_portfolio.save_to_vault(
-            fit_start=fit_start.to_pydatetime(),
-            fit_end=fit_end.to_pydatetime(),
-        )
+        portfolio_id = _sanitize_tearsheet_name(f"{phase_title}_{output_dir_name}")
     global_positions_raw = global_portfolio.predict_from_cache(predict_query)
     if run_purpose == "full":
         materialize_global_portfolio_predictions(
@@ -700,6 +697,7 @@ def _evaluate_phase(
             query=predict_query,
             portfolio_id=portfolio_id,
             world=_phase_world(output_dir_name),
+            ensemble_dirs=tuple(config.ensemble_dirs.values()),
         )
     global_positions_raw["datetime"] = pd.to_datetime(
         global_positions_raw["datetime"]
@@ -847,7 +845,7 @@ def run_portfolio_test_pipeline(config: Any) -> None:
             _enable_cache(
                 load_ensemble_from_vault(
                     path,
-                    refit=True,
+                    refit=getattr(config, "ensemble_vault_refit", True),
                     target_volatility=config.target_volatility,
                     exclude_feature_stems_by_ensemble=getattr(
                         config, "exclude_feature_stems_by_ensemble", None
@@ -977,7 +975,7 @@ def run_single_phase_for_prop_firm(
             _enable_cache(
                 load_ensemble_from_vault(
                     path,
-                    refit=True,
+                    refit=getattr(config, "ensemble_vault_refit", True),
                     target_volatility=config.target_volatility,
                     exclude_feature_stems_by_ensemble=getattr(
                         config, "exclude_feature_stems_by_ensemble", None

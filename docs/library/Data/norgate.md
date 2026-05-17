@@ -4,66 +4,57 @@ Norgate Data is the external market data provider accessed via the `norgatedata`
 
 ## Requirements
 
-> [!warning] Windows only
-> NDU is a Windows-only application. Data extraction must run on a Windows host.
+> [!warning]
+> Windows only. NDU must be running on a Windows host for extraction calls to succeed.
 
-- Active Norgate subscription (current coverage: futures)
+- Active Norgate subscription (futures coverage required)
 - NDU installed and running locally
-- Runtime health check: `norgatedata.status()` returns `True` when NDU is active
+- Runtime health check: `norgatedata.status()` returns `True`
 - Local data root at `.norgatedata` or env var `NORGATEDATA_ROOT`
 - Python packages: `norgatedata`, `pandas`, `numpy`, `requests`, `logbook`
 
 ## Identifiers
 
-- `assetid(symbol)` — stable numeric ID; **use this for storage**, not symbol strings
-- `symbol(assetid)` — reverse lookup; symbols can change over time, asset IDs do not
+- `assetid(symbol)` - stable numeric ID; preferred for persistent references
+- `symbol(assetid)` - reverse lookup; symbols can change, asset IDs do not
 
-## Price Schema
+## Price schema
 
 Base columns: `Date`, `Open`, `High`, `Low`, `Close`
 
 Additional columns:
-- `Volume` — futures, stocks, some indices
-- `Open Interest` — futures, some options
-- `Delivery Month` — continuous futures contracts only
 
-## Key Parameters for `price_timeseries(...)`
+- `Volume` - futures, stocks, some indices
+- `Open Interest` - futures, some options
+- `Delivery Month` - continuous futures only
+
+## Key parameters for `price_timeseries(...)`
 
 | Parameter | Values |
 |---|---|
-| `interval` | `D`, `W`, `M` (date = last date of interval) |
+| `interval` | `D`, `W`, `M` |
 | `start_date` / `end_date` | `YYYY-MM-DD`, `datetime`, `Timestamp`, `datetime64` |
-| Output format | `numpy-recarray` (default), `numpy-ndarray`, `pandas-dataframe` |
+| Output format | `numpy-recarray`, `numpy-ndarray`, `pandas-dataframe` |
 
-## Adjustment Types (`StockPriceAdjustmentType`)
+## Futures adjustment context
 
-- `NONE` — raw prices
-- `CAPITAL` — capital events only
-- `CAPITALSPECIAL` — capital + special dividends
-- `TOTALRETURN` (default) — full total return adjustment
+Norgate continuous futures use volume-based rolls and vendor-defined back-adjustment behavior.
 
-## Padding Types (`PaddingType`)
+In this repository, Norgate adjusted continuous data is the canonical daily futures history anchor. IB live appends are reconciled into that anchor using append-only plus ratio splice rules.
 
-- `NONE` (default)
-- `ALLMARKETDAYS`, `ALLWEEKDAYS`, `ALLCALENDARDAYS`
-- Use `padding_status_timeseries` to identify padded rows
+See:
 
-## Futures-Specific Notes
+- `docs/library/Data/canonical_data_architecture.md`
+- `docs/library/Data/NORGATE_MIGRATION.md`
+- `docs/SaaS/data_source.md`
 
-- Continuous futures provide `Delivery Month` column
-- First notice date and other date metadata are only available on **individual contracts**, not continuous symbols
-- Key metadata fields: tick size, point value, margin, session type, futures market name
+## Operational notes
 
-> [!important] Roll methodology divergence
-> Norgate continuous futures use **volume-based** roll rules. Legacy data uses fixed-date rolls. Roll dates and price levels will diverge — account for this in any comparison workstream.
-
-## Operational Notes
-
-- Invalid symbols/params raise `ValueError`; missing data returns `None`
-- Always record adjustment type and padding settings alongside extracted data to keep comparisons reproducible
-- Comparing Norgate daily series to legacy 1-minute series requires resampling and timestamp alignment
+- Invalid symbols/parameters raise `ValueError`
+- Missing data typically returns `None`
+- For reproducible workflows, persist adjustment/padding assumptions with extracted outputs
 
 ## Related
 
-- [[pipeline]] — feature extraction pipeline that consumes candle data
-- [[vault]] — where validated features are stored after extraction
+- [[pipeline]]
+- [[vault]]
