@@ -14,12 +14,12 @@ The guiding product goal is to let independent traders build, validate, combine,
 
 ## 2. Repository Strategy
 
-The existing repository should remain operational as the internal research workbench while stable product-grade pieces are extracted into QuantFoundry packages and services.
+The long-term goal is to avoid duplicate research/runtime code. `Trading-Algo` should not remain a parallel implementation of the product engine. Instead, QuantFoundry should become the single local and cloud runtime, with `Trading-Algo` treated as the source to migrate from and as a temporary reference while stable logic is extracted.
 
 | Repository | Role |
 |---|---|
-| `Trading-Algo` | Internal research/backtesting/training lab. Keeps local data, cache, vault, experimental workflows, and current quant research code operational. |
-| `QuantFoundry-Core` | Shared Python library for strategy contracts, validation, candle/runtime models, cache keys, artifact schemas, zone splitting (`zone_manager` module), and reusable engine components. |
+| `Trading-Algo` | Existing research/backtesting codebase and migration source. Keep operational during transition, but do not build new product-runtime features here. |
+| `QuantFoundry-Core` | Shared Python library for strategy contracts, validation, candle/runtime models, artifact schemas, zone splitting (`zone_manager` module), and reusable engine components. |
 | `QuantFoundry-API` | SaaS backend: auth integration, user/project/strategy metadata, job submission, ACA Job orchestration, status/results APIs, deployment APIs. |
 | `QuantFoundry-Worker` | Private batch worker image for executing strategy validation/backtests/signal generation jobs. It imports `QuantFoundry-Core`. |
 | `QuantFoundry-Web` | Public web application for dashboard, research workspace, strategy library, portfolio builder, and deployment UI. |
@@ -27,9 +27,9 @@ The existing repository should remain operational as the internal research workb
 Dependency direction must stay one-way:
 
 ```text
-Trading-Algo / QuantFoundry-Research  ─┐
-QuantFoundry-API                       ├── imports quantfoundry_core
-QuantFoundry-Worker                    ┘
+QuantFoundry-API     ─┐
+QuantFoundry-Worker  ├── imports quantfoundry_core
+Local research stack ┘
 
 QuantFoundry-Web talks to QuantFoundry-API over HTTP.
 QuantFoundry-Core never imports from API, Worker, Web, or Trading-Algo.
@@ -37,11 +37,11 @@ QuantFoundry-Core never imports from API, Worker, Web, or Trading-Algo.
 
 Migration should be incremental, not a big-bang rewrite:
 
-1. Keep `Trading-Algo` operational.
+1. Keep `Trading-Algo` operational only as a transition safety net.
 2. Move stable contracts and portable logic into `QuantFoundry-Core`.
-3. Update `Trading-Algo` to import those contracts where useful.
-4. Build the cloud API and worker around the same Core contract.
-5. Add parity tests proving local and cloud runners produce equivalent outputs for the same strategy, data, and parameters.
+3. Build local and cloud execution through `QuantFoundry-API` + `QuantFoundry-Worker`.
+4. Stop adding new product-facing runtime logic to `Trading-Algo`.
+5. Add parity tests proving local Docker worker and cloud ACA Job outputs match for the same strategy, data, and parameters.
 
 ## 3. MVP Architecture
 
@@ -108,36 +108,28 @@ Infrastructure should live in the repos that own the deployable surface:
 | `QuantFoundry-API` | Azure Bicep, API/worker container deployment, Postgres migrations, worker job definitions, storage, Key Vault, monitoring. |
 | `QuantFoundry-Web` | Vercel project config, frontend environment variable docs, preview/prod deploy settings. |
 | `QuantFoundry-Core` | No cloud infrastructure; Python package build/test/release only. |
-| `Trading-Algo` | Internal/local research scripts and data publishing scripts until moved into a dedicated data/ops package. |
+| `Trading-Algo` | Legacy migration source only. Do not add new QuantFoundry product workflows here unless they are temporary migration helpers. |
 
 A separate `QuantFoundry-Infra` repo is not needed for MVP. It can be introduced later only if infrastructure ownership spans many services and the API repo becomes cluttered.
 
-Recommended GitHub Actions workflows:
+Each repo should use exactly two primary GitHub Actions workflows: one pull request pipeline and one official pipeline.
 
 ```text
 .github/workflows/
-  ci-core.yml
-  ci-api.yml
-  ci-worker.yml
-  ci-web.yml
-  deploy-dev.yml
-  deploy-prod.yml
-  data-publish-dev.yml
-  data-publish-prod.yml
+  QuantFoundry-<Repo>-PullRequest.yml
+  QuantFoundry-<Repo>-Official.yml
 ```
 
 Pipeline responsibilities:
 
 | Pipeline | Responsibility |
 |---|---|
-| `ci-core.yml` | Test and package `QuantFoundry-Core`. |
-| `ci-api.yml` | Test API, build API container image, push to registry. |
-| `ci-worker.yml` | Test worker, build shared worker image, push to registry. |
-| `ci-web.yml` | Typecheck/build frontend, create Vercel preview. |
-| `deploy-dev.yml` | Deploy Bicep to dev, run Alembic migrations, deploy API/job image revisions. |
-| `deploy-prod.yml` | Same as dev but requires manual GitHub Environment approval. |
-| `data-publish-dev.yml` | Upload validated candle dataset to dev Blob container. |
-| `data-publish-prod.yml` | Promote an already validated dataset version to prod after approval. |
+| `QuantFoundry-Core-PullRequest.yml` | Build package, run unit tests, run type/lint checks when configured. |
+| `QuantFoundry-Core-Official.yml` | Publish/version the Core package after merge to `main`. |
+| `QuantFoundry-API-PullRequest.yml` | Build API/worker images, run unit tests, run migration checks. |
+| `QuantFoundry-API-Official.yml` | After merge to `main`: deploy dev automatically, then deploy prod behind GitHub Environment manual approval. |
+| `QuantFoundry-Web-PullRequest.yml` | Typecheck/build frontend and create Vercel preview. |
+| `QuantFoundry-Web-Official.yml` | After merge to `main`: deploy dev/preview automatically, then prod behind approval or Vercel production gate. |
 
 Authentication should use GitHub Actions OIDC federation into Azure, not long-lived Azure credentials stored as GitHub secrets. Vercel can be connected directly to the `QuantFoundry-Web` repository for preview/prod deploys, or driven through GitHub Actions if tighter release coordination is needed.
 
@@ -222,14 +214,15 @@ Initial banned capabilities:
 
 ## 5. Local Research Story
 
-Local research remains first-class to control cost and preserve the existing quant workflow.
+Local research should use the same QuantFoundry product runtime rather than a separate `Trading-Algo` execution path. The local stack should mirror cloud architecture with local substitutions for cloud services.
 
 ```text
-Write strategy locally
-  -> validate against QuantFoundry-Core
-  -> run local backtest against Trading-Algo daily data/cache
-  -> generate same artifact schema as cloud workers
-  -> promote/upload only when ready
+QuantFoundry-Web locally
+  -> QuantFoundry-API locally
+  -> local Postgres
+  -> local Blob emulator or filesystem artifact store
+  -> local Docker engine starts QuantFoundry-Worker containers
+  -> local data files are mounted/read by worker
 ```
 
 Local and cloud execution should share:
@@ -238,18 +231,30 @@ Local and cloud execution should share:
 - `StrategyParams`.
 - Strategy metadata.
 - Output validation.
-- Cache key generation.
 - Artifact schemas.
+- Worker image/runtime.
+- API request/response contracts.
 
 They should differ only in execution backend:
 
 | Concern | Local/internal | Cloud/user-facing |
 |---|---|---|
-| Strategy source | Local file | Immutable Blob object/version. |
-| Data | `Trading-Algo\data\ohlc_data` or local Parquet | Curated Parquet in Blob Storage. |
-| Execution | Local Python process or local worker container | Azure Container Apps Job. |
-| Artifacts | Local filesystem/vault | Blob Storage + Postgres metadata. |
-| Metadata | Optional manifest | Postgres product records. |
+| Web | Local Vite/React dev server | Vercel. |
+| API | Local FastAPI process | Azure Container Apps. |
+| DB | Local Postgres | Azure Database for PostgreSQL. |
+| Artifacts | Local Blob emulator or filesystem adapter | Azure Blob Storage. |
+| Worker execution | Docker starts local worker containers | API starts ACA Job executions. |
+| Data | Local mounted daily/quarterly files or local IB/TWS connection | Blob quarterly research data and IB/TWS live candle fetch for deployments. |
+
+Local-only research features are acceptable if feature-flagged off by default in deployed environments. Example flags:
+
+```text
+ENABLE_LOCAL_RESEARCH_TOOLS=true
+ENABLE_LOCAL_DATA_BROWSER=true
+ENABLE_UNSAFE_DEV_SHORTCUTS=false
+```
+
+Production deployments should fail closed: local-only features must require explicit opt-in and should not be enabled by missing environment variables.
 
 ## 6. Core Product Models
 
@@ -350,7 +355,6 @@ BacktestRun:
   date_range_start
   date_range_end
   status
-  cache_policy
   request_json
   result_summary_json
   warnings_json
@@ -531,7 +535,7 @@ request authenticated
   -> load user plan and subscription status
   -> check plan allows requested feature
   -> check monthly quota and concurrent job limits
-  -> reserve usage or create queued job
+  -> reserve usage or start job
   -> reconcile actual usage after worker completion
 ```
 
@@ -548,7 +552,7 @@ Postgres stores relational product state:
 - Strategy metadata and immutable versions.
 - Backtest job state and summaries.
 - Portfolio versions and deployments.
-- Cache metadata and artifact URIs.
+- Artifact URIs.
 - API key hashes and audit records.
 
 Use JSONB for snapshots and flexible metadata, but keep ownership, status, versioning, and foreign keys relational.
@@ -569,9 +573,8 @@ Suggested container layout:
 
 ```text
 candles/
-  manifests/dataset_version=<version>/manifest.json
-  partitions/timeframe=D/ticker=ES/year=2026/part.parquet
-  adjusted/timeframe=D/ticker=ES/adjustment_set=<id>/year=2026/part.parquet
+  research/timeframe=D/ticker=ES/as_of=2026Q2/part.parquet
+  live-snapshots/deployment_run=<run_id>/ticker=ES/candles.parquet
 
 strategy-source/
   user=<user_id>/strategy=<strategy_id>/version=<version_id>/source.py
@@ -588,47 +591,32 @@ deployment-signals/
   deployment=<deployment_id>/date=<yyyy-mm-dd>/signals.json
 ```
 
-## 8. Cache Design
+## 8. Cache Policy
 
-Cache entries should be metadata rows pointing to Blob artifacts.
+No dedicated cache layer is included in the MVP. Backtests and signal runs should produce durable result artifacts, but the system should not attempt to reuse prior strategy outputs or maintain research/portfolio caches initially.
 
-Canonical cache key inputs:
+Reasons to defer caching:
 
-```text
-strategy_id
-strategy_version_id
-source_code_hash
-ticker_set_hash
-timeframe
-parameter_hash
-date_range_start
-date_range_end
-dataset_version
-core_version
-worker_image_version
-```
+- Fewer invalidation rules.
+- Fewer artifact lifecycle concerns.
+- Simpler worker orchestration.
+- Easier correctness story while the strategy contract is still evolving.
+- Lower implementation cost.
 
-Cache tiers:
-
-| Cache | Lifecycle |
-|---|---|
-| Research cache | User opt-in, TTL-based, visible and manually invalidatable. |
-| Portfolio cache | Persistent for selected/committed strategies, invalidated when strategy source/hash changes or strategy is deselected. |
-
-The orchestrator should check cache before dispatching worker jobs. A cache hit reuses the forecast stream artifact and avoids compute.
+If repeated parameter sweeps or portfolio recomputation become expensive, cache design can be reintroduced later using completed run artifacts and deterministic input hashes.
 
 ## 9. Market Data Operations
 
-MVP data should be daily futures data only. Cloud workers should read curated Parquet from Blob Storage, while internal research can continue using local data in `Trading-Algo`.
+MVP data should be daily futures data only. Separate the research/backtest dataset story from the hosted deployment signal story.
 
-### 9.1 Dataset Versioning
+### 9.1 Research and Backtest Data
 
-Every published candle dataset should be versioned, but this should not mean duplicating the full historical dataset every week. Dataset versions should be lightweight manifests that point to immutable Parquet partitions and metadata.
+For research and backtesting, do not publish a new dataset every day or week. QuantFoundry should use curated quarterly data releases after contract rollover review and backadjustment.
 
 ```text
-CandleDatasetVersion:
+ResearchDataRelease:
   id
-  version_name              # e.g. 2026-W20 or 2026Q2-roll-adjusted
+  release_name              # e.g. 2026Q2-backadjusted
   source                    # TWS, Norgate, manual import, etc.
   timeframe                 # D for MVP
   tickers
@@ -636,127 +624,72 @@ CandleDatasetVersion:
   end_date
   adjustment_policy
   validation_summary_json
-  manifest_blob_uri
+  blob_prefix
   status                    # candidate | dev_published | prod_published | retired
   created_at
   promoted_to_dev_at
   promoted_to_prod_at
 ```
 
-Backtest runs, cache keys, strategy versions, portfolio versions, and deployments should record the dataset version used. This prevents historical results from silently changing when data is republished.
+Backtest runs may record the research data release used for auditability, but QuantFoundry does not need user-facing dataset version selection in MVP. Users should understand that the platform's available data improves over time.
 
-The manifest should define exactly which physical files belong to the logical dataset:
+### 9.2 Quarterly Backadjustment Flow
 
-```json
-{
-  "dataset_version": "2026-W20",
-  "active_from": "2026-05-13",
-  "timeframe": "D",
-  "tickers": {
-    "ES": [
-      {
-        "start": "2010-01-01",
-        "end": "2025-12-31",
-        "uri": "candles/adjusted/timeframe=D/ticker=ES/adjustment_set=2026Q2/year=*/part.parquet",
-        "content_hash": "..."
-      },
-      {
-        "start": "2026-01-01",
-        "end": "2026-05-08",
-        "uri": "candles/partitions/timeframe=D/ticker=ES/year=2026/part.parquet",
-        "content_hash": "..."
-      }
-    ]
-  }
-}
-```
-
-This gives reproducibility without weekly full-copy storage growth.
-
-Recommended physical storage model:
-
-| Data type | Storage behavior |
-|---|---|
-| Raw TWS pulls | Append-only, retained for audit/debug, moved to cool/archive tier after validation. |
-| Clean canonical daily partitions | Partitioned by ticker/timeframe/year or month. Daily updates append into a small open partition and are compacted into larger files on a schedule. |
-| Dataset version manifests | Small immutable JSON files. One per published dataset version. |
-| Quarterly backadjusted partitions | Rewrite only affected ticker/date partitions; retain recent prior adjustment sets according to retention policy. |
-| Active dataset pointer | Small DB/config value pointing to the current manifest. |
-
-Retention policy should be explicit:
-
-- Keep all dataset manifests because they are tiny.
-- Keep raw weekly TWS pulls in hot/cool storage for a limited operational window, then archive or delete based on legal/data-license needs.
-- Keep the current adjusted dataset and at least one previous adjusted dataset hot.
-- Move older adjusted partitions to cool/archive or delete if no backtests/deployments reference them.
-- For intraday future data, partition by ticker/timeframe/date or month and use lifecycle policies aggressively.
-
-### 9.2 Daily Data Update Flow
-
-Hosted deployments require fresh data whenever signals are expected. For daily strategies, the normal operating target is a daily TWS import after the relevant market close/data availability window. During an internal alpha, this can be manually triggered; before users depend on hosted deployments, it should become a scheduled or checklist-driven daily operation.
+Quarterly futures backadjustment should produce a new curated research data release.
 
 ```text
-TWS daily pull
+Quarterly rollover review
   -> local raw data landing folder
-  -> normalization/cleaning
-  -> append/update current open daily futures partition
-  -> validation report
-  -> write/update only changed open Parquet partitions locally
-  -> write candidate dataset manifest locally
+  -> import latest TWS history as needed
+  -> run backadjustment script locally
+  -> compare prior active release vs new adjusted release
+  -> produce adjustment report by ticker/contract/roll date
+  -> write complete quarterly backadjusted Parquet release
   -> publish to dev Blob
-  -> run smoke/parity checks in dev
-  -> promote same dataset version to prod after approval
-  -> update active dataset pointer
-  -> trigger hosted signal scheduler
+  -> rerun smoke backtests and data quality checks
+  -> promote to prod
+  -> update active research data release for new backtests
 ```
 
 Suggested scripts:
 
 ```text
-scripts/data/import_tws_daily.py
+scripts/data/import_tws_history.py
 scripts/data/build_continuous_futures.py
 scripts/data/validate_candle_dataset.py
 scripts/data/publish_dataset.py --target dev --dataset-version <version>
 scripts/data/promote_dataset.py --from dev --to prod --dataset-version <version>
-scripts/data/compact_open_partitions.py --target dev --through <date>
 ```
 
-The daily update should not create a separate one-day file forever. It should maintain an open partition for the current period, such as current month or current quarter, and write a new manifest pointing to that updated open partition. Compaction periodically rewrites many tiny daily appends into a small number of larger Parquet files.
+This simpler cadence avoids weekly dataset churn and avoids retaining many near-duplicate daily datasets. Keep the current quarterly research release hot; older releases can move to cool/archive or be deleted according to retention needs.
 
-If the current-year partition is mutable during data assembly, mutation should happen only in a candidate/dev area. Once promoted, the production partition referenced by a manifest should be treated as immutable.
+### 9.3 Hosted Deployment Live Data
 
-For MVP daily data, use one of these partition policies:
+Hosted deployments need the most recent candles at signal time. Instead of publishing a new full research dataset every day, scheduled deployment workers should fetch the required lookback window from Interactive Brokers/TWS.
 
-| Policy | Recommendation |
-|---|---|
-| One file per ticker/year | Simple for daily data, but each daily append rewrites the current-year file. Fine at MVP scale. |
-| One file per ticker/month | Better balance: smaller rewrites, no tiny daily-file explosion. Recommended default. |
-| One file per ticker/day | Avoid for daily data unless using a table format with compaction; creates too many tiny files. |
-
-For future intraday data, use month/day partitions plus scheduled compaction or adopt a table format such as Delta Lake/Iceberg if append/update/query complexity justifies it.
-
-### 9.3 Quarterly Backadjustment Flow
-
-Quarterly futures backadjustment should also produce a new dataset manifest, but only physically rewrite partitions affected by rollover/backadjustment changes.
+MVP approach:
 
 ```text
-Quarterly rollover review
-  -> run backadjustment script locally
-  -> compare prior active dataset vs new adjusted dataset
-  -> produce adjustment report by ticker/contract/roll date
-  -> write changed adjusted partitions under a new adjustment_set
-  -> write new manifest pointing to reused unchanged partitions plus changed adjusted partitions
-  -> publish candidate to dev
-  -> rerun smoke backtests and data quality checks
-  -> promote to prod
-  -> update active dataset pointer for new runs
+ACA scheduled signal trigger
+  -> enumerate running deployments
+  -> start one ACA Job per deployment, or per small deployment batch
+  -> each worker connects to the platform IB/TWS gateway
+  -> fetch required daily candle lookback for declared tickers
+  -> run deployed portfolio strategies
+  -> write signal result to Postgres and optional Blob artifact
 ```
 
-Existing historical backtests should remain tied to their original dataset version. New runs should use the current active version unless the user explicitly selects an older dataset version.
+This requires a reliable headless IB/TWS gateway or IB Gateway container strategy. The gateway should be treated as platform infrastructure, not user infrastructure. It should not expose broker execution for MVP; it is only a market data source.
 
-If storage pressure grows, the system can retain manifests while pruning old physical partitions that no active deployment, committed portfolio version, paid retention policy, or recent backtest references. A pruned dataset version remains visible for audit but is marked non-rerunnable unless restored from archive.
+Risks to validate early:
 
-Daily manifests do not require retaining duplicate full datasets. Most daily manifests should point to the same historical partitions plus the latest current-month/current-quarter open partition. At quarter-end backadjustment, the system writes a consolidated adjustment set, updates the active manifest, and can retire intermediate daily open partitions after their retention window if no referenced runs require them.
+- IB/TWS gateway session reliability and reauthentication behavior.
+- Rate limits and pacing violations when many deployments request overlapping symbols.
+- Data adjustment differences between live IB lookback data and quarterly backadjusted research data.
+- Timezone/session-close handling for daily bars.
+- Whether one shared data fetch step can deduplicate overlapping ticker requests before fanout.
+
+If IB pacing becomes an issue, add a market data prefetch job that fetches each ticker once, stores a short-lived daily candle snapshot, and lets deployment jobs read that snapshot instead of each connecting to IB independently.
 
 ### 9.4 Data Validation Gates
 
@@ -785,7 +718,7 @@ Recommended convention:
 |---|---|---|
 | Web app API | `/api/...` | Frontend and backend ship together; avoiding `/v1` reduces churn while the product is evolving. |
 | External Signal API | `/api/v1/signals/...` | Users may automate against it, so breaking changes need explicit versioning. |
-| Internal worker/admin APIs | Not public or separately authenticated | Prefer queue/job contracts over public endpoints. |
+| Internal worker/admin APIs | Not public or separately authenticated | Prefer job payload contracts over public endpoints. |
 
 Breaking app API changes should be handled by deploying compatible Web and API revisions together. If a public app API emerges later, add versioning then.
 
@@ -856,8 +789,7 @@ Backtests should support both single-strategy and portfolio scopes.
   "scope": "strategy",
   "strategy_version_id": "uuid",
   "parameters": {},
-  "zone_ids": ["uuid"],
-  "cache_policy": "use_cache"
+  "zone_ids": ["uuid"]
 }
 ```
 
@@ -865,8 +797,7 @@ Backtests should support both single-strategy and portfolio scopes.
 {
   "scope": "portfolio",
   "portfolio_version_id": "uuid",
-  "zone_ids": ["uuid"],
-  "cache_policy": "use_cache"
+  "zone_ids": ["uuid"]
 }
 ```
 
@@ -947,16 +878,15 @@ Abuse response should be explicit:
 1. API receives backtest request.
 2. API validates ownership, strategy version, parameters, zones, and quotas.
 3. API writes BacktestRun(status='queued').
-4. API checks cache; if complete hit exists, it attaches artifact and marks run complete.
-5. API starts an ACA Job execution with the run ID and job payload reference.
-6. ACA Job starts worker container.
-7. Worker loads job payload and strategy source.
-8. Worker loads candle Parquet for tickers/timeframe/date range.
-9. Worker converts data to CandleData windows and calls compute() per bar.
-10. Worker validates outputs and records warnings.
-11. Worker writes forecast stream and summary artifacts to Blob.
-12. Worker updates BacktestRun status and artifact URIs.
-13. Frontend polls API for status/results.
+4. API starts an ACA Job execution with the run ID and job payload reference.
+5. ACA Job starts worker container.
+6. Worker loads job payload and strategy source.
+7. Worker loads candle Parquet for tickers/timeframe/date range.
+8. Worker converts data to CandleData windows and calls compute() per bar.
+9. Worker validates outputs and records warnings.
+10. Worker writes forecast stream and summary artifacts to Blob.
+11. Worker updates BacktestRun status and artifact URIs.
+12. Frontend polls API for status/results.
 ```
 
 Workers should be idempotent. Retrying the same job should either overwrite a deterministic staging path safely or create a new attempt path and atomically mark the successful attempt in Postgres.
@@ -968,7 +898,7 @@ The initial implementation should use direct ACA Job startup:
 | API starts ACA Job directly | API validates, writes run row, calls Azure to start an ACA Job. | Fewer moving pieces for first prototype. | API is coupled to Azure job API; burst handling/retries/backpressure are weaker. |
 | Queue-first controller | API validates, writes run row, sends Service Bus message; a small controller or event process starts ACA Jobs. | Better backpressure, retries, auditability, burst absorption, and future portability. | One extra component to deploy/observe. |
 
-Recommendation: start with direct ACA Job startup for MVP simplicity, but preserve queue-friendly status fields (`queued`, `running`, `attempts`, idempotency keys). Add Service Bus/controller later only if bursts, retries, or API coupling become painful.
+Recommendation: start with direct ACA Job startup for MVP simplicity, but preserve job lifecycle fields (`queued`, `running`, `attempts`, idempotency keys). Add Service Bus/controller later only if bursts, retries, or API coupling become painful.
 
 ## 12. Deployment and Hosted Signal Automation
 
@@ -980,8 +910,8 @@ MVP deployment means hosted daily signal generation for a committed `PortfolioVe
 User creates portfolio version
   -> user clicks Deploy
   -> API creates Deployment(status='running')
-  -> scheduler includes deployment in daily signal run
-  -> worker computes latest signals after data update
+  -> scheduled ACA Job includes deployment in the next all-deployments signal run
+  -> worker computes latest signals using the IB/TWS lookback window
   -> signals are stored and exposed through UI/API/notifications
 ```
 
@@ -989,22 +919,21 @@ Users should not need to press a browser button every day. Once a deployment is 
 
 ### 12.2 Scheduled Signal Runs
 
-Use a scheduled ACA Job, Azure Container Apps scheduled job, or GitHub Actions/Azure workflow for the first MVP. The job should run after the expected daily data update window.
+Use an ACA scheduled job for MVP. All running deployments should be evaluated from the same scheduled trigger. The scheduler should fan out ACA Job executions across deployments so users receive signals from the same market data window.
 
 Recommended daily flow:
 
 ```text
-Daily market data import/promote completes
-  -> active dataset pointer updated or confirmed
-  -> signal scheduler starts
+ACA scheduled signal trigger fires
   -> fetch all running deployments
-  -> group by portfolio version/dataset/timeframe where possible
-  -> run strategy/portfolio signal jobs
+  -> group deployments by timeframe and overlapping ticker needs
+  -> optionally prefetch/deduplicate IB/TWS candle lookbacks
+  -> start deployment signal jobs in parallel
   -> write deployment-signals artifacts
   -> update latest_signal records
 ```
 
-Hosted signal automation depends on daily data availability. If data is not published for a trading day, the scheduler should not silently produce stale signals. It should mark affected deployments as `waiting_for_data` or `data_unavailable` and expose that status in the dashboard and API.
+Hosted signal automation depends on IB/TWS candle availability. If fresh candles are unavailable for a trading day, the scheduler should not silently produce stale signals. It should mark affected deployments as `waiting_for_data` or `data_unavailable` and expose that status in the dashboard and API.
 
 ### 12.3 Signal Delivery Options
 
@@ -1012,7 +941,7 @@ The MVP should support pull-based delivery through the website and Signal API on
 
 | Delivery | MVP recommendation |
 |---|---|
-| Website dashboard | Required. Show latest signal, timestamp, dataset version, and deployment status. |
+| Website dashboard | Required. Show latest signal, timestamp, data source, and deployment status. |
 | Signal API | Required. Users can pull latest signals with deployment-scoped API keys. |
 | CSV/JSON download | Useful and cheap. |
 | Email | Deferred. |
@@ -1031,7 +960,7 @@ Authorization: Bearer qf_sig_...
   "deployment_id": "uuid",
   "portfolio_version_id": "uuid",
   "as_of": "2026-05-13",
-  "dataset_version": "2026-W20",
+  "data_source": "ibkr_tws",
   "signals": [
     {
       "ticker": "ES",
@@ -1130,7 +1059,7 @@ Local development should support:
 - API running locally.
 - Worker running locally against a sample job payload.
 - Optional local Postgres.
-- Filesystem artifact adapter for local runners. Azurite/direct Blob can be added later when testing cloud storage behavior.
+- Local Blob emulator for integration parity, with a filesystem artifact adapter for fast Core/unit tests.
 
 ## 16. Cost Controls
 
@@ -1139,8 +1068,7 @@ MVP cost controls:
 - ACA Jobs scale to zero.
 - No per-strategy image builds.
 - User quotas for concurrent jobs, monthly backtests, tickers, bars, memory, CPU, and timeout.
-- API rate limits prevent polling/submission abuse before jobs are queued.
-- Cache hits skip worker dispatch.
+- API rate limits prevent polling/submission abuse before jobs start.
 - Logs sampled and retained conservatively.
 - Vercel for frontend instead of Azure Front Door.
 - Small Postgres tier until usage requires scaling.
@@ -1151,13 +1079,13 @@ Worker compute should be close to serverless economics. A 1 vCPU / 2 GiB worker 
 
 | Layer | Tests |
 |---|---|
-| Core unit tests | Strategy contract, metadata validation, cache key determinism, output validation. |
+| Core unit tests | Strategy contract, metadata validation, zone slicing, output validation. |
 | Worker unit tests | Job payload parsing, source loading, result writing, warning behavior. |
 | API tests | Auth mapping, ownership checks, CRUD, job submission, status transitions. |
 | Local integration tests | Run sample strategies against local daily data and produce artifacts. |
 | Cloud parity tests | Same strategy/data/params produce equivalent local and worker outputs. |
 | Security tests | Banned imports/calls, suspicious AST patterns, timeout/memory/quota behavior. |
-| Data publishing tests | Dataset validation gates, dev publish, prod promotion dry-run, backadjustment reports. |
+| Data tests | Quarterly release validation, TWS lookback fetching, backadjustment reports. |
 | Deployment automation tests | Scheduled signal generation, latest signal API, notification formatting. |
 
 ## 18. Remaining Technical Decisions
@@ -1165,14 +1093,14 @@ Worker compute should be close to serverless economics. A 1 vCPU / 2 GiB worker 
 These are the main items still worth hashing out before deeper implementation. The broad platform choices above are now fixed for MVP.
 
 1. Final `QuantFoundry-Core` strategy contract details: exact `CandleData`, `StrategyParams`, metadata schema, and validation strictness.
-2. Data operations v1: daily TWS import, validation, active manifest update, dev/prod promotion, and compaction details.
+2. Data operations v1: quarterly research data release scripts and hosted signal IB/TWS lookback fetch design.
 3. Result artifact format: Parquet-only for time series plus JSON summaries, or Arrow IPC for some paths.
 4. Strategy source package shape: single `source.py` plus metadata JSON vs zipped package with controlled modules.
 5. Warning thresholds: when a run becomes `completed_with_warnings` vs `failed`.
 6. Signal API response format and rate limits.
-7. Exact path for extracting reusable logic from `Trading-Algo` into `QuantFoundry-Core`.
+7. Exact path for extracting reusable logic from `Trading-Algo` into `QuantFoundry-Core` and retiring duplicate execution paths.
 8. Rate limit counters: which counters should be exact vs approximate.
-9. Whether the daily hosted signal scheduler is ACA scheduled jobs, GitHub Actions, or an internal API-triggered timer.
+9. IB/TWS gateway deployment model for hosted signal lookback data.
 
 Closed MVP decisions:
 
@@ -1184,19 +1112,21 @@ Closed MVP decisions:
 - Signal API keys: one active deployment-scoped key at a time.
 - Portfolio backtests: support both single-strategy and portfolio backtests; implement whole-portfolio worker first, matching the SaaS specs, with fanout later.
 - IaC: Bicep/GitHub Actions live in the owning repos, mainly `QuantFoundry-API` for backend infrastructure and `QuantFoundry-Web` for Vercel config.
+- Hosted signal scheduler: ACA scheduled job starts the all-deployments run and fans out deployment jobs in parallel.
+- MVP cache: no dedicated cache layer.
 
 ## 19. Near-Term Implementation Order
 
 1. Update `QuantFoundry-Core` to match the `compute(candles, params)` strategy contract.
-2. Add output validation, metadata models, cache key generation, and artifact schemas to Core.
-3. Add a local runner that can execute the Core contract against local daily data.
+2. Add output validation, metadata models, zone slicing, and artifact schemas to Core.
+3. Add local Docker-based worker execution wired to local API, Postgres, and local Blob/filesystem artifacts.
 4. Add API models/endpoints for projects, zones, strategy validation, and strategy version commit.
 5. Add SQLAlchemy 2 models and Alembic migrations for the core product schema.
 6. Add Worker package/image scaffold using shared-image runtime-loaded source.
 7. Add backtest submission/status/result APIs.
 8. Update Web to match the Dashboard / Research Workspace / Strategy Library / Portfolio Builder / Deployment structure.
 9. Add cloud deployment scripts for Vercel + Azure Container Apps + ACA Jobs + Blob + Postgres.
-10. Add rate limit/quota admission checks before queued compute.
-11. Add market data publishing scripts for weekly TWS updates and quarterly backadjusted dataset versions.
-12. Add hosted deployment scheduler and Signal API for latest portfolio signals.
+10. Add rate limit/quota admission checks before compute starts.
+11. Add quarterly research data publishing and backadjustment scripts.
+12. Add ACA scheduled deployment runner, IB/TWS lookback fetch, and Signal API for latest portfolio signals.
 
