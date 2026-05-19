@@ -20,7 +20,7 @@ The long-term goal is to avoid duplicate research/runtime code. `Trading-Algo` s
 |---|---|
 | `Trading-Algo` | Existing research/backtesting codebase and migration source. Keep operational during transition, but do not build new product-runtime features here. |
 | `QuantFoundry-Core` | Shared Python library for strategy contracts, validation, candle/runtime models, artifact schemas, zone splitting (`zone_manager` module), and reusable engine components. |
-| `QuantFoundry-API` | SaaS backend: auth integration, user/project/strategy metadata, job submission, ACA Job orchestration, status/results APIs, deployment APIs. |
+| `QuantFoundry-API` | SaaS backend: auth integration, user-owned strategy/portfolio metadata, job submission, ACA Job orchestration, status/results APIs, deployment APIs. |
 | `QuantFoundry-Worker` | Private batch worker image for executing strategy validation/backtests/signal generation jobs. It imports `QuantFoundry-Core`. |
 | `QuantFoundry-Web` | Public web application for dashboard, research workspace, strategy library, portfolio builder, and deployment UI. |
 
@@ -61,7 +61,7 @@ User Browser
 | Frontend | Vercel | Simplest frontend deploys, preview environments, rollbacks, custom domains, GitHub integration. |
 | API | Azure Container Apps | Container-native FastAPI deployment with scale controls and managed ingress. |
 | Workers | Azure Container Apps Jobs | Finite direct-start jobs, scale-to-zero economics, container-based Python stack. |
-| Metadata DB | Azure Database for PostgreSQL Flexible Server | Relational ownership/versioning/audit model with JSONB escape hatch. |
+| Metadata DB | Azure Database for PostgreSQL Flexible Server | Relational ownership, jobs, deployments, and audit state with JSONB escape hatch. |
 | Artifacts | Azure Blob Storage | Cheap durable storage for Parquet, JSON, source bundles, and backtest outputs. |
 | Secrets | Azure Key Vault | OAuth secrets, API keys, storage credentials if not fully using managed identity. |
 | Observability | Azure Monitor/Application Insights | API/worker logs, job failures, latency, cost and health telemetry. |
@@ -113,7 +113,7 @@ Pipeline responsibilities:
 | Pipeline | Responsibility |
 |---|---|
 | `QuantFoundry-Core-PullRequest.yml` | Build package, run unit tests, run type/lint checks when configured. |
-| `QuantFoundry-Core-Official.yml` | Publish/version the Core package after merge to `main`. |
+| `QuantFoundry-Core-Official.yml` | Publish the Core package after merge to `main`. |
 | `QuantFoundry-API-PullRequest.yml` | Build API/worker images, run unit tests, run migration checks. |
 | `QuantFoundry-API-Official.yml` | After merge to `main`: deploy dev automatically, then deploy prod behind GitHub Environment manual approval. |
 | `QuantFoundry-Web-PullRequest.yml` | Typecheck/build frontend and create Vercel preview. |
@@ -172,7 +172,7 @@ Job B:
   exits
 ```
 
-This keeps runtime isolation without the operational cost of building, scanning, pushing, and managing a container image for every strategy version.
+This keeps runtime isolation without the operational cost of building, scanning, pushing, and managing a container image for every strategy.
 
 ### 4.2 Security Boundary
 
@@ -262,94 +262,101 @@ User:
 
 Google OAuth should be implemented through Clerk for MVP. The API should verify Clerk-issued JWTs and map the Clerk subject to internal users.
 
-### 6.2 Research Project
+### 6.2 Zones
+
+MVP has no project model. Zones are explicit objects attached either to strategies or portfolios.
 
 ```text
-ResearchProject:
+StrategyZone:
   id
-  owner_user_id
+  user_id
   name
-  description
-  default_timeframe
+  train_start_at_utc
+  train_end_at_utc
+  test_start_at_utc
+  test_end_at_utc
+  created_at
+  updated_at
+
+PortfolioZone:
+  id
+  user_id
+  name
+  train_start_at_utc
+  train_end_at_utc
+  test_start_at_utc
+  test_end_at_utc
   created_at
   updated_at
 ```
 
-### 6.3 Zone
+The train/test shape matches the MVP UI and avoids a generic project-scoped zone manager. Strategy zones and portfolio zones are separate because portfolio research may use a different train/test split than individual strategy research.
 
-The backend should support arbitrary non-overlapping zones. The UI presents a guided Train / Validation / Test layout by default; researchers may add multiple zones of the same type, including multiple test zones.
-
-```text
-Zone:
-  id
-  project_id
-  name
-  zone_type        # Train | Validation | Test
-  start_at_utc     # timestamptz; inclusive lower bound per zone_manager.md
-  end_at_utc       # timestamptz; inclusive upper bound per zone_manager.md
-  created_at
-```
-
-Rules:
-
-- UTC range must be valid, non-empty, and non-overlapping with any other zone in the project.
-- No enforced count or ordering in the backend.
-- API accepts user-friendly date inputs where appropriate but persists normalized UTC instants consistent with `docs/SaaS/zone_manager.md`.
-
-### 6.4 Strategy and Strategy Version
+### 6.3 Strategies and Realized Strategies
 
 ```text
 Strategy:
   id
-  project_id
-  owner_user_id
+  user_id
   name
-  description
+  code_blob_id
   created_at
   updated_at
 
-StrategyVersion:
+RealizedStrategy:
   id
   strategy_id
-  version_number
-  semver
-  source_code_hash
-  source_blob_uri
-  metadata_json
-  params_schema_json
-  training_config_json
-  zone_snapshot_json
-  core_version
-  worker_image_version
-  committed_at
+  user_id
+  strategy_zone_id
+  param_combo_json
+  created_at
 ```
 
-Committed strategy versions are immutable.
+A realized strategy is a concrete strategy instance: one strategy, one strategy zone, and one parameter combination.
 
-### 6.5 Backtest Run
+### 6.4 Strategy Research Runs
 
 ```text
-BacktestRun:
+ParameterSweep:
   id
-  owner_user_id
-  project_id
-  strategy_version_id
-  selected_zone_ids
-  ticker_set_hash
-  parameter_hash
-  date_range_start
-  date_range_end
+  user_id
+  strategy_id
+  strategy_zone_id
+  param_space_json
   status
-  request_json
-  result_summary_json
-  warnings_json
+  metrics_json
+  artifact_root_uri
+  expires_at
+  created_at
+  completed_at
+
+StrategyBacktest:
+  id
+  user_id
+  realized_strategy_id
+  is_train
+  status
+  results_json
   artifact_root_uri
   created_at
-  started_at
+  completed_at
+
+PermutationTest:
+  id
+  user_id
+  realized_strategy_id
+  status
+  real_x
+  shuffled_ys_blob_uri
+  results_json
+  artifact_root_uri
+  created_at
   completed_at
 ```
 
-Recommended statuses:
+Parameter sweep results are saved in Blob because they can be large. Use Azure Blob lifecycle management for TTL deletion on the parameter-sweep artifact prefix or blob index tags. A daily cleanup job should also delete expired `ParameterSweep` metadata rows whose `expires_at` has passed.
+
+Recommended job statuses:
 
 - `queued`
 - `running`
@@ -358,47 +365,57 @@ Recommended statuses:
 - `failed`
 - `cancelled`
 
-### 6.6 Portfolio and Portfolio Version
+### 6.5 Portfolios
 
 ```text
 Portfolio:
   id
-  owner_user_id
-  project_id
+  user_id
   name
+  portfolio_zone_id
+  realized_strategy_ids
+  weight_layer_json
+  diversification_multiplier
   created_at
   updated_at
 
-PortfolioVersion:
+PortfolioBacktest:
   id
+  user_id
   portfolio_id
-  version_number
-  strategy_weights_json
-  zone_snapshot_json
-  result_summary_json
+  is_train
+  status
+  results_json
   artifact_root_uri
   created_at
+  completed_at
 ```
 
-Portfolio versions are immutable snapshots.
-
-### 6.7 Deployment
+### 6.6 Deployment, Predictions, and Signal API Keys
 
 ```text
 Deployment:
   id
-  owner_user_id
-  portfolio_version_id
+  user_id
+  portfolio_id
   status             # running | stopped
   output_mode        # forecast_score | position_fraction | contracts
   created_at
   started_at
   stopped_at
 
+Prediction:
+  id
+  user_id
+  deployment_id
+  as_of
+  signals_json
+  artifact_uri
+  created_at
+
 SignalApiKey:
   id
-  owner_user_id
-  deployment_id
+  user_id
   name
   key_prefix          # safe display prefix, e.g. qf_sig_live_abc123
   key_hash
@@ -411,9 +428,9 @@ SignalApiKey:
 
 MVP deployment means daily signal generation and retrieval.
 
-Signal API keys are deployment-scoped, not global per user. MVP allows one active key per deployment for simplicity. Rotation creates a replacement key and automatically revokes the prior active key for that deployment.
+MVP Signal API keys are user-scoped. A key can read predictions for deployments owned by that user. MVP allows one active key per user for simplicity. Rotation creates a replacement key and automatically revokes the prior active key.
 
-### 6.8 Rate Limit and Quota Models
+### 6.7 Rate Limit and Quota Models
 
 Rate limiting and quota state should be first-class product data so users cannot accidentally or intentionally create unbounded compute cost.
 
@@ -469,7 +486,7 @@ Initial editable defaults:
 
 These are starting guesses, not product pricing decisions. They should be easy to edit without schema changes.
 
-### 6.9 Billing and Payment Models
+### 6.8 Billing and Payment Models
 
 The exact packages and limits require market research, but the technical design should assume subscription/billing will become part of request admission. Stripe is the likely default payment gateway because it is the most common SaaS path and has mature Checkout, Customer Portal, subscriptions, invoices, webhooks, and tax integrations.
 
@@ -533,14 +550,14 @@ Until billing launches, the same code path can use internal/free/beta plans mana
 Postgres stores relational product state:
 
 - Users and OAuth identity mapping.
-- Projects and zones.
-- Strategy metadata and immutable versions.
-- Backtest job state and summaries.
-- Portfolio versions and deployments.
+- Strategy and portfolio zones.
+- Strategies and realized strategies.
+- Strategy backtests, portfolio backtests, parameter sweeps, and permutation tests.
+- Portfolios, deployments, and predictions.
 - Artifact URIs.
 - API key hashes and audit records.
 
-Use JSONB for snapshots and flexible metadata, but keep ownership, status, versioning, and foreign keys relational.
+Use JSONB for flexible metadata, but keep ownership, status, and foreign keys relational.
 
 ### 7.2 Blob Storage
 
@@ -558,22 +575,25 @@ Suggested container layout:
 
 ```text
 candles/
-  research/timeframe=D/ticker=ES/as_of=2026Q2/part.parquet
+  research/timeframe=D/ticker=ES/part.parquet
   live-snapshots/deployment_run=<run_id>/ticker=ES/candles.parquet
 
 strategy-source/
-  user=<user_id>/strategy=<strategy_id>/version=<version_id>/source.py
+  user=<user_id>/strategy=<strategy_id>/source.py
 
-backtest-results/
-  user=<user_id>/run=<backtest_run_id>/forecast_stream.parquet
-  user=<user_id>/run=<backtest_run_id>/summary.json
-  user=<user_id>/run=<backtest_run_id>/warnings.json
+strategy-backtests/
+  user=<user_id>/strategy_backtest=<strategy_backtest_id>/forecast_stream.parquet
+  user=<user_id>/strategy_backtest=<strategy_backtest_id>/summary.json
+  user=<user_id>/strategy_backtest=<strategy_backtest_id>/warnings.json
 
-portfolio-results/
-  user=<user_id>/portfolio_version=<portfolio_version_id>/summary.json
+portfolio-backtests/
+  user=<user_id>/portfolio_backtest=<portfolio_backtest_id>/summary.json
 
 deployment-signals/
   deployment=<deployment_id>/date=<yyyy-mm-dd>/signals.json
+
+parameter-sweeps/
+  user=<user_id>/sweep=<parameter_sweep_id>/results.parquet
 ```
 
 ## 8. Market Data Operations
@@ -588,7 +608,7 @@ For research and backtesting, QuantFoundry reads curated daily futures Parquet f
 candles/research/timeframe=D/ticker=ES/part.parquet
 ```
 
-Backtests use whatever curated research data is active in the environment at run time. Backtest results should store the run timestamp and input date range, but no dataset-versioning system is included in the MVP.
+Backtests use whatever curated research data is active in the environment at run time. Backtest results should store the run timestamp and input date range.
 
 ### 8.2 Quarterly Backadjustment Flow
 
@@ -634,7 +654,7 @@ ACA scheduled signal trigger
   -> write signal result to Postgres and optional Blob artifact
 ```
 
-This requires a reliable headless IB/TWS gateway or IB Gateway container strategy. The gateway should be treated as platform infrastructure, not user infrastructure. It should not expose broker execution for MVP; it is only a market data source.
+This requires a reliable headless IB/TWS gateway or IB Gateway container strategy. The gateway should be treated as platform infrastructure, not user infrastructure, and only as a market data source.
 
 Risks to validate early:
 
@@ -683,30 +703,29 @@ Breaking app API changes should be handled by deploying compatible Web and API r
 GET /api/health
 ```
 
-### 9.2 Projects and Zones
+### 9.2 Zones
 
 ```http
-POST /api/projects
-GET  /api/projects
-GET  /api/projects/{project_id}
+POST /api/strategy-zones
+GET  /api/strategy-zones
+PUT  /api/strategy-zones/{strategy_zone_id}
+DELETE /api/strategy-zones/{strategy_zone_id}
 
-POST /api/projects/{project_id}/zones
-GET  /api/projects/{project_id}/zones
-PUT  /api/projects/{project_id}/zones/{zone_id}
-DELETE /api/projects/{project_id}/zones/{zone_id}
+POST /api/portfolio-zones
+GET  /api/portfolio-zones
+PUT  /api/portfolio-zones/{portfolio_zone_id}
+DELETE /api/portfolio-zones/{portfolio_zone_id}
 ```
 
 ### 9.3 Strategies
 
 ```http
-POST /api/projects/{project_id}/strategies
-GET  /api/projects/{project_id}/strategies
+POST /api/strategies
+GET  /api/strategies
 GET  /api/strategies/{strategy_id}
 
-POST /api/strategies/{strategy_id}/versions/validate
-POST /api/strategies/{strategy_id}/versions/commit
-GET  /api/strategies/{strategy_id}/versions
-GET  /api/strategy-versions/{strategy_version_id}
+POST /api/strategies/{strategy_id}/validate
+PUT  /api/strategies/{strategy_id}
 ```
 
 Validation response:
@@ -719,52 +738,48 @@ Validation response:
 }
 ```
 
-### 9.4 Backtests
+### 9.4 Realized Strategies and Research Runs
 
 ```http
-POST /api/backtests
-GET  /api/backtests/{backtest_run_id}
-GET  /api/backtests/{backtest_run_id}/results
-POST /api/backtests/{backtest_run_id}/cancel
+POST /api/realized-strategies
+GET  /api/realized-strategies
+GET  /api/realized-strategies/{realized_strategy_id}
+
+POST /api/parameter-sweeps
+GET  /api/parameter-sweeps/{parameter_sweep_id}
+POST /api/realized-strategies/{realized_strategy_id}/backtests
+POST /api/realized-strategies/{realized_strategy_id}/permutation-tests
 ```
 
 Submission response:
 
 ```json
 {
-  "backtest_run_id": "uuid",
+  "job_id": "uuid",
   "status": "queued"
 }
 ```
 
-Backtests should support both single-strategy and portfolio scopes.
+Parameter sweep request:
 
 ```json
 {
-  "scope": "strategy",
-  "strategy_version_id": "uuid",
-  "parameters": {},
-  "zone_ids": ["uuid"]
+  "strategy_id": "uuid",
+  "strategy_zone_id": "uuid",
+  "param_space": {}
 }
 ```
 
-```json
-{
-  "scope": "portfolio",
-  "portfolio_version_id": "uuid",
-  "zone_ids": ["uuid"]
-}
-```
-
-Single-strategy backtests are the main research loop. Portfolio backtests are required before deployment because users need to validate combined weights, correlations, and aggregate drawdown. MVP portfolio backtests run as one worker job for the whole portfolio.
+Parameter sweeps compute metrics for a strategy/zone/parameter space. A realized strategy is created when the user selects a parameter combination to keep.
 
 ### 9.5 Portfolios
 
 ```http
-POST /api/projects/{project_id}/portfolios
-GET  /api/projects/{project_id}/portfolios
-POST /api/portfolios/{portfolio_id}/versions
-GET  /api/portfolio-versions/{portfolio_version_id}
+POST /api/portfolios
+GET  /api/portfolios
+GET  /api/portfolios/{portfolio_id}
+PUT  /api/portfolios/{portfolio_id}
+POST /api/portfolios/{portfolio_id}/backtests
 ```
 
 ### 9.6 Deployments and Signals
@@ -773,14 +788,16 @@ GET  /api/portfolio-versions/{portfolio_version_id}
 POST /api/deployments
 GET  /api/deployments
 POST /api/deployments/{deployment_id}/stop
-POST /api/deployments/{deployment_id}/signal-api-key
-GET  /api/deployments/{deployment_id}/signal-api-keys
-DELETE /api/deployments/{deployment_id}/signal-api-keys/{key_id}
+GET  /api/predictions
+GET  /api/predictions/{prediction_id}
+POST /api/signal-api-key
+GET  /api/signal-api-keys
+DELETE /api/signal-api-keys/{key_id}
 GET  /api/v1/signals/latest
 GET  /api/v1/signals?deployment_id=...&date=...
 ```
 
-Signal API authentication should use hashed API keys scoped to a deployment or portfolio.
+Signal API authentication uses the user's active hashed Signal API key.
 
 The Signal API is a pull-based machine interface for retrieving the latest hosted portfolio output. Users create an API key in the QuantFoundry portal, copy it once, store it in their own script/pipeline/bot, and call the Signal API to fetch the latest signal snapshot.
 
@@ -788,11 +805,11 @@ MVP key management:
 
 | Action | API |
 |---|---|
-| Create or rotate key | `POST /api/deployments/{deployment_id}/signal-api-key`; creates a new key and revokes the prior active deployment key. |
-| List keys | `GET /api/deployments/{deployment_id}/signal-api-keys` returns current and historical metadata only, never full secrets. |
-| Revoke key | `DELETE /api/deployments/{deployment_id}/signal-api-keys/{key_id}` sets `revoked_at`. |
+| Create or rotate key | `POST /api/signal-api-key`; creates a new key and revokes the prior active user key. |
+| List keys | `GET /api/signal-api-keys` returns current and historical metadata only, never full secrets. |
+| Revoke key | `DELETE /api/signal-api-keys/{key_id}` sets `revoked_at`. |
 
-The full key secret is only shown once at creation. The database stores a hash and a safe prefix for display. MVP should enforce one active key per deployment. This is simpler than multi-key management and still supports emergency revocation/replacement.
+The full key secret is only shown once at creation. The database stores a hash and a safe prefix for display. MVP should enforce one active key per user. This is simpler than multi-key management and still supports emergency revocation/replacement.
 
 Signal API does not place trades. It only returns the latest signal snapshot for a running deployment.
 
@@ -830,8 +847,8 @@ Abuse response should be explicit:
 
 ```text
 1. API receives backtest request.
-2. API validates ownership, strategy version, parameters, zones, and quotas.
-3. API writes BacktestRun(status='queued').
+2. API validates ownership, strategy/realized-strategy inputs, parameters, zones, and quotas.
+3. API writes the relevant run row with `status='queued'`.
 4. API starts an ACA Job execution with the run ID and job payload reference.
 5. ACA Job starts worker container.
 6. Worker loads job payload and strategy source.
@@ -839,7 +856,7 @@ Abuse response should be explicit:
 8. Worker converts data to CandleData windows and calls compute() per bar.
 9. Worker validates outputs and records warnings.
 10. Worker writes forecast stream and summary artifacts to Blob.
-11. Worker updates BacktestRun status and artifact URIs.
+11. Worker updates the run status and artifact URIs.
 12. Frontend polls API for status/results.
 ```
 
@@ -849,17 +866,17 @@ The MVP implementation uses direct ACA Job startup from the API.
 
 ## 11. Deployment and Hosted Signal Automation
 
-MVP deployment means hosted daily signal generation for a committed `PortfolioVersion`.
+MVP deployment means hosted daily signal generation for a `Portfolio`.
 
 ### 11.1 Deployment Lifecycle
 
 ```text
-User creates portfolio version
+User creates portfolio
   -> user clicks Deploy
   -> API creates Deployment(status='running')
   -> scheduled ACA Job includes deployment in the next all-deployments signal run
   -> worker computes latest signals using the IB/TWS lookback window
-  -> signals are stored and exposed through UI/API/notifications
+  -> signals are stored and exposed through UI/API
 ```
 
 Users should not need to press a browser button every day. Once a deployment is running, scheduled backend automation should produce signals.
@@ -889,7 +906,7 @@ The MVP supports pull-based delivery through the website and Signal API.
 | Delivery | MVP recommendation |
 |---|---|
 | Website dashboard | Required. Show latest signal, timestamp, data source, and deployment status. |
-| Signal API | Required. Users can pull latest signals with deployment-scoped API keys. |
+| Signal API | Required. Users can pull latest signals with the user's Signal API key. |
 | CSV/JSON download | Useful and cheap. |
 
 Signal API example:
@@ -902,7 +919,7 @@ Authorization: Bearer qf_sig_...
 ```json
 {
   "deployment_id": "uuid",
-  "portfolio_version_id": "uuid",
+  "portfolio_id": "uuid",
   "as_of": "2026-05-13",
   "data_source": "ibkr_tws",
   "signals": [
@@ -950,11 +967,11 @@ Deployment
 Frontend responsibilities:
 
 - OAuth login flow.
-- Project and zone management UI.
+- Strategy-zone and portfolio-zone management UI.
 - Strategy editor and schema validation display.
 - Backtest submission and polling.
 - Result summaries and warning surfacing.
-- Strategy library and committed version browsing.
+- Strategy library and realized strategy browsing.
 - Portfolio composition and deployment controls.
 - Signal API key display/rotation flow.
 
@@ -970,7 +987,7 @@ API requirements:
 
 - Verify JWT issuer, audience, signature, and expiry.
 - Map provider subject to internal `users.id`.
-- Enforce ownership on every project, strategy, backtest, portfolio, deployment, artifact, and API key.
+- Enforce ownership on every strategy, zone, realized strategy, backtest, portfolio, deployment, prediction, artifact, and API key.
 - Store only provider identity metadata and no passwords.
 
 ## 14. Deployment Environments
@@ -1015,15 +1032,15 @@ Worker compute should be close to serverless economics. A 1 vCPU / 2 GiB worker 
 | Local integration tests | Run sample strategies against local daily data and produce artifacts. |
 | Cloud parity tests | Same strategy/data/params produce equivalent local and worker outputs. |
 | Security tests | Banned imports/calls, suspicious AST patterns, timeout/memory/quota behavior. |
-| Data tests | Quarterly release validation, TWS lookback fetching, backadjustment reports. |
-| Deployment automation tests | Scheduled signal generation, latest signal API, notification formatting. |
+| Data tests | Quarterly Parquet update validation, TWS lookback fetching, backadjustment reports. |
+| Deployment automation tests | Scheduled signal generation and latest signal API. |
 
 ## 17. Implementation Decisions
 
 These items need concrete implementation choices during buildout.
 
 1. Final `QuantFoundry-Core` strategy contract details: exact `CandleData`, `StrategyParams`, metadata schema, and validation strictness.
-2. Data operations v1: quarterly research data release scripts and hosted signal IB/TWS lookback fetch design.
+2. Data operations v1: quarterly Parquet update scripts and hosted signal IB/TWS lookback fetch design.
 3. Result artifact format: Parquet-only for time series plus JSON summaries, or Arrow IPC for some paths.
 4. Strategy source package shape: single `source.py` plus metadata JSON vs zipped package with controlled modules.
 5. Warning thresholds: when a run becomes `completed_with_warnings` vs `failed`.
@@ -1039,7 +1056,7 @@ Closed MVP decisions:
 - Local artifacts: filesystem adapter first.
 - Worker orchestration: API directly starts ACA Jobs for MVP.
 - Quotas: editable defaults in `QuantFoundry-API/config/plans.yml`.
-- Signal API keys: one active deployment-scoped key at a time.
+- Signal API keys: one active user-scoped key at a time.
 - Portfolio backtests: support both single-strategy and portfolio backtests; MVP portfolio backtests use one whole-portfolio worker job.
 - IaC: Bicep/GitHub Actions live in the owning repos, mainly `QuantFoundry-API` for backend infrastructure and `QuantFoundry-Web` for Vercel config.
 - Hosted signal scheduler: ACA scheduled job starts the all-deployments run and fans out deployment jobs in parallel.
@@ -1049,10 +1066,10 @@ Closed MVP decisions:
 1. Update `QuantFoundry-Core` to match the `compute(candles, params)` strategy contract.
 2. Add output validation, metadata models, zone slicing, and artifact schemas to Core.
 3. Add local Docker-based worker execution wired to local API, Postgres, and local Blob/filesystem artifacts.
-4. Add API models/endpoints for projects, zones, strategy validation, and strategy version commit.
+4. Add API models/endpoints for strategy zones, portfolio zones, strategies, realized strategies, and strategy validation.
 5. Add SQLAlchemy 2 models and Alembic migrations for the core product schema.
 6. Add Worker package/image scaffold using shared-image runtime-loaded source.
-7. Add backtest submission/status/result APIs.
+7. Add parameter sweep, strategy backtest, permutation test, and portfolio backtest APIs.
 8. Update Web to match the Dashboard / Research Workspace / Strategy Library / Portfolio Builder / Deployment structure.
 9. Add cloud deployment scripts for Vercel + Azure Container Apps + ACA Jobs + Blob + Postgres.
 10. Add rate limit/quota admission checks before compute starts.
