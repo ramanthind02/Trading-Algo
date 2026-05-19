@@ -93,14 +93,15 @@ Infrastructure should live in the repos that own the deployable surface:
 
 | Repository | Infrastructure/config ownership |
 |---|---|
-| `QuantFoundry-API` | Azure Bicep, API/worker container deployment, Postgres migrations, worker job definitions, storage, Key Vault, monitoring. |
+| `QuantFoundry-API` | Azure Bicep, API container deployment, Postgres migrations, ACA Job definitions/orchestration config, storage, Key Vault, monitoring. |
+| `QuantFoundry-Worker` | Worker container image build/test/publish config and worker runtime environment defaults. |
 | `QuantFoundry-Web` | Vercel project config, frontend environment variable docs, preview/prod deploy settings. |
 | `QuantFoundry-Core` | No cloud infrastructure; Python package build/test/release only. |
 | `Trading-Algo` | Legacy migration source only. Do not add new QuantFoundry product workflows here. |
 
 A separate `QuantFoundry-Infra` repo is not part of the MVP.
 
-Each repo should use exactly two primary GitHub Actions workflows: one pull request pipeline and one official pipeline.
+Each QuantFoundry repo should use exactly two primary GitHub Actions workflows: one pull request pipeline and one official pipeline.
 
 ```text
 .github/workflows/
@@ -114,8 +115,10 @@ Pipeline responsibilities:
 |---|---|
 | `QuantFoundry-Core-PullRequest.yml` | Build package, run unit tests, run type/lint checks when configured. |
 | `QuantFoundry-Core-Official.yml` | Publish the Core package after merge to `main`. |
-| `QuantFoundry-API-PullRequest.yml` | Build API/worker images, run unit tests, run migration checks. |
-| `QuantFoundry-API-Official.yml` | After merge to `main`: deploy dev automatically, then deploy prod behind GitHub Environment manual approval. |
+| `QuantFoundry-API-PullRequest.yml` | Build API image, run unit tests, run migration checks, validate Bicep. |
+| `QuantFoundry-API-Official.yml` | After merge to `main`: publish API image, deploy dev automatically, then deploy prod behind GitHub Environment manual approval. |
+| `QuantFoundry-Worker-PullRequest.yml` | Build worker image, run worker unit tests, run local sample-job smoke test when configured. |
+| `QuantFoundry-Worker-Official.yml` | After merge to `main`: publish worker image to the registry, update dev worker job image automatically, then update prod behind GitHub Environment manual approval. |
 | `QuantFoundry-Web-PullRequest.yml` | Typecheck/build frontend and create Vercel preview. |
 | `QuantFoundry-Web-Official.yml` | After merge to `main`: deploy dev/preview automatically, then prod behind approval or Vercel production gate. |
 
