@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 772 116" width="772" height="116"><defs></defs>
+  <rect width="772" height="116" fill="#22232b"></rect>
+  <text x="14.4" y="90.5" font-family="JetBrains Mono, monospace" font-weight="500" font-size="92" fill="#d57044">[</text>
+  <text x="87.2" y="90.5" font-family="Space Grotesk, sans-serif" font-weight="600" font-size="80" fill="#f7f5ef">Quant</text>
+  <rect x="338.7" y="28.1" width="7.0" height="66.4" fill="#d57044"></rect>
+  <text x="363.3" y="90.5" font-family="Space Grotesk, sans-serif" font-weight="500" font-size="80" fill="#f7f5ef" opacity="0.85">Foundry</text>
+  <text x="702.3" y="90.5" font-family="JetBrains Mono, monospace" font-weight="500" font-size="92" fill="#d57044">]</text>
+</svg>

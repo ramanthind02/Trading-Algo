@@ -88,6 +88,7 @@ def _build_summary(net_cashflow: float) -> PortfolioSimulationSummary:
         total_challenge_costs=50.0,
         total_activation_costs=0.0,
         total_reset_costs=0.0,
+        total_fee_refunds=0.0,
         net_cashflow=net_cashflow,
         first_payout_day=pd.Timestamp("2026-01-10"),
         days_to_first_payout=5,

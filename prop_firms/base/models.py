@@ -40,6 +40,7 @@ class AccountFees:
     challenge_fee: float
     reset_fee: float
     activation_fee: float = 0.0
+    refundable_on_first_payout: bool = False
 
     def __post_init__(self) -> None:
         if self.challenge_fee < 0.0:
@@ -113,6 +114,20 @@ class ProfitDayRule:
 
 
 @dataclass(frozen=True)
+class PayoutCycleRule:
+    """Calendar-day payout cycle windows for funded accounts."""
+
+    first_cycle_calendar_days: int
+    subsequent_cycle_calendar_days: int
+
+    def __post_init__(self) -> None:
+        if self.first_cycle_calendar_days < 1:
+            raise ValueError("first_cycle_calendar_days must be >= 1")
+        if self.subsequent_cycle_calendar_days < 1:
+            raise ValueError("subsequent_cycle_calendar_days must be >= 1")
+
+
+@dataclass(frozen=True)
 class PayoutRule:
     """Funded-account payout constraints."""
 
@@ -125,6 +140,7 @@ class PayoutRule:
     protected_balance: float | None = None
     consistency_rule: ConsistencyRule | None = None
     payout_cap_schedule: tuple[float, ...] = tuple()
+    payout_cycle_rule: PayoutCycleRule | None = None
 
     def __post_init__(self) -> None:
         if not 0.0 < self.trader_profit_split <= 1.0:
@@ -233,6 +249,7 @@ class AccountDefinition:
     fees: AccountFees
     evaluation: EvaluationRules
     funded: FundedRules
+    verification: EvaluationRules | None = None
     metadata: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -372,6 +389,7 @@ class SimulationSummary:
     total_profit: float
     challenge_fee_paid: float
     reset_fee_paid: float
+    fee_refund_amount: float
     total_payout_amount: float
     payout_count: int
     resets_used: int
@@ -388,6 +406,7 @@ class SimulationSummary:
             "total_profit": self.total_profit,
             "challenge_fee_paid": self.challenge_fee_paid,
             "reset_fee_paid": self.reset_fee_paid,
+            "fee_refund_amount": self.fee_refund_amount,
             "total_payout_amount": self.total_payout_amount,
             "payout_count": self.payout_count,
             "resets_used": self.resets_used,

@@ -82,17 +82,19 @@ Users should write indicator logic that operates directly on these arrays using 
 
 Every strategy must declare the following at registration time:
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | `str` | Human-readable strategy name |
-| `version` | `str` | Semantic version (e.g. `"1.0.0"`). Must be incremented on any logic change. |
-| `description` | `str` | What the strategy does and its intended market conditions |
-| `timeframe` | `TimeFrame` | Single timeframe: `D`, `W`, or `M` |
-| `tickers` | `TickerMode` | See Section 3.3 |
-| `max_lookback` | `int` | Maximum bars required before the strategy produces a meaningful signal. Subject to platform cap (see Section 5.3). |
-| `lookback_params` | `list[str]` | Parameter names that directly determine lookback (see Section 3.5) |
-| `params_schema` | `list[ParamSpec]` | Declared parameters with types and constraints (see Section 3.4) |
-| `warmup_mode` | `WarmupMode` | `strict` or `flexible` (see Section 4) |
+
+| Field             | Type              | Description                                                                                                        |
+| ----------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `name`            | `str`             | Human-readable strategy name                                                                                       |
+| `version`         | `str`             | Semantic version (e.g. `"1.0.0"`). Must be incremented on any logic change.                                        |
+| `description`     | `str`             | What the strategy does and its intended market conditions                                                          |
+| `timeframe`       | `TimeFrame`       | Single timeframe: `D`, `W`, or `M`                                                                                 |
+| `tickers`         | `TickerMode`      | See Section 3.3                                                                                                    |
+| `max_lookback`    | `int`             | Maximum bars required before the strategy produces a meaningful signal. Subject to platform cap (see Section 5.3). |
+| `lookback_params` | `list[str]`       | Parameter names that directly determine lookback (see Section 3.5)                                                 |
+| `params_schema`   | `list[ParamSpec]` | Declared parameters with types and constraints (see Section 3.4)                                                   |
+| `warmup_mode`     | `WarmupMode`      | `strict` or `flexible` (see Section 4)                                                                             |
+
 
 ### 3.3 Ticker Declaration
 
@@ -106,14 +108,16 @@ Two modes are supported. A strategy must declare exactly one.
 
 Parameters are supplied by the user at backtest time. Each parameter must be declared in `params_schema`:
 
-| Field | Description |
-|---|---|
-| `name` | Parameter name, used as key in `StrategyParams` |
-| `type` | One of: `int`, `float`, `bool`, `str_enum` |
+
+| Field            | Description                                            |
+| ---------------- | ------------------------------------------------------ |
+| `name`           | Parameter name, used as key in `StrategyParams`        |
+| `type`           | One of: `int`, `float`, `bool`, `str_enum`             |
 | `allowed_values` | For `str_enum`: exhaustive list of valid string values |
-| `min` / `max` | For `int` and `float`: inclusive bounds |
-| `default` | Optional default value |
-| `description` | Human-readable explanation shown in the UI |
+| `min` / `max`    | For `int` and `float`: inclusive bounds                |
+| `default`        | Optional default value                                 |
+| `description`    | Human-readable explanation shown in the UI             |
+
 
 No other parameter types are supported. Strategies requiring more complex configuration must encode it as a `str_enum` or decompose it into the supported primitives.
 
@@ -133,9 +137,9 @@ The platform calls the strategy from bar 0, passing whatever candle history is a
 
 ### 4.1 Warmup Modes
 
-**`strict`**: The strategy commits to outputting `0` (flat) for all bars before `max_lookback` bars have been accumulated. No partial signals are produced. The platform does not enforce this — it is a user commitment that affects how results are interpreted downstream.
+`**strict`**: The strategy commits to outputting `0` (flat) for all bars before `max_lookback` bars have been accumulated. No partial signals are produced. The platform does not enforce this — it is a user commitment that affects how results are interpreted downstream.
 
-**`flexible`**: The strategy may produce partial signals during warmup (e.g. computing a moving average over however many bars are currently available). The platform accepts and records these outputs without any special treatment.
+`**flexible`**: The strategy may produce partial signals during warmup (e.g. computing a moving average over however many bars are currently available). The platform accepts and records these outputs without any special treatment.
 
 In both modes the platform clips all outputs to `[-2, 2]` and records them. The warmup mode declaration is informational — it does not change platform behavior at execution time.
 
@@ -167,11 +171,13 @@ At registration time the platform performs static AST analysis on all submitted 
 
 ### 5.3 Complexity Limits
 
-| Limit | Cap | Behavior on Breach |
-|---|---|---|
-| `max_lookback` | 500 bars | Rejected at registration |
-| Per-bar time budget | 100ms | Strategy run killed, backtest fails with error |
-| Memory | 512MB | Strategy run killed, backtest fails with error |
+
+| Limit               | Cap      | Behavior on Breach                             |
+| ------------------- | -------- | ---------------------------------------------- |
+| `max_lookback`      | 500 bars | Rejected at registration                       |
+| Per-bar time budget | 100ms    | Strategy run killed, backtest fails with error |
+| Memory              | 512MB    | Strategy run killed, backtest fails with error |
+
 
 The per-bar time budget and memory cap are enforced at the container level.
 
@@ -260,6 +266,7 @@ A durable, managed message queue receives backtest submissions and buffers them 
 
 **Orchestrator**
 A workflow orchestration layer (DAG-based) is responsible for:
+
 - Decomposing a backtest job into per-strategy worker jobs
 - Tracking completion of all workers belonging to a backtest
 - Triggering downstream steps (combining, result storage, user notification) once all workers are done
@@ -269,6 +276,7 @@ The orchestrator does not perform any computation itself — it only coordinates
 
 **Batch Compute Workers**
 Each strategy worker is a short-lived container executing one strategy's for-loop. Workers are managed by a batch compute service that:
+
 - Provisions containers on demand as jobs arrive in the queue
 - Scales the number of concurrent workers dynamically based on queue depth
 - Deallocates containers immediately when a job finishes

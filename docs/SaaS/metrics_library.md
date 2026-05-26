@@ -112,7 +112,7 @@ Do not mix conventions inside a single formula without naming it in code and doc
 
 ---
 
-## 7. QuantStats-aligned table (`quant-foundry-core`)
+## 7. QuantStats-aligned table (`QuantFoundry-Core`)
 
 The metrics **row vocabulary** from QuantStats `reports.metrics(..., display=False)` (basic vs full, compounded vs simple summed returns, optional benchmark columns) defines the baseline table for dashboards and APIs: Sharpe, Probabilistic Sharpe, Omega, VaR rows, streak stats, horizon returns (`MTD`, `3M`, …), drawdown summaries, ulcer/serenity, and—with a benchmark—R², information ratio, Treynor, and formatted Greek rows.
 
@@ -122,7 +122,7 @@ The metrics **row vocabulary** from QuantStats `reports.metrics(..., display=Fal
 - Entrypoint: **`compute_aligned_performance_metrics(...)` → `AlignedMetricsReport`** (`to_plain_dict()`, `to_dataframe()`).
 - **Implementation:** an **in-repo** Apache-2.0-derived slice under `quantfoundry_core.metrics.vendor_qs` (no PyPI **`quantstats`** dependency). **`tabulate`** is a normal dependency for display-mode printing only.
 - **Timezone:** UTC-aware indexes are stripped to UTC-naive before the metrics pipeline (mixed tz-aware alignment is brittle otherwise).
-- **Parity:** `quant-foundry-core/tests/test_metrics_golden.py` asserts equality against **`tests/fixtures/quantstats_metrics_golden.json`** (generated once from QuantStats upstream for locked seeds).
+- **Parity:** `QuantFoundry-Core/tests/test_metrics_golden.py` asserts equality against **`tests/fixtures/quantstats_metrics_golden.json`** (locked RNG seeds; regenerate from current `compute_aligned_performance_metrics` when vendored logic changes).
 
 **Catalog**
 

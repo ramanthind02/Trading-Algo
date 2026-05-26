@@ -7,6 +7,7 @@ class AccountPhase(str, Enum):
     """Lifecycle phase for a prop-firm account."""
 
     EVALUATION = "evaluation"
+    VERIFICATION = "verification"
     FUNDED = "funded"
 
 
@@ -42,6 +43,7 @@ class EventType(str, Enum):
     DAILY_LOSS_LIMIT_HIT = "daily_loss_limit_hit"
     PAYOUT_ELIGIBLE = "payout_eligible"
     PAYOUT_REQUESTED = "payout_requested"
+    FEE_REFUNDED = "fee_refunded"
     SCALE_CHANGED = "scale_changed"
     SIMULATION_COMPLETED = "simulation_completed"
 

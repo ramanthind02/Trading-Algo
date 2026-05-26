@@ -12,6 +12,7 @@ from prop_firms.base.models import (
     EodTrailingDrawdownRule,
     EvaluationRules,
     FundedRules,
+    PayoutCycleRule,
     PayoutRule,
     ProfitDayRule,
     ScalingTier,
@@ -55,8 +56,17 @@ def _build_account_definition(
         fees=_build_fees(_read_mapping(account_payload, "fees")),
         evaluation=_build_evaluation_rules(_read_mapping(account_payload, "evaluation")),
         funded=_build_funded_rules(_read_mapping(account_payload, "funded")),
+        verification=_build_optional_evaluation_rules(account_payload, "verification"),
         metadata=metadata,
     )
+
+
+def _build_optional_evaluation_rules(
+    payload: Mapping[str, object],
+    key: str,
+) -> EvaluationRules | None:
+    rules_payload = _read_optional_mapping(payload, key)
+    return None if not rules_payload else _build_evaluation_rules(rules_payload)
 
 
 def _build_fees(payload: Mapping[str, object]) -> AccountFees:
@@ -64,6 +74,7 @@ def _build_fees(payload: Mapping[str, object]) -> AccountFees:
         challenge_fee=_read_float(payload, "challenge_fee"),
         reset_fee=_read_float(payload, "reset_fee"),
         activation_fee=_read_float(payload, "activation_fee", 0.0),
+        refundable_on_first_payout=_read_bool(payload, "refundable_on_first_payout", False),
     )
 
 
@@ -97,10 +108,18 @@ def _build_profit_day_rule(payload: Mapping[str, object]) -> ProfitDayRule:
     )
 
 
+def _build_payout_cycle_rule(payload: Mapping[str, object]) -> PayoutCycleRule:
+    return PayoutCycleRule(
+        first_cycle_calendar_days=_read_int(payload, "first_cycle_calendar_days"),
+        subsequent_cycle_calendar_days=_read_int(payload, "subsequent_cycle_calendar_days"),
+    )
+
+
 def _build_payout_rule(payload: Mapping[str, object]) -> PayoutRule:
     payout_cap_schedule = tuple(
         float(item) for item in _read_optional_list(payload, "payout_cap_schedule")
     )
+    cycle_payload = _read_optional_mapping(payload, "payout_cycle_rule")
     return PayoutRule(
         trader_profit_split=_read_float(payload, "trader_profit_split"),
         min_request_amount=_read_float(payload, "min_request_amount"),
@@ -111,6 +130,9 @@ def _build_payout_rule(payload: Mapping[str, object]) -> PayoutRule:
         protected_balance=_read_optional_float(payload, "protected_balance"),
         consistency_rule=_build_optional_consistency_rule(payload, "consistency_rule"),
         payout_cap_schedule=payout_cap_schedule,
+        payout_cycle_rule=(
+            None if not cycle_payload else _build_payout_cycle_rule(cycle_payload)
+        ),
     )
 
 

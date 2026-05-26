@@ -174,6 +174,7 @@ class TopstepRuleEngine(BasePropFirmEngine[TopstepState]):
             total_profit=gross_profit,
             challenge_fee_paid=state.challenge_fee_paid,
             reset_fee_paid=state.reset_fee_paid,
+            fee_refund_amount=0.0,
             total_payout_amount=state.total_payout_amount,
             payout_count=state.payout_count,
             resets_used=state.resets_used,

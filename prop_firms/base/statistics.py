@@ -41,6 +41,9 @@ def compute_portfolio_statistics(
         expected_total_reset_costs=mean(
             summary.total_reset_costs for summary in summaries
         ),
+        expected_total_fee_refunds=mean(
+            summary.total_fee_refunds for summary in summaries
+        ),
         expected_funded_accounts_created=mean(
             summary.funded_accounts_created for summary in summaries
         ),

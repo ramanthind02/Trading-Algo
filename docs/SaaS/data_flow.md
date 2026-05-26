@@ -123,7 +123,7 @@ The output of this phase is a strategy that has passed validation robustness tes
 
 Before committing a strategy to the portfolio, the researcher can inspect how its IS returns correlate with strategies already committed. This is a research aid — it does not gate the commit. A highly correlated new strategy adds little diversification; the researcher weighs this against its standalone merit.
 
-See `docs/SaaS/ui_ux.md` §3.5 for the UI specification.
+See `docs/SaaS/UI-UX/research_workspace/portfolio_addition.md` (step 5) and `portfolio_correlation.md` for the UI specification.
 
 ### 4.4 Commit Phase
 

@@ -16,7 +16,7 @@ Strategy evaluation (Validation zone)
   └── Validation robustness tests         → validation.md
 
 Portfolio fit check (IS + Validation data)
-  └── Portfolio correlation check         → ui_ux.md §3.5  (advisory)
+  └── Portfolio correlation check         → UI-UX/research_workspace/portfolio_correlation.md  (advisory)
   └── Portfolio addition gate             → portfolio_addition.md  (primary gate)
 
 Portfolio construction (pre-holdout)

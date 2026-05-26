@@ -7,7 +7,7 @@ This document captures the current technical plan for turning the existing `Trad
 - `docs/SaaS/data_flow.md` - research, portfolio, deployment, and zone lifecycle.
 - `docs/SaaS/zone_manager.md` - zone types, UTC slicing contract, Core vs API responsibilities, snapshots.
 - `docs/SaaS/strategy_spec.md` - user strategy contract and runtime expectations.
-- `docs/SaaS/ui_ux.md` - product navigation and MVP user surfaces.
+- `docs/SaaS/UI-UX/` - product navigation, page specs, components, and MVP user surfaces ([README](UI-UX/README.md)).
 - `docs/SaaS/metrics_library.md` - canonical return conventions, KPI computation boundaries, UTC series, QuantStats posture, NumPy-centric implementation.
 
 The guiding product goal is to let independent traders build, validate, combine, and deploy systematic strategies without needing to build the surrounding infrastructure themselves.
@@ -16,13 +16,15 @@ The guiding product goal is to let independent traders build, validate, combine,
 
 The existing repository should remain operational as the internal research workbench while stable product-grade pieces are extracted into QuantFoundry packages and services.
 
-| Repository | Role |
-|---|---|
-| `Trading-Algo` | Internal research/backtesting/training lab. Keeps local data, cache, vault, experimental workflows, and current quant research code operational. |
-| `QuantFoundry-Core` | Shared Python library for strategy contracts, validation, candle/runtime models, cache keys, artifact schemas, **zone splitting** (`zone_manager` module), and reusable engine components. |
-| `QuantFoundry-API` | SaaS backend: auth integration, user/project/strategy metadata, job submission, queue orchestration, status/results APIs, deployment APIs. |
-| `QuantFoundry-Worker` | Private batch worker image for executing strategy validation/backtests/signal generation jobs. It imports `QuantFoundry-Core`. |
-| `QuantFoundry-Web` | Public web application for dashboard, research workspace, strategy library, portfolio builder, and deployment UI. |
+
+| Repository            | Role                                                                                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Trading-Algo`        | Internal research/backtesting/training lab. Keeps local data, cache, vault, experimental workflows, and current quant research code operational.                                           |
+| `QuantFoundry-Core`   | Shared Python library for strategy contracts, validation, candle/runtime models, cache keys, artifact schemas, **zone splitting** (`zone_manager` module), and reusable engine components. |
+| `QuantFoundry-API`    | SaaS backend: auth integration, user/project/strategy metadata, job submission, queue orchestration, status/results APIs, deployment APIs.                                                 |
+| `QuantFoundry-Worker` | Private batch worker image for executing strategy validation/backtests/signal generation jobs. It imports `QuantFoundry-Core`.                                                             |
+| `QuantFoundry-Web`    | Public web application for dashboard, research workspace, strategy library, portfolio builder, and deployment UI.                                                                          |
+
 
 Dependency direction must stay one-way:
 
@@ -57,18 +59,20 @@ User Browser
 
 ### 3.1 Hosting Decisions
 
-| Surface | MVP choice | Reason |
-|---|---|---|
-| Frontend | Vercel | Simplest frontend deploys, preview environments, rollbacks, custom domains, GitHub integration. |
-| API | Azure Container Apps | Container-native FastAPI deployment with scale controls and managed ingress. |
-| Workers | Azure Container Apps Jobs | Finite queued jobs, scale-to-zero economics, container-based Python stack. |
-| Queue | Azure Service Bus | Durable job buffering and decoupling between API and workers. |
-| Metadata DB | Azure Database for PostgreSQL Flexible Server | Relational ownership/versioning/audit model with JSONB escape hatch. |
-| Artifacts | Azure Blob Storage | Cheap durable storage for Parquet, JSON, source bundles, and backtest outputs. |
-| Secrets | Azure Key Vault | OAuth secrets, API keys, storage credentials if not fully using managed identity. |
-| Observability | Azure Monitor/Application Insights | API/worker logs, job failures, latency, cost and health telemetry. |
-| Infrastructure as Code | Azure Bicep | Native Azure IaC without AKS/Helm complexity. |
-| CI/CD | GitHub Actions | Build, test, provision, and deploy from repo workflows using OIDC federation. |
+
+| Surface                | MVP choice                                    | Reason                                                                                          |
+| ---------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Frontend               | Vercel                                        | Simplest frontend deploys, preview environments, rollbacks, custom domains, GitHub integration. |
+| API                    | Azure Container Apps                          | Container-native FastAPI deployment with scale controls and managed ingress.                    |
+| Workers                | Azure Container Apps Jobs                     | Finite queued jobs, scale-to-zero economics, container-based Python stack.                      |
+| Queue                  | Azure Service Bus                             | Durable job buffering and decoupling between API and workers.                                   |
+| Metadata DB            | Azure Database for PostgreSQL Flexible Server | Relational ownership/versioning/audit model with JSONB escape hatch.                            |
+| Artifacts              | Azure Blob Storage                            | Cheap durable storage for Parquet, JSON, source bundles, and backtest outputs.                  |
+| Secrets                | Azure Key Vault                               | OAuth secrets, API keys, storage credentials if not fully using managed identity.               |
+| Observability          | Azure Monitor/Application Insights            | API/worker logs, job failures, latency, cost and health telemetry.                              |
+| Infrastructure as Code | Azure Bicep                                   | Native Azure IaC without AKS/Helm complexity.                                                   |
+| CI/CD                  | GitHub Actions                                | Build, test, provision, and deploy from repo workflows using OIDC federation.                   |
+
 
 Avoid for MVP unless required:
 
@@ -119,16 +123,18 @@ Recommended GitHub Actions workflows:
 
 Pipeline responsibilities:
 
-| Pipeline | Responsibility |
-|---|---|
-| `ci-core.yml` | Test and package `QuantFoundry-Core`. |
-| `ci-api.yml` | Test API, build API container image, push to registry. |
-| `ci-worker.yml` | Test worker, build shared worker image, push to registry. |
-| `ci-web.yml` | Typecheck/build frontend, create Vercel preview. |
-| `deploy-dev.yml` | Deploy Bicep to dev, run DB migrations, deploy API/job image revisions. |
-| `deploy-prod.yml` | Same as dev but requires manual GitHub Environment approval. |
-| `data-publish-dev.yml` | Upload validated candle dataset to dev Blob container. |
-| `data-publish-prod.yml` | Promote an already validated dataset version to prod after approval. |
+
+| Pipeline                | Responsibility                                                          |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `ci-core.yml`           | Test and package `QuantFoundry-Core`.                                   |
+| `ci-api.yml`            | Test API, build API container image, push to registry.                  |
+| `ci-worker.yml`         | Test worker, build shared worker image, push to registry.               |
+| `ci-web.yml`            | Typecheck/build frontend, create Vercel preview.                        |
+| `deploy-dev.yml`        | Deploy Bicep to dev, run DB migrations, deploy API/job image revisions. |
+| `deploy-prod.yml`       | Same as dev but requires manual GitHub Environment approval.            |
+| `data-publish-dev.yml`  | Upload validated candle dataset to dev Blob container.                  |
+| `data-publish-prod.yml` | Promote an already validated dataset version to prod after approval.    |
+
 
 Authentication should use GitHub Actions OIDC federation into Azure, not long-lived Azure credentials stored as GitHub secrets. Vercel can be connected directly to the `QuantFoundry-Web` repository for preview/prod deploys, or driven through GitHub Actions if tighter release coordination is needed.
 
@@ -194,15 +200,17 @@ Static validation is a fast-fail quality gate, not the primary security boundary
 
 MVP defense-in-depth:
 
-| Layer | Requirement |
-|---|---|
-| Contract | Pure `compute()` function, no platform state mutation. |
-| Static validation | AST checks for banned imports/calls and required signature. |
-| Dependency policy | Only platform-approved libraries in the shared worker image. No custom pip installs. |
-| Runtime isolation | User code never runs in API or orchestrator process. It runs in worker job containers. |
-| Resource limits | CPU, memory, wall-clock timeout, max bars, max tickers, max lookback, max concurrent jobs. |
-| Data scoping | Job receives only the source, candle data, and artifact paths it needs. |
-| Output validation | Missing, NaN, undeclared, and out-of-range outputs are corrected with surfaced warnings. |
+
+| Layer             | Requirement                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------ |
+| Contract          | Pure `compute()` function, no platform state mutation.                                     |
+| Static validation | AST checks for banned imports/calls and required signature.                                |
+| Dependency policy | Only platform-approved libraries in the shared worker image. No custom pip installs.       |
+| Runtime isolation | User code never runs in API or orchestrator process. It runs in worker job containers.     |
+| Resource limits   | CPU, memory, wall-clock timeout, max bars, max tickers, max lookback, max concurrent jobs. |
+| Data scoping      | Job receives only the source, candle data, and artifact paths it needs.                    |
+| Output validation | Missing, NaN, undeclared, and out-of-range outputs are corrected with surfaced warnings.   |
+
 
 Initial banned capabilities:
 
@@ -234,13 +242,15 @@ Local and cloud execution should share:
 
 They should differ only in execution backend:
 
-| Concern | Local/internal | Cloud/user-facing |
-|---|---|---|
-| Strategy source | Local file | Immutable Blob object/version. |
-| Data | `Trading-Algo\data\ohlc_data` or local Parquet | Curated Parquet in Blob Storage. |
-| Execution | Local Python process or local worker container | Azure Container Apps Job. |
-| Artifacts | Local filesystem/vault | Blob Storage + Postgres metadata. |
-| Metadata | Optional manifest | Postgres product records. |
+
+| Concern         | Local/internal                                 | Cloud/user-facing                 |
+| --------------- | ---------------------------------------------- | --------------------------------- |
+| Strategy source | Local file                                     | Immutable Blob object/version.    |
+| Data            | `Trading-Algo\data\ohlc_data` or local Parquet | Curated Parquet in Blob Storage.  |
+| Execution       | Local Python process or local worker container | Azure Container Apps Job.         |
+| Artifacts       | Local filesystem/vault                         | Blob Storage + Postgres metadata. |
+| Metadata        | Optional manifest                              | Postgres product records.         |
+
 
 ## 6. Core Product Models
 
@@ -585,10 +595,12 @@ worker_image_version
 
 Cache tiers:
 
-| Cache | Lifecycle |
-|---|---|
-| Research cache | User opt-in, TTL-based, visible and manually invalidatable. |
+
+| Cache           | Lifecycle                                                                                                              |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Research cache  | User opt-in, TTL-based, visible and manually invalidatable.                                                            |
 | Portfolio cache | Persistent for selected/committed strategies, invalidated when strategy source/hash changes or strategy is deselected. |
+
 
 The orchestrator should check cache before dispatching worker jobs. A cache hit reuses the forecast stream artifact and avoids compute.
 
@@ -650,13 +662,15 @@ This gives reproducibility without weekly full-copy storage growth.
 
 Recommended physical storage model:
 
-| Data type | Storage behavior |
-|---|---|
-| Raw TWS pulls | Append-only, retained for audit/debug, moved to cool/archive tier after validation. |
-| Clean canonical daily partitions | Partitioned by ticker/timeframe/year or month. Daily updates append into a small open partition and are compacted into larger files on a schedule. |
-| Dataset version manifests | Small immutable JSON files. One per published dataset version. |
-| Quarterly backadjusted partitions | Rewrite only affected ticker/date partitions; retain recent prior adjustment sets according to retention policy. |
-| Active dataset pointer | Small DB/config value pointing to the current manifest. |
+
+| Data type                         | Storage behavior                                                                                                                                   |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Raw TWS pulls                     | Append-only, retained for audit/debug, moved to cool/archive tier after validation.                                                                |
+| Clean canonical daily partitions  | Partitioned by ticker/timeframe/year or month. Daily updates append into a small open partition and are compacted into larger files on a schedule. |
+| Dataset version manifests         | Small immutable JSON files. One per published dataset version.                                                                                     |
+| Quarterly backadjusted partitions | Rewrite only affected ticker/date partitions; retain recent prior adjustment sets according to retention policy.                                   |
+| Active dataset pointer            | Small DB/config value pointing to the current manifest.                                                                                            |
+
 
 Retention policy should be explicit:
 
@@ -702,11 +716,13 @@ If the current-year partition is mutable during data assembly, mutation should h
 
 For MVP daily data, use one of these partition policies:
 
-| Policy | Recommendation |
-|---|---|
-| One file per ticker/year | Simple for daily data, but each daily append rewrites the current-year file. Fine at MVP scale. |
-| One file per ticker/month | Better balance: smaller rewrites, no tiny daily-file explosion. Recommended default. |
-| One file per ticker/day | Avoid for daily data unless using a table format with compaction; creates too many tiny files. |
+
+| Policy                    | Recommendation                                                                                  |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| One file per ticker/year  | Simple for daily data, but each daily append rewrites the current-year file. Fine at MVP scale. |
+| One file per ticker/month | Better balance: smaller rewrites, no tiny daily-file explosion. Recommended default.            |
+| One file per ticker/day   | Avoid for daily data unless using a table format with compaction; creates too many tiny files.  |
+
 
 For future intraday data, use month/day partitions plus scheduled compaction or adopt a table format such as Delta Lake/Iceberg if append/update/query complexity justifies it.
 
@@ -756,11 +772,13 @@ API paths are illustrative and can change during implementation. During MVP, app
 
 Recommended convention:
 
-| API surface | Path style | Reason |
-|---|---|---|
-| Web app API | `/api/...` | Frontend and backend ship together; avoiding `/v1` reduces churn while the product is evolving. |
-| External Signal API | `/api/v1/signals/...` | Users may automate against it, so breaking changes need explicit versioning. |
-| Internal worker/admin APIs | Not public or separately authenticated | Prefer queue/job contracts over public endpoints. |
+
+| API surface                | Path style                             | Reason                                                                                          |
+| -------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Web app API                | `/api/...`                             | Frontend and backend ship together; avoiding `/v1` reduces churn while the product is evolving. |
+| External Signal API        | `/api/v1/signals/...`                  | Users may automate against it, so breaking changes need explicit versioning.                    |
+| Internal worker/admin APIs | Not public or separately authenticated | Prefer queue/job contracts over public endpoints.                                               |
+
 
 Breaking app API changes should be handled by deploying compatible Web and API revisions together. If a public app API emerges later, add versioning then.
 
@@ -875,12 +893,14 @@ The Signal API is a pull-based machine interface for retrieving the latest hoste
 
 MVP key management:
 
-| Action | API |
-|---|---|
-| Create key | `POST /api/deployments/{deployment_id}/signal-api-keys` |
-| List keys | `GET /api/deployments/{deployment_id}/signal-api-keys` returns metadata only, never full secrets. |
-| Revoke key | `DELETE /api/deployments/{deployment_id}/signal-api-keys/{key_id}` sets `revoked_at`. |
-| Rotate key | Create a new key, update user integration, then revoke old key. |
+
+| Action     | API                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------- |
+| Create key | `POST /api/deployments/{deployment_id}/signal-api-keys`                                           |
+| List keys  | `GET /api/deployments/{deployment_id}/signal-api-keys` returns metadata only, never full secrets. |
+| Revoke key | `DELETE /api/deployments/{deployment_id}/signal-api-keys/{key_id}` sets `revoked_at`.             |
+| Rotate key | Create a new key, update user integration, then revoke old key.                                   |
+
 
 The full key secret is only shown once at creation. The database stores a hash and a safe prefix for display. MVP should allow multiple active keys per deployment so users can rotate safely or use separate keys for separate integrations. A hard cap such as 3 to 5 active keys per deployment prevents key sprawl.
 
@@ -892,14 +912,16 @@ Rate limiting must happen before expensive work is queued.
 
 Recommended layers:
 
-| Layer | Control |
-|---|---|
-| Edge/frontend | Basic bot protection through Vercel and OAuth-required app access. |
-| API request rate | Per-user/IP limits for validation, backtest submission, results polling, and Signal API requests. |
-| Job admission | Check plan quota before writing jobs to Service Bus. |
-| Queue concurrency | Enforce max active/running jobs per user and global worker concurrency. |
-| Worker runtime | Enforce CPU, memory, wall-clock timeout, max tickers, max bars, and max lookback. |
-| Monthly ledger | Track approximate vCPU/GiB seconds and backtest count by billing period. |
+
+| Layer             | Control                                                                                           |
+| ----------------- | ------------------------------------------------------------------------------------------------- |
+| Edge/frontend     | Basic bot protection through Vercel and OAuth-required app access.                                |
+| API request rate  | Per-user/IP limits for validation, backtest submission, results polling, and Signal API requests. |
+| Job admission     | Check plan quota before writing jobs to Service Bus.                                              |
+| Queue concurrency | Enforce max active/running jobs per user and global worker concurrency.                           |
+| Worker runtime    | Enforce CPU, memory, wall-clock timeout, max tickers, max bars, and max lookback.                 |
+| Monthly ledger    | Track approximate vCPU/GiB seconds and backtest count by billing period.                          |
+
 
 MVP implementation should avoid expensive rate-limit infrastructure if possible:
 
@@ -939,10 +961,12 @@ Workers should be idempotent. Retrying the same job should either overwrite a de
 
 The initial implementation can choose between two orchestration styles:
 
-| Style | Flow | Pros | Cons |
-|---|---|---|---|
-| API starts ACA Job directly | API validates, writes run row, calls Azure to start an ACA Job. | Fewer moving pieces for first prototype. | API is coupled to Azure job API; burst handling/retries/backpressure are weaker. |
-| Queue-first controller | API validates, writes run row, sends Service Bus message; a small controller or event process starts ACA Jobs. | Better backpressure, retries, auditability, burst absorption, and future portability. | One extra component to deploy/observe. |
+
+| Style                       | Flow                                                                                                           | Pros                                                                                  | Cons                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| API starts ACA Job directly | API validates, writes run row, calls Azure to start an ACA Job.                                                | Fewer moving pieces for first prototype.                                              | API is coupled to Azure job API; burst handling/retries/backpressure are weaker. |
+| Queue-first controller      | API validates, writes run row, sends Service Bus message; a small controller or event process starts ACA Jobs. | Better backpressure, retries, auditability, burst absorption, and future portability. | One extra component to deploy/observe.                                           |
+
 
 Recommendation: prototype direct ACA Job start if it materially speeds up the first working path, but design the data model around queue-first semantics (`queued`, `running`, `attempts`, idempotency keys). Move to Service Bus/controller before private beta so API requests are decoupled from Azure job startup and bursts do not tie up web requests.
 
@@ -986,14 +1010,16 @@ Hosted signal automation depends on daily data availability. If data is not publ
 
 The MVP should support pull-based delivery through the website and Signal API only. Push channels such as Telegram, email, SMS, and broker execution are deferred.
 
-| Delivery | MVP recommendation |
-|---|---|
-| Website dashboard | Required. Show latest signal, timestamp, dataset version, and deployment status. |
-| Signal API | Required. Users can pull latest signals with deployment-scoped API keys. |
-| CSV/JSON download | Useful and cheap. |
-| Email | Deferred. |
-| Telegram | Deferred. |
-| Broker order routing | Deferred. |
+
+| Delivery             | MVP recommendation                                                               |
+| -------------------- | -------------------------------------------------------------------------------- |
+| Website dashboard    | Required. Show latest signal, timestamp, dataset version, and deployment status. |
+| Signal API           | Required. Users can pull latest signals with deployment-scoped API keys.         |
+| CSV/JSON download    | Useful and cheap.                                                                |
+| Email                | Deferred.                                                                        |
+| Telegram             | Deferred.                                                                        |
+| Broker order routing | Deferred.                                                                        |
+
 
 Signal API example:
 
@@ -1025,13 +1051,15 @@ Hosted portfolio signal generation should reuse the same worker image and Core s
 
 Differences from backtesting:
 
-| Concern | Backtest | Hosted signal run |
-|---|---|---|
-| Date range | Historical range | Latest required rolling window only. |
-| Output | Full forecast stream and metrics | Latest signal snapshot plus optional recent history. |
-| Trigger | User action or API request | Scheduled automation after data update. |
-| Storage | Backtest artifacts | Deployment signal artifacts and latest pointer. |
-| Notifications | None in MVP | User pulls through dashboard or Signal API. |
+
+| Concern       | Backtest                         | Hosted signal run                                    |
+| ------------- | -------------------------------- | ---------------------------------------------------- |
+| Date range    | Historical range                 | Latest required rolling window only.                 |
+| Output        | Full forecast stream and metrics | Latest signal snapshot plus optional recent history. |
+| Trigger       | User action or API request       | Scheduled automation after data update.              |
+| Storage       | Backtest artifacts               | Deployment signal artifacts and latest pointer.      |
+| Notifications | None in MVP                      | User pulls through dashboard or Signal API.          |
+
 
 ## 13. Frontend Structure
 
@@ -1086,11 +1114,13 @@ API requirements:
 
 Suggested environments should be kept lean:
 
-| Environment | Purpose |
-|---|---|
-| Local | Developer machine, local API, local worker runner, local/readonly data. |
-| Dev | Shared cloud development environment with low quotas. |
-| Prod | Customer-facing environment. |
+
+| Environment | Purpose                                                                 |
+| ----------- | ----------------------------------------------------------------------- |
+| Local       | Developer machine, local API, local worker runner, local/readonly data. |
+| Dev         | Shared cloud development environment with low quotas.                   |
+| Prod        | Customer-facing environment.                                            |
+
 
 Do not create a standing staging environment for MVP if cost is a concern. Instead:
 
@@ -1125,16 +1155,18 @@ Worker compute should be close to serverless economics. A 1 vCPU / 2 GiB worker 
 
 ## 17. Testing Strategy
 
-| Layer | Tests |
-|---|---|
-| Core unit tests | Strategy contract, metadata validation, cache key determinism, output validation. |
-| Worker unit tests | Job payload parsing, source loading, result writing, warning behavior. |
-| API tests | Auth mapping, ownership checks, CRUD, job submission, status transitions. |
-| Local integration tests | Run sample strategies against local daily data and produce artifacts. |
-| Cloud parity tests | Same strategy/data/params produce equivalent local and worker outputs. |
-| Security tests | Banned imports/calls, suspicious AST patterns, timeout/memory/quota behavior. |
-| Data publishing tests | Dataset validation gates, dev publish, prod promotion dry-run, backadjustment reports. |
-| Deployment automation tests | Scheduled signal generation, latest signal API, notification formatting. |
+
+| Layer                       | Tests                                                                                  |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| Core unit tests             | Strategy contract, metadata validation, cache key determinism, output validation.      |
+| Worker unit tests           | Job payload parsing, source loading, result writing, warning behavior.                 |
+| API tests                   | Auth mapping, ownership checks, CRUD, job submission, status transitions.              |
+| Local integration tests     | Run sample strategies against local daily data and produce artifacts.                  |
+| Cloud parity tests          | Same strategy/data/params produce equivalent local and worker outputs.                 |
+| Security tests              | Banned imports/calls, suspicious AST patterns, timeout/memory/quota behavior.          |
+| Data publishing tests       | Dataset validation gates, dev publish, prod promotion dry-run, backadjustment reports. |
+| Deployment automation tests | Scheduled signal generation, latest signal API, notification formatting.               |
+
 
 ## 18. Open Technical Decisions
 
@@ -1150,10 +1182,10 @@ These are the main items still worth hashing out before deeper implementation:
 8. Quota defaults for free/internal/beta users and how these map to future Stripe plans.
 9. Signal API details: API key scoping, rotation, rate limits, response format, and whether it is available on all paid plans.
 10. Portfolio backtest execution strategy: one whole-portfolio job first vs per-strategy fanout plus combine step.
-12. Exact path for extracting reusable logic from `Trading-Algo` into `QuantFoundry-Core`.
-13. Rate limit defaults by plan and which counters should be exact vs approximate.
-14. Whether Telegram is MVP or beta; if MVP, start with platform-managed bot integration.
-15. Whether the daily/weekly hosted signal scheduler is ACA scheduled jobs, GitHub Actions, or an internal API-triggered timer.
+11. Exact path for extracting reusable logic from `Trading-Algo` into `QuantFoundry-Core`.
+12. Rate limit defaults by plan and which counters should be exact vs approximate.
+13. Whether Telegram is MVP or beta; if MVP, start with platform-managed bot integration.
+14. Whether the daily/weekly hosted signal scheduler is ACA scheduled jobs, GitHub Actions, or an internal API-triggered timer.
 
 ## 19. Near-Term Implementation Order
 

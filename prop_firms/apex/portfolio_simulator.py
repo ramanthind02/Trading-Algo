@@ -265,8 +265,9 @@ class ApexPortfolioSimulator:
                     trader_payouts=trader_payouts,
                     challenge_costs=challenge_costs,
                     activation_costs=activation_costs,
-                    reset_costs=reset_costs,
-                    net_cashflow=net_cashflow,
+            reset_costs=reset_costs,
+            fee_refunds=0.0,
+            net_cashflow=net_cashflow,
                     cumulative_net_cashflow=cumulative_net_cashflow,
                 )
             )
@@ -838,10 +839,12 @@ def _build_portfolio_summary(
     total_challenge_costs = sum(account.challenge_fee_paid for account in accounts)
     total_activation_costs = sum(account.activation_fee_paid for account in accounts)
     total_reset_costs = sum(account.reset_fee_paid for account in accounts)
+    total_fee_refunds = 0.0
     total_gross_payouts = sum(account.total_gross_payouts for account in accounts)
     total_trader_payouts = sum(account.total_trader_payouts for account in accounts)
     net_cashflow = (
         total_trader_payouts
+        + total_fee_refunds
         - total_challenge_costs
         - total_activation_costs
         - total_reset_costs
@@ -859,6 +862,7 @@ def _build_portfolio_summary(
         total_challenge_costs=total_challenge_costs,
         total_activation_costs=total_activation_costs,
         total_reset_costs=total_reset_costs,
+        total_fee_refunds=total_fee_refunds,
         net_cashflow=net_cashflow,
         first_payout_day=first_payout_day,
         days_to_first_payout=(
