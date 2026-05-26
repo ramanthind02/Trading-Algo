@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This document defines **QuantFoundry** data zones for research projects: the **three zone types**, **time-boundary rules**, where logic lives (**Core** vs **API**), and how configurations are **stored and snapshotted**. Product-level lifecycle and research flow are in `data_flow.md`; API entity shapes are in `technical_design.md` §6.3; UI entry points are in `ui_ux.md` §3.1.
+This document defines **QuantFoundry** data zones for research projects: the **three zone types**, **time-boundary rules**, where logic lives (**Core** vs **API**), and how configurations are **stored and snapshotted**. Product-level lifecycle and research flow are in `data_flow.md`; API entity shapes are in `technical_design.md` §6.3. **UI:** portfolio zone at `docs/SaaS/UI-UX/portfolios.md` (create, lock); strategy zones at `docs/SaaS/UI-UX/research_workspace/project_setup.md`; field reference `docs/SaaS/UI-UX/research_workspace/zone_manager.md`.
 
 ---
 
@@ -205,4 +205,5 @@ The goal is not to make contamination impossible but to make it visible. A resea
 |----------|-----------|
 | `data_flow.md` | Research phases, portfolio snapshots, discipline around test zones. |
 | `technical_design.md` | Zone entity, REST routes, worker flow. |
-| `ui_ux.md` | Zone Manager UI, timeline bar, backtest zone picker. |
+| `UI-UX/portfolios.md` | Create portfolio; lock project test zone. |
+| `UI-UX/research_workspace/project_setup.md` | Strategy zones only; read-only portfolio zone. |

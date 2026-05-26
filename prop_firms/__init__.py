@@ -53,6 +53,15 @@ from prop_firms.apex import (
     load_apex_account,
     load_apex_accounts,
 )
+from prop_firms.fundednext import (
+    DEFAULT_FUNDEDNEXT_CONFIG_PATH,
+    FundedNextPortfolioSimulator,
+    FundedNextRuleEngine,
+    create_fundednext_portfolio_simulator,
+    create_fundednext_simulator,
+    load_fundednext_account,
+    load_fundednext_accounts,
+)
 from prop_firms.lucid import (
     DEFAULT_LUCID_CONFIG_PATH,
     LucidPortfolioSimulator,
@@ -82,14 +91,17 @@ from prop_firms.optimization_reporting import (
 )
 from prop_firms.report_config import (
     ApexPortfolioReportConfig,
+    FundedNextPortfolioReportConfig,
     LucidPortfolioHyperoptReportConfig,
     LucidPortfolioReportConfig,
     load_apex_report_config,
+    load_fundednext_report_config,
     load_hyperopt_config,
     load_report_config,
 )
 from prop_firms.reporting import PropFirmReportArtifacts, generate_portfolio_report
 from prop_firms.run_apex_portfolio_report import run_apex_portfolio_report
+from prop_firms.run_fundednext_portfolio_report import run_fundednext_portfolio_report
 from prop_firms.run_lucid_hyperopt import run_lucid_hyperopt_report
 from prop_firms.run_lucid_portfolio_report import run_lucid_portfolio_report
 
@@ -107,6 +119,7 @@ __all__ = [
     "ConsistencyRule",
     "ContractLimit",
     "DEFAULT_APEX_CONFIG_PATH",
+    "DEFAULT_FUNDEDNEXT_CONFIG_PATH",
     "DEFAULT_LUCID_CONFIG_PATH",
     "DEFAULT_ES_DATA_PATH",
     "DailySnapshot",
@@ -115,6 +128,9 @@ __all__ = [
     "EvaluationRules",
     "EventType",
     "FloatSearchRange",
+    "FundedNextPortfolioReportConfig",
+    "FundedNextPortfolioSimulator",
+    "FundedNextRuleEngine",
     "FundedRules",
     "IntSearchRange",
     "LucidHyperoptConfig",
@@ -154,6 +170,8 @@ __all__ = [
     "compute_portfolio_statistics",
     "create_apex_portfolio_simulator",
     "create_apex_simulator",
+    "create_fundednext_portfolio_simulator",
+    "create_fundednext_simulator",
     "create_lucid_portfolio_simulator",
     "create_lucid_simulator",
     "evaluate_portfolio_config",
@@ -163,6 +181,9 @@ __all__ = [
     "load_apex_accounts",
     "load_apex_report_config",
     "load_es_buy_hold_returns",
+    "load_fundednext_account",
+    "load_fundednext_accounts",
+    "load_fundednext_report_config",
     "load_lucid_account",
     "load_lucid_accounts",
     "load_hyperopt_config",
@@ -173,6 +194,7 @@ __all__ = [
     "PropFirmOptimizationArtifacts",
     "PropFirmReportArtifacts",
     "run_apex_portfolio_report",
+    "run_fundednext_portfolio_report",
     "run_lucid_hyperopt_report",
     "run_lucid_portfolio_report",
     "sample_portfolio_config",

@@ -31,6 +31,7 @@ class PortfolioEventType(str, Enum):
     CHALLENGE_PASSED = "challenge_passed"
     FUNDED_STARTED = "funded_started"
     PAYOUT_REQUESTED = "payout_requested"
+    FEE_REFUNDED = "fee_refunded"
     FUNDED_CLOSED = "funded_closed"
     PURCHASE_SKIPPED = "purchase_skipped"
     SIMULATION_COMPLETED = "simulation_completed"
@@ -42,6 +43,7 @@ class PortfolioPayoutPolicyMode(str, Enum):
     AGGRESSIVE = "aggressive"
     BUFFER = "buffer"
     FRACTIONAL = "fractional"
+    CFD_LADDER = "cfd_ladder"
 
 
 @dataclass(frozen=True)
@@ -68,12 +70,21 @@ class PortfolioPayoutPolicyConfig:
     mode: PortfolioPayoutPolicyMode = PortfolioPayoutPolicyMode.AGGRESSIVE
     buffer_amount: float = 0.0
     withdrawal_fraction: float = 1.0
+    cfd_buffer_pct: float = 0.03
+    cfd_profit_step_pct: float = 0.02
+    cfd_payout_amount_pct: float = 0.02
 
     def __post_init__(self) -> None:
         if self.buffer_amount < 0.0:
             raise ValueError("buffer_amount must be >= 0")
         if not 0.0 < self.withdrawal_fraction <= 1.0:
             raise ValueError("withdrawal_fraction must be in (0, 1]")
+        if not 0.0 < self.cfd_buffer_pct < 1.0:
+            raise ValueError("cfd_buffer_pct must be in (0, 1)")
+        if not 0.0 < self.cfd_profit_step_pct <= 1.0:
+            raise ValueError("cfd_profit_step_pct must be in (0, 1]")
+        if not 0.0 < self.cfd_payout_amount_pct <= 1.0:
+            raise ValueError("cfd_payout_amount_pct must be in (0, 1]")
 
 
 @dataclass(frozen=True)
@@ -156,6 +167,11 @@ class PortfolioAccountState:
     close_day: pd.Timestamp | None = None
     last_payout_day: pd.Timestamp | None = None
     breach_reason: BreachReason | None = None
+    fee_refund_received: bool = False
+    funded_start_day: pd.Timestamp | None = None
+    payout_cycle_start_day: pd.Timestamp | None = None
+    previous_cycle_had_payout: bool = False
+    payout_milestones_taken: int = 0
 
     def to_record(self) -> dict[str, object]:
         return {
@@ -184,6 +200,11 @@ class PortfolioAccountState:
             "close_day": self.close_day,
             "last_payout_day": self.last_payout_day,
             "breach_reason": None if self.breach_reason is None else self.breach_reason.value,
+            "fee_refund_received": self.fee_refund_received,
+            "funded_start_day": self.funded_start_day,
+            "payout_cycle_start_day": self.payout_cycle_start_day,
+            "previous_cycle_had_payout": self.previous_cycle_had_payout,
+            "payout_milestones_taken": self.payout_milestones_taken,
         }
 
 
@@ -204,6 +225,7 @@ class PortfolioDailySnapshot:
     challenge_costs: float
     activation_costs: float
     reset_costs: float
+    fee_refunds: float
     net_cashflow: float
     cumulative_net_cashflow: float
 
@@ -222,6 +244,7 @@ class PortfolioDailySnapshot:
             "challenge_costs": self.challenge_costs,
             "activation_costs": self.activation_costs,
             "reset_costs": self.reset_costs,
+            "fee_refunds": self.fee_refunds,
             "net_cashflow": self.net_cashflow,
             "cumulative_net_cashflow": self.cumulative_net_cashflow,
         }
@@ -266,6 +289,7 @@ class PortfolioSimulationSummary:
     total_challenge_costs: float
     total_activation_costs: float
     total_reset_costs: float
+    total_fee_refunds: float
     net_cashflow: float
     first_payout_day: pd.Timestamp | None
     days_to_first_payout: int | None
@@ -289,6 +313,7 @@ class PortfolioSimulationSummary:
             "total_challenge_costs": self.total_challenge_costs,
             "total_activation_costs": self.total_activation_costs,
             "total_reset_costs": self.total_reset_costs,
+            "total_fee_refunds": self.total_fee_refunds,
             "net_cashflow": self.net_cashflow,
             "first_payout_day": self.first_payout_day,
             "days_to_first_payout": self.days_to_first_payout,
@@ -324,6 +349,7 @@ class PortfolioBatchStatistics:
     expected_total_challenge_costs: float
     expected_total_activation_costs: float
     expected_total_reset_costs: float
+    expected_total_fee_refunds: float
     expected_funded_accounts_created: float
     expected_average_active_funded_accounts: float
     expected_average_active_challenges: float
@@ -340,6 +366,7 @@ class PortfolioBatchStatistics:
             "expected_total_challenge_costs": self.expected_total_challenge_costs,
             "expected_total_activation_costs": self.expected_total_activation_costs,
             "expected_total_reset_costs": self.expected_total_reset_costs,
+            "expected_total_fee_refunds": self.expected_total_fee_refunds,
             "expected_funded_accounts_created": self.expected_funded_accounts_created,
             "expected_average_active_funded_accounts": self.expected_average_active_funded_accounts,
             "expected_average_active_challenges": self.expected_average_active_challenges,

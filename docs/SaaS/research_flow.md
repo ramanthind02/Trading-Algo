@@ -16,7 +16,8 @@ On project creation:
 - The platform suggests the final 20% of available data as the default; adjust if needed
 - **This boundary is locked once the first strategy training job is submitted**
 
-Zone model specification: `zone_manager.md`
+Zone model specification: `zone_manager.md`  
+UI pipeline (steps 0–6): `docs/SaaS/UI-UX/research_workspace/user_flow.md`
 
 ### Step 2: Configure strategy-level zones
 
@@ -113,7 +114,7 @@ Before running the portfolio addition gate:
 
 This is an advisory tool, not a gate. Its purpose is to give the researcher early signal before the more formal portfolio addition gate runs.
 
-Portfolio correlation UI: `ui_ux.md` §3.5
+Portfolio correlation UI: `docs/SaaS/UI-UX/research_workspace/portfolio_correlation.md`
 
 ### Step 10: Portfolio addition gate
 

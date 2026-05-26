@@ -250,8 +250,8 @@
         "Strategy": 0.05
       },
       "Serenity Index": {
-        "Benchmark": -0.08,
-        "Strategy": 0.23
+        "Benchmark": 0,
+        "Strategy": 0
       },
       "Avg. Up Month": {
         "Benchmark": 0.01,
@@ -491,7 +491,7 @@
         "Strategy": 0.04
       },
       "Serenity Index": {
-        "Strategy": 0.1
+        "Strategy": 0
       }
     },
     "row_order": [
@@ -694,8 +694,8 @@
         "Strategy": 0.05
       },
       "Serenity Index": {
-        "Benchmark": 0.43,
-        "Strategy": 0.33
+        "Benchmark": 0,
+        "Strategy": 0
       }
     },
     "row_order": [

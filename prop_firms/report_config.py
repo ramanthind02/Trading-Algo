@@ -47,6 +47,19 @@ class ApexPortfolioReportConfig:
 
 
 @dataclass(frozen=True)
+class FundedNextPortfolioReportConfig:
+    """Editable config for the FundedNext Stellar 2-Step CFD portfolio report runner."""
+
+    simulation: PortfolioSimulationConfig
+    output_dir: Path = field(
+        default_factory=lambda: _PROP_FIRMS_DIR / "results" / "fundednext_portfolio"
+    )
+    data_path: Path | None = None
+    report_stem: str = "fundednext_50k_stellar2step_cfd_report"
+    save_csvs: bool = True
+
+
+@dataclass(frozen=True)
 class LucidPortfolioHyperoptReportConfig:
     """Editable config for the Lucid hyperparameter optimizer runner."""
 
@@ -144,6 +157,54 @@ def load_apex_report_config() -> ApexPortfolioReportConfig:
     # ==========================================================================
 
     return ApexPortfolioReportConfig(
+        simulation=simulation,
+        output_dir=output_dir,
+        data_path=data_path,
+        report_stem=report_stem,
+        save_csvs=save_csvs,
+    )
+
+
+def load_fundednext_report_config() -> FundedNextPortfolioReportConfig:
+    """Single source of truth for the FundedNext Stellar 2-Step CFD portfolio report."""
+
+    # ==========================================================================
+    # EDIT BELOW
+    # ==========================================================================
+    # Max allocation $300K = 6 x $50K accounts. Challenge fee $300, refunded on
+    # first payout after passing both 2-step phases.
+    simulation = PortfolioSimulationConfig(
+        account_code="50000",
+        purchase_policy=PurchasePolicyConfig(
+            funded_account_cap=6,
+            challenge_account_cap=6,
+            challenges_per_purchase_window=1,
+        ),
+        payout_policy=PortfolioPayoutPolicyConfig(
+            mode=PortfolioPayoutPolicyMode.AGGRESSIVE,
+            buffer_amount=2500.0,
+            withdrawal_fraction=1.0,
+        ),
+        return_engine=ReturnEngineConfig(
+            target_annual_volatility=0.10,
+            target_sharpe=2.0,
+            annualization_factor=252.0,
+            start_date="2018-01-01",
+            end_date="2026-02-20",
+            random_seed=44,
+        ),
+        challenge_vol_multiplier=2.0,
+        funded_vol_multiplier=0.5,
+    )
+    output_dir = _PROP_FIRMS_DIR / "results" / "fundednext_portfolio"
+    data_path = None
+    report_stem = "fundednext_50k_stellar2step_cfd_report"
+    save_csvs = True
+    # ==========================================================================
+    # EDIT ABOVE
+    # ==========================================================================
+
+    return FundedNextPortfolioReportConfig(
         simulation=simulation,
         output_dir=output_dir,
         data_path=data_path,

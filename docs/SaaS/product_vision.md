@@ -18,7 +18,7 @@ Most algo platforms are built by engineers for engineers. QuantFoundry is built 
 - **Zone timeline bar** — always visible, always shows what data you're touching.
 - **Keyboard-first** — run, save, compare, switch zones without touching the mouse.
 - **Run comparison built-in** — click any two past runs to overlay them. No separate mode.
-- **Foundry aesthetic** — dark, high-contrast, industrial. Looks like it was made in 2025.
+- **Foundry aesthetic** — dark Ink shell, Paper type, Ember accents; **Space Grotesk** + **JetBrains Mono**; mark is `[Quant|Foundry]` with ember brackets and cursor. See `docs/SaaS/UI-UX/brand.md` and `design_system.md`.
 
 ### 3. Fast Lifecycle
 Sign up to live signal generation in an afternoon.
