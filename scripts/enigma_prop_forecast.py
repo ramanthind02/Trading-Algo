@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """
-Enigma Prop Forecast Entrypoint
-================================
+Enigma Prop Forecast Entrypoint (DEPRECATED -- futures prop alias)
+==================================================================
 
-Thin wrapper that invokes the shared forecast pipeline with the prop-firm
-profile: reads ``vault/``, sizes micro futures contracts (MES, MNQ, MGC,
-M2K, MYM, ZN proxy for TLT), and posts to the prop-firm Telegram channel.
+This script has been renamed to ``enigma_futures_prop_forecast.py`` now
+that a separate CFD prop-firm flow exists (``enigma_cfd_prop_forecast.py``).
 
-Designed to run once per day around 6:00 PM ET -- after the CME settlement
-window ends and the official daily candle has closed at 5:00 PM ET.
-
-Usage (delegates everything else to ``enigma_live_forecast.main``)::
-
-    python scripts/enigma_prop_forecast.py [--dry-run] [--capital N] [--port N]
+This file is kept as a thin shim so existing cron jobs / shortcuts continue
+to work; it prints a deprecation notice and delegates to the futures
+script. Please update your scheduler to call ``enigma_futures_prop_forecast.py``
+directly.
 """
 from __future__ import annotations
 
 import sys
+import warnings
 
 try:
     from scripts._bootstrap import ensure_project_root_on_path
@@ -25,16 +23,25 @@ except ImportError:
 
 ensure_project_root_on_path()
 
-from scripts.enigma_live_forecast import main as _run_forecast
+from scripts.enigma_futures_prop_forecast import main as _run_futures_prop
 
 
 def main() -> None:
-    # Insert the profile flag so argparse in _run_forecast picks it up without
-    # us needing to duplicate argument handling here.
-    sys.argv.insert(1, "--profile")
-    sys.argv.insert(2, "prop")
-    _run_forecast()
+    warnings.warn(
+        "scripts/enigma_prop_forecast.py is deprecated; use "
+        "scripts/enigma_futures_prop_forecast.py instead. This shim will be "
+        "removed in a future release.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    print(
+        "[deprecation] enigma_prop_forecast.py is deprecated; please use "
+        "enigma_futures_prop_forecast.py.",
+        file=sys.stderr,
+    )
+    _run_futures_prop()
 
 
 if __name__ == "__main__":
     main()
+
