@@ -240,13 +240,14 @@ def _acct(login: int) -> MT5AccountInfo:
 
 
 def _make_args(
-    *, dry_run=False, dry_run_execute=False, approve_via_telegram=True, live=False
+    *, dry_run=False, dry_run_execute=False, approve_via_telegram=True, live=False, execute=True
 ) -> argparse.Namespace:
     return argparse.Namespace(
         dry_run=dry_run,
         dry_run_execute=dry_run_execute,
         approve_via_telegram=approve_via_telegram,
         live=live,
+        execute=execute,
     )
 
 
@@ -647,3 +648,30 @@ def test_audit_log_contains_expected_keys(monkeypatch, tmp_path):
     ):
         assert required in payload, f"audit log missing {required}"
     assert payload["approver_telegram_id"] == 42
+
+
+def test_no_execute_flag_skips_mt5_entirely(monkeypatch, capsys):
+    """Pure --dry-run (no --execute) must NOT touch MT5 at all."""
+    _install_fake_executor(monkeypatch)
+    spec = _setup_account(login=99999, symbols=("US500.cash",))
+    monkeypatch.setenv("MT5_FTMO_A_USERNAME", "99999")
+    monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
+
+    monkeypatch.setattr(
+        orch, "request_batch_approval",
+        lambda *a, **kw: pytest.fail("approval must NOT be requested without --execute"),
+    )
+    config = _make_config(
+        accounts=[_account_block(label="ftmo_a", login=99999, tradeable=("ES",))],
+    )
+    orch.run_cfd_prop_execution(
+        args=_make_args(execute=False, dry_run=True),
+        config=config,
+        forecasts_df=_forecasts_df([{"ticker": "ES", "position_fraction": 0.10}]),
+    )
+    # No MT5 connect happened, no orders placed.
+    assert spec.place_calls == []
+    assert spec.close_calls == []
+    out = capsys.readouterr().out
+    assert "--execute not set" in out

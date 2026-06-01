@@ -8,6 +8,13 @@
     "idm_max": 2.5
   },
 
+  "connection": {
+    "_comment": "IB TWS connection for historical OHLC data (CFDs trade via MT5 but we keep IB as the price-quality source so signals are consistent across all three profiles). port 7497=paper, 7496=live. client_id must be unique across all live scripts that share the same TWS instance.",
+    "host": "127.0.0.1",
+    "port": 7497,
+    "client_id": 4
+  },
+
   "tradeable_tickers": ["ES", "NQ", "GC", "SI"],
 
   "instruments": {
@@ -18,11 +25,9 @@
   },
 
   "data": {
-    "_comment": "Historical data fetched via IB (TWS) for price quality consistency with prop/personal profiles. MT5 is execution-only in v1. Could switch to MT5 data later via 'source': 'mt5'.",
-    "source": "ib",
-    "host": "127.0.0.1",
-    "port": 7497,
-    "client_id": 4,
+    "_comment": "Lookback windows for OHLC fetch via IB.",
+    "_comment_use_cached_only": "When true, skip the IB TWS connection entirely and just use cached parquets. Useful for testing the MT5 execution path on machines without TWS (e.g. the FTMO VPS). Set to false in production to fetch today's partial bar from IB for fresh signals.",
+    "use_cached_only": true,
     "min_lookback_days": 500,
     "max_lookback_days": 500,
     "prediction_daily_max_bars": 500

@@ -1369,45 +1369,56 @@ def main():
     for tk, cov in cache_status.get("coverage", {}).items():
         print(f"  {tk}: {cov['start'].date()} to {cov['end'].date()}")
 
-    # Create IB client
-    ib_config = IBConfig(
-        host=config["connection"]["host"],
-        port=port,
-        client_id=config["connection"]["client_id"]
-    )
-    client = IBDataClient(ib_config)
+    # Create IB client. If `data.use_cached_only` is true we skip the TWS
+    # connection entirely and just use the cached parquets — useful for
+    # testing on machines without TWS (e.g. CFD prop testing on FTMO VPS).
+    use_cached_only = bool(data_cfg.get("use_cached_only", False))
+    if use_cached_only:
+        print("\n3. Skipping TWS connect (data.use_cached_only=true). Using cached parquets only.")
+        client = None
+    else:
+        ib_config = IBConfig(
+            host=config["connection"]["host"],
+            port=port,
+            client_id=config["connection"]["client_id"]
+        )
+        client = IBDataClient(ib_config)
 
     try:
-        # Connect to TWS
-        print("\n3. Connecting to TWS...")
-        client.connect_to_ib()
+        if not use_cached_only:
+            # Connect to TWS
+            print("\n3. Connecting to TWS...")
+            client.connect_to_ib()
 
-        # Wait for connection (nextValidId callback sets connected=True)
-        max_wait = 10
-        waited = 0
-        while not client.connected and waited < max_wait:
-            time.sleep(0.5)
-            waited += 0.5
+            # Wait for connection (nextValidId callback sets connected=True)
+            max_wait = 10
+            waited = 0
+            while not client.connected and waited < max_wait:
+                time.sleep(0.5)
+                waited += 0.5
 
-        if not client.connected:
-            print("ERROR: Could not connect to TWS.")
-            print("Please ensure:")
-            print("  1. TWS or IB Gateway is running")
-            print("  2. API is enabled in TWS settings")
-            print(f"  3. Port {port} is correct")
-            sys.exit(1)
+            if not client.connected:
+                print("ERROR: Could not connect to TWS.")
+                print("Please ensure:")
+                print("  1. TWS or IB Gateway is running")
+                print("  2. API is enabled in TWS settings")
+                print(f"  3. Port {port} is correct")
+                sys.exit(1)
 
-        print("Connected to TWS successfully!")
+            print("Connected to TWS successfully!")
 
-        # Brief pause to ensure API is fully ready
-        time.sleep(1)
+            # Brief pause to ensure API is fully ready
+            time.sleep(1)
 
-        runtime_daily, partial_overlay_df = sync_ib_fetched_dailies_into_central_cache(
-            config=config,
-            required_tickers=required_tickers,
-            client=client,
-            profile=profile,
-        )
+            runtime_daily, partial_overlay_df = sync_ib_fetched_dailies_into_central_cache(
+                config=config,
+                required_tickers=required_tickers,
+                client=client,
+                profile=profile,
+            )
+        else:
+            runtime_daily = None
+            partial_overlay_df = None
 
         # Step 6: Refresh stale bias node caches
         print("\n6. Refreshing bias caches...")
@@ -1628,7 +1639,7 @@ def main():
         traceback.print_exc()
     finally:
         # Disconnect
-        if client.connected:
+        if client is not None and client.connected:
             print("\nDisconnecting from TWS...")
             client.disconnect_from_ib()
 

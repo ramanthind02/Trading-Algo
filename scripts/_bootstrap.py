@@ -4,6 +4,15 @@ import os
 import sys
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so emoji/unicode glyphs used in print()
+# (✓ ✗ ⚠ ✅ ❌ ⏱ 🚫 etc.) don't crash on Windows consoles that default
+# to cp1252. Safe no-op on Unix where stdout is already UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
+
 # Insert repo root before any ``utils`` import so ``python scripts/foo.py`` works
 # when the interpreter's initial sys.path entry is the ``scripts/`` directory.
 _repo_root = Path(__file__).resolve().parent.parent

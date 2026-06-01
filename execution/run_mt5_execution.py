@@ -693,6 +693,17 @@ def run_cfd_prop_execution(
 ) -> None:
     """Top-level entry called from ``scripts/enigma_live_forecast.py``."""
 
+    # Match run_auto_execution semantics: only attempt MT5 work when
+    # --execute is passed. --dry-run alone produces the forecast but
+    # never touches MT5 / Telegram.
+    if not getattr(args, "execute", False):
+        print(
+            "\n12. CFD prop execution: --execute not set; skipping MT5 connection. "
+            "Pass --execute --dry-run-execute to build plans without sending orders, "
+            "or --execute --approve-via-telegram for the full flow."
+        )
+        return
+
     forecasts = _forecasts_from_df(forecasts_df)
     if not forecasts:
         print("\n12. CFD prop execution: forecast frame is empty; nothing to do.")
