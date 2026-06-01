@@ -9,7 +9,7 @@
   },
 
   "connection": {
-    "_comment": "IB TWS connection for historical OHLC data (CFDs trade via MT5 but we keep IB as the price-quality source so signals are consistent across all three profiles). port 7497=paper, 7496=live. client_id must be unique across all live scripts that share the same TWS instance.",
+    "_comment": "IB TWS connection — only used when data.source='ib'. cfd_prop defaults to data.source='mt5' so the FTMO VPS does NOT need TWS installed. Kept here as a fallback in case the user wants to switch back to IB sourcing. port 7497=paper, 7496=live. client_id must be unique across all live scripts that share the same TWS instance.",
     "host": "127.0.0.1",
     "port": 7497,
     "client_id": 4
@@ -25,12 +25,17 @@
   },
 
   "data": {
-    "_comment": "Lookback windows for OHLC fetch via IB.",
-    "_comment_use_cached_only": "When true, skip the IB TWS connection entirely and just use cached parquets. Useful for testing the MT5 execution path on machines without TWS (e.g. the FTMO VPS). Set to false in production to fetch today's partial bar from IB for fresh signals.",
-    "use_cached_only": true,
+    "_comment_source": "data.source='mt5' fetches daily OHLC via MetaTrader 5 (uses each ticker's instruments[*].mt5_symbol). data.source='ib' falls back to IB TWS (and requires the connection block above). For cfd_prop we default to 'mt5' so the FTMO VPS is fully self-contained (MT5 = data AND execution).",
+    "source": "mt5",
+    "_comment_use_cached_only": "Emergency-only escape hatch: when true, skip data fetch entirely and just use whatever is already in the cache (bootstrapped from data/ohlc_data parquets). Useful if both TWS and MT5 are unavailable.",
+    "use_cached_only": false,
+    "_comment_lookback": "Lookback windows. mt5_min_bars_per_ticker is the fail-fast threshold per required ticker; if MT5 returns fewer bars for any required ticker, the run aborts loudly (no silent fallback to stale cache).",
     "min_lookback_days": 500,
     "max_lookback_days": 500,
-    "prediction_daily_max_bars": 500
+    "prediction_daily_max_bars": 500,
+    "mt5_min_bars_per_ticker": 100,
+    "_comment_mt5_terminal_path": "Optional explicit terminal path for the data fetch. If unset, falls back to the first enabled account's terminal_path.",
+    "mt5_terminal_path": null
   },
 
   "mt5": {
@@ -46,11 +51,11 @@
 
   "accounts": [
     {
-      "_comment": "Example FTMO 50K demo account. Replace label, magic_number, and env var names per your setup. The env vars listed below must be set in your environment (or .env) before running with --execute.",
-      "label": "ftmo_50k_demo_a",
-      "username_env": "MT5_FTMO_50K_DEMO_A_USERNAME",
-      "password_env": "MT5_FTMO_50K_DEMO_A_PASSWORD",
-      "server_env":   "MT5_FTMO_50K_DEMO_A_SERVER",
+      "_comment": "Example FTMO 100K demo account. Replace label, magic_number, and env var names per your setup. The env vars listed below must be set in your environment (or .env) before running with --execute.",
+      "label": "ftmo_100k_demo_a",
+      "username_env": "MT5_FTMO_100K_DEMO_A_USERNAME",
+      "password_env": "MT5_FTMO_100K_DEMO_A_PASSWORD",
+      "server_env":   "MT5_FTMO_100K_DEMO_A_SERVER",
       "terminal_path": "C:/Program Files/FTMO Global Markets MT5 Terminal/terminal64.exe",
       "magic_number": 90421,
       "symbol_overrides": {},
