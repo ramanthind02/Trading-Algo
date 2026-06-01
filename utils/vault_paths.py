@@ -9,10 +9,14 @@ from utils.cache.runtime.cache_paths import project_root
 _VAULT_ROOT_ENV_VAR = "TRADING_ALGO_VAULT_ROOT"
 _VAULT_PROP_ENV_VAR = "TRADING_ALGO_VAULT_PROP"
 _VAULT_PERSONAL_ENV_VAR = "TRADING_ALGO_VAULT_PERSONAL"
+_VAULT_CFD_PROP_ENV_VAR = "TRADING_ALGO_VAULT_CFD_PROP"
 _DEFAULT_VAULT_DIRNAME = "vault"
 _DEFAULT_VAULT_PERSONAL_DIRNAME = "vault_personal"
+_DEFAULT_VAULT_CFD_PROP_DIRNAME = "vault_cfd_prop"
 
-VaultProfile = Literal["prop", "personal"]
+# "prop" is the legacy alias for the futures prop-firm profile; "futures_prop"
+# is the canonical name introduced alongside the CFD prop profile.
+VaultProfile = Literal["prop", "futures_prop", "personal", "cfd_prop"]
 
 
 def _env_path(env_var: str) -> Path | None:
@@ -41,9 +45,19 @@ def resolve_vault_personal() -> Path:
     return project_root() / _DEFAULT_VAULT_PERSONAL_DIRNAME
 
 
+def resolve_vault_cfd_prop() -> Path:
+    """CFD prop-firm vault root: ``TRADING_ALGO_VAULT_CFD_PROP`` else ``<repo>/vault_cfd_prop``."""
+    explicit = _env_path(_VAULT_CFD_PROP_ENV_VAR)
+    if explicit is not None:
+        return explicit
+    return project_root() / _DEFAULT_VAULT_CFD_PROP_DIRNAME
+
+
 def resolve_vault_root_for_profile(profile: VaultProfile) -> Path:
-    if profile == "prop":
+    if profile in ("prop", "futures_prop"):
         return resolve_vault_prop()
+    if profile == "cfd_prop":
+        return resolve_vault_cfd_prop()
     return resolve_vault_personal()
 
 
@@ -82,7 +96,7 @@ def default_vault_discovery_dirnames() -> tuple[str, ...]:
     """
     repo = project_root().resolve()
     out: list[str] = []
-    for p in (resolve_vault_prop(), resolve_vault_personal()):
+    for p in (resolve_vault_prop(), resolve_vault_personal(), resolve_vault_cfd_prop()):
         try:
             rel = p.resolve().relative_to(repo)
         except ValueError:
@@ -91,7 +105,11 @@ def default_vault_discovery_dirnames() -> tuple[str, ...]:
             name = rel.parts[0]
             if name not in out:
                 out.append(name)
-    for fallback in (_DEFAULT_VAULT_DIRNAME, _DEFAULT_VAULT_PERSONAL_DIRNAME):
+    for fallback in (
+        _DEFAULT_VAULT_DIRNAME,
+        _DEFAULT_VAULT_PERSONAL_DIRNAME,
+        _DEFAULT_VAULT_CFD_PROP_DIRNAME,
+    ):
         if fallback not in out:
             out.append(fallback)
     return tuple(out)

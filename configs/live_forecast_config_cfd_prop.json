@@ -1,0 +1,79 @@
+{
+  "_comment": "CFD prop-firm profile: trades CFDs via MetaTrader 5 across one or more prop-firm accounts. Forecast is generated ONCE for all accounts; per-account sizing uses each account's live balance/equity from MT5. Credentials are env-var NAMES only -- real values live in .env (gitignored).",
+
+  "portfolio": {
+    "vault_root": "vault_cfd_prop",
+    "target_volatility": 0.15,
+    "max_position_pct": 2.5,
+    "idm_max": 2.5
+  },
+
+  "tradeable_tickers": ["ES", "NQ", "GC", "SI"],
+
+  "instruments": {
+    "ES": {"mt5_symbol": "US500.cash", "sec_type": "CONTFUT", "exchange": "CME"},
+    "NQ": {"mt5_symbol": "US100.cash", "sec_type": "CONTFUT", "exchange": "CME"},
+    "GC": {"mt5_symbol": "XAUUSD",     "sec_type": "CONTFUT", "exchange": "COMEX"},
+    "SI": {"mt5_symbol": "XAGUSD",     "sec_type": "CONTFUT", "exchange": "COMEX"}
+  },
+
+  "data": {
+    "_comment": "Historical data fetched via IB (TWS) for price quality consistency with prop/personal profiles. MT5 is execution-only in v1. Could switch to MT5 data later via 'source': 'mt5'.",
+    "source": "ib",
+    "host": "127.0.0.1",
+    "port": 7497,
+    "client_id": 4,
+    "min_lookback_days": 500,
+    "max_lookback_days": 500,
+    "prediction_daily_max_bars": 500
+  },
+
+  "mt5": {
+    "_comment_magic": "Magic number ranges identify OUR orders so we never touch positions opened by other strategies/manual trades on the same account. Each account should have a unique magic_number; default_magic_number is used when an account omits it.",
+    "default_magic_number": 90420,
+    "default_deviation_points": 20,
+    "sizing_basis": "equity",
+    "force_min_lot_if_signal": false,
+    "abort_if_unmanaged_position": true,
+    "verify_account_after_login": true,
+    "currency_conversion": "usd_via_mt5"
+  },
+
+  "accounts": [
+    {
+      "_comment": "Example FTMO 50K demo account. Replace label, magic_number, and env var names per your setup. The env vars listed below must be set in your environment (or .env) before running with --execute.",
+      "label": "ftmo_50k_demo_a",
+      "username_env": "MT5_FTMO_50K_DEMO_A_USERNAME",
+      "password_env": "MT5_FTMO_50K_DEMO_A_PASSWORD",
+      "server_env":   "MT5_FTMO_50K_DEMO_A_SERVER",
+      "terminal_path": "C:/Program Files/FTMO MetaTrader 5/terminal64.exe",
+      "magic_number": 90421,
+      "symbol_overrides": {},
+      "enabled": false
+    }
+  ],
+
+  "execution": {
+    "_comment_approval": "Default-on-timeout 'cancel' is the conservative choice. To enable 'no answer in 5 min = execute', set default_on_timeout to 'approve'. Even with 'approve', a Telegram/network outage detected during polling will still cancel (fail-closed).",
+    "approval_mode": "batch_with_per_account_cancel",
+    "approval_timeout_seconds": 300,
+    "default_on_timeout": "cancel",
+    "authorized_telegram_user_ids": [],
+    "allow_any_approver": true,
+
+    "_comment_sizing": "min_rebalance_lots is a hard floor in lots (never trade less). min_rebalance_notional_usd is a dead-band on the dollar value of the delta (skip noise). rebalance_mode: hybrid_close_on_flip is described in docs/library/live_forecast/cfd_prop_workflow.md.",
+    "min_rebalance_lots": 0.01,
+    "min_rebalance_notional_usd": 50,
+    "rebalance_mode": "hybrid_close_on_flip",
+
+    "max_orders_per_run_per_account": 8,
+    "order_fill_timeout_seconds": 30,
+    "post_order_retry_attempts": 1,
+    "require_live_flag_for_real_money": true,
+
+    "_comment_safety": "Optional preflight gates. max_spread_points caps acceptable spread; max_margin_usage_pct prevents margin-call risk; max_daily_loss_pct enforces prop-firm DLL.",
+    "max_spread_points": 50,
+    "max_margin_usage_pct": 0.95,
+    "max_daily_loss_pct": null
+  }
+}
