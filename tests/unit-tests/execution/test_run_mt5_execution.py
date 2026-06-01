@@ -276,8 +276,20 @@ def _make_config(
     accounts: List[Dict[str, Any]],
     default_on_timeout: str = "cancel",
     audit_dir: Optional[Path] = None,
+    tradeable_tickers: Optional[List[str]] = None,
+    instruments: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     return {
+        "tradeable_tickers": list(tradeable_tickers or ["ES", "NQ", "GC", "SI"]),
+        "instruments": dict(
+            instruments
+            or {
+                "ES": {"mt5_symbol": "US500.cash"},
+                "NQ": {"mt5_symbol": "US100.cash"},
+                "GC": {"mt5_symbol": "XAUUSD"},
+                "SI": {"mt5_symbol": "XAGUSD"},
+            }
+        ),
         "mt5": {
             "sizing_basis": "equity",
             "lot_size_ceiling": 100.0,
@@ -288,11 +300,14 @@ def _make_config(
             "max_tick_staleness_seconds": 0,
             "max_margin_usage_pct": 0.95,
             "abort_if_unmanaged_position": True,
+            "default_magic_number": 90420,
         },
         "execution": {
             "approval_timeout_seconds": 5,
             "default_on_timeout": default_on_timeout,
-            "authorized_user_ids": [42],
+            "authorized_telegram_user_ids": [42],
+            "allow_any_approver": True,
+            "require_live_flag_for_real_money": True,
             "audit_dir": str(audit_dir) if audit_dir else "logs/cfd_prop_audit",
         },
         "accounts": accounts,
@@ -302,16 +317,20 @@ def _make_config(
 def _account_block(
     *, label: str, login: int, magic: int = 90420, tradeable=("ES",)
 ) -> Dict[str, Any]:
+    # Note: per-account `tradeable_tickers` is supported by the orchestrator
+    # as an override; if omitted we fall back to the top-level list. Keeping
+    # it here per-test to preserve the original behaviour where each test
+    # picks the symbols it cares about.
     return {
         "label": label,
         "enabled": True,
-        "server": "FTMO-Demo",
-        "username_env_var": f"MT5_{label.upper()}_USERNAME",
-        "password_env_var": f"MT5_{label.upper()}_PASSWORD",
+        "username_env": f"MT5_{label.upper()}_USERNAME",
+        "password_env": f"MT5_{label.upper()}_PASSWORD",
+        "server_env": f"MT5_{label.upper()}_SERVER",
         "magic_number": magic,
         "terminal_path": None,
         "tradeable_tickers": list(tradeable),
-        "symbol_map": {"ES": "US500.cash", "NQ": "US100.cash", "GC": "XAUUSD", "SI": "XAGUSD"},
+        "symbol_overrides": {},
     }
 
 
@@ -371,7 +390,7 @@ def test_missing_creds_yields_preflight_failure(monkeypatch, capsys, tmp_path):
         forecasts_df=_forecasts_df([{"ticker": "ES", "position_fraction": 0.10}]),
     )
     out = capsys.readouterr().out
-    assert "Missing creds" in out
+    assert "Missing env var(s)" in out
     assert "MT5_FTMO_A_USERNAME" in out
     assert "no actionable plans" in out.lower() or "nothing to approve" in out.lower()
 
@@ -381,6 +400,7 @@ def test_happy_path_executes_single_open(monkeypatch, capsys, tmp_path):
     spec = _setup_account(login=11111, symbols=("US500.cash",))
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "11111")
     monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
 
     # Force the approval path to APPROVE the single account.
     def fake_approval(*args, **kwargs):
@@ -427,6 +447,7 @@ def test_cancel_all_skips_execution(monkeypatch, capsys, tmp_path):
     spec = _setup_account(login=22222, symbols=("US500.cash",))
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "22222")
     monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
 
     def fake_approval(*args, **kwargs):
         labels = kwargs.get("account_labels")
@@ -460,8 +481,10 @@ def test_per_account_cancel_only_skips_one(monkeypatch, capsys, tmp_path):
     spec_b = _setup_account(login=44444, symbols=("US500.cash",))
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "33333")
     monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
     monkeypatch.setenv("MT5_FTMO_B_USERNAME", "44444")
     monkeypatch.setenv("MT5_FTMO_B_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_B_SERVER", "FTMO-Demo")
 
     def fake_approval(*args, **kwargs):
         labels = kwargs.get("account_labels")
@@ -502,6 +525,7 @@ def test_dry_run_execute_skips_approval_and_orders(monkeypatch, capsys):
     spec = _setup_account(login=55555, symbols=("US500.cash",))
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "55555")
     monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
     # If approval is called, the test will fail.
     monkeypatch.setattr(
         orch, "request_batch_approval",
@@ -523,6 +547,7 @@ def test_no_approve_flag_and_no_live_flag_refuses_to_execute(monkeypatch, capsys
     spec = _setup_account(login=66666, symbols=("US500.cash",))
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "66666")
     monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
     monkeypatch.setattr(
         orch, "request_batch_approval",
         lambda *a, **kw: pytest.fail("approval should not be requested"),
@@ -556,6 +581,7 @@ def test_partial_close_with_existing_positions(monkeypatch, capsys, tmp_path):
     spec = _setup_account(login=77777, symbols=("US500.cash",), positions=[existing])
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "77777")
     monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
 
     def fake_approval(*args, **kwargs):
         labels = kwargs.get("account_labels")
@@ -591,6 +617,7 @@ def test_audit_log_contains_expected_keys(monkeypatch, tmp_path):
     _setup_account(login=88888, symbols=("US500.cash",))
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "88888")
     monkeypatch.setenv("MT5_FTMO_A_PASSWORD", "pw")
+    monkeypatch.setenv("MT5_FTMO_A_SERVER", "FTMO-Demo")
 
     def fake_approval(*args, **kwargs):
         labels = kwargs.get("account_labels")

@@ -58,6 +58,7 @@
     "approval_mode": "batch_with_per_account_cancel",
     "approval_timeout_seconds": 300,
     "default_on_timeout": "cancel",
+    "_comment_authorized": "authorized_telegram_user_ids is a whitelist of numeric Telegram user IDs allowed to approve/cancel. Leave empty + set allow_any_approver=false to fail-closed during initial setup. To find your user ID, DM @userinfobot in Telegram.",
     "authorized_telegram_user_ids": [],
     "allow_any_approver": true,
 
@@ -74,6 +75,9 @@
     "_comment_safety": "Optional preflight gates. max_spread_points caps acceptable spread; max_margin_usage_pct prevents margin-call risk; max_daily_loss_pct enforces prop-firm DLL.",
     "max_spread_points": 50,
     "max_margin_usage_pct": 0.95,
-    "max_daily_loss_pct": null
+    "max_daily_loss_pct": null,
+
+    "_comment_audit": "Per-run JSON audit log directory (created if missing). Each run writes one file with plans + decisions + execution results for post-mortem analysis.",
+    "audit_dir": "logs/cfd_prop_audit"
   }
 }
