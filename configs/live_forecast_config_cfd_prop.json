@@ -46,10 +46,10 @@
       "username_env": "MT5_FTMO_50K_DEMO_A_USERNAME",
       "password_env": "MT5_FTMO_50K_DEMO_A_PASSWORD",
       "server_env":   "MT5_FTMO_50K_DEMO_A_SERVER",
-      "terminal_path": "C:/Program Files/FTMO MetaTrader 5/terminal64.exe",
+      "terminal_path": null,
       "magic_number": 90421,
       "symbol_overrides": {},
-      "enabled": false
+      "enabled": true
     }
   ],
 
@@ -59,8 +59,8 @@
     "approval_timeout_seconds": 300,
     "default_on_timeout": "cancel",
     "_comment_authorized": "authorized_telegram_user_ids is a whitelist of numeric Telegram user IDs allowed to approve/cancel. Leave empty + set allow_any_approver=false to fail-closed during initial setup. To find your user ID, DM @userinfobot in Telegram.",
-    "authorized_telegram_user_ids": [],
-    "allow_any_approver": true,
+    "authorized_telegram_user_ids": [633351651, 1065592953],
+    "allow_any_approver": false,
 
     "_comment_sizing": "min_rebalance_lots is a hard floor in lots (never trade less). min_rebalance_notional_usd is a dead-band on the dollar value of the delta (skip noise). rebalance_mode: hybrid_close_on_flip is described in docs/library/live_forecast/cfd_prop_workflow.md.",
     "min_rebalance_lots": 0.01,

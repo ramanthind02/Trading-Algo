@@ -56,6 +56,7 @@ matplotlib-inline==0.1.7
 # it on macOS / Linux, so the rest of the repo (research, unit tests on Mac CI,
 # etc.) still installs cleanly.
 MetaTrader5==5.0.5430; sys_platform == "win32"
+python-dotenv==1.0.1
 multitasking==0.0.12
 narwhals==2.10.0
 nbformat==5.10.4
