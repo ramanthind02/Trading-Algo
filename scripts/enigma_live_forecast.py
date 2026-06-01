@@ -1325,9 +1325,27 @@ def main():
         capital = float(args.capital) if args.capital else None
     else:
         capital = args.capital or config["account"]["capital_usd"]
-    port = args.port or config["connection"]["port"]
+    # IB connection block is optional when data.source != "ib" (e.g. cfd_prop
+    # using data.source="mt5" doesn't need TWS at all).
+    connection_cfg = config.get("connection") or {}
+    port = args.port or connection_cfg.get("port", 7497)
     data_cfg = config.get("data") or {}
     instruments: Dict[str, Any] = config["instruments"]
+
+    # Hard guard: data.source="mt5" is only allowed for the cfd_prop profile
+    # because MT5 writes CFD prices into the shared CentralCacheStore which
+    # would corrupt cross-profile signals for futures_prop / personal.
+    data_source = str(data_cfg.get("source", "ib")).lower()
+    if data_source not in ("ib", "mt5"):
+        print(f"Error: unsupported data.source={data_source!r} (expected 'ib' or 'mt5').")
+        sys.exit(1)
+    if data_source == "mt5" and profile != "cfd_prop":
+        print(
+            f"Error: data.source='mt5' is only supported for profile='cfd_prop' "
+            f"(got profile={profile!r}). Writing MT5 CFD prices to the shared "
+            "central cache would corrupt futures_prop/personal signals."
+        )
+        sys.exit(1)
 
     print("=" * 60)
     if profile == "futures_prop":
@@ -1369,45 +1387,66 @@ def main():
     for tk, cov in cache_status.get("coverage", {}).items():
         print(f"  {tk}: {cov['start'].date()} to {cov['end'].date()}")
 
-    # Create IB client
-    ib_config = IBConfig(
-        host=config["connection"]["host"],
-        port=port,
-        client_id=config["connection"]["client_id"]
-    )
-    client = IBDataClient(ib_config)
+    # Data-source dispatch. Three modes:
+    #   * use_cached_only=true: skip everything, use parquet-bootstrapped cache.
+    #   * data.source="mt5":    pull dailies from MT5 (cfd_prop only).
+    #   * data.source="ib":     pull dailies from IB TWS (default for prop/personal).
+    use_cached_only = bool(data_cfg.get("use_cached_only", False))
+    if use_cached_only:
+        print("\n3. Skipping data fetch (data.use_cached_only=true). Using cached parquets only.")
+        client = None
+    elif data_source == "mt5":
+        print("\n3. Using MT5 as data source (data.source='mt5'). No TWS connection required.")
+        client = None
+    else:
+        ib_config = IBConfig(
+            host=connection_cfg.get("host", "127.0.0.1"),
+            port=port,
+            client_id=connection_cfg.get("client_id", 1),
+        )
+        client = IBDataClient(ib_config)
 
     try:
-        # Connect to TWS
-        print("\n3. Connecting to TWS...")
-        client.connect_to_ib()
+        if use_cached_only:
+            runtime_daily = None
+            partial_overlay_df = None
+        elif data_source == "mt5":
+            from scripts.mt5_data_fetch import sync_mt5_dailies_into_central_cache
+            runtime_daily, partial_overlay_df = sync_mt5_dailies_into_central_cache(
+                config=config,
+                required_tickers=required_tickers,
+            )
+        else:
+            # Connect to TWS (IB path)
+            print("\n3. Connecting to TWS...")
+            client.connect_to_ib()
 
-        # Wait for connection (nextValidId callback sets connected=True)
-        max_wait = 10
-        waited = 0
-        while not client.connected and waited < max_wait:
-            time.sleep(0.5)
-            waited += 0.5
+            # Wait for connection (nextValidId callback sets connected=True)
+            max_wait = 10
+            waited = 0
+            while not client.connected and waited < max_wait:
+                time.sleep(0.5)
+                waited += 0.5
 
-        if not client.connected:
-            print("ERROR: Could not connect to TWS.")
-            print("Please ensure:")
-            print("  1. TWS or IB Gateway is running")
-            print("  2. API is enabled in TWS settings")
-            print(f"  3. Port {port} is correct")
-            sys.exit(1)
+            if not client.connected:
+                print("ERROR: Could not connect to TWS.")
+                print("Please ensure:")
+                print("  1. TWS or IB Gateway is running")
+                print("  2. API is enabled in TWS settings")
+                print(f"  3. Port {port} is correct")
+                sys.exit(1)
 
-        print("Connected to TWS successfully!")
+            print("Connected to TWS successfully!")
 
-        # Brief pause to ensure API is fully ready
-        time.sleep(1)
+            # Brief pause to ensure API is fully ready
+            time.sleep(1)
 
-        runtime_daily, partial_overlay_df = sync_ib_fetched_dailies_into_central_cache(
-            config=config,
-            required_tickers=required_tickers,
-            client=client,
-            profile=profile,
-        )
+            runtime_daily, partial_overlay_df = sync_ib_fetched_dailies_into_central_cache(
+                config=config,
+                required_tickers=required_tickers,
+                client=client,
+                profile=profile,
+            )
 
         # Step 6: Refresh stale bias node caches
         print("\n6. Refreshing bias caches...")
@@ -1628,7 +1667,7 @@ def main():
         traceback.print_exc()
     finally:
         # Disconnect
-        if client.connected:
+        if client is not None and client.connected:
             print("\nDisconnecting from TWS...")
             client.disconnect_from_ib()
 

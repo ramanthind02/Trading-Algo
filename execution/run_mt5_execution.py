@@ -71,11 +71,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class AccountConfig:
+    """Per-account view computed from the JSON config + global defaults.
+
+    The on-disk schema uses ``username_env`` / ``password_env`` / ``server_env``
+    (env-var NAMES, not raw values) so secrets stay out of the config; the
+    actual login number / password / server name are read from ``os.environ``
+    at plan-build time.
+    """
+
     label: str
     enabled: bool
-    server: str
-    username_env_var: str
-    password_env_var: str
+    server_env: str
+    username_env: str
+    password_env: str
     magic_number: int
     terminal_path: Optional[str]
     tradeable_tickers: Tuple[str, ...]
@@ -93,35 +101,93 @@ class AccountConfig:
     sod_balance_env_var: Optional[str]
 
 
-def _account_from_config(account_cfg: Dict[str, Any], global_mt5: Dict[str, Any]) -> AccountConfig:
-    """Merge a single account block with the global ``mt5`` defaults."""
-    def g(key: str, default: Any = None) -> Any:
+def _account_from_config(
+    *,
+    account_cfg: Dict[str, Any],
+    global_mt5: Dict[str, Any],
+    execution_cfg: Dict[str, Any],
+    top_level_tradeable: Sequence[str],
+    top_level_instruments: Dict[str, Dict[str, Any]],
+) -> AccountConfig:
+    """Merge a single account block with the global ``mt5`` + ``execution`` defaults.
+
+    The schema (matching ``configs/live_forecast_config_cfd_prop.json``):
+
+    - ``label``                 : str, required, unique
+    - ``enabled``               : bool, defaults False
+    - ``username_env`` / ``password_env`` / ``server_env`` : env var NAMES (required)
+    - ``magic_number``          : int (optional → ``mt5.default_magic_number``)
+    - ``terminal_path``         : optional path to ``terminal64.exe``
+    - ``symbol_overrides``      : optional ``{ticker: {mt5_symbol: "..."}}`` patching
+                                  the top-level ``instruments`` map for this account
+    - ``max_daily_loss_pct``    : optional per-account override
+    - ``sod_balance_env_var``   : optional env var holding start-of-day balance
+    """
+    label = str(account_cfg["label"])
+    # Required env-var names. Fail loudly if missing rather than failing later.
+    if "username_env" not in account_cfg:
+        raise KeyError(f"account {label!r}: missing 'username_env' (env var NAME)")
+    if "password_env" not in account_cfg:
+        raise KeyError(f"account {label!r}: missing 'password_env' (env var NAME)")
+    if "server_env" not in account_cfg:
+        raise KeyError(f"account {label!r}: missing 'server_env' (env var NAME)")
+
+    overrides = dict(account_cfg.get("symbol_overrides") or {})
+    # Per-account tradeable_tickers override falls back to the top-level list.
+    per_account_tradeable = account_cfg.get("tradeable_tickers")
+    effective_tradeable = (
+        list(per_account_tradeable) if per_account_tradeable else list(top_level_tradeable)
+    )
+    symbol_map: Dict[str, str] = {}
+    for ticker in effective_tradeable:
+        if ticker in overrides and "mt5_symbol" in overrides[ticker]:
+            symbol_map[ticker] = str(overrides[ticker]["mt5_symbol"])
+        elif ticker in top_level_instruments and "mt5_symbol" in top_level_instruments[ticker]:
+            symbol_map[ticker] = str(top_level_instruments[ticker]["mt5_symbol"])
+
+    def gm(key: str, default: Any = None) -> Any:
+        """Per-account override → global mt5 default → hard default."""
         if key in account_cfg:
             return account_cfg[key]
         return global_mt5.get(key, default)
+
+    def ge(key: str, default: Any = None) -> Any:
+        """Per-account override → global execution default → hard default."""
+        if key in account_cfg:
+            return account_cfg[key]
+        return execution_cfg.get(key, default)
+
     return AccountConfig(
-        label=str(account_cfg["label"]),
+        label=label,
         enabled=bool(account_cfg.get("enabled", False)),
-        server=str(account_cfg["server"]),
-        username_env_var=str(account_cfg["username_env_var"]),
-        password_env_var=str(account_cfg["password_env_var"]),
-        magic_number=int(account_cfg["magic_number"]),
+        server_env=str(account_cfg["server_env"]),
+        username_env=str(account_cfg["username_env"]),
+        password_env=str(account_cfg["password_env"]),
+        magic_number=int(
+            account_cfg.get("magic_number")
+            or global_mt5.get("default_magic_number")
+            or 90420
+        ),
         terminal_path=account_cfg.get("terminal_path") or global_mt5.get("terminal_path"),
-        tradeable_tickers=tuple(account_cfg.get("tradeable_tickers") or []),
-        symbol_map=dict(account_cfg.get("symbol_map") or {}),
-        sizing_basis=str(g("sizing_basis", "equity")),
-        lot_size_ceiling=float(g("lot_size_ceiling", 100.0)),
-        force_min_lot_if_signal=bool(g("force_min_lot_if_signal", False)),
-        min_rebalance_lots=float(g("min_rebalance_lots", 0.0)),
-        min_rebalance_notional_usd=float(g("min_rebalance_notional_usd", 0.0)),
-        max_spread_points=int(g("max_spread_points", 0)),
-        max_tick_staleness_seconds=int(g("max_tick_staleness_seconds", 0)),
-        max_margin_usage_pct=float(g("max_margin_usage_pct", 0.95)),
-        abort_if_unmanaged_position=bool(g("abort_if_unmanaged_position", True)),
+        tradeable_tickers=tuple(effective_tradeable),
+        symbol_map=symbol_map,
+        sizing_basis=str(gm("sizing_basis", "equity")),
+        lot_size_ceiling=float(gm("lot_size_ceiling", 100.0)),
+        force_min_lot_if_signal=bool(gm("force_min_lot_if_signal", False)),
+        min_rebalance_lots=float(ge("min_rebalance_lots", 0.0)),
+        min_rebalance_notional_usd=float(ge("min_rebalance_notional_usd", 0.0)),
+        max_spread_points=int(ge("max_spread_points", 0)),
+        max_tick_staleness_seconds=int(ge("max_tick_staleness_seconds", 0)),
+        max_margin_usage_pct=float(ge("max_margin_usage_pct", 0.95)),
+        abort_if_unmanaged_position=bool(gm("abort_if_unmanaged_position", True)),
         max_daily_loss_pct=(
             float(account_cfg["max_daily_loss_pct"])
             if account_cfg.get("max_daily_loss_pct") is not None
-            else None
+            else (
+                float(execution_cfg["max_daily_loss_pct"])
+                if execution_cfg.get("max_daily_loss_pct") is not None
+                else None
+            )
         ),
         sod_balance_env_var=account_cfg.get("sod_balance_env_var"),
     )
@@ -147,14 +213,22 @@ def _build_account_plan(
     captured in ``preflight_messages`` so the user sees it in the batch
     approval message rather than the script silently skipping the account.
     """
-    # Read creds from env first; fail-closed if missing.
-    username_raw = os.environ.get(account.username_env_var)
-    password_raw = os.environ.get(account.password_env_var)
-    if not username_raw or not password_raw:
+    # Read creds + server name from env first; fail-closed if any missing.
+    username_raw = os.environ.get(account.username_env)
+    password_raw = os.environ.get(account.password_env)
+    server_raw = os.environ.get(account.server_env)
+    missing: List[str] = []
+    if not username_raw:
+        missing.append(account.username_env)
+    if not password_raw:
+        missing.append(account.password_env)
+    if not server_raw:
+        missing.append(account.server_env)
+    if missing:
         return AccountPlan(
             label=account.label,
             login=0,
-            server=account.server,
+            server="",
             currency="",
             balance=0.0,
             equity=0.0,
@@ -162,7 +236,7 @@ def _build_account_plan(
             actions_by_symbol={},
             preflight_ok=False,
             preflight_messages=[
-                f"Missing creds: set {account.username_env_var} and {account.password_env_var}"
+                f"Missing env var(s): {', '.join(missing)}"
             ],
         )
     try:
@@ -171,7 +245,7 @@ def _build_account_plan(
         return AccountPlan(
             label=account.label,
             login=0,
-            server=account.server,
+            server=server_raw,
             currency="",
             balance=0.0,
             equity=0.0,
@@ -179,7 +253,7 @@ def _build_account_plan(
             actions_by_symbol={},
             preflight_ok=False,
             preflight_messages=[
-                f"{account.username_env_var}={username_raw!r} is not an integer login"
+                f"{account.username_env}={username_raw!r} is not an integer login"
             ],
         )
 
@@ -190,7 +264,7 @@ def _build_account_plan(
         with MT5TradeExecutor.connect_and_verify(
             login=login,
             password=password_raw,
-            server=account.server,
+            server=server_raw,
             terminal_path=account.terminal_path,
         ) as mt5x:
             account_info = mt5x.fetch_account_info()
@@ -276,7 +350,7 @@ def _build_account_plan(
             failures = run_preflight(
                 account_info=account_info,
                 expected_login=login,
-                expected_server=account.server,
+                expected_server=server_raw,
                 actions_by_symbol=actions_by_symbol,
                 symbol_infos=symbol_infos,
                 ticks=ticks,
@@ -308,7 +382,7 @@ def _build_account_plan(
         return AccountPlan(
             label=account.label,
             login=login,
-            server=account.server,
+            server=server_raw,
             currency="",
             balance=0.0,
             equity=0.0,
@@ -449,8 +523,9 @@ def _execute_account(
     # Real execution: reconnect (we shut down after plan-build).
     from execution.mt5_trade_executor import MT5TradeExecutor
 
-    username_raw = os.environ.get(account.username_env_var) or ""
-    password_raw = os.environ.get(account.password_env_var) or ""
+    username_raw = os.environ.get(account.username_env) or ""
+    password_raw = os.environ.get(account.password_env) or ""
+    server_raw = os.environ.get(account.server_env) or ""
     try:
         login = int(username_raw)
     except ValueError:
@@ -468,7 +543,7 @@ def _execute_account(
         with MT5TradeExecutor.connect_and_verify(
             login=login,
             password=password_raw,
-            server=account.server,
+            server=server_raw,
             terminal_path=account.terminal_path,
         ) as mt5x:
             for symbol_name in sorted(plan.actions_by_symbol.keys()):
@@ -618,6 +693,17 @@ def run_cfd_prop_execution(
 ) -> None:
     """Top-level entry called from ``scripts/enigma_live_forecast.py``."""
 
+    # Match run_auto_execution semantics: only attempt MT5 work when
+    # --execute is passed. --dry-run alone produces the forecast but
+    # never touches MT5 / Telegram.
+    if not getattr(args, "execute", False):
+        print(
+            "\n12. CFD prop execution: --execute not set; skipping MT5 connection. "
+            "Pass --execute --dry-run-execute to build plans without sending orders, "
+            "or --execute --approve-via-telegram for the full flow."
+        )
+        return
+
     forecasts = _forecasts_from_df(forecasts_df)
     if not forecasts:
         print("\n12. CFD prop execution: forecast frame is empty; nothing to do.")
@@ -626,9 +712,21 @@ def run_cfd_prop_execution(
     accounts_raw = config.get("accounts") or []
     global_mt5 = config.get("mt5") or {}
     execution_cfg = config.get("execution") or {}
+    top_level_tradeable: Sequence[str] = tuple(config.get("tradeable_tickers") or [])
+    top_level_instruments: Dict[str, Dict[str, Any]] = dict(config.get("instruments") or {})
+
+    if not top_level_tradeable:
+        print("\n12. CFD prop execution: 'tradeable_tickers' is empty at top level; nothing to do.")
+        return
 
     accounts = [
-        _account_from_config(acct, global_mt5)
+        _account_from_config(
+            account_cfg=acct,
+            global_mt5=global_mt5,
+            execution_cfg=execution_cfg,
+            top_level_tradeable=top_level_tradeable,
+            top_level_instruments=top_level_instruments,
+        )
         for acct in accounts_raw
     ]
     enabled = [a for a in accounts if a.enabled]
@@ -700,8 +798,9 @@ def run_cfd_prop_execution(
             )
             return
         authorized_user_ids = [
-            int(uid) for uid in execution_cfg.get("authorized_user_ids") or []
+            int(uid) for uid in execution_cfg.get("authorized_telegram_user_ids") or []
         ]
+        allow_any_approver = bool(execution_cfg.get("allow_any_approver", False))
         outcome = request_batch_approval(
             notifier,
             message_text=approval_text,
@@ -710,14 +809,20 @@ def run_cfd_prop_execution(
             authorized_user_ids=authorized_user_ids,
             timeout_seconds=timeout_seconds,
             poll_chunk_seconds=min(25, max(5, timeout_seconds // 12)),
+            allow_any_approver=allow_any_approver,
             default_on_timeout=default_on_timeout,
         )
     else:
-        # No-approval mode is dangerous; require --live to arm it.
-        if not require_live_flag:
+        # No-approval mode is dangerous; require --live to arm it AND
+        # the config must explicitly disable the live-flag requirement.
+        require_live_flag_for_real_money = bool(
+            execution_cfg.get("require_live_flag_for_real_money", True)
+        )
+        if require_live_flag_for_real_money and not require_live_flag:
             print(
                 "\n14. ⚠ --approve-via-telegram not set and --live not set; refusing to execute. "
-                "Either approve via telegram or pass --live to skip approval entirely."
+                "Either approve via telegram or pass --live (and config.execution."
+                "require_live_flag_for_real_money is True)."
             )
             return
         outcome = BatchApprovalOutcome(
