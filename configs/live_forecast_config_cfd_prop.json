@@ -46,7 +46,7 @@
       "username_env": "MT5_FTMO_50K_DEMO_A_USERNAME",
       "password_env": "MT5_FTMO_50K_DEMO_A_PASSWORD",
       "server_env":   "MT5_FTMO_50K_DEMO_A_SERVER",
-      "terminal_path": null,
+      "terminal_path": "C:/Program Files/FTMO Global Markets MT5 Terminal/terminal64.exe",
       "magic_number": 90421,
       "symbol_overrides": {},
       "enabled": true
