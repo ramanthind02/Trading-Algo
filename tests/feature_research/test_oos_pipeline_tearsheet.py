@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from feature_research.config import FeatureType, OOSWindowConfig
+from feature_research.config import FeatureType, ResearchWindowConfig
 from feature_research.config import load_config
 from feature_research.pipeline import run_oos_pipeline
 from utils.core.enums import Ticker
@@ -15,13 +15,13 @@ from utils.core.enums import Ticker
 
 def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path) -> None:
     base_config = load_config()
-    oos_window = base_config.oos_window or OOSWindowConfig(
+    research_window = base_config.research_window or ResearchWindowConfig(
         train_start=datetime(2009, 1, 1),
         train_end=datetime(2023, 12, 30),
-        test_start=datetime(2024, 1, 1),
-        test_end=datetime(2025, 12, 31),
+        val_start=datetime(2024, 1, 1),
+        val_end=datetime(2025, 12, 31),
     )
-    config = replace(base_config, feature_type=FeatureType.SIGNED_SIGNAL, oos_window=oos_window)
+    config = replace(base_config, feature_type=FeatureType.SIGNED_SIGNAL, research_window=research_window)
 
     base_index = pd.date_range("2023-01-01", periods=15, freq="D")
     index = pd.DatetimeIndex(np.repeat(base_index.values, 2))
@@ -123,14 +123,14 @@ def test_oos_pipeline_uses_available_data_when_no_full_coverage(
 ) -> None:
     """When no ticker has full coverage, pipeline narrows to available data and completes."""
     base_config = load_config()
-    oos_window = base_config.oos_window or OOSWindowConfig(
+    research_window = ResearchWindowConfig(
         train_start=datetime(2009, 1, 1),
-        train_end=datetime(2023, 12, 30),
-        test_start=datetime(2024, 1, 1),
-        test_end=datetime(2025, 12, 31),
+        train_end=datetime(2023, 6, 30),
+        val_start=datetime(2023, 7, 1),
+        val_end=datetime(2024, 6, 30),
     )
     config = replace(
-        base_config, feature_type=FeatureType.SIGNED_SIGNAL, oos_window=oos_window
+        base_config, feature_type=FeatureType.SIGNED_SIGNAL, research_window=research_window
     )
 
     base_index = pd.date_range("2023-01-01", periods=15, freq="D")

@@ -87,7 +87,13 @@ def align_forecast_vectors_to_daily_grid(
             .set_index("datetime")
         )
         stream = base[["forecast", "signal"]].astype(float)
-        aligned = stream.reindex(daily_grid).ffill().fillna(0.0).reset_index()
+        # Reindex through the union of bar dates and the daily grid so that
+        # non-trading-day bar closes (e.g. weekly bars timestamped on Sunday)
+        # are forward-filled into the next valid trading day before extraction.
+        superset = pd.DatetimeIndex(sorted(set(daily_grid) | set(stream.index)))
+        aligned = (
+            stream.reindex(superset).ffill().fillna(0.0).reindex(daily_grid).reset_index()
+        )
         aligned = aligned.rename(columns={"index": "datetime"})
         aligned["ticker"] = ticker
         aligned["model_name"] = model_name

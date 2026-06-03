@@ -1,0 +1,46 @@
+{
+  "feature_name": "robust_trend_breakout_signal_D_atrLen_14_atrMult_1.5_atrVolFilter_0_cooldownBars_0_emaPeriod_126_lookback_20",
+  "created_at": "2026-05-30T22:36:49.616807+00:00",
+  "updated_at": "2026-05-30T22:36:49.616807+00:00",
+  "bias_node_spec": {
+    "module_name": "robust_trend_breakout",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "lookback": 20,
+      "ema_period": 126,
+      "atr_mult": 1.5,
+      "atr_len": 14,
+      "atr_vol_filter": 0,
+      "cooldown_bars": 0
+    }
+  },
+  "tickers": [
+    "GC"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_robust-trend-breakout_d_atr-len_14_atr-mult_1-5_atr-vol-filter_0_cooldown-bars_0_ema-period_126_lookback_20",
+      "model_name": "robust_trend_breakout_signal_D_atrLen_14_atrMult_1.5_atrVolFilter_0_cooldownBars_0_emaPeriod_126_lookback_20::signed_signal_robust-trend-breakout_d_atr-len_14_atr-mult_1-5_atr-vol-filter_0_cooldown-bars_0_ema-period_126_lookback_20",
+      "model_type": "signed_signal",
+      "feature_column": "robust_trend_breakout_signal_D_atrLen_14_atrMult_1.5_atrVolFilter_0_cooldownBars_0_emaPeriod_126_lookback_20",
+      "strategy": "long",
+      "bias_node_spec": {
+        "module_name": "robust_trend_breakout",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "lookback": 20,
+          "ema_period": 126,
+          "atr_mult": 1.5,
+          "atr_len": 14,
+          "atr_vol_filter": 0,
+          "cooldown_bars": 0
+        }
+      }
+    }
+  ],
+  "weight_hierarchy_group": "gc_breakout"
+}

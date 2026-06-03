@@ -8,6 +8,7 @@ from utils.vault_paths import (
     resolve_vault_prop,
     resolve_vault_root,
     resolve_vault_root_for_profile,
+    vault_discovery_dirnames_for_profile,
     vault_root_from_repo_relative_ensemble,
 )
 
@@ -57,6 +58,14 @@ def test_default_vault_discovery_dirnames_includes_standard_names(monkeypatch) -
     names = default_vault_discovery_dirnames()
     assert "vault" in names
     assert "vault_personal" in names
+
+
+def test_vault_discovery_dirnames_for_profile_returns_single_root(monkeypatch) -> None:
+    monkeypatch.delenv("TRADING_ALGO_VAULT_PROP", raising=False)
+    monkeypatch.delenv("TRADING_ALGO_VAULT_PERSONAL", raising=False)
+    monkeypatch.delenv("TRADING_ALGO_VAULT_ROOT", raising=False)
+    assert vault_discovery_dirnames_for_profile("prop") == ("vault",)
+    assert vault_discovery_dirnames_for_profile("personal") == ("vault_personal",)
 
 
 def test_resolve_vault_root_preserves_absolute_paths() -> None:

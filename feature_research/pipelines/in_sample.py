@@ -11,19 +11,28 @@ from typing import cast
 import pandas as pd
 
 from feature_research.config import FeatureType, ResearchConfig
-from feature_research.core_helpers import normalize_timeframe_from_bias_spec
+from feature_research.exploration.filter_gate_catalog import resolved_exploration_bias_spec
+from feature_research._internal.core_helpers import normalize_timeframe_from_bias_spec
+from feature_research.filter_research_labels import (
+    build_filter_exploration_long_pairs,
+    is_filter_exploration_modules,
+)
 from feature_research.in_sample.data_loader import (
+    enrich_param_combo_with_module,
     expand_bias_specs,
     expanded_combo_param_value,
     expanded_spec_combo_label,
     first_bias_spec,
+    load_candles_for_config,
     load_features_for_combo,
     populate_cache_if_needed,
 )
 from feature_research.in_sample.metric_helpers import compute_param_sensitivity_metric
 from feature_research.research_table_exports import (
-    write_in_sample_equity_curve_powerbi_csv,
-    write_param_sensitivity_powerbi_tables,
+    return_kind_for_target,
+    write_filter_exploration_tables,
+    write_in_sample_equity_curve_csv,
+    write_param_sensitivity_tables,
 )
 from feature_selection.eda.eda_dataclasses import EDAConfig, EDAMetadata
 from feature_selection.eda.eda_reporter import (
@@ -42,21 +51,28 @@ def _default_rolling_window(feature: pd.Series) -> int:
 _PARAM_COMBO_HASH_FOLDER_LEN = 8
 
 
-def _windows_eda_path_budget() -> int | None:
-    """Max full path length for EDA combo output; ``None`` means no shortening."""
-    if os.name != "nt":
-        return None
-    return int(os.environ.get("TRADING_ALGO_EDA_MAX_PATH", "230"))
+def _windows_eda_path_budget() -> int:
+    """Max resolved path length for EDA combo output (``TRADING_ALGO_EDA_MAX_PATH`` override)."""
+    default = 230 if os.name == "nt" else 4096
+    return int(os.environ.get("TRADING_ALGO_EDA_MAX_PATH", str(default)))
+
+
+_PATH_COMPONENT_MAX_LEN = 255
 
 
 def _combo_eda_parent_dir(output_dir: Path, label: str, feature_name: str) -> Path:
     """``output_dir / <segment>`` for one combo; shortens *segment* when paths would exceed OS limits."""
     budget = _windows_eda_path_budget()
-    if budget is None:
-        return output_dir / label
+    feature_segment = (
+        feature_name
+        if len(feature_name) <= _PATH_COMPONENT_MAX_LEN
+        else f"feat_{hashlib.md5(feature_name.encode('utf-8')).hexdigest()[:12]}"
+    )
 
     def path_length_for_segment(segment: str) -> int:
-        leaf = output_dir / segment / feature_name / ("x" * _PARAM_COMBO_HASH_FOLDER_LEN)
+        if len(segment) > _PATH_COMPONENT_MAX_LEN:
+            return budget + 1
+        leaf = output_dir / segment / feature_segment / ("x" * _PARAM_COMBO_HASH_FOLDER_LEN)
         return len(str(leaf.resolve()))
 
     if path_length_for_segment(label) <= budget:
@@ -155,20 +171,21 @@ def run_eda_pipeline(
     tr_start, tr_end = config.training_window_bounds
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    populate_cache_if_needed(config)
+    exploration_spec = resolved_exploration_bias_spec(config)
+    populate_cache_if_needed(config, bias_spec=exploration_spec)
 
     config = replace(config, start=tr_start, end=tr_end)
 
-    expanded = expand_bias_specs(config.bias_spec)
-    meta_spec = first_bias_spec(config.bias_spec)
+    expanded = expand_bias_specs(exploration_spec)
+    meta_spec = first_bias_spec(exploration_spec)
     timeframe = normalize_timeframe_from_bias_spec(meta_spec)
     results: dict[str, Path] = {}
 
     print(f"\n{'='*64}")
     feature_type_label = config.feature_type.name
-    if isinstance(config.bias_spec, list):
+    if isinstance(exploration_spec, list):
         branch_modules = ", ".join(
-            str(s.get("module_name")) for s in config.bias_spec
+            str(s.get("module_name")) for s in exploration_spec
         )
         eda_module_label = f"MULTI[{branch_modules}]"
     else:
@@ -199,8 +216,13 @@ def run_eda_pipeline(
     sensitivity_by_ticker_rows: list[dict[str, object]] = []
 
     print(f"Loading data for {len(expanded)} combos...")
+    exploration_modules = {str(spec.get("module_name", "")) for spec in expanded}
+    filter_exploration = is_filter_exploration_modules(exploration_modules)
     for single_spec in expanded:
-        combo = single_spec["params"]
+        combo = enrich_param_combo_with_module(
+            single_spec["params"],
+            single_spec.get("module_name"),
+        )
         label = expanded_spec_combo_label(single_spec)
         data = load_features_for_combo(single_spec, config)
         if data is None:
@@ -269,34 +291,63 @@ def run_eda_pipeline(
                     row["t_stat"] = t_stat_v
                     metric_rows.append(row)
 
-    label_param_pairs = [
-        (
-            label,
-            {
-                **dict(params),
-                "bias_composite_module": _bias_module_token_from_store_label(label),
-            },
-        )
-        for label, (_, _, _, _, params) in sorted(combo_store.items())
-    ]
+    label_param_pairs = (
+        [
+            pair
+            for label, (_, _, _, _, params) in sorted(combo_store.items())
+            for pair in build_filter_exploration_long_pairs(label, params)
+        ]
+        if filter_exploration
+        else [
+            (
+                label,
+                {
+                    **dict(params),
+                    "bias_composite_module": _bias_module_token_from_store_label(label),
+                },
+            )
+            for label, (_, _, _, _, params) in sorted(combo_store.items())
+        ]
+    )
     if config.feature_type == FeatureType.SIGNED_SIGNAL:
-        pbi_paths = write_param_sensitivity_powerbi_tables(
+        visualization_paths = write_param_sensitivity_tables(
             sensitivity_rows,
             label_param_pairs,
             sensitivity_by_ticker_rows=sensitivity_by_ticker_rows,
         )
-        equity_csv = write_in_sample_equity_curve_powerbi_csv(combo_store)
-        print(
-            "Power BI tables (param sensitivity): "
-            f"{pbi_paths.get('param_sensitivity_csv', '')} ({len(sensitivity_rows)} rows)"
+        if filter_exploration:
+            filter_paths = write_filter_exploration_tables(
+                sensitivity_rows,
+                combo_store,
+            )
+            visualization_paths = {**visualization_paths, **filter_paths}
+        try:
+            _is_candles = load_candles_for_config(config)
+        except Exception:
+            _is_candles = None
+        equity_csv = write_in_sample_equity_curve_csv(
+            combo_store,
+            portfolio_candles=_is_candles,
+            timeframe=timeframe,
+            target_volatility=config.tearsheet_target_annual_volatility or 0.15,
+            instrument_return_kind=return_kind_for_target(config.target_col),
         )
-        if pbi_paths.get("param_sensitivity_by_ticker_csv"):
+        print(
+            "Visualization CSVs (param sensitivity): "
+            f"{visualization_paths.get('param_sensitivity_csv', '')} ({len(sensitivity_rows)} rows)"
+        )
+        if filter_exploration:
             print(
-                "Power BI tables (param sensitivity by ticker): "
-                f"{pbi_paths['param_sensitivity_by_ticker_csv']} "
+                "Filter exploration summary: "
+                f"{visualization_paths.get('filter_exploration_summary_csv', '')}"
+            )
+        if visualization_paths.get("param_sensitivity_by_ticker_csv"):
+            print(
+                "Visualization CSVs (param sensitivity by ticker): "
+                f"{visualization_paths['param_sensitivity_by_ticker_csv']} "
                 f"({len(sensitivity_by_ticker_rows)} rows)"
             )
-        print(f"Power BI equity curve (all combos): {equity_csv}")
+        print(f"Visualization equity curve CSV (all combos): {equity_csv}")
 
     max_eda_combos = config.param_sensitivity.max_eda_output_combos
     should_preselect = (

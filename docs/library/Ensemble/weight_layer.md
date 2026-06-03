@@ -59,6 +59,61 @@ Provide either:
 
 Leaves may specify `stream_id` directly (`ticker::timeframe::model_name`) or `ticker`, `timeframe`, and `model_name`. The fit step validates that declared leaves match the available model names (strict coverage). See `parse_hierarchy_spec` and `compute_equal_split_weights` in `ensemble/weight_hierarchy.py`.
 
+### Asset-first 3-level hierarchy (recommended for portfolios)
+
+For multi-asset vaults, prefer a **3-level** tree so commodity and equity streams are not siblings under one strategy label:
+
+```text
+root → asset_class → strategy_group (vault weight_hierarchy_group) → stream leaves
+```
+
+Vault folder layout is unchanged; rebucketing uses the ticker in each `stream_id` (`buy_hold`, `seasonal`, and `es_tlt` included — e.g. ES rebalancing flow → `equity_indices/es_tlt`). See `docs/SaaS/weight_layer_spec.md` for rationale.
+
+| Module | Role |
+|---|---|
+| `ensemble/vault/constants.py` | `TICKER_ASSET_CLASS`, `STRATEGY_GROUP_ASSET_OVERRIDE`, `ASSET_CLASS_ORDER` |
+| `ensemble/vault/hierarchy_spec.py` | `collect_streams_by_asset_and_style*`, `build_asset_first_hierarchy_spec*` |
+
+```python
+from ensemble.vault.hierarchy_spec import build_asset_first_hierarchy_spec_for_ensemble_dirs
+
+spec = build_asset_first_hierarchy_spec_for_ensemble_dirs(
+    repo_root,
+    config.ensemble_dirs,
+    strict_group=True,
+    portfolio_ticker_names=frozenset(t.name for t in config.tickers),
+)
+WeightLayer(weight_method="hierarchy_equal", hierarchy_spec=spec, fdm_max=2.0)
+```
+
+Feature-research portfolio admission rebuilds this spec whenever `ensemble_dirs` changes (`feature_research.inclusion_gates.config_with_ensemble_dirs`). Default `PortfolioSourceConfig.weight_layer_method` is `hierarchy_equal`.
+
+### SR adjustment on `hierarchy_equal`
+
+Optional Carver handcrafting SR multipliers (`sr_adjustment=True`) run after equal splits at **each sibling level** (asset class, style group, leaf streams), using training-window **lagged** `forecast × instrument_return` PnL (prior-bar vol-scaled forecast, no same-day lookahead). See `docs/SaaS/weight_layer_spec.md` §2.5.
+
+```python
+WeightLayer(
+    weight_method="hierarchy_equal",
+    hierarchy_spec=spec,
+    fdm_max=2.0,
+    sr_adjustment=True,
+    sr_avg=0.5,
+    sr_p_step=0.01,
+    sr_min_years=5.0,
+)
+```
+
+`GlobalPortfolio.fit()` supplies per-ticker daily returns when SR adjustment is enabled.
+
+Draft JSON from a vault root:
+
+```bash
+python scripts/emit_weight_hierarchy_json.py --stats -o hierarchy_draft.json
+```
+
+Use `--legacy-two-level` for the older root → vault-group → leaves layout.
+
 ## FDM
 
 FDM uses the raw signal-level positive-clipped correlation matrix for **all** modes:

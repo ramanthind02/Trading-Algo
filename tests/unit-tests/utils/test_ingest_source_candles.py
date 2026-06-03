@@ -10,7 +10,6 @@ import pytest
 from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
 from utils.cache.runtime.central_cache import CentralCacheStore
 from utils.cache.runtime.central_cache_errors import ArtifactMissingError
-from utils.cache.runtime.ingest_source_candles import ingest_source_candles
 from utils.core.enums import Ticker, TimeFrame
 
 
@@ -131,34 +130,3 @@ def test_bootstrap_source_candles_reset_existing_clears_prior_candle_cache(
             end=datetime(2024, 1, 2),
         )
 
-
-def test_ingest_source_candles_alias_delegates_to_bootstrap_helper(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    expected = {"total": 1, "success": 1, "failed": 0, "details": []}
-    captured: dict[str, object] = {}
-
-    def _bootstrap(**kwargs: object) -> dict[str, object]:
-        captured.update(kwargs)
-        return expected
-
-    ingest_module = importlib.import_module("utils.cache.runtime.ingest_source_candles")
-    monkeypatch.setattr(ingest_module, "bootstrap_source_candles", _bootstrap)
-
-    with pytest.deprecated_call(match="deprecated"):
-        summary = ingest_source_candles(
-            tickers=[Ticker.ES],
-            timeframes=[TimeFrame.D],
-            start_date=datetime(2024, 1, 1),
-            end_date=datetime(2024, 1, 2),
-            reset_existing=True,
-        )
-
-    assert summary == expected
-    assert captured == {
-        "tickers": [Ticker.ES],
-        "timeframes": [TimeFrame.D],
-        "start_date": datetime(2024, 1, 1),
-        "end_date": datetime(2024, 1, 2),
-        "reset_existing": True,
-    }

@@ -2,20 +2,28 @@
 
 This document is the entry point for the QuantFoundry robustness test suite. It shows which tests apply at each research stage, what question each answers, and what happens on a pass or fail.
 
+For local `Trading-Algo` work, treat this index as the canonical workflow for `feature_research/` as well. The local package is converging on the same three top-level phases:
+
+- `exploration`
+- `validation`
+- `portfolio_addition`
+
+Older local names such as `in_sample` and `oos` are compatibility aliases, not the preferred mental model.
+
 ---
 
 ## 1. Research Stage Map
 
 ```
-Strategy development (IS zone)
+Strategy research (exploration phase)
   └── In-sample robustness tests          → in_sample.md
         └── Parameter sensitivity test    → parameter_sensitivity.md
               └── Parameter selection     → parameter_selection.md
 
-Strategy evaluation (Validation zone)
+Strategy evaluation (validation phase)
   └── Validation robustness tests         → validation.md
 
-Portfolio fit check (IS + Validation data)
+Portfolio admission (portfolio_addition phase)
   └── Portfolio correlation check         → UI-UX/research_workspace/portfolio_correlation.md  (advisory)
   └── Portfolio addition gate             → portfolio_addition.md  (primary gate)
 
@@ -34,20 +42,33 @@ Live operation (post-deployment)
 
 ## 2. In-Sample Tests
 
-**Document:** `in_sample.md`
-**When:** After a parameter sweep on the IS zone, before selecting a combination.
+**Document:** `in_sample.md`  
+**When:** After a parameter sweep on the IS zone, before selecting a combination.  
 **Data used:** IS zone only.
 
-| Test | Question | Auto / On-demand | Pass condition |
-|---|---|---|---|
-| Newey-West correction | Is the t-stat inflated by autocorrelation? | Auto | λ reported (no hard gate; feeds other tests) |
-| Sharpe CI | How wide is the uncertainty on the IS Sharpe? | Auto | CI reported (no hard gate; calibrates expectations) |
-| Deflated Sharpe Ratio | What is the probability this result is real after correcting for search? | Auto | DSR ≥ 0.50 to proceed; ≥ 0.75 preferred |
-| Rolling IS / CUSUM | Is the edge consistent across the IS period, or concentrated in one sub-period? | Auto | CUSUM not triggered; rolling positive fraction ≥ 60% |
-| Full Grid Permutation | Did the search process explain the result? | On-demand | p ≤ 0.05 |
-| Individual Permutation | Is this specific combination capturing temporal structure? | On-demand | p ≤ 0.05 |
+See `in_sample.md` §4 for the full failure-mode framework (temporal overfitting vs parameter mining).
 
-**Gate:** DSR ≥ 0.50 is a soft minimum before proceeding to parameter sensitivity. A researcher may proceed with DSR < 0.50 but should document the reason.
+### Required gates
+
+| Test | Failure mode | Auto / On-demand | Pass condition |
+|---|---|---|---|
+| Vector shuffle (per combo) | Mode 1 — temporal overfitting | On-demand (exploration) | Pass at configured $\alpha$ |
+| Deflated Sharpe Ratio | Mode 2 — parameter mining | Auto | **DSR $\geq 0.95$** |
+| NW t-stat (best combo) | HAC-adjusted magnitude | Auto | **$\geq 2.0$** |
+| Rolling IS | Temporal consistency | Auto | Positive fraction **$\geq 70\%$** (SaaS default 60%) |
+| CUSUM | Structural stability | Auto | Not triggered at 5% |
+
+### Diagnostics (report; do not hard-gate structured grids)
+
+| Test | Role | Pass / flag |
+|---|---|---|
+| Sharpe CI | Estimate precision | Report; lower bound $> 0$ is sanity check |
+| Full Grid Permutation | Empirical search-bias check | Report null percentile; **flag if $< 20$th percentile** |
+| Individual return-shuffle permutation | Pre-specified single hypothesis only | On-demand; $p \leq 0.05$ when combo was not grid-selected |
+
+**Gate summary:** vector shuffle + DSR + NW t-stat + rolling + CUSUM must pass before parameter lock on a structured indicator family. Full-grid permutation is retained for audit and heterogeneous mining — not as the primary Mode 2 gate when $N_\text{eff}$ is trustworthy.
+
+**Do not** restrict full-grid to vector-shuffle passers on the same IS window; that invalidates the null (see `in_sample.md` §4.2).
 
 ---
 
@@ -69,7 +90,7 @@ Live operation (post-deployment)
 
 **Document:** `parameter_selection.md`
 **When:** After IS tests and perturbation test.
-**Method:** Manual (researcher picks) or Best-by-Metric (rank 1 by NW-adjusted t-stat).
+**Method:** Manual (researcher picks) or Best-by-Metric (rank 1 by the configured selection metric).
 
 This is not a test — it is a decision. The selected combination is locked as strategy metadata and does not change after this point.
 
@@ -103,11 +124,11 @@ This is not a test — it is a decision. The selected combination is locked as s
 | Test | Question | Gate type | Pass condition |
 |---|---|---|---|
 | Analytical hurdle | Does SR_new exceed ρ × SR_P (the theoretical condition for improvement)? | Soft | SR_new > ρ_new,P × SR_P |
-| Empirical Sharpe comparison | Does the portfolio Sharpe improve when the strategy is added at the weight layer's assigned weight? | **Primary gate** | ΔSR > 0 |
+| Empirical Sharpe comparison | Does the portfolio Sharpe improve when the strategy is added at the weight layer's assigned weight? | **Primary gate** | ΔSR ≥ 0.02 |
 | Weight assessment | Does the strategy receive a meaningful allocation (≥ 3%)? | Advisory | weight_assigned ≥ floor |
 | IDM improvement | Does adding the strategy increase the portfolio IDM? | Observational | ΔIDM reported |
 
-**Gate:** ΔSR > 0 on combined IS + validation data. Failing means the strategy is discarded — parameters cannot be adjusted in response to this result.
+**Gate:** ΔSR ≥ 0.02 on combined IS + validation data. Failing means the strategy is discarded — parameters cannot be adjusted in response to this result.
 
 **Contamination rule:** The result is binary. Using a failure to tune the strategy's parameters or to change the weight layer method converts IS + validation data into a fitness function.
 
@@ -155,7 +176,10 @@ This is not a test — it is a decision. The selected combination is locked as s
 ## 8. Decision Summary
 
 ```
-IS tests pass (DSR ≥ 0.50, rolling consistent)
+Vector shuffle pass (Mode 1)
+  AND DSR ≥ 0.95 (Mode 2)
+  AND NW t-stat ≥ 2.0
+  AND rolling + CUSUM pass
   → Run perturbation test
       → Median ≥ floor
           → Select parameters
@@ -163,11 +187,13 @@ IS tests pass (DSR ≥ 0.50, rolling consistent)
                   → CUSUM clear, degradation ratio ≥ 0.10, ρ ≥ 0.20
                       → Check portfolio correlation (advisory)
                       → Run portfolio addition gate
-                          → ΔSR > 0 on IS + val data
+                          → ΔSR ≥ 0.02 on IS + val data
                               → Commit to portfolio
                                   → Register monitoring config (before holdout)
                                   → Select weight layer (before holdout)
                                       → Open holdout
                                           → Monitor triggers → cull
                                           → Satisfied with holdout → Deploy
+
+Diagnostics throughout: full-grid null percentile, Sharpe CI (flag discord with DSR)
 ```

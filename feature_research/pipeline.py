@@ -1,19 +1,30 @@
 """Compatibility façade for feature_research phase pipelines.
 
-Public run functions keep stable import paths while implementation lives in
-`feature_research.pipelines.*`.
+Public run functions keep stable import paths while canonical phase entrypoints
+live in `feature_research.exploration`, `feature_research.validation`, and
+`feature_research.portfolio_addition`.
 """
 
-from feature_research.pipelines.in_sample import run_eda_pipeline
-from feature_research.pipelines.oos import run_oos_pipeline, run_oos_pipeline_with_bundle
-from feature_research.pipelines.permutation import run_permutation_pipeline, write_permutation_summary
-from feature_research.pipelines.validation import run_validation_pipeline
+from feature_research.exploration import (
+    run_exploration_permutation_pipeline as run_permutation_pipeline,
+    run_exploration_pipeline as run_eda_pipeline,
+    run_exploration_robustness_pipeline as run_robustness_pipeline,
+    write_exploration_permutation_summary as write_permutation_summary,
+    write_exploration_robustness_summary as write_robustness_summary,
+)
+from feature_research.portfolio_addition import (
+    run_portfolio_addition_pipeline as run_oos_pipeline,
+    run_portfolio_addition_pipeline_with_bundle as run_oos_pipeline_with_bundle,
+)
+from feature_research.validation import run_validation_pipeline
 
 __all__ = [
     "run_eda_pipeline",
     "run_validation_pipeline",
     "run_oos_pipeline",
     "run_oos_pipeline_with_bundle",
+    "run_robustness_pipeline",
+    "write_robustness_summary",
     "run_permutation_pipeline",
     "write_permutation_summary",
 ]

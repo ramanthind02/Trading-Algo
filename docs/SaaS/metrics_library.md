@@ -119,10 +119,14 @@ The metrics **row vocabulary** from QuantStats `reports.metrics(..., display=Fal
 **Stable façade:**
 
 - Module: **`quantfoundry_core.metrics`**.
-- Entrypoint: **`compute_aligned_performance_metrics(...)` → `AlignedMetricsReport`** (`to_plain_dict()`, `to_dataframe()`).
-- **Implementation:** an **in-repo** Apache-2.0-derived slice under `quantfoundry_core.metrics.vendor_qs` (no PyPI **`quantstats`** dependency). **`tabulate`** is a normal dependency for display-mode printing only.
+- Entrypoints:
+  - **`compute_aligned_performance_metrics(...)` → `AlignedMetricsReport`** for full/basic tables.
+  - **`compute_scalar_metric(...)`** with **`MetricName`** for hot-path single-metric loops.
+  - **`compute_rolling_sharpe(...)`** / **`compute_monthly_returns_heatmap(...)`** for time-series chart payloads.
+- Artifact shape: prefer **`report.to_json_dict()`** for worker/API persistence; materialize DataFrames only at display/export boundaries.
+- Contract helpers: **`ReportMode`**, **`ReturnsCompounding`**, **`ReturnsValidationError`**, **`MetricsSchemaError`**, and **`returns_fingerprint(...)`**.
 - **Timezone:** UTC-aware indexes are stripped to UTC-naive before the metrics pipeline (mixed tz-aware alignment is brittle otherwise).
-- **Parity:** `QuantFoundry-Core/tests/test_metrics_golden.py` asserts equality against **`tests/fixtures/quantstats_metrics_golden.json`** (locked RNG seeds; regenerate from current `compute_aligned_performance_metrics` when vendored logic changes).
+- **Usage rule:** application code must call the public `quantfoundry_core.metrics` surface and must not import private `_quantstats` modules directly.
 
 **Catalog**
 
@@ -142,7 +146,7 @@ normalized returns + periods_per_year
   immutable report dict / DataFrame
 ```
 
-`Trading-Algo/metrics/` can seed primitives; conformance = same parity harness.
+`Trading-Algo/metrics/` acts only as a compatibility shell for older imports (risk/drawdown helpers and re-exports of `feature_selection.validation.objective_metrics`), not as an independent source of truth for performance formulas. The removed `metrics/performance/` class wrappers (`SharpeRatio`, `SortinoRatio`) are superseded by `quantfoundry_core.metrics` via `objective_metrics.py`.
 
 ---
 

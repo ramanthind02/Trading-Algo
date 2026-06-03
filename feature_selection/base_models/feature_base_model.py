@@ -12,6 +12,8 @@ from utils.core.models import Candle
 
 logger = logging.getLogger(__name__)
 
+_CACHE_MISS_SENTINEL = object()  # returned by _read_signal_from_cache on miss
+
 
 def _normalize_tickers(tickers: Ticker | list[Ticker]) -> list[Ticker]:
     return [tickers] if isinstance(tickers, Ticker) else list(tickers)
@@ -136,7 +138,112 @@ class BaseModel:
             for timeframe in self.bias_node_spec["timeframes"]
         }
 
+    def _read_signal_from_cache(self, candles_df: pd.DataFrame) -> pd.Series | object:
+        """Attempt to read pre-computed signal values from the central cache.
+
+        Returns a pd.Series (datetime-indexed, clipped to [-2,2]) on cache hit,
+        or ``_CACHE_MISS_SENTINEL`` when the artifact is absent, the module is
+        not cacheable (e.g. buy_hold), or any other lookup failure occurs.
+
+        Reading from the cache avoids replaying raw candles through the bias
+        node, which is the root cause of all-zero signals when the predict
+        window is shorter than the indicator's warmup period (e.g. SMA-252
+        over a 91-day holdout window).
+        """
+        from utils.cache.runtime.central_cache import CentralCacheStore
+        from utils.cache.runtime.central_cache_errors import ArtifactMissingError
+        from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
+
+        spec = self.bias_node_spec
+        module_name = str(spec["module_name"])
+        if module_name == "buy_hold":
+            return _CACHE_MISS_SENTINEL
+
+        timeframes: list[TimeFrame] = spec["timeframes"]
+        raw_params: dict = dict(spec.get("params", {}))
+
+        if "datetime" not in candles_df.columns:
+            return _CACHE_MISS_SENTINEL
+
+        store = CentralCacheStore.get_instance()
+
+        combined_values: list[float] = []
+        combined_index: list[pd.Timestamp] = []
+        column_name: str | None = self.feature_column
+
+        for ticker in self.tickers:
+            ticker_name = ticker.name if hasattr(ticker, "name") else str(ticker)
+            ticker_mask = candles_df["ticker"].astype(str).map(
+                lambda v: v.name if hasattr(v, "name") else v  # type: ignore[return-value]
+            ) == ticker_name if "ticker" in candles_df.columns else pd.Series(True, index=candles_df.index)
+            ticker_dates = pd.to_datetime(candles_df.loc[ticker_mask, "datetime"]).dt.normalize()
+            if ticker_dates.empty:
+                continue
+
+            for tf in timeframes:
+                try:
+                    node = helpers.create_fresh_bias_node(module_name, ticker, tf, raw_params)
+                except Exception:
+                    return _CACHE_MISS_SENTINEL
+
+                resolved_module = getattr(node, "module_name", None) or module_name
+                resolved_params = dict(getattr(node, "params", None) or raw_params)
+
+                if column_name is None and hasattr(node, "get_column_names"):
+                    names = node.get_column_names()
+                    if names:
+                        column_name = str(names[0])
+
+                descriptor = ArtifactDescriptor(
+                    family="bias",
+                    module_name=resolved_module,
+                    params=resolved_params,
+                    ticker=ticker,
+                    timeframe=tf,
+                    scope=ArtifactScope.LIVE,
+                    artifact_name=resolved_module,
+                )
+
+                try:
+                    artifact_df = store.read_artifact(descriptor)
+                except (ArtifactMissingError, Exception):
+                    logger.debug(
+                        "Cache miss for %s / %s / %s — falling back to candle replay",
+                        resolved_module, ticker_name, tf.name,
+                    )
+                    return _CACHE_MISS_SENTINEL
+
+                if artifact_df is None or artifact_df.empty:
+                    return _CACHE_MISS_SENTINEL
+
+                artifact_index = pd.to_datetime(artifact_df.index).normalize()
+                value_col = artifact_df["value"] if "value" in artifact_df.columns else artifact_df.iloc[:, 0]
+                artifact_series = pd.Series(value_col.values, index=artifact_index, dtype=float)
+
+                aligned = artifact_series.reindex(ticker_dates.values).fillna(0.0)
+                combined_values.extend(aligned.values.tolist())
+                combined_index.extend(ticker_dates.values.tolist())
+
+        if not combined_index:
+            return _CACHE_MISS_SENTINEL
+
+        if column_name is None:
+            column_name = "signed_signal"
+
+        result = pd.Series(combined_values, index=pd.DatetimeIndex(combined_index), name=column_name, dtype=float)
+        if result.index.duplicated().any():
+            result = result.groupby(level=0).mean()
+        result = result.clip(-2.0, 2.0)
+        self.feature_column = column_name
+        self._latest_feature_series = result
+        return result
+
     def _extract_feature_series(self, candles_df: pd.DataFrame) -> pd.Series:
+        if self.use_cache:
+            cached = self._read_signal_from_cache(candles_df)
+            if cached is not _CACHE_MISS_SENTINEL:
+                return cached  # type: ignore[return-value]
+
         nodes = self._build_bias_nodes()
         self.bias_nodes = nodes
 

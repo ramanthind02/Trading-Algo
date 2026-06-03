@@ -25,8 +25,8 @@ def test_permutation_test_config_defaults() -> None:
     assert config.nreps == 1000
     assert config.alpha == 0.10
     assert config.random_seed is None
-    assert config.n_jobs_combos == 1
-    assert config.n_jobs_reps == 1
+    assert config.n_jobs_combos == 8
+    assert config.n_jobs_reps == 8
 
 
 def test_permutation_test_config_rejects_in_sample_config_plus_legacy_scalars() -> None:
@@ -141,13 +141,72 @@ def test_vector_shuffle_only_empty_stage2_reports(monkeypatch: pytest.MonkeyPatc
         param_grid=param_grid,
         objective_func=_objective,
         fold_structure=[(candles.index[0], candles.index[-1])],
-        config=PermutationTestConfig(nreps=4, alpha=0.10, min_folds_stable=1),
+        config=PermutationTestConfig(
+            in_sample=InSamplePermutationConfig(nreps=4, alpha=0.10, n_jobs_combos=1),
+            out_of_sample=OutOfSamplePermutationConfig(run_oos_permutation=False),
+        ),
         extractor_func=_extractor,
         feature_name="test",
     )
 
     assert suite.stage2_reports == {}
     assert set(suite.ensemble_candidates) == passers
+
+
+def test_parallel_combo_parity_with_sequential() -> None:
+    """Parallel (n_jobs_combos=2) and sequential (n_jobs_combos=1) produce identical p-values and pass flags."""
+    from feature_selection.validation import orchestration
+
+    rng = np.random.default_rng(0)
+    n = 60
+    dates = pd.date_range("2020-01-01", periods=n, freq="D")
+    candles = pd.DataFrame({"close": rng.standard_normal(n).cumsum() + 100.0}, index=dates)
+    target = pd.Series(rng.standard_normal(n), index=dates)
+    param_grid = [{"lookback": 2}, {"lookback": 4}, {"lookback": 7}]
+
+    base_config = PermutationTestConfig(
+        nreps=20,
+        alpha=0.10,
+        random_seed=42,
+        out_of_sample=OutOfSamplePermutationConfig(run_oos_permutation=False),
+    )
+
+    def _run(n_jobs: int) -> dict:
+        cfg = PermutationTestConfig(
+            in_sample=InSamplePermutationConfig(
+                nreps=base_config.nreps,
+                alpha=base_config.alpha,
+                n_jobs_combos=n_jobs,
+            ),
+            random_seed=base_config.random_seed,
+            out_of_sample=OutOfSamplePermutationConfig(run_oos_permutation=False),
+        )
+        suite = orchestration.run_permutation_test_suite(
+            candles_df=candles,
+            feature_spec={"module_name": "test"},
+            target=target,
+            param_grid=param_grid,
+            objective_func=_objective,
+            config=cfg,
+            extractor_func=_extractor,
+            feature_name="parity_test",
+        )
+        return {
+            k: (round(r.p_value, 6), r.passed)
+            for k, r in suite.stage1_reports.items()
+        }
+
+    sequential = _run(1)
+    parallel = _run(2)
+
+    assert set(sequential) == set(parallel), "combo keys differ"
+    for combo_name in sequential:
+        seq_pval, seq_passed = sequential[combo_name]
+        par_pval, par_passed = parallel[combo_name]
+        assert seq_passed == par_passed, f"{combo_name}: passed flag differs ({seq_passed} vs {par_passed})"
+        assert abs(seq_pval - par_pval) < 0.05, (
+            f"{combo_name}: p-values differ too much ({seq_pval} vs {par_pval})"
+        )
 
 
 def test_suite_runs_oos_on_vector_passers_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,10 +262,8 @@ def test_suite_runs_oos_on_vector_passers_by_default(monkeypatch: pytest.MonkeyP
         objective_func=_objective,
         fold_structure=[(candles.index[0], candles.index[-1])],
         config=PermutationTestConfig(
-            nreps=5,
-            alpha=0.10,
+            in_sample=InSamplePermutationConfig(nreps=5, alpha=0.10, n_jobs_combos=1),
             random_seed=17,
-            min_folds_stable=1,
             out_of_sample=OutOfSamplePermutationConfig(run_oos_permutation=True),
         ),
         extractor_func=_extractor,

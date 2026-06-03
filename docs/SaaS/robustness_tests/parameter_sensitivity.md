@@ -23,53 +23,48 @@ Existing implementation references:
 
 ### 2.1 Core Idea
 
-Take the researcher's chosen parameter combination. Perturb each parameter by ±10%. Run the strategy on all perturbed combinations. The **median result across the perturbation set is the realistic performance estimate** — the number the researcher should plan around, not the peak backtest result.
+Take the researcher's chosen parameter combination (from robustness selection). For each numeric parameter, evaluate the combo with that parameter shifted by **±1 × min_step**, holding all others fixed. This is an **axis-aligned** neighbourhood — typically `2 × n_params` fresh backtests, not a Cartesian product and not grid spacing.
 
-This is a shrinkage estimator. In practice a researcher never trades the exact optimised parameter: values drift, data shifts, implementation differs slightly. The median across the perturbation neighbourhood is a more honest expectation of live performance than the IS peak. The gap between peak and median is the **optimism bias** introduced by optimisation.
+Grid steps bound the search space; **min_step** is the smallest economically meaningful change (1 day, 1 bar, 1 RSI point). Do not use grid spacing as min_step — that measures sensitivity at search resolution, not parameter resolution.
 
-A large gap (peak 1.8, median 0.9) means the optimiser found a noise spike — the strategy is fragile. A small gap (peak 1.8, median 1.6) means the strategy sits on a plateau — robust.
+The **median metric across neighbour runs** is the realistic performance estimate. The gap between peak and median is **optimism bias**. **Stability ratio** (`median / peak`) near 1.0 means the edge does not flinch at the smallest parameter nudge.
 
-### 2.2 Perturbation Method
+Implementation: `quantfoundry_core.robustness.build_perturbation_neighbors` + `aggregate_perturbation_results`; pipeline: `feature_research/pipelines/param_perturbation.py`.
 
-> **Note:** The exact perturbation scheme (how the ±10% band is enumerated across parameter types, grid-rounding behaviour, and whether the Cartesian product or joint perturbation is used) is TBD and will be specified separately once finalised.
+### 2.2 Configuration
 
-The key invariants regardless of scheme:
-- All perturbed combinations stay within ±10% of each chosen parameter value
-- The chosen combination itself is included in the perturbation set
-- The perturbation set is the same for both the formal test and the sensitivity plots
+Per-parameter `ParamPerturbationSpec(min_step, valid_min, valid_max)` in `ResearchConfig.param_sensitivity.perturbation_specs`. Invalid directions are **skipped** (not clipped) when a shift would leave the valid range.
 
 ### 2.3 Outputs
 
-For each run of the perturbation test, report:
-
 | Metric | Description |
 |---|---|
-| `peak_metric` | Metric value of the chosen combination |
-| `median_metric` | Median across all perturbed combinations — the realistic performance estimate |
-| `p10_metric` | 10th percentile — downside tail |
-| `p90_metric` | 90th percentile — upside tail |
-| `optimism_bias` | `peak_metric − median_metric` — how much the optimiser inflated the result |
-| `n_perturbed` | Number of combinations in the perturbation set |
+| `peak_metric` | Metric for the **chosen** combination |
+| `median_metric` | Median across **neighbour** runs only |
+| `p10_metric` | 10th percentile of neighbour scores |
+| `p90_metric` | 90th percentile of neighbour scores |
+| `optimism_bias` | `peak_metric − median_metric` |
+| `stability_ratio` | `median_metric / peak_metric` |
+| `n_perturbed` | Number of neighbour combos evaluated |
 | `passed` | `median_metric ≥ metric_floor` (default: t-stat 2.0) |
+| `interpretation` | Sentence-level summary for UI |
 
-The `passed` condition is deliberately simple: does the strategy still show a meaningful edge after shrinking toward the perturbation median? If the median clears the floor, the researcher has a robust signal. If it does not, the peak was a noise spike.
+Artifacts: `perturbation_report.json`, `perturbation_runs.csv`, `perturbation_summary.md` under the exploration visualization dir.
 
 ```python
 @dataclass(frozen=True)
 class PerturbationTestResult:
-    chosen_combination: dict[str, Any]
-    perturbation_pct: float          # default 0.10
-
+    chosen_params: dict[str, Any]
     peak_metric: float
     median_metric: float
     p10_metric: float
     p90_metric: float
-    optimism_bias: float             # peak - median
+    optimism_bias: float
+    stability_ratio: float
     n_perturbed: int
-
     metric_floor: float
-    passed: bool                     # median_metric >= metric_floor
-    interpretation: str              # sentence-level summary for UI
+    passed: bool
+    interpretation: str
 ```
 
 ---
@@ -130,6 +125,19 @@ For models with 3 or more parameters, direct visualisation requires slicing. Two
 
 For 4+ parameter models the UI defaults to pairwise slices through the chosen combination, with an option to explore other slice positions.
 
+### 3.4 Current Research Artifact Path
+
+The active local implementation is the **interactive pivot explorer** in the research workspace **Parameter Sensitivity** section. It reads:
+
+- `param_sensitivity.csv`
+- `param_sensitivity_by_ticker.csv`
+- `param_combo_long.csv`
+- `filter_exploration_summary.csv` (optional filter A/B/C dataset)
+
+The UI joins metric tables to long-form parameter rows, lets the researcher pick row/column dimensions and a metric, and renders a live HTML heatmap (each cell = average metric for that parameter pair). Field labels map internal keys (`s_*`, `f_*`, gate columns) to readable names.
+
+Matplotlib still renders non-sensitivity charts (equity curves, filter-gate comparison bar chart, etc.) from other CSV exports; parameter-sensitivity surfaces are pivot-only in the workspace.
+
 ---
 
 ## 4. Relationship to Other IS Tests
@@ -138,7 +146,7 @@ The perturbation test and search-bias tests (Full Grid Permutation, DSR) are ind
 
 | Scenario | Interpretation |
 |---|---|
-| Passes search-bias, passes perturbation | Strong IS evidence of real edge. Proceed to walkforward. |
+| Passes search-bias, passes perturbation | Strong IS evidence of real edge. Proceed to validation. |
 | Passes search-bias, fails perturbation | Search was not the problem — the chosen combination is a fragile peak within an otherwise real signal space. Select a combination from the stable neighbourhood instead of the raw peak. |
 | Fails search-bias, passes perturbation | The stable region is real, but the search was large enough that finding it by chance is plausible. Reduce grid size or obtain more data. |
 | Fails both | Discard. Weak signal, large search, and a fragile peak. |
@@ -191,8 +199,8 @@ Grid layout of all pairwise heatmaps with the perturbation box overlay described
 | `results_df` | `pd.DataFrame` | IS zone backtest output | One row per combination; param value columns and metric column |
 | `param_names` | `list[str]` | Strategy spec | Names of parameters that were swept |
 | `metric_col` | `str` | User config | Objective column (e.g. `t_stat`, `sharpe`) |
-| `chosen_combination` | `dict[str, Any]` | Researcher selection | The combination selected as best |
-| `perturbation_pct` | `float` | User config | Default 0.10 (±10%) |
+| `chosen_combination` | `dict[str, Any]` | Robustness selection | Best combo from `robustness_report.best_combination.params` |
+| `perturbation_specs` | `dict[str, ParamPerturbationSpec]` | `ParamSensitivityConfig` | Per-parameter min_step and optional bounds |
 | `metric_floor` | `float` | User config | Default 2.0 (t-stat units) |
 
 ### 6.2 Outputs
@@ -210,8 +218,10 @@ class ParameterSensitivityPlotBundle:
 
 Each `MarginalCurveData` and `HeatmapData` carries data arrays for client-side rendering — not pre-rendered images. The Web frontend owns rendering; the worker produces data.
 
+For the current research workspace, the practical artifact is the pivot explorer described in §3.4: live HTML heatmap over CSV exports. That keeps the path CSV-first while giving readable axis labels and slice controls in the browser.
+
 ### 6.3 Worker Behaviour
 
-Parameter sensitivity computation runs synchronously on the API server after the IS backtest job completes — no separate job dispatch. Input is the already-computed `results_df`; no additional backtesting is required. Neighbour averaging and perturbation statistics are sub-second for grids up to ~10,000 combinations.
+**Grid surface (EDA):** runs during the exploration EDA sweep; writes `param_sensitivity.csv`, `param_combo_long.csv`, and optional by-ticker tables. Neighbour smoothing uses **grid-step** neighbours only. Review surfaces in the workspace pivot explorer, not Matplotlib heatmaps.
 
-Plot data is stored as a structured artifact alongside the backtest result and returned to the frontend on demand.
+**Min-step perturbation:** runs after robustness in `execute_exploration_phase`, before vector-shuffle permutation. Builds neighbours via `build_perturbation_neighbors`, then **re-runs** the strategy for each off-grid neighbour (typically `2 × n_params` evaluations). Writes `perturbation_report.json`, `perturbation_runs.csv`, and `perturbation_summary.md`. Surfaced in the Parameter Sensitivity workspace section via `renderPerturbationSummaryPanel`.

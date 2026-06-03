@@ -1,11 +1,11 @@
-"""Validation permutation test (vector-shuffle null, single fold from config.validation_window)."""
+"""Validation permutation test (vector-shuffle null, single fold from config.research_window)."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
-from feature_research.permutation_script_support import run_permutation_phase_main
+from feature_research._internal.permutation_script_support import run_permutation_phase_main
 
 
 def main() -> int:

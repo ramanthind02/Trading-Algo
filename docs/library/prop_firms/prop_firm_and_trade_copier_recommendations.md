@@ -108,7 +108,7 @@ Cheapest monthly. Longest track record ($1.1B+ paid). Tighter drawdown and lower
 ## Recommended Architecture
 
 ```
-Python pipeline (tws_live_forecast.py)
+Python pipeline (`scripts/enigma_live_forecast.py`)
     ↓ places orders via Tradovate REST API
 Tradovate demo/sim account (leader)
     ↓ Tradecopia watches leader

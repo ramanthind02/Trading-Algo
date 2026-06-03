@@ -560,16 +560,16 @@ def run_futures_sim(
         sim_dir=sim_dir,
     )
 
-    # --- discrete tearsheet ---
-    daily_discrete_pnl = daily.set_index("date")["discrete_total_pnl"]
-    daily_fractional_pnl = daily.set_index("date")["fractional_total_pnl"]
-    _emit_discrete_tearsheet(
-        daily_discrete_pnl=daily_discrete_pnl,
-        daily_fractional_pnl=daily_fractional_pnl,
-        account_capital=capital,
-        phase_name=phase_name,
-        sim_dir=sim_dir,
-    )
+    if getattr(sim_config, "emit_discrete_tearsheet", False):
+        daily_discrete_pnl = daily.set_index("date")["discrete_total_pnl"]
+        daily_fractional_pnl = daily.set_index("date")["fractional_total_pnl"]
+        _emit_discrete_tearsheet(
+            daily_discrete_pnl=daily_discrete_pnl,
+            daily_fractional_pnl=daily_fractional_pnl,
+            account_capital=capital,
+            phase_name=phase_name,
+            sim_dir=sim_dir,
+        )
 
     # --- return series for callers ---
     discrete_pct = daily.set_index("date")["discrete_pct_return"].rename("strategy_return")

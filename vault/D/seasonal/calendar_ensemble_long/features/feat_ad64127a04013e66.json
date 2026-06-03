@@ -1,0 +1,47 @@
+{
+  "feature_name": "calendar_ensemble_signal_D_equityEntryOffset_-4_equityExitOffset_0_fomcEntryOffset_-2_fomcExitOffset_0_goldEntryOffset_-2_goldExitOffset_1",
+  "created_at": "2026-05-30T23:09:59.019750+00:00",
+  "updated_at": "2026-05-30T23:09:59.019750+00:00",
+  "bias_node_spec": {
+    "module_name": "calendar_ensemble",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "equity_entry_offset": -4,
+      "equity_exit_offset": 0,
+      "gold_entry_offset": -2,
+      "gold_exit_offset": 1,
+      "fomc_entry_offset": -2,
+      "fomc_exit_offset": 0
+    }
+  },
+  "tickers": [
+    "ES",
+    "GC"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_calendar-ensemble_d_equity-entry-offset_4_equity-exit-offset_0_fomc-entry-offset_2_fomc-exit-offset_0_gold-entry-offset_2_gold-exit-offset_1",
+      "model_name": "calendar_ensemble_signal_D_equityEntryOffset_-4_equityExitOffset_0_fomcEntryOffset_-2_fomcExitOffset_0_goldEntryOffset_-2_goldExitOffset_1::signed_signal_calendar-ensemble_d_equity-entry-offset_4_equity-exit-offset_0_fomc-entry-offset_2_fomc-exit-offset_0_gold-entry-offset_2_gold-exit-offset_1",
+      "model_type": "signed_signal",
+      "feature_column": "calendar_ensemble_signal_D_equityEntryOffset_-4_equityExitOffset_0_fomcEntryOffset_-2_fomcExitOffset_0_goldEntryOffset_-2_goldExitOffset_1",
+      "strategy": "long",
+      "bias_node_spec": {
+        "module_name": "calendar_ensemble",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "equity_entry_offset": -4,
+          "equity_exit_offset": 0,
+          "gold_entry_offset": -2,
+          "gold_exit_offset": 1,
+          "fomc_entry_offset": -2,
+          "fomc_exit_offset": 0
+        }
+      }
+    }
+  ],
+  "weight_hierarchy_group": "seasonal"
+}

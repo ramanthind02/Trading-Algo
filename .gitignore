@@ -14,6 +14,8 @@ utils/compute/cython/*.c
 
 # HTML artifacts (QuantStats / portfolio tearsheets / prop-firm reports / any static export)
 *.html
+!frontend/feature_research.html
+!frontend/portfolio_research.html
 
 # Distribution / packaging
 .Python
@@ -56,6 +58,8 @@ htmlcov/
 .cache/trading_algo/
 # In-sample research run outputs (thousands of small files; kills commit performance if staged).
 feature_research/in_sample/results/
+feature_research/shared_results/
+portfolio_research/results/
 nosetests.xml
 coverage.xml
 *.cover
@@ -240,6 +244,7 @@ uv.lock
 venv
 # Claude
 .claude/settings.local.json
+.codegraph/
 tmpclaude*
 
 # Research reports (generated outputs)

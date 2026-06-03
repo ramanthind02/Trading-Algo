@@ -1,4 +1,4 @@
-"""Long-format CSV export for feature–vault correlation (Power BI / BI tools)."""
+"""Long-format CSV export for feature-vault correlation visualization."""
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
@@ -32,11 +32,11 @@ def _write_frame_csv(df: pd.DataFrame, stem: Path) -> Path:
     return csv_path
 
 
-def write_vault_correlation_powerbi_long(
+def write_vault_correlation_visualization_long(
     rows: Sequence[Mapping[str, object]],
     output_csv_stem: Path,
 ) -> Path:
-    """Write long-format vault vs research correlation metrics for Power BI (stable columns)."""
+    """Write long-format vault vs research correlation metrics with stable columns."""
     df = _dataframe_with_columns(pd.DataFrame(list(rows)), _VAULT_CORRELATION_LONG_COLS)
     output_csv_stem.parent.mkdir(parents=True, exist_ok=True)
     return _write_frame_csv(df, output_csv_stem)

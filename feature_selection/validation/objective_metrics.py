@@ -8,10 +8,17 @@ from typing import Callable, Literal, Mapping, cast
 
 import numpy as np
 import pandas as pd
+from quantfoundry_core.metrics import (
+    MetricName,
+    ReturnsCompounding,
+    ReturnsValidationError,
+    compute_scalar_metric,
+)
 
 BuiltinMetricName = Literal['sharpe', 'sortino', 'calmar', 't_stat', 'profit_factor', 'mean_return', 'always_zero']
 ObjectiveMetricCallable = Callable[[pd.Series], float]
 _MetricFactoryCallable = Callable[..., float]
+_SCALAR_INDEX_START = "2000-01-01"
 
 
 def metric_sharpe(
@@ -20,15 +27,27 @@ def metric_sharpe(
     risk_free_rate: float = 0.0,
     annualization_factor: float = 1.0,
 ) -> float:
-    """Sharpe ratio with optional annualization."""
-    clean = _clean_returns(returns)
+    """Sharpe ratio via ``quantfoundry_core.metrics`` with local edge-case fallback."""
+    clean = _prepare_scalar_returns(returns)
     if clean.empty:
         return 0.0
-    excess = clean - risk_free_rate
-    volatility = float(excess.std(ddof=0))
-    annualization_scale = math.sqrt(max(annualization_factor, 0.0))
-    numerator = float(excess.mean() * annualization_scale)
-    return _deterministic_ratio(numerator=numerator, denominator=volatility)
+    annual_risk_free_rate = risk_free_rate * max(float(annualization_factor), 0.0)
+    core_value = _compute_supported_core_metric(
+        clean,
+        metric=MetricName.SHARPE,
+        annualization_factor=annualization_factor,
+        annual_risk_free_rate=annual_risk_free_rate,
+    )
+    return (
+        core_value
+        if core_value is not None
+        else _fallback_builtin_metric(
+            clean,
+            MetricName.SHARPE,
+            annualization_factor=annualization_factor,
+            risk_free_rate=risk_free_rate,
+        )
+    )
 
 
 def metric_sortino(
@@ -37,16 +56,27 @@ def metric_sortino(
     target_return: float = 0.0,
     annualization_factor: float = 1.0,
 ) -> float:
-    """Sortino ratio using downside volatility only."""
-    clean = _clean_returns(returns)
+    """Sortino ratio via ``quantfoundry_core.metrics`` with local edge-case fallback."""
+    clean = _prepare_scalar_returns(returns)
     if clean.empty:
         return 0.0
-    excess = clean - target_return
-    downside = excess[excess < 0.0]
-    downside_risk = float(downside.std(ddof=0))
-    annualization_scale = math.sqrt(max(annualization_factor, 0.0))
-    numerator = float(excess.mean() * annualization_scale)
-    return _deterministic_ratio(numerator=numerator, denominator=downside_risk)
+    annual_target_return = target_return * max(float(annualization_factor), 0.0)
+    core_value = _compute_supported_core_metric(
+        clean,
+        metric=MetricName.SORTINO,
+        annualization_factor=annualization_factor,
+        annual_risk_free_rate=annual_target_return,
+    )
+    return (
+        core_value
+        if core_value is not None
+        else _fallback_builtin_metric(
+            clean,
+            MetricName.SORTINO,
+            annualization_factor=annualization_factor,
+            target_return=target_return,
+        )
+    )
 
 
 def metric_calmar(
@@ -54,47 +84,58 @@ def metric_calmar(
     *,
     annualization_factor: float = 1.0,
 ) -> float:
-    """Calmar ratio as annualized mean return over max drawdown."""
-    clean = _clean_returns(returns)
+    """Calmar ratio via ``quantfoundry_core.metrics`` with local edge-case fallback."""
+    clean = _prepare_scalar_returns(returns)
     if clean.empty:
         return 0.0
-    equity_curve = (1.0 + clean).cumprod()
-    drawdown = equity_curve / equity_curve.cummax() - 1.0
-    max_drawdown = abs(float(drawdown.min()))
-    annualized_return = float(clean.mean() * annualization_factor)
-    return _deterministic_ratio(numerator=annualized_return, denominator=max_drawdown)
+    core_value = _compute_supported_core_metric(
+        clean,
+        metric=MetricName.CALMAR,
+        annualization_factor=annualization_factor,
+    )
+    return (
+        core_value
+        if core_value is not None
+        else _fallback_builtin_metric(
+            clean,
+            MetricName.CALMAR,
+            annualization_factor=annualization_factor,
+        )
+    )
 
 
 def metric_t_stat(returns: pd.Series) -> float:
     """One-sample t-statistic of mean returns against zero."""
-    clean = _clean_returns(returns)
-    if clean.empty:
-        return 0.0
-    n_obs = int(clean.shape[0])
-    if n_obs < 2:
+    clean = _prepare_scalar_returns(returns)
+    if clean.empty or len(clean) < 2:
         return 0.0
     mean_return = float(clean.mean())
     sample_std = float(clean.std(ddof=1))
-    standard_error = sample_std / math.sqrt(float(n_obs))
+    standard_error = sample_std / math.sqrt(float(len(clean)))
     return _deterministic_ratio(numerator=mean_return, denominator=standard_error)
 
 
 def metric_profit_factor(returns: pd.Series) -> float:
     """Profit factor as gross gains divided by gross losses."""
-    clean = _clean_returns(returns)
+    clean = _prepare_scalar_returns(returns)
     if clean.empty:
         return 0.0
-    gross_gain = float(clean[clean > 0.0].sum())
-    gross_loss = abs(float(clean[clean < 0.0].sum()))
-    return _deterministic_ratio(numerator=gross_gain, denominator=gross_loss)
+    core_value = _compute_supported_core_metric(
+        clean,
+        metric=MetricName.PROFIT_FACTOR,
+        annualization_factor=1.0,
+    )
+    return (
+        core_value
+        if core_value is not None
+        else _fallback_builtin_metric(clean, MetricName.PROFIT_FACTOR)
+    )
 
 
 def metric_mean_return(returns: pd.Series) -> float:
     """Arithmetic mean return with NaN/inf cleanup."""
-    clean = _clean_returns(returns)
-    if clean.empty:
-        return 0.0
-    return float(clean.mean())
+    clean = _prepare_scalar_returns(returns)
+    return float(clean.mean()) if not clean.empty else 0.0
 
 
 def metric_always_zero(_returns: pd.Series) -> float:
@@ -162,6 +203,14 @@ def resolve_objective_metric(spec: ObjectiveMetricSpec) -> ObjectiveMetricCallab
     return lambda returns: apply_objective_metric(spec, returns)
 
 
+def resolve_objective_metric_name(metric_name: str) -> ObjectiveMetricCallable:
+    """Resolve a builtin metric callable from its stable string name."""
+    spec = _BUILTIN_OBJECTIVE_METRICS.get(metric_name)
+    if spec is None:
+        raise ValueError(f"Unsupported objective metric: {metric_name}")
+    return lambda returns: float(spec(returns))
+
+
 def _import_metric_callable(callable_path: str | None) -> _MetricFactoryCallable:
     if callable_path is None:
         raise ValueError('callable_path is required for custom objective metrics.')
@@ -174,16 +223,87 @@ def _import_metric_callable(callable_path: str | None) -> _MetricFactoryCallable
     return cast(_MetricFactoryCallable, metric_object)
 
 
-def _clean_returns(returns: pd.Series) -> pd.Series:
-    numeric_returns = pd.to_numeric(returns, errors='coerce').dropna()
-    if numeric_returns.empty:
-        return numeric_returns
-    finite_mask = np.isfinite(numeric_returns.to_numpy(dtype=float))
-    return numeric_returns.loc[finite_mask]
+def _compute_supported_core_metric(
+    returns: pd.Series,
+    *,
+    metric: MetricName,
+    annualization_factor: float,
+    annual_risk_free_rate: float = 0.0,
+) -> float | None:
+    periods_per_year = _periods_per_year(annualization_factor)
+    if periods_per_year is None:
+        return None
+    try:
+        return float(
+            compute_scalar_metric(
+                returns,
+                metric,
+                periods_per_year=periods_per_year,
+                risk_free_rate=annual_risk_free_rate,
+                compounding=ReturnsCompounding.SIMPLE,
+            )
+        )
+    except ReturnsValidationError:
+        return None
+
+
+def _prepare_scalar_returns(returns: pd.Series | np.ndarray) -> pd.Series:
+    raw = returns if isinstance(returns, pd.Series) else pd.Series(returns)
+    numeric = pd.to_numeric(raw, errors='coerce').dropna()
+    if numeric.empty:
+        return pd.Series(dtype='float64')
+    values = numeric.to_numpy(dtype=float)
+    finite_values = values[np.isfinite(values)]
+    if finite_values.size == 0:
+        return pd.Series(dtype='float64')
+    synthetic_index = pd.date_range(_SCALAR_INDEX_START, periods=len(finite_values), freq='D')
+    return pd.Series(finite_values, index=synthetic_index, dtype='float64')
+
+
+def _periods_per_year(annualization_factor: float) -> int | None:
+    if not math.isfinite(annualization_factor) or annualization_factor <= 0.0:
+        return None
+    return max(1, int(round(float(annualization_factor))))
+
+
+def _fallback_builtin_metric(
+    returns: pd.Series,
+    metric: MetricName,
+    *,
+    annualization_factor: float = 1.0,
+    risk_free_rate: float = 0.0,
+    target_return: float = 0.0,
+) -> float:
+    """Local edge-case policy when Core rejects or cannot annualize the series."""
+    match metric:
+        case MetricName.SHARPE:
+            excess = returns - risk_free_rate
+            volatility = float(excess.std(ddof=0))
+            annualization_scale = math.sqrt(max(annualization_factor, 0.0))
+            numerator = float(excess.mean() * annualization_scale)
+            return _deterministic_ratio(numerator=numerator, denominator=volatility)
+        case MetricName.SORTINO:
+            excess = returns - target_return
+            downside = excess[excess < 0.0]
+            downside_risk = float(downside.std(ddof=0))
+            annualization_scale = math.sqrt(max(annualization_factor, 0.0))
+            numerator = float(excess.mean() * annualization_scale)
+            return _deterministic_ratio(numerator=numerator, denominator=downside_risk)
+        case MetricName.CALMAR:
+            equity_curve = (1.0 + returns).cumprod()
+            drawdown = equity_curve / equity_curve.cummax() - 1.0
+            max_drawdown = abs(float(drawdown.min()))
+            annualized_return = float(returns.mean() * annualization_factor)
+            return _deterministic_ratio(numerator=annualized_return, denominator=max_drawdown)
+        case MetricName.PROFIT_FACTOR:
+            gross_gain = float(returns[returns > 0.0].sum())
+            gross_loss = abs(float(returns[returns < 0.0].sum()))
+            return _deterministic_ratio(numerator=gross_gain, denominator=gross_loss)
+        case _:
+            raise ValueError(f"Unsupported fallback metric: {metric!r}")
 
 
 def _deterministic_ratio(*, numerator: float, denominator: float) -> float:
-    """Return stable ratio values when denominator is zero or non-finite."""
     if math.isfinite(denominator) and denominator > 0.0:
         return numerator / denominator
     if numerator > 0.0:

@@ -24,14 +24,18 @@ Production uses native signed-signal bias nodes that emit `-1/0/+1`. Continuous 
 
 ## Feature selection
 
-- [[Feature_selection/pipeline]] - End-to-end research flow
+- [[Feature_selection/pipeline]] - Current `feature_research` phase model (`exploration -> validation -> portfolio_addition`)
+- [[SaaS/robustness_tests/index]] - Canonical robustness workflow that the local `feature_research` docs now mirror
 - [[Feature_selection/Features/base_feature]] - Base feature contract
 - [[Feature_selection/Features/feature_model]] - Feature model overview
 - [[Feature_selection/Features/rule_based]] - Native discrete feature notes
-- [[Feature_selection/Phase_1_IS/eda]] - In-sample EDA
-- [[Feature_selection/Phase_1_IS/permutation_testing]] - In-sample permutation
-- [[Feature_selection/Phase_2_WF/walkforward]] - Walk-forward reference
-- [[Feature_selection/Phase_3_OOS/oos_validation]] - OOS validation
+- [[Feature_selection/exploration]] - Exploration artifacts and hand-off to parameter lock
+- [[Feature_selection/permutation_testing]] - Exploration-phase permutation subset
+- [[Feature_selection/parameter_sensitivity]] - Parameter sensitivity and plateau-selection guide
+- [[Feature_selection/validation]] - Validation stage reference
+- [[Feature_selection/portfolio_addition]] - Portfolio-addition stage reference
+- [[SaaS/robustness_tests/portfolio_holdout]] - Downstream portfolio holdout source of truth
+- [[SaaS/robustness_tests/monitoring]] - Downstream monitoring source of truth
 
 ## Data
 
@@ -41,7 +45,7 @@ Production uses native signed-signal bias nodes that emit `-1/0/+1`. Continuous 
 
 - [[Ensemble/base_model]] - Base-model concepts
 - [[Ensemble/weight_layer]] - Weighting layer
-- [[Ensemble/portfolio]] - Portfolio layer, multi-TF orchestration, **inclusion gates** (adding a candidate strategy)
+- [[Ensemble/portfolio]] - Portfolio layer, multi-TF orchestration, and the portfolio-addition gate (older docs/code may still say `inclusion`)
 
 ## Vault
 
@@ -65,9 +69,10 @@ Default prop tree: `vault/<D|W|M>/<group>/<ensemble>/` (manual weight-hierarchy 
 1. [[workflow]]
 2. [[bias_nodes/index]] -> [[bias_nodes/creating_nodes]]
 3. [[Feature_selection/pipeline]]
-4. [[Feature_selection/Phase_1_IS/permutation_testing]]
-5. [[Feature_selection/Phase_2_WF/walkforward]]
-6. [[Vault/user_guide]]
+4. [[SaaS/robustness_tests/index]]
+5. [[Feature_selection/exploration]]
+6. [[Feature_selection/validation]]
+7. [[Vault/user_guide]]
 
 ## Naming convention
 

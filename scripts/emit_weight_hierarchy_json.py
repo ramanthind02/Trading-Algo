@@ -9,6 +9,9 @@ Uses each feature's ``weight_hierarchy_group`` (or infers ``.../<group>/...`` fr
 ``tickers``, ``bias_node_spec.timeframes``, and ``base_models[0].model_name`` to build global
 ``stream_id`` strings ``ticker::timeframe::model_name``.
 
+By default emits a **3-level asset-first** tree (root → asset_class → strategy_group → leaves).
+Use ``--legacy-two-level`` for the older root → vault-group → leaves layout.
+
 Pass ``--vault-root`` for a non-default tree (e.g. ``vault_personal``); otherwise the root is
 ``resolve_vault_root(None)`` (prop: ``TRADING_ALGO_VAULT_PROP`` / legacy ``TRADING_ALGO_VAULT_ROOT`` / ``<repo>/vault``).
 """
@@ -28,15 +31,17 @@ from utils.vault_paths import resolve_vault_root
 
 from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
 from ensemble.vault.hierarchy_spec import (
+    build_asset_first_hierarchy_spec_from_vault,
     build_hierarchy_spec_from_vault,
+    collect_streams_by_asset_and_style,
 )
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Build a hierarchy_equal JSON spec: root → five manual buckets → leaves as "
-            "global stream_id strings (ticker::timeframe::model_name)."
+            "Build a hierarchy_equal JSON spec from the vault. Default: 3-level asset-first "
+            "(root → asset_class → strategy_group → stream leaves)."
         )
     )
     parser.add_argument(
@@ -62,6 +67,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Fail if a feature has no weight_hierarchy_group and is not under a nested group folder",
     )
     parser.add_argument(
+        "--legacy-two-level",
+        action="store_true",
+        help="Emit root → vault strategy group → leaves (pre-asset-first layout)",
+    )
+    parser.add_argument(
         "--indent",
         type=int,
         default=2,
@@ -78,11 +88,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     vault = resolve_vault_root(args.vault_root)
-    spec, by_group = build_hierarchy_spec_from_vault(vault, strict_group=args.strict_group)
-    if args.stats:
-        for name in sorted(VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES):
-            n = len(by_group.get(name, ()))
-            print(f"{name}: {n} streams", file=sys.stderr)
+    if args.legacy_two_level:
+        spec, by_group = build_hierarchy_spec_from_vault(vault, strict_group=args.strict_group)
+        if args.stats:
+            for name in sorted(VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES):
+                n = len(by_group.get(name, ()))
+                print(f"{name}: {n} streams", file=sys.stderr)
+    else:
+        by_asset = collect_streams_by_asset_and_style(vault, strict_group=args.strict_group)
+        spec = build_asset_first_hierarchy_spec_from_vault(vault, strict_group=args.strict_group)
+        if args.stats:
+            for asset in sorted(by_asset.keys()):
+                for style, sids in sorted(by_asset[asset].items()):
+                    print(f"{asset}/{style}: {len(sids)} streams", file=sys.stderr)
     text = json.dumps(spec, indent=args.indent if args.indent > 0 else None, sort_keys=False)
     text = text if args.indent > 0 else text + "\n"
     if args.output is not None:

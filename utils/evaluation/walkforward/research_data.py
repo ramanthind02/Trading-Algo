@@ -7,13 +7,14 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from feature_research.core_helpers import (
+from feature_research._internal.core_helpers import (
     combo_key,
     normalize_datetime_index,
     normalize_series_datetime_index,
     unique_sorted_datetime_index,
 )
 from feature_research.in_sample.data_loader import (
+    enrich_param_combo_with_module,
     load_candles_for_config,
     load_features_for_combo,
     param_combo_label,
@@ -51,8 +52,16 @@ def _load_combo_signal_target(
     *,
     candles_override: pd.DataFrame | None = None,
 ) -> tuple[dict[str, object], pd.DataFrame | None]:
-    combo = single_spec["params"]
-    data = load_features_for_combo(single_spec, config, candles_override=candles_override)
+    combo = enrich_param_combo_with_module(
+        single_spec["params"],
+        single_spec.get("module_name"),
+    )
+    data = load_features_for_combo(
+        single_spec,
+        config,
+        candles_override=candles_override,
+        populate_on_miss=True,
+    )
     if data is None:
         return combo, None
 

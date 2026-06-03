@@ -25,7 +25,7 @@ The researcher explicitly picks a parameter combination from the sweep results. 
 
 ## 3. Method 2 — Best by Metric
 
-Select the combination with the highest Newey-West adjusted t-stat (or Sharpe, depending on the researcher's configured selection metric).
+Select the combination with the highest configured selection metric (typically t-stat or Sharpe).
 
 **When it is defensible:**
 - The IS period is reasonably long
@@ -34,7 +34,7 @@ Select the combination with the highest Newey-West adjusted t-stat (or Sharpe, d
 
 **When it is not sufficient:** If the perturbation test reveals a large peak-to-median gap, the best combination is a fragile noise peak. In this case the researcher should either narrow the search space, obtain more data, or wait for the ensemble selection method (future milestone).
 
-**Implementation:** Rank all combinations by NW-adjusted t-stat descending. Select rank 1. This is the default selection if the researcher does not manually choose a combination.
+**Implementation:** Rank all combinations by the configured selection metric descending. Select rank 1. This is the default selection if the researcher does not manually choose a combination.
 
 ---
 
@@ -61,4 +61,4 @@ class ParameterSelection:
     n_combinations_evaluated: int
 ```
 
-This is required to reproduce the selection decision at any future point and to audit it against walkforward results.
+This is required to reproduce the selection decision at any future point and to audit it against later validation and portfolio-addition results.

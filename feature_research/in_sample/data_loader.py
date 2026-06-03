@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Mapping
@@ -24,7 +25,7 @@ import pandas as pd
 if TYPE_CHECKING:
     from feature_research.config import ResearchConfig
 
-from feature_research.bias_spec_catalog import first_bias_spec
+from feature_research._internal.bias_spec_catalog import first_bias_spec
 
 
 class SupportsBiasCachePopulation(Protocol):
@@ -36,8 +37,8 @@ class SupportsBiasCachePopulation(Protocol):
     end: datetime
 
 from feature_extraction.feature_extractor import extract_features_for_bias_node
-from feature_research.bootstrap import find_repo_root
-from feature_research.config import FeatureType, RAW_TARGET_COLS
+from feature_research._internal.bootstrap import find_repo_root
+from feature_research.config import CachePopulationMode, FeatureType, RAW_TARGET_COLS
 from utils.cache import ArtifactScope
 from utils.cache.runtime.cache_manager import CacheManager
 from utils.core.enums import Ticker, TimeFrame
@@ -81,6 +82,37 @@ def _cache_coverage_console_message(summary: dict[str, Any]) -> str:
 
 def _normalize_bias_module_key(module_name: object) -> str:
     return str(module_name or "").replace("_", "").lower()
+
+
+BIAS_MODULE_COMBO_KEY = "_bias_module"
+
+
+def enrich_param_combo_with_module(
+    params: Mapping[str, Any],
+    module_name: object,
+) -> dict[str, Any]:
+    """Attach taxonomy ``module_name`` so identical inner params stay distinct (e.g. gate variants)."""
+    enriched = dict(params)
+    if module_name is not None:
+        enriched[BIAS_MODULE_COMBO_KEY] = str(module_name)
+    return enriched
+
+
+def params_for_bias_node(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Strip combo-identity keys before instantiating a bias node from ``params``."""
+    return {
+        key: value
+        for key, value in params.items()
+        if key != BIAS_MODULE_COMBO_KEY
+    }
+
+
+def bias_spec_for_node_instantiation(spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a bias spec safe to pass into ``extract_features_for_bias_node``."""
+    params = spec.get("params", {})
+    if not isinstance(params, dict):
+        return dict(spec)
+    return {**dict(spec), "params": params_for_bias_node(params)}
 
 
 def expand_bias_specs(
@@ -240,8 +272,62 @@ def load_candles_for_config(config: "ResearchConfig") -> pd.DataFrame:
 
 _INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
-# Keep final segments short so repo_path + results/.../filter_gate/<label> stays under Windows MAX_PATH.
+# Keep final path segments short (Windows MAX_PATH); prefer abbreviated labels before hashing.
 _MAX_PARAM_COMBO_LABEL_LEN = 80
+
+# Omitted from compact labels when constant across a typical signed-signal grid.
+_LABEL_SKIP_KEYS: frozenset[str] = frozenset(
+    {
+        "strategy_mode",
+        "strategyMode",
+        "exit_policy",
+        "exitPolicy",
+    }
+)
+
+_PARAM_KEY_ABBREV: dict[str, str] = {
+    "lookback": "lb",
+    "avg_period": "ap",
+    "avgPeriod": "ap",
+    "short_period": "sp",
+    "shortPeriod": "sp",
+    "ma_period": "ma",
+    "maPeriod": "ma",
+    "oversold": "os",
+    "overbought": "ob",
+    "momentum_lookback": "ml",
+    "momentumLookback": "ml",
+    "spanFast": "sf",
+    "spanSlow": "ss",
+    "rsi_period": "rsi",
+    "rsiPeriod": "rsi",
+    "exit_bars": "eb",
+    "exitBars": "eb",
+    "max_hold_bars": "mh",
+    "maxHoldBars": "mh",
+    "macd_fast": "mf",
+    "macdFast": "mf",
+    "macd_slow": "ms",
+    "macdSlow": "ms",
+    "macd_signal": "mc",
+    "macdSignal": "mc",
+    "trend_ema_period": "te",
+    "trendEmaPeriod": "te",
+    "pullback_ema_period": "pe",
+    "pullbackEmaPeriod": "pe",
+    "atr_len": "al",
+    "atrLen": "al",
+    "atr_mult": "am",
+    "atrMult": "am",
+    "atr_pullback_mult": "ap",
+    "atrPullbackMult": "ap",
+    "rsi_max": "rsiMax",
+    "rsiMax": "rsiMax",
+    "channel_lookback": "ch",
+    "channelLookback": "ch",
+    "sma_period": "sma",
+    "smaPeriod": "sma",
+}
 
 
 def _sanitize_path_label(raw: str) -> str:
@@ -249,6 +335,56 @@ def _sanitize_path_label(raw: str) -> str:
     cleaned = _INVALID_PATH_CHARS.sub("_", raw)
     cleaned = cleaned.strip(" .")
     return cleaned if cleaned else "combo"
+
+
+def _format_label_scalar(value: object) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, float):
+        as_int = int(value)
+        return str(as_int) if value == as_int else str(value)
+    return str(value)
+
+
+def _combo_label_token(key: str, value: object, *, abbreviate: bool) -> str:
+    if isinstance(value, dict):
+        nested = _build_combo_label_tokens(value, abbreviate=abbreviate, skip_fixed=False)
+        nested_body = "_".join(nested) if nested else "empty"
+        prefix = _PARAM_KEY_ABBREV.get(key, key) if abbreviate else key
+        return f"{prefix}_{nested_body}"
+    if isinstance(value, (list, tuple)):
+        flat = "_".join(_format_label_scalar(v) for v in value)
+        prefix = _PARAM_KEY_ABBREV.get(key, key) if abbreviate else key
+        return f"{prefix}_{flat}"
+    prefix = _PARAM_KEY_ABBREV.get(key, key) if abbreviate else key
+    return f"{prefix}{_format_label_scalar(value)}"
+
+
+def _build_combo_label_tokens(
+    combo: Mapping[str, Any],
+    *,
+    abbreviate: bool,
+    skip_fixed: bool,
+) -> list[str]:
+    tokens: list[str] = []
+    for key, val in sorted(combo.items()):
+        if skip_fixed and key in _LABEL_SKIP_KEYS:
+            continue
+        tokens.append(_combo_label_token(key, val, abbreviate=abbreviate))
+    return tokens
+
+
+def param_combo_display_label(combo: Mapping[str, Any]) -> str:
+    """Human-readable combo label for tables and markdown (never hashed).
+
+  Compact ``lb2_ap3_os25_ob70`` style; skips grid-fixed keys like ``exit_policy``.
+    """
+    if not combo:
+        return "empty_params"
+    tokens = _build_combo_label_tokens(combo, abbreviate=True, skip_fixed=True)
+    if not tokens:
+        tokens = _build_combo_label_tokens(combo, abbreviate=True, skip_fixed=False)
+    return "_".join(tokens)
 
 
 def expanded_combo_param_value(combo: dict[str, Any], key: str) -> Any | None:
@@ -291,20 +427,17 @@ def param_combo_label(combo: dict[str, Any]) -> str:
     """
     if not combo:
         return "empty_params"
-    segments: list[str] = []
-    for key, val in sorted(combo.items()):
-        if isinstance(val, dict):
-            nested = param_combo_label(val)
-            segments.append(f"{key}__{nested}")
-        elif isinstance(val, (list, tuple)):
-            flat = "_".join(str(x) for x in val)
-            segments.append(f"{key}_{flat}")
-        else:
-            segments.append(f"{key}_{val}")
-    joined = "__".join(segments)
-    sanitized = _sanitize_path_label(joined)
-    if len(sanitized) <= _MAX_PARAM_COMBO_LABEL_LEN:
-        return sanitized
+    for abbreviate, skip_fixed in ((True, True), (True, False), (False, False)):
+        tokens = _build_combo_label_tokens(
+            combo, abbreviate=abbreviate, skip_fixed=skip_fixed
+        )
+        if not tokens:
+            continue
+        joined = "__".join(tokens)
+        sanitized = _sanitize_path_label(joined)
+        if len(sanitized) <= _MAX_PARAM_COMBO_LABEL_LEN:
+            return sanitized
+    joined = json.dumps(dict(combo), sort_keys=True, default=str)
     digest = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:32]
     return _sanitize_path_label(f"combo_{digest}")
 
@@ -313,7 +446,7 @@ def expanded_spec_combo_label(single_spec: Mapping[str, Any]) -> str:
     """Unique label for one expanded bias row (composite ``module_name`` + params).
 
     Params alone can match across gate variants (e.g. ``filter_gate`` vs
-    ``filter_gate_entry_only``); prefixing ``module_name`` keeps paths and Power BI keys distinct.
+    ``filter_gate_entry_only``); prefixing ``module_name`` keeps paths and visualization keys distinct.
     """
     mod = single_spec.get("module_name")
     mod_token = str(mod) if mod is not None else "unknown"
@@ -324,22 +457,159 @@ def expanded_spec_combo_label(single_spec: Mapping[str, Any]) -> str:
 
 
 def permutation_combo_display_name(params: dict[str, Any] | None) -> str:
-    """Human-readable label for permutation / validation tables.
+    """Human-readable label for permutation / validation tables."""
+    from feature_research.filter_research_labels import permutation_combo_display_name as _display
 
-    Nested research payloads may embed parent bias-node params; surface those
-    instead of stringifying deeply nested dicts.
-    """
-    if not params:
-        return "unknown"
-    scalar_like = all(
-        v is None or isinstance(v, (bool, int, float, str)) for v in params.values()
+    return _display(params)
+
+
+@dataclass(frozen=True)
+class CachePopulationWindow:
+    """Resolved date bounds for central-cache bootstrap and bias artifact coverage."""
+
+    bootstrap_start: datetime
+    bootstrap_end: datetime
+    bias_coverage_start: datetime | None
+    bias_coverage_end: datetime
+    used_config_fallback: bool
+
+
+def _iter_numeric_param_values(params: object) -> list[int]:
+    """Collect positive integer-like values from nested bias param dicts."""
+
+    if isinstance(params, dict):
+        return [
+            value
+            for nested in params.values()
+            for value in _iter_numeric_param_values(nested)
+        ]
+    if isinstance(params, list):
+        return [
+            value
+            for item in params
+            for value in _iter_numeric_param_values(item)
+        ]
+    if isinstance(params, int) and params > 0:
+        return [params]
+    if isinstance(params, float) and params > 0 and float(params).is_integer():
+        return [int(params)]
+    return []
+
+
+def estimate_bias_lookback_buffer_days(
+    bias_spec: dict[str, Any] | list[dict[str, Any]],
+    *,
+    minimum_buffer_days: int = 504,
+) -> int:
+    """Conservative calendar-day buffer before ``config.start`` for indicator warmup."""
+
+    expanded = expand_bias_specs(bias_spec)
+    max_period = max(
+        (
+            value
+            for spec in expanded
+            for value in _iter_numeric_param_values(spec.get("params", {}))
+        ),
+        default=0,
     )
-    if scalar_like:
-        return param_combo_label(params)
-    digest = hashlib.sha256(
-        json.dumps(params, sort_keys=True, default=str).encode()
-    ).hexdigest()[:12]
-    return f"complex_spec · id_{digest}"
+    return max(minimum_buffer_days, max_period * 2 + 1)
+
+
+def resolve_cache_population_window(
+    config: SupportsBiasCachePopulation,
+    *,
+    ranges: Mapping[Ticker, tuple[datetime, datetime]],
+    bootstrap_tickers: list[Ticker],
+    cache_population_mode: CachePopulationMode = CachePopulationMode.FULL_HISTORY,
+    lookback_buffer_days: int | None = None,
+) -> CachePopulationWindow:
+    """Resolve OHLC bootstrap and bias-artifact bounds for cache population.
+
+    Bootstrap candles use the intersection of all bootstrap tickers' OHLC spans.
+    In ``FULL_HISTORY`` mode, bias/EWSD coverage uses ``bias_coverage_start=None``
+    (earliest candle coverage) through ``bias_coverage_end``.
+
+    In ``ANALYSIS_PLUS_LOOKBACK`` mode, bias coverage starts at
+    ``config.start - lookback_buffer`` (clamped to available OHLC).
+
+    When OHLC discovery is incomplete, falls back to ``config.start`` / ``config.end``.
+    """
+    req_start = pd.Timestamp(config.start).to_pydatetime()
+    req_end = pd.Timestamp(config.end).to_pydatetime()
+    buffer_days = (
+        lookback_buffer_days
+        if lookback_buffer_days is not None
+        else estimate_bias_lookback_buffer_days(config.bias_spec)
+    )
+    analysis_bias_start = (pd.Timestamp(req_start) - pd.Timedelta(days=buffer_days)).to_pydatetime()
+
+    if all(ticker in ranges for ticker in bootstrap_tickers):
+        common_start = max(ranges[ticker][0] for ticker in bootstrap_tickers)
+        common_end = min(ranges[ticker][1] for ticker in bootstrap_tickers)
+        overlap_start = max(common_start, req_start)
+        overlap_end = min(common_end, req_end)
+        if overlap_start > overlap_end:
+            raise ValueError(
+                "Config analysis window does not overlap available OHLC common range: "
+                f"analysis [{req_start.date()} .. {req_end.date()}], "
+                f"common [{common_start.date()} .. {common_end.date()}]."
+            )
+        bias_start = (
+            max(common_start, analysis_bias_start)
+            if cache_population_mode is CachePopulationMode.ANALYSIS_PLUS_LOOKBACK
+            else None
+        )
+        return CachePopulationWindow(
+            bootstrap_start=common_start,
+            bootstrap_end=common_end,
+            bias_coverage_start=bias_start,
+            bias_coverage_end=common_end,
+            used_config_fallback=False,
+        )
+
+    bias_start = (
+        analysis_bias_start
+        if cache_population_mode is CachePopulationMode.ANALYSIS_PLUS_LOOKBACK
+        else req_start
+    )
+    return CachePopulationWindow(
+        bootstrap_start=req_start,
+        bootstrap_end=req_end,
+        bias_coverage_start=bias_start,
+        bias_coverage_end=req_end,
+        used_config_fallback=True,
+    )
+
+
+def _cache_population_log_message(
+    window: CachePopulationWindow,
+    *,
+    analysis_start: datetime,
+    analysis_end: datetime,
+    cache_population_mode: CachePopulationMode,
+) -> str:
+    if window.used_config_fallback:
+        return (
+            "[data_loader] Could not discover common OHLC date range; "
+            f"populating cache from config: {window.bootstrap_start.date()} -> "
+            f"{window.bootstrap_end.date()}"
+        )
+    mode_label = (
+        "analysis+lookback"
+        if cache_population_mode is CachePopulationMode.ANALYSIS_PLUS_LOOKBACK
+        else "full common OHLC history"
+    )
+    bias_start = (
+        window.bias_coverage_start.date()
+        if window.bias_coverage_start is not None
+        else "inception"
+    )
+    return (
+        f"[data_loader] Populating cache ({mode_label}): "
+        f"bootstrap {window.bootstrap_start.date()} -> {window.bootstrap_end.date()}, "
+        f"bias {bias_start} -> {window.bias_coverage_end.date()} "
+        f"(analysis window: {analysis_start.date()} -> {analysis_end.date()})"
+    )
 
 
 def populate_cache_if_needed(
@@ -348,6 +618,8 @@ def populate_cache_if_needed(
     bias_spec: dict[str, Any] | None = None,
     artifact_scope: ArtifactScope = ArtifactScope.LIVE,
     bias_cache_max_workers: int = 6,
+    cache_population_mode: CachePopulationMode = CachePopulationMode.FULL_HISTORY,
+    lookback_buffer_days: int | None = None,
 ) -> None:
     """Bootstrap OHLC into the central cache, then ensure bias (+EWSD) artifact coverage.
 
@@ -355,13 +627,11 @@ def populate_cache_if_needed(
     hit ``CentralCacheStore`` with missing/stale artifacts refreshed first.
 
     The helper bootstraps the required source candles into the runtime cache,
-    then refreshes bias artifacts from that cache. Date span is the
-    **intersection** of ``[config.start, config.end]`` with the common available
-    OHLC range across the requested tickers, dependencies, and timeframes.
-
-    For in-sample pipelines, pass a config whose ``start``/``end`` cover the **full**
-    research span you want cached; narrow to ``training_window_bounds`` only *after*
-    calling this helper so validation/OOS can reuse the same artifacts.
+    then refreshes bias artifacts from that cache. Population uses the **full
+    common OHLC history** across required tickers and timeframes (not
+    ``config.start`` / ``config.end``), so indicator warmup happens once at data
+    inception. Analysis pipelines should narrow ``config.start`` / ``config.end``
+    (e.g. to ``training_window_bounds``) only *after* calling this helper.
 
     Safe to call even if cache already exists. Missing, stale, and out-of-range
     artifacts are refreshed; fresh artifacts are left untouched.
@@ -401,41 +671,36 @@ def populate_cache_if_needed(
         timeframes,
     ) = _cache_requirements_for_bias_spec(config, selected_bias_spec)
 
-    # Use the full common available source range across all required inputs.
     ranges = manager.get_available_date_range_per_ticker(
         tickers=bootstrap_tickers,
         timeframes=timeframes,
     )
-    req_start = pd.Timestamp(config.start).to_pydatetime()
-    req_end = pd.Timestamp(config.end).to_pydatetime()
-    if all(ticker in ranges for ticker in bootstrap_tickers):
-        common_start = max(ranges[ticker][0] for ticker in bootstrap_tickers)
-        common_end = min(ranges[ticker][1] for ticker in bootstrap_tickers)
-        start_date = max(common_start, req_start)
-        end_date = min(common_end, req_end)
-        if start_date > end_date:
-            raise ValueError(
-                "Config date window does not overlap available OHLC common range: "
-                f"requested [{req_start.date()} .. {req_end.date()}], "
-                f"common [{common_start.date()} .. {common_end.date()}]."
-            )
-        print(
-            "[data_loader] Populating cache (clipped to config window & common OHLC): "
-            f"{start_date.date()} -> {end_date.date()}"
+    analysis_start = pd.Timestamp(config.start).to_pydatetime()
+    analysis_end = pd.Timestamp(config.end).to_pydatetime()
+    effective_mode = cache_population_mode
+    if hasattr(config, "cache_population_mode"):
+        effective_mode = getattr(config, "cache_population_mode", cache_population_mode)
+    window = resolve_cache_population_window(
+        config,
+        ranges=ranges,
+        bootstrap_tickers=bootstrap_tickers,
+        cache_population_mode=effective_mode,
+        lookback_buffer_days=lookback_buffer_days,
+    )
+    print(
+        _cache_population_log_message(
+            window,
+            analysis_start=analysis_start,
+            analysis_end=analysis_end,
+            cache_population_mode=effective_mode,
         )
-    else:
-        start_date = req_start
-        end_date = req_end
-        print(
-            "[data_loader] Could not discover common OHLC date range; "
-            f"using config: {start_date.date()} -> {end_date.date()}"
-        )
+    )
 
     bootstrap_summary = manager.bootstrap_source_candles(
         tickers=bootstrap_tickers,
         timeframes=timeframes,
-        start_date=start_date,
-        end_date=end_date,
+        start_date=window.bootstrap_start,
+        end_date=window.bootstrap_end,
     )
     if bootstrap_summary["failed"] > 0:
         raise ValueError(f"Failed to bootstrap candle cache coverage: {bootstrap_summary}")
@@ -443,8 +708,8 @@ def populate_cache_if_needed(
     summary = manager.ensure_bias_cache_coverage(
         bias_node_specs=expanded,
         tickers=primary_tickers,
-        start_date=start_date,
-        end_date=end_date,
+        start_date=window.bias_coverage_start,
+        end_date=window.bias_coverage_end,
         refresh_mode="missing_stale_only",
         include_daily_ewsd=True,
         artifact_scope=artifact_scope,
@@ -623,6 +888,8 @@ def load_features_for_combo(
     single_combo_spec: dict[str, Any],
     config: "ResearchConfig",
     candles_override: pd.DataFrame | None = None,
+    *,
+    populate_on_miss: bool = False,
 ) -> tuple[pd.Series, pd.Series, str, pd.Series] | None:
     """Extract feature + target Series for a single param combo across all config tickers.
 
@@ -638,6 +905,10 @@ def load_features_for_combo(
         Optional override candles passed through to ``extract_features_for_bias_node``
         for forward-return computation. Expected schema: one row per ticker/timestamp
         with columns ``datetime``, ``open``, ``high``, ``low``, ``close``, ``ticker``.
+    populate_on_miss : bool, default=False
+        When ``True`` and ``use_cache=True``, stream and persist bias artifacts for
+        parameter combos not already in the central cache (e.g. min-step perturbation
+        neighbours off the exploration grid).
 
     Returns
     -------
@@ -652,12 +923,13 @@ def load_features_for_combo(
         If target data is missing or misaligned.
     """
     features_df, targets_df = extract_features_for_bias_node(
-        bias_spec=single_combo_spec,
+        bias_spec=bias_spec_for_node_instantiation(single_combo_spec),
         ticker=config.tickers,
         start=config.start,
         end=config.end,
         target_col=config.target_col,
         use_cache=True,
+        populate_on_miss=populate_on_miss,
         candles_override=candles_override,
     )
 

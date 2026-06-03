@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from utils.core.enums import TimeFrame
-from feature_research.bias_spec_catalog import first_bias_spec
+from feature_research._internal.bias_spec_catalog import first_bias_spec
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     expanded_combo_param_value,
     expanded_spec_combo_label,
+    param_combo_display_label,
     param_combo_label,
+    permutation_combo_display_name,
 )
 
 
@@ -105,9 +107,36 @@ def test_expanded_spec_combo_label_distinguishes_gate_variants() -> None:
 
 
 def test_param_combo_label_single():
-    assert param_combo_label({"rsi_period": 2}) == "rsi_period_2"
+    assert param_combo_label({"rsi_period": 2}) == "rsi2"
 
 
 def test_param_combo_label_multi():
     label = param_combo_label({"rsi_period": 2, "oversold": 25.0})
-    assert label == "oversold_25.0__rsi_period_2"  # sorted alphabetically
+    assert label == "os25__rsi2"  # abbreviated, sorted
+
+
+def test_param_combo_label_includes_exit_bars_when_it_varies() -> None:
+    """Distinct exit horizons must not collapse to one exploration folder/key."""
+    a = param_combo_label(
+        {"rsi_period": 2, "oversold": 20.0, "overbought": 70.0, "exit_bars": 3}
+    )
+    b = param_combo_label(
+        {"rsi_period": 2, "oversold": 20.0, "overbought": 70.0, "exit_bars": 10}
+    )
+    assert a != b
+    assert "eb3" in a and "eb10" in b
+
+
+def test_param_combo_display_label_cumulative_rsi() -> None:
+    params = {
+        "lookback": 2,
+        "avg_period": 3,
+        "oversold": 25.0,
+        "overbought": 70.0,
+        "strategy_mode": "long",
+        "exit_policy": "threshold_or_bars",
+        "exit_bars": 5,
+    }
+    assert param_combo_display_label(params) == "ap3_eb5_lb2_ob70_os25"
+    assert permutation_combo_display_name(params) == "ap3_eb5_lb2_ob70_os25"
+    assert not param_combo_label(params).startswith("combo_")

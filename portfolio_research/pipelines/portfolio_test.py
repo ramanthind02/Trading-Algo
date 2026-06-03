@@ -7,7 +7,7 @@ Primary datasets: (1) train, (2) validation, (3) test. Two composite tearsheets:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Mapping, Sequence
@@ -28,6 +28,7 @@ from ensemble.portfolio_impl.portfolio_tester import (
     aggregate_intraday_returns_to_daily,
     calculate_baseline_returns,
     calculate_strategy_returns_from_positions,
+    filter_candles_to_position_tickers,
 )
 from ensemble.vault_manager import (
     get_bias_node_specs,
@@ -36,11 +37,13 @@ from ensemble.vault_manager import (
 )
 from ensemble.weight_layer import WeightLayer
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from portfolio_research.config import rebuild_weight_layer_kwargs
 from portfolio_research.futures_sim import run_futures_sim
 from portfolio_research.weight_layer_export import (
     weight_layer_diagnostics_to_dataframe,
     write_weight_layer_csv,
 )
+from portfolio_research.weight_layer_report import write_portfolio_weight_layer_report
 from utils.cache import (
     CentralCacheStore,
     bootstrap_source_candles,
@@ -82,6 +85,20 @@ def _timeframe_label(timeframe: TimeFrame) -> str:
     return timeframe.name.lower()
 
 
+def _benchmark_ticker_key(config: Any) -> str | None:
+    ticker = getattr(config, "benchmark_ticker", None)
+    if ticker is None:
+        return None
+    return ticker.name if isinstance(ticker, Ticker) else str(ticker)
+
+
+def _benchmark_tearsheet_title(config: Any) -> str:
+    key = _benchmark_ticker_key(config)
+    if key is None:
+        return "Baseline (Always-In)"
+    return f"{key} Buy & Hold"
+
+
 @dataclass(frozen=True)
 class PhaseResult:
     """Container for combined portfolio-level returns for a single phase."""
@@ -92,6 +109,8 @@ class PhaseResult:
     combined_baseline_returns: pd.Series
     daily_test_candles: pd.DataFrame = field(default_factory=pd.DataFrame)
     combined_positions: pd.DataFrame = field(default_factory=pd.DataFrame)
+    weight_layer_diagnostics_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    strategy_returns_by_ensemble: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def _portfolio_cache_query(
@@ -306,10 +325,14 @@ def _collect_preflight_bootstrap_inputs(
 def _preflight_vault_cache(
     ensemble_dirs: dict[str, str],
     portfolio_tickers: Sequence[Ticker],
-    start: datetime,
+    start: datetime | None,
     end: datetime,
 ) -> dict[str, Any]:
-    """Normalize vault feature schemas and ensure cache coverage before portfolio runs."""
+    """Normalize vault feature schemas and ensure cache coverage before portfolio runs.
+
+    ``start=None`` bootstraps from the full available candle history so that
+    every bias-node artifact is computed with its complete warmup window.
+    """
     unique_dirs = tuple(dict.fromkeys(ensemble_dirs.values()))
     for ensemble_dir in unique_dirs:
         migrate_legacy_feature_members_schema(ensemble_dir)
@@ -383,17 +406,18 @@ def _format_artifact_failure_lines(cache_preflight: dict[str, Any]) -> list[str]
 
 
 def run_portfolio_research_cache_preflight(config: Any) -> None:
-    """Bootstrap source candles and refresh vault-selected bias artifacts for the research span.
+    """Bootstrap source candles and refresh vault-selected bias artifacts.
 
-    Span is train start through test end (same as ``run_portfolio_test_pipeline``).
+    Candles are bootstrapped from the full available history (start=None) to
+    ensure every bias-node cache entry is built with its complete warmup window.
+    Artifacts are refreshed through test end.
     Raises ``RuntimeError`` if bootstrap or artifact refresh reports failures.
     """
-    train_start_ts = pd.Timestamp(config.train_window.start)
     test_end_ts = pd.Timestamp(config.test_window.end)
     cache_preflight = _preflight_vault_cache(
         config.ensemble_dirs,
         config.tickers,
-        train_start_ts.to_pydatetime(),
+        None,  # full history — cache is source of truth, no warmup gaps
         test_end_ts.to_pydatetime(),
     )
     bootstrap_summary = cache_preflight.get("bootstrap", {})
@@ -459,7 +483,32 @@ def _build_tester_for_timeframe(
         "use_cache": True,
     }
     portfolio = Portfolio(**portfolio_kw)
-    return PortfolioTester(portfolio, baseline_mode=config.baseline_mode)
+    return PortfolioTester(
+        portfolio,
+        baseline_mode=config.baseline_mode,
+        benchmark_ticker=_benchmark_ticker_key(config),
+    )
+
+
+def _ensemble_returns_frame(
+    testers_by_timeframe: Mapping[TimeFrame, PortfolioTester],
+    test_candles_by_timeframe: Mapping[TimeFrame, pd.DataFrame],
+) -> pd.DataFrame:
+    """Build a daily returns DataFrame with one column per vault ensemble name."""
+
+    series_by_name: dict[str, pd.Series] = {}
+    for timeframe, tester in testers_by_timeframe.items():
+        predictions = tester.ensemble_predictions
+        if not predictions:
+            continue
+        candles = test_candles_by_timeframe[timeframe]
+        for ensemble_name, positions in predictions.items():
+            ensemble_returns = calculate_strategy_returns_from_positions(positions, candles)
+            daily = aggregate_intraday_returns_to_daily(ensemble_returns)
+            series_by_name[str(ensemble_name)] = daily.sort_index()
+    if not series_by_name:
+        return pd.DataFrame()
+    return pd.DataFrame(series_by_name).sort_index()
 
 
 def _generate_component_tearsheets(
@@ -511,6 +560,8 @@ def _generate_composite_tearsheet(
     results: list[PhaseResult],
     composite_name: str,
     output_dir: Path,
+    *,
+    config: Any,
 ) -> None:
     """Generate tearsheet from combined phase results (e.g., Validation+Test)."""
     strategy = (
@@ -528,6 +579,7 @@ def _generate_composite_tearsheet(
         feature_name=f"Portfolio {composite_name}",
         output_file=str(output_file),
         mode=_TEARSHEET_MODE,
+        benchmark_title=_benchmark_tearsheet_title(config),
     )
 
 
@@ -544,6 +596,7 @@ def _evaluate_phase(
     *,
     emit_tearsheets: bool = True,
     run_purpose: Literal["full", "metrics_only"] = "full",
+    collect_strategy_returns: bool = False,
 ) -> tuple[PhaseResult, pd.DataFrame]:
     """Evaluate a portfolio phase: fit on train window, test on test window.
 
@@ -564,17 +617,23 @@ def _evaluate_phase(
     portfolio_dir = phase_out / "portfolio"
     portfolio_dir.mkdir(parents=True, exist_ok=True)
 
-    fit_query = _portfolio_cache_query(
-        config,
-        fit_start.to_pydatetime(),
-        fit_end.to_pydatetime(),
-        tuple(unique_timeframes),
+    fit_query = replace(
+        _portfolio_cache_query(
+            config,
+            fit_start.to_pydatetime(),
+            fit_end.to_pydatetime(),
+            tuple(unique_timeframes),
+        ),
+        volatility_history_start=fit_start.to_pydatetime(),
     )
-    predict_query = _portfolio_cache_query(
-        config,
-        test_start.to_pydatetime(),
-        test_end.to_pydatetime(),
-        tuple(unique_timeframes),
+    predict_query = replace(
+        _portfolio_cache_query(
+            config,
+            test_start.to_pydatetime(),
+            test_end.to_pydatetime(),
+            tuple(unique_timeframes),
+        ),
+        volatility_history_start=fit_start.to_pydatetime(),
     )
 
     candle_timeframes = sorted({TimeFrame.D, *unique_timeframes})
@@ -633,9 +692,12 @@ def _evaluate_phase(
 
         print(f"  Predicting {tf_label} portfolio...")
         need_tf_component_predictions = (
-            run_purpose == "full"
-            and emit_tearsheets
-            and config.export_per_ensemble_tearsheets
+            collect_strategy_returns
+            or (
+                run_purpose == "full"
+                and emit_tearsheets
+                and config.export_per_ensemble_tearsheets
+            )
         )
         tester.predict_from_cache(
             predict_query.for_timeframe(timeframe),
@@ -667,7 +729,7 @@ def _evaluate_phase(
         tf_portfolios=tf_portfolios,
         weight_layer=WeightLayer(
             weight_method=config.weight_layer_method,
-            **dict(config.weight_layer_kwargs),
+            **rebuild_weight_layer_kwargs(config),
         ),
         max_position_pct=config.max_position_pct,
     )
@@ -688,6 +750,16 @@ def _evaluate_phase(
         write_weight_layer_csv(
             weight_layer_export_df,
             portfolio_dir / "weight_layer_weights_long.csv",
+        )
+        write_portfolio_weight_layer_report(
+            weight_layer_export_df,
+            portfolio_dir / "weight_layer_report.json",
+            config=config,
+            phase=phase_title,
+            fit_start=fit_start,
+            fit_end=fit_end,
+            predict_start=test_start,
+            predict_end=test_end,
         )
         portfolio_id = _sanitize_tearsheet_name(f"{phase_title}_{output_dir_name}")
     global_positions_raw = global_portfolio.predict_from_cache(predict_query)
@@ -721,11 +793,16 @@ def _evaluate_phase(
 
     combined_strategy_returns = calculate_strategy_returns_from_positions(
         combined_positions,
+        filter_candles_to_position_tickers(combined_positions, daily_test_candles),
+    )
+    scoped_baseline_candles = filter_candles_to_position_tickers(
+        combined_positions,
         daily_test_candles,
     )
     combined_baseline_returns = calculate_baseline_returns(
-        daily_test_candles,
+        scoped_baseline_candles if not scoped_baseline_candles.empty else daily_test_candles,
         equal_weight=(config.baseline_mode == "equal_weight"),
+        benchmark_ticker=_benchmark_ticker_key(config),
     )
     combined_strategy_returns = aggregate_intraday_returns_to_daily(combined_strategy_returns)
     combined_baseline_returns = aggregate_intraday_returns_to_daily(combined_baseline_returns)
@@ -738,6 +815,7 @@ def _evaluate_phase(
             feature_name=f"Portfolio {phase_title} Test",
             output_file=str(combined_output_file),
             mode="html",
+            benchmark_title=_benchmark_tearsheet_title(config),
         )
 
     if emit_tearsheets and config.export_per_timeframe_tearsheets and len(unique_timeframes) >= 2:
@@ -765,6 +843,12 @@ def _evaluate_phase(
                 filename_prefix=None,
             )
 
+    strategy_returns_frame = (
+        _ensemble_returns_frame(testers_by_timeframe, test_candles_by_timeframe)
+        if collect_strategy_returns
+        else pd.DataFrame()
+    )
+
     if emit_tearsheets:
         print(f"{phase_title} tearsheets written to {phase_out}")
 
@@ -776,6 +860,8 @@ def _evaluate_phase(
             combined_baseline_returns=combined_baseline_returns,
             daily_test_candles=daily_test_candles.copy(),
             combined_positions=combined_positions.copy(),
+            weight_layer_diagnostics_df=weight_layer_export_df.copy(),
+            strategy_returns_by_ensemble=strategy_returns_frame,
         ),
         weight_layer_export_df,
     )
@@ -921,12 +1007,14 @@ def run_portfolio_test_pipeline(config: Any) -> None:
         [validation_result, test_result],
         "Validation_and_Test_windows",
         combined_portfolio_dir,
+        config=config,
     )
 
     _generate_composite_tearsheet(
         [train_result, validation_result, test_result],
         "Train_Validation_and_Test_windows",
         combined_portfolio_dir,
+        config=config,
     )
 
     futures_sim_cfg = getattr(config, "futures_sim", None)
@@ -942,6 +1030,19 @@ def run_portfolio_test_pipeline(config: Any) -> None:
             composite_name="Train_Validation_and_Test_windows",
             output_dir=combined_dir,
             sim_config=futures_sim_cfg,
+        )
+
+    if config.prop_firm_report.enabled:
+        from portfolio_research.prop_firm_reports import run_prop_firm_reports_for_phases
+
+        print("\nRunning prop-firm account simulation reports...")
+        run_prop_firm_reports_for_phases(
+            config,
+            {
+                "train": train_result,
+                "validation": validation_result,
+                "test": test_result,
+            },
         )
 
     print(f"\nDone. Artifacts written to {config.output_root}\n")
@@ -997,7 +1098,7 @@ def run_single_phase_for_prop_firm(
     test_end_ts = pd.Timestamp(config.test_window.end)
 
     if phase == "train":
-        phase_result, _wl = _evaluate_phase(
+        phase_result, _weight_layer_df = _evaluate_phase(
             phase_title="Train",
             output_dir_name="train",
             fit_start=train_start_ts,
@@ -1011,7 +1112,7 @@ def run_single_phase_for_prop_firm(
             run_purpose=run_purpose,
         )
     elif phase == "validation":
-        phase_result, _wl = _evaluate_phase(
+        phase_result, _weight_layer_df = _evaluate_phase(
             phase_title="Validation",
             output_dir_name="validation",
             fit_start=train_start_ts,
@@ -1025,7 +1126,7 @@ def run_single_phase_for_prop_firm(
             run_purpose=run_purpose,
         )
     elif phase == "test":
-        phase_result, _wl = _evaluate_phase(
+        phase_result, _weight_layer_df = _evaluate_phase(
             phase_title="Test",
             output_dir_name="test",
             fit_start=train_start_ts,

@@ -8,7 +8,6 @@ remains in this module.
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional, cast
 
@@ -39,7 +38,18 @@ def _permutation_tail_stats(
     nreps: int,
     alpha: float,
 ) -> tuple[float, float, bool]:
-    p_value = float(1 + int((null_metrics >= original_metric).sum())) / float(nreps + 1)
+    """One-sided Monte Carlo p-value with +1 pseudo-count (Phipson & Smyth).
+
+    ``p_value = (1 + #{null_i >= observed}) / (nreps + 1)``. The extra ``+1`` in
+    numerator and denominator avoids ``p=0`` and treats the observed statistic as
+    one additional null draw. With ``nreps=100``, only values ``k/101`` for
+    ``k in {1, …, 101}`` are possible — not multiples of ``1/100``.
+
+    ``passed`` uses the empirical ``(1 - alpha)`` quantile of the null distribution
+  (``critical_value``), not ``p_value <= alpha``.
+    """
+    null_ge_count = int((null_metrics >= original_metric).sum())
+    p_value = float(1 + null_ge_count) / float(nreps + 1)
     critical_value = float(np.percentile(null_metrics, (1.0 - alpha) * 100.0))
     return p_value, critical_value, bool(original_metric > critical_value)
 
@@ -51,10 +61,6 @@ def _shuffle_feature_values(original_feature: pd.Series, seed: int) -> pd.Series
         name=original_feature.name,
     )
 
-_FAST_BATCH_BUILTINS: frozenset[str] = frozenset(
-    {"mean_return", "sharpe", "sortino", "calmar", "t_stat", "profit_factor"},
-)
-
 
 @dataclass(frozen=True)
 class _SignedSignalPermutationBatchItem:
@@ -63,30 +69,10 @@ class _SignedSignalPermutationBatchItem:
     param_combo: str
     signal_extractor: Callable[[pd.DataFrame], pd.Series]
 
-
-def _vectorized_ratio(
-    numerator: np.ndarray,
-    denominator: np.ndarray,
-) -> np.ndarray:
-    out = np.zeros_like(numerator, dtype=np.float64)
-    valid = np.isfinite(denominator) & (denominator > 0.0)
-    np.divide(numerator, denominator, out=out, where=valid)
-    out = np.where(valid, out, np.where(numerator > 0.0, math.inf, np.where(numerator < 0.0, -math.inf, 0.0)))
-    return out
-
-
-def _builtin_metric_name(spec: ObjectiveMetricSpec) -> str | None:
-    return spec.builtin if spec.callable_path is None else None
-
-
 def _compute_builtin_metric_matrix(
     spec: ObjectiveMetricSpec,
     returns_matrix: np.ndarray,
 ) -> np.ndarray:
-    builtin = _builtin_metric_name(spec)
-    if builtin not in _FAST_BATCH_BUILTINS:
-        raise ValueError(f"Unsupported builtin fast path: {builtin!r}")
-
     if returns_matrix.ndim != 2:
         raise ValueError("returns_matrix must be 2D")
     n_rows, n_obs = returns_matrix.shape
@@ -94,67 +80,13 @@ def _compute_builtin_metric_matrix(
         return np.zeros(0, dtype=np.float64)
     if n_obs == 0:
         return np.zeros(n_rows, dtype=np.float64)
-
-    kwargs = dict(spec.kwargs)
-
-    if builtin == "mean_return":
-        return returns_matrix.mean(axis=1, dtype=np.float64)
-
-    if builtin == "sharpe":
-        risk_free_rate = float(kwargs.get("risk_free_rate", 0.0))
-        annualization_factor = float(kwargs.get("annualization_factor", 1.0))
-        excess = returns_matrix - risk_free_rate
-        means = excess.mean(axis=1, dtype=np.float64) * math.sqrt(max(annualization_factor, 0.0))
-        volatility = excess.std(axis=1, ddof=0, dtype=np.float64)
-        return _vectorized_ratio(means, volatility)
-
-    if builtin == "sortino":
-        target_return = float(kwargs.get("target_return", 0.0))
-        annualization_factor = float(kwargs.get("annualization_factor", 1.0))
-        excess = returns_matrix - target_return
-        numerator = excess.mean(axis=1, dtype=np.float64) * math.sqrt(max(annualization_factor, 0.0))
-        downside_mask = excess < 0.0
-        downside_count = downside_mask.sum(axis=1)
-        downside_values = np.where(downside_mask, excess, 0.0)
-        downside_sum = downside_values.sum(axis=1, dtype=np.float64)
-        downside_mean = np.divide(
-            downside_sum,
-            downside_count,
-            out=np.zeros(n_rows, dtype=np.float64),
-            where=downside_count > 0,
-        )
-        centered = np.where(downside_mask, downside_values - downside_mean[:, np.newaxis], 0.0)
-        downside_var = np.divide(
-            np.square(centered, dtype=np.float64).sum(axis=1, dtype=np.float64),
-            downside_count,
-            out=np.zeros(n_rows, dtype=np.float64),
-            where=downside_count > 0,
-        )
-        downside_risk = np.sqrt(downside_var)
-        return _vectorized_ratio(numerator, downside_risk)
-
-    if builtin == "calmar":
-        annualization_factor = float(kwargs.get("annualization_factor", 1.0))
-        equity_curve = np.cumprod(1.0 + returns_matrix, axis=1, dtype=np.float64)
-        drawdown = equity_curve / np.maximum.accumulate(equity_curve, axis=1) - 1.0
-        max_drawdown = np.abs(drawdown.min(axis=1))
-        annualized_return = returns_matrix.mean(axis=1, dtype=np.float64) * annualization_factor
-        return _vectorized_ratio(annualized_return, max_drawdown)
-
-    if builtin == "t_stat":
-        if n_obs < 2:
-            return np.zeros(n_rows, dtype=np.float64)
-        mean_return = returns_matrix.mean(axis=1, dtype=np.float64)
-        sample_std = returns_matrix.std(axis=1, ddof=1, dtype=np.float64)
-        standard_error = sample_std / math.sqrt(float(n_obs))
-        return _vectorized_ratio(mean_return, standard_error)
-
-    if builtin == "profit_factor":
-        gross_gain = np.where(returns_matrix > 0.0, returns_matrix, 0.0).sum(axis=1, dtype=np.float64)
-        gross_loss = np.abs(np.where(returns_matrix < 0.0, returns_matrix, 0.0).sum(axis=1, dtype=np.float64))
-        return _vectorized_ratio(gross_gain, gross_loss)
-
-    raise ValueError(f"Unsupported builtin fast path: {builtin!r}")
+    return np.array(
+        [
+            apply_objective_metric(spec, pd.Series(row, dtype=np.float64))
+            for row in returns_matrix
+        ],
+        dtype=np.float64,
+    )
 
 
 def _compute_metric_vectorized_for_feature(
@@ -262,51 +194,22 @@ def run_vector_shuffle_target_perm_batch(
     t = np.asarray(aligned_target.to_numpy(dtype=float, copy=False), dtype=np.float64)
     F = np.column_stack(feature_columns)
     n, k = F.shape
-    builtin = _builtin_metric_name(metric_spec)
-
-    if builtin in _FAST_BATCH_BUILTINS:
-        rng = np.random.default_rng(random_seed)
-        perm = (
-            np.vstack([rng.permutation(n) for _ in range(nreps)])
-            if n > 1
-            else np.zeros((nreps, n), dtype=np.int64)
+    rng = np.random.default_rng(random_seed)
+    perm = (
+        np.vstack([rng.permutation(n) for _ in range(nreps)])
+        if n > 1
+        else np.zeros((nreps, n), dtype=np.int64)
+    )
+    permuted_targets = t[perm] if n > 0 else np.zeros((nreps, 0), dtype=np.float64)
+    observed = np.zeros(k, dtype=np.float64)
+    null_m = np.zeros((k, nreps), dtype=np.float64)
+    for c in range(k):
+        observed[c], null_m[c] = _compute_metric_vectorized_for_feature(
+            metric_spec,
+            F[:, c],
+            t,
+            permuted_targets,
         )
-        permuted_targets = t[perm] if n > 0 else np.zeros((nreps, 0), dtype=np.float64)
-        observed = np.zeros(k, dtype=np.float64)
-        null_m = np.zeros((k, nreps), dtype=np.float64)
-        for c in range(k):
-            observed[c], null_m[c] = _compute_metric_vectorized_for_feature(
-                metric_spec,
-                F[:, c],
-                t,
-                permuted_targets,
-            )
-    else:
-        actives = [F[:, c] != 0.0 for c in range(k)]
-        observed = np.zeros(k, dtype=np.float64)
-        for c in range(k):
-            active = actives[c]
-            if not active.any():
-                observed[c] = 0.0
-            else:
-                observed[c] = apply_objective_metric(
-                    metric_spec,
-                    pd.Series((t * F[:, c])[active], dtype=np.float64),
-                )
-
-        rng = np.random.default_rng(random_seed)
-        null_m = np.zeros((k, nreps), dtype=np.float64)
-        for r in range(nreps):
-            t_perm = t[rng.permutation(n)]
-            for c in range(k):
-                active = actives[c]
-                if not active.any():
-                    null_m[c, r] = 0.0
-                else:
-                    null_m[c, r] = apply_objective_metric(
-                        metric_spec,
-                        pd.Series((t_perm * F[:, c])[active], dtype=np.float64),
-                    )
 
     reports: dict[str, VectorShuffleReport] = {}
     for c, name in enumerate(ordered_combo_names):

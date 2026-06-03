@@ -1,0 +1,2988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Feature Research Workspace</title>
+  <link rel="stylesheet" href="/static/research_workspace.css" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #111827;
+      color: #e5e7eb;
+    }
+
+    body {
+      margin: 0;
+      background: #111827;
+      color: #e5e7eb;
+    }
+
+    .shell {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 24px 20px 40px;
+    }
+
+    h1,
+    h2,
+    p {
+      margin-top: 0;
+    }
+
+    .lede {
+      max-width: 70ch;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+
+    .app-grid {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+      align-items: start;
+    }
+
+    .setup-rail {
+      display: grid;
+      gap: 16px;
+      align-content: start;
+      position: sticky;
+      top: 16px;
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+    }
+
+    .results-main {
+      display: grid;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .results-dashboard {
+      display: grid;
+      gap: 16px;
+      min-height: calc(100vh - 120px);
+    }
+
+    .results-header {
+      display: grid;
+      gap: 12px;
+    }
+
+    .plan-details {
+      border: 1px solid #334155;
+      border-radius: 12px;
+      background: #0f172a;
+      padding: 12px 14px;
+    }
+
+    .plan-details summary {
+      cursor: pointer;
+      color: #e2e8f0;
+      font-weight: 600;
+      list-style: none;
+    }
+
+    .plan-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .plan-details[open] summary {
+      margin-bottom: 12px;
+    }
+
+    .run-status-panel {
+      padding: 14px 18px;
+    }
+
+    .panel {
+      background: #1f2937;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.28);
+    }
+
+    .section-copy {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      line-height: 1.45;
+      margin-bottom: 18px;
+    }
+
+    form {
+      display: grid;
+      gap: 14px;
+    }
+
+    .workspace-stack {
+      display: grid;
+      gap: 20px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      font-size: 0.92rem;
+      color: #e2e8f0;
+    }
+
+    input,
+    select,
+    button,
+    textarea {
+      font: inherit;
+      border-radius: 10px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 10px 12px;
+    }
+
+    input:focus,
+    select:focus,
+    button:focus,
+    textarea:focus {
+      outline: 2px solid #38bdf8;
+      outline-offset: 1px;
+    }
+
+    button {
+      cursor: pointer;
+      background: #2563eb;
+      border-color: #2563eb;
+      font-weight: 600;
+    }
+
+    button.secondary {
+      background: transparent;
+      border-color: #475569;
+      color: #e2e8f0;
+    }
+
+    button.success {
+      background: #059669;
+      border-color: #059669;
+    }
+
+    .vault-commit-panel {
+      border: 1px solid #334155;
+      border-radius: 12px;
+      background: #0f172a;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .vault-commit-panel.ready {
+      border-color: #059669;
+      box-shadow: inset 0 0 0 1px rgba(5, 150, 105, 0.25);
+    }
+
+    .vault-commit-panel.blocked {
+      border-color: #475569;
+    }
+
+    .vault-commit-status {
+      font-size: 0.92rem;
+      line-height: 1.45;
+      color: #cbd5e1;
+    }
+
+    .vault-commit-status strong.pass {
+      color: #34d399;
+    }
+
+    .vault-commit-status strong.fail {
+      color: #f87171;
+    }
+
+    .vault-commit-meta {
+      display: grid;
+      gap: 6px;
+      font-size: 0.84rem;
+      color: #94a3b8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      word-break: break-word;
+    }
+
+    .vault-commit-blockers {
+      margin: 0;
+      padding-left: 18px;
+      color: #fca5a5;
+      font-size: 0.88rem;
+    }
+
+    .vault-commit-result {
+      border: 1px solid #059669;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: rgba(5, 150, 105, 0.08);
+      color: #a7f3d0;
+      font-size: 0.88rem;
+    }
+
+    .vault-commit-cta {
+      margin-top: 18px;
+      border: 1px solid #059669;
+      border-radius: 12px;
+      padding: 16px;
+      background: rgba(5, 150, 105, 0.08);
+      display: grid;
+      gap: 12px;
+    }
+
+    .vault-commit-cta h3 {
+      margin: 0;
+      color: #6ee7b7;
+      font-size: 1rem;
+    }
+
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .button-row button[disabled] {
+      opacity: 0.65;
+      cursor: wait;
+    }
+
+    .phase-copy {
+      color: #93c5fd;
+      min-height: 2.5em;
+      margin: 0;
+    }
+
+    .workflow-cards {
+      display: grid;
+      gap: 12px;
+    }
+
+    .workflow-card {
+      border: 1px solid #334155;
+      border-radius: 12px;
+      background: #0f172a;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .workflow-card.active {
+      border-color: #38bdf8;
+      box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+    }
+
+    .workflow-title {
+      color: #f8fafc;
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .workflow-summary {
+      color: #cbd5e1;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+
+    .workflow-gate {
+      color: #93c5fd;
+      font-size: 0.84rem;
+      line-height: 1.4;
+    }
+
+    .workflow-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .window-fields {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
+
+    .window-panel[hidden] {
+      display: none;
+    }
+
+    .hint {
+      font-size: 0.84rem;
+      color: #94a3b8;
+      margin: 0;
+    }
+
+    .error {
+      color: #fca5a5;
+      min-height: 1.4em;
+      margin: 0;
+    }
+
+    .field-list,
+    .step-list,
+    .note-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    .field-row {
+      display: grid;
+      gap: 4px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #334155;
+    }
+
+    .field-row:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .field-label {
+      color: #94a3b8;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .field-value {
+      color: #f8fafc;
+      word-break: break-word;
+    }
+
+    .code-block {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .status {
+      color: #86efac;
+      min-height: 1.4em;
+      margin: 8px 0 0;
+      font-size: 0.9rem;
+    }
+
+    .card-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    }
+
+    .metric-card {
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 12px;
+      background: #0f172a;
+    }
+
+    .metric-label {
+      color: #94a3b8;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+
+    .metric-value {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #f8fafc;
+      word-break: break-word;
+    }
+
+    .wl-section {
+      margin-top: 16px;
+      padding: 14px 16px;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      background: #0f172a;
+    }
+
+    .wl-section h4 {
+      margin: 0 0 10px;
+      font-size: 0.95rem;
+      color: #e2e8f0;
+    }
+
+    .wl-meta-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      margin-bottom: 12px;
+    }
+
+    .wl-meta-item {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+    }
+
+    .wl-meta-item strong {
+      display: block;
+      color: #94a3b8;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+
+    .wl-budget-bars {
+      display: grid;
+      gap: 10px;
+      margin: 12px 0;
+    }
+
+    .wl-budget-row {
+      display: grid;
+      gap: 6px;
+    }
+
+    .wl-budget-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.85rem;
+      color: #cbd5e1;
+    }
+
+    .wl-budget-track {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .wl-bar-before,
+    .wl-bar-after {
+      height: 8px;
+      border-radius: 999px;
+      background: #1e293b;
+      overflow: hidden;
+    }
+
+    .wl-bar-before span,
+    .wl-bar-after span {
+      display: block;
+      height: 100%;
+      border-radius: 999px;
+    }
+
+    .wl-bar-before span {
+      background: #64748b;
+    }
+
+    .wl-bar-after span {
+      background: #38bdf8;
+    }
+
+    .wl-tree {
+      margin: 0;
+      padding-left: 0;
+      list-style: none;
+    }
+
+    .wl-tree ul {
+      margin: 6px 0 6px 16px;
+      padding-left: 12px;
+      border-left: 1px solid #334155;
+      list-style: none;
+    }
+
+    .wl-tree-node {
+      margin: 4px 0;
+      font-size: 0.88rem;
+      color: #e2e8f0;
+    }
+
+    .wl-tree-node.wl-candidate {
+      background: rgba(245, 133, 24, 0.1);
+      border-radius: 6px;
+      padding: 4px 6px;
+    }
+
+    .wl-tree-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+
+    .wl-tree-id {
+      font-weight: 600;
+      color: #f8fafc;
+    }
+
+    .wl-tree-weights {
+      color: #94a3b8;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .wl-tree-weights .wl-delta-pos {
+      color: #4ade80;
+    }
+
+    .wl-tree-weights .wl-delta-neg {
+      color: #f87171;
+    }
+
+    .wl-callout {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #475569;
+      background: rgba(56, 189, 248, 0.08);
+      font-size: 0.9rem;
+      color: #cbd5e1;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .tab-button {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+    }
+
+    .tab-button.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #ffffff;
+    }
+
+    .phase-dashboard {
+      display: none;
+      grid-template-rows: auto 1fr;
+      gap: 14px;
+      min-height: calc(100vh - 220px);
+    }
+
+    .phase-dashboard.active {
+      display: grid;
+    }
+
+    .section-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .section-nav button {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-weight: 500;
+      padding: 8px 14px;
+    }
+
+    .section-nav button.active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #ffffff;
+    }
+
+    .section-content {
+      display: grid;
+      gap: 20px;
+      min-height: 0;
+    }
+
+    .section-intro {
+      color: #94a3b8;
+      font-size: 0.92rem;
+      line-height: 1.45;
+      margin: 0;
+    }
+
+    .panel-stack {
+      display: grid;
+      gap: 24px;
+    }
+
+    .report-panel {
+      border: 1px solid #334155;
+      border-radius: 14px;
+      background: #0f172a;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .report-panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .report-panel-title {
+      color: #f8fafc;
+      font-weight: 600;
+      font-size: 1rem;
+      margin: 0;
+    }
+
+    .report-panel-body {
+      padding: 0;
+      min-height: 320px;
+    }
+
+    .embed-viewer {
+      width: 100%;
+      min-height: min(82vh, 920px);
+      border: 0;
+      background: #ffffff;
+      display: block;
+    }
+
+    .embed-switcher {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 12px 16px 0;
+    }
+
+    .embed-switcher button {
+      background: #111827;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-size: 0.88rem;
+      padding: 7px 12px;
+    }
+
+    .embed-switcher button.active {
+      background: #1d4ed8;
+      border-color: #1d4ed8;
+      color: #fff;
+    }
+
+    .embed-stage {
+      padding: 12px 16px 16px;
+    }
+
+    img.report-image {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #111827;
+    }
+
+    .table-panel-body {
+      padding: 16px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .text-panel-body {
+      padding: 16px;
+      max-height: 480px;
+      overflow: auto;
+    }
+
+    .results-empty {
+      color: #94a3b8;
+      min-height: 360px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 32px;
+      border: 1px dashed #334155;
+      border-radius: 14px;
+      background: #0f172a;
+    }
+
+    .raw-data-banner {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      margin: 0 0 8px;
+      padding: 12px 14px;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #111827;
+    }
+
+    .section-nav button.raw-data-tab {
+      margin-left: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.86rem;
+    }
+
+    th,
+    td {
+      border: 1px solid #334155;
+      padding: 6px 8px;
+      vertical-align: top;
+      text-align: left;
+      word-break: break-word;
+    }
+
+    th {
+      background: #111827;
+      color: #cbd5e1;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font: 0.85rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: #e2e8f0;
+    }
+
+    .preview-link {
+      color: #93c5fd;
+      text-decoration: none;
+    }
+
+    .preview-link:hover {
+      text-decoration: underline;
+    }
+
+    .job-log {
+      max-height: 180px;
+      overflow: auto;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      background: #0f172a;
+      padding: 12px;
+    }
+
+    .inline-chart svg {
+      width: 100%;
+      height: 220px;
+      background: #111827;
+      border: 1px solid #334155;
+      border-radius: 10px;
+    }
+
+    .pivot-explorer {
+      border: 1px solid #334155;
+      border-radius: 14px;
+      background: #0f172a;
+      overflow: hidden;
+      display: grid;
+      gap: 0;
+    }
+
+    .pivot-explorer-header {
+      padding: 14px 16px;
+      border-bottom: 1px solid #334155;
+      display: grid;
+      gap: 6px;
+    }
+
+    .pivot-explorer-header h3 {
+      margin: 0;
+      color: #f8fafc;
+      font-size: 1rem;
+    }
+
+    .pivot-explorer-header p {
+      margin: 0;
+      color: #94a3b8;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+
+    .pivot-controls {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      padding: 14px 16px;
+      border-bottom: 1px solid #334155;
+    }
+
+    .pivot-controls label {
+      gap: 4px;
+      font-size: 0.82rem;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .pivot-scale-note {
+      padding: 0 16px 12px;
+      color: #64748b;
+      font-size: 0.82rem;
+    }
+
+    .pivot-table-wrap {
+      overflow: auto;
+      padding: 0 16px 16px;
+      max-height: min(70vh, 720px);
+    }
+
+    table.pivot-heatmap {
+      font-size: 0.84rem;
+      min-width: 100%;
+    }
+
+    table.pivot-heatmap th,
+    table.pivot-heatmap td {
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    table.pivot-heatmap th.pivot-corner,
+    table.pivot-heatmap th.pivot-row-label {
+      text-align: left;
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: #111827;
+    }
+
+    table.pivot-heatmap thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #111827;
+    }
+
+    table.pivot-heatmap td.pivot-cell {
+      font-variant-numeric: tabular-nums;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    table.pivot-heatmap td.pivot-empty {
+      background: #1e293b;
+      color: #64748b;
+    }
+
+    @media (max-width: 1080px) {
+      .app-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .setup-rail {
+        position: static;
+        max-height: none;
+      }
+
+      .embed-viewer {
+        min-height: 60vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <h1>Feature Research Workspace</h1>
+    <p class="lede">
+      Launch each research phase from config, then review plots and reports in a full-width dashboard aligned with
+      exploration, validation, and portfolio addition—no file-by-file hunting.
+    </p>
+
+    <div class="app-grid">
+      <aside class="setup-rail">
+      <section class="panel">
+        <h2>Run Setup</h2>
+        <p class="section-copy">
+          Start with just the key choices. The workspace derives the current plan, combo counts, and output locations
+          from these inputs.
+        </p>
+
+        <form id="planner-form">
+          <section>
+            <p class="section-copy" style="margin-bottom: 10px;">
+              Follow the research flow directly: exploration, then validation, then portfolio addition.
+              The selected stage controls the current plan and run button.
+            </p>
+            <div id="workflow-cards" class="workflow-cards"></div>
+            <p id="phase-copy" class="phase-copy"></p>
+          </section>
+
+          <label>
+            Tickers
+            <input
+              id="tickers"
+              name="tickers"
+              type="text"
+              placeholder="ES"
+              autocomplete="off"
+            />
+          </label>
+
+          <p id="ticker-hint" class="hint"></p>
+
+          <section>
+            <p class="section-copy" style="margin-bottom: 10px;">
+              Bias node and parameter search space stay in <code>feature_research/config.py</code>.
+              This workspace reads that config, launches runs, and keeps the outputs in one place.
+            </p>
+            <div id="configured-cards" class="card-grid"></div>
+            <p id="configured-description" class="phase-copy"></p>
+          </section>
+
+          <section id="window-panel" class="window-panel" hidden>
+            <p class="section-copy" id="window-copy"></p>
+            <div class="window-fields">
+              <label>
+                Train start
+                <input id="train_start" name="train_start" type="date" />
+              </label>
+
+              <label>
+                Train end
+                <input id="train_end" name="train_end" type="date" />
+              </label>
+
+              <label>
+                Val start
+                <input id="val_start" name="val_start" type="date" />
+              </label>
+
+              <label>
+                Val end
+                <input id="val_end" name="val_end" type="date" />
+              </label>
+            </div>
+          </section>
+
+          <section id="vault-commit-panel" class="vault-commit-panel blocked" hidden>
+            <h3 style="margin: 0;">Save to Vault</h3>
+            <p class="section-copy" style="margin-bottom: 0;">
+              Commit the frozen evaluation combo to the configured vault target once portfolio addition is satisfied.
+            </p>
+            <div id="vault-commit-status" class="vault-commit-status"></div>
+            <div id="vault-commit-meta" class="vault-commit-meta"></div>
+            <ul id="vault-commit-blockers" class="vault-commit-blockers" hidden></ul>
+            <div id="vault-commit-result" class="vault-commit-result" hidden></div>
+            <div class="button-row">
+              <button id="vault-save-button" class="success" type="button" disabled>Save to Vault</button>
+              <button id="vault-preview-button" class="secondary" type="button">Refresh Preview</button>
+            </div>
+            <p id="vault-commit-hint" class="hint"></p>
+          </section>
+
+          <div class="button-row">
+            <button id="preview-button" type="submit">Preview Workspace</button>
+            <button id="run-button" type="button">Run Selected Phase</button>
+            <button id="refresh-button" class="secondary" type="button">Refresh Results</button>
+            <button id="reset-button" class="secondary" type="button">Reset</button>
+          </div>
+
+          <p id="error" class="error"></p>
+        </form>
+
+        <details class="plan-details">
+          <summary>Run plan &amp; command</summary>
+          <h3 id="plan-title" style="margin-top: 0;">Current Plan</h3>
+          <p id="plan-description" class="section-copy"></p>
+          <div id="combo-cards" class="card-grid"></div>
+          <h4>Run summary</h4>
+          <ul id="field-list" class="field-list"></ul>
+          <h4>What will run</h4>
+          <ul id="step-list" class="step-list"></ul>
+          <h4>Command</h4>
+          <textarea id="command" class="code-block" readonly spellcheck="false"></textarea>
+          <div class="button-row" style="margin-top: 10px;">
+            <button id="copy-command" class="secondary" type="button">Copy Command</button>
+          </div>
+          <p id="copy-status" class="status"></p>
+          <h4>Notes</h4>
+          <ul id="note-list" class="note-list"></ul>
+        </details>
+      </section>
+      </aside>
+
+      <main class="results-main">
+        <section class="panel run-status-panel">
+          <h2 style="margin-bottom: 10px;">Run Status</h2>
+          <div id="job-cards" class="card-grid"></div>
+          <div id="job-log" class="job-log" hidden></div>
+        </section>
+
+        <section class="panel results-dashboard" id="results-dashboard">
+          <div class="results-header">
+            <h2>Results Dashboard</h2>
+            <p class="section-copy" style="margin-bottom: 0;">
+              After a phase completes, reports load here automatically. Switch phase, then use the section tabs
+              for parameter sensitivity, permutation, tearsheets, and other doc-aligned views.
+            </p>
+            <div id="phase-tabs" class="tabs"></div>
+            <div id="phase-summary-cards" class="card-grid"></div>
+          </div>
+          <div id="phase-dashboards"></div>
+        </section>
+      </main>
+    </div>
+  </main>
+
+  <script src="/static/research_workspace.js"></script>
+  <script>
+    const state = {
+      defaults: null,
+      phaseDescriptions: {},
+      workflowSteps: [],
+      selectedPhase: "exploration",
+      workspace: null,
+      activeSections: {},
+      activeEmbedPanels: {},
+      panelCache: {},
+      pivotCache: {},
+      currentJob: null,
+      pollingHandle: null,
+      vaultCommit: null,
+      vaultSaveResult: null,
+    };
+
+    const form = document.getElementById("planner-form");
+    const phaseCopy = document.getElementById("phase-copy");
+    const workflowCards = document.getElementById("workflow-cards");
+    const tickersInput = document.getElementById("tickers");
+    const tickerHint = document.getElementById("ticker-hint");
+    const configuredCards = document.getElementById("configured-cards");
+    const configuredDescription = document.getElementById("configured-description");
+    const windowPanel = document.getElementById("window-panel");
+    const windowCopy = document.getElementById("window-copy");
+    const errorEl = document.getElementById("error");
+    const planTitle = document.getElementById("plan-title");
+    const planDescription = document.getElementById("plan-description");
+    const comboCards = document.getElementById("combo-cards");
+    const fieldList = document.getElementById("field-list");
+    const stepList = document.getElementById("step-list");
+    const noteList = document.getElementById("note-list");
+    const commandBox = document.getElementById("command");
+    const copyStatus = document.getElementById("copy-status");
+    const previewButton = document.getElementById("preview-button");
+    const runButton = document.getElementById("run-button");
+    const refreshButton = document.getElementById("refresh-button");
+    const resetButton = document.getElementById("reset-button");
+    const copyButton = document.getElementById("copy-command");
+    const jobCards = document.getElementById("job-cards");
+    const jobLog = document.getElementById("job-log");
+    const phaseTabs = document.getElementById("phase-tabs");
+    const phaseDashboards = document.getElementById("phase-dashboards");
+    const phaseSummaryCards = document.getElementById("phase-summary-cards");
+    const resultsDashboard = document.getElementById("results-dashboard");
+    const vaultCommitPanel = document.getElementById("vault-commit-panel");
+    const vaultCommitStatus = document.getElementById("vault-commit-status");
+    const vaultCommitMeta = document.getElementById("vault-commit-meta");
+    const vaultCommitBlockers = document.getElementById("vault-commit-blockers");
+    const vaultCommitResult = document.getElementById("vault-commit-result");
+    const vaultCommitHint = document.getElementById("vault-commit-hint");
+    const vaultSaveButton = document.getElementById("vault-save-button");
+    const vaultPreviewButton = document.getElementById("vault-preview-button");
+
+    const dashboard = new ResearchWorkspace({
+      apiPrefix: "/api/feature-research",
+      state,
+      elements: { phaseTabs, phaseDashboards, phaseSummaryCards, resultsDashboard },
+      hooks: {
+        afterRenderWorkspace: (workspace) =>
+          renderVaultCommitPanel(workspace?.vault_commit || null, state.vaultSaveResult),
+        resolvePanelRenderer: (panel) => {
+          const path = panel.relative_path || "";
+          if (path.endsWith("validation_robustness_report.json")) {
+            return renderValidationRobustnessSummaryPanel;
+          }
+          if (path.endsWith("portfolio_addition_report.json")) {
+            return renderPortfolioAdditionSummaryPanel;
+          }
+          if (path.endsWith("robustness_report.json")) {
+            return renderRobustnessSummaryPanel;
+          }
+          if (path.endsWith("perturbation_report.json")) {
+            return renderPerturbationSummaryPanel;
+          }
+          return null;
+        },
+        renderSectionExtras: async (phase, section, container, phaseView) => {
+          const isRawSection = Boolean(section.is_raw_data);
+          const showPivotExplorer =
+            !isRawSection &&
+            section.id === "parameter_sensitivity" &&
+            phaseView?.pivot_explorer?.available;
+          if (!showPivotExplorer) {
+            return false;
+          }
+          await renderSectionPanels(phase, section, container);
+          return true;
+        },
+      },
+    });
+
+    function setWindowValues(windowDefaults) {
+      ["train_start", "train_end", "val_start", "val_end"].forEach((key) => {
+        const input = document.getElementById(key);
+        input.value = windowDefaults && windowDefaults[key] ? windowDefaults[key] : "";
+      });
+    }
+
+    function selectedPhaseDefaults() {
+      if (!state.defaults) {
+        return null;
+      }
+      return state.selectedPhase === "exploration" ? null : state.defaults.research_window;
+    }
+
+    function renderWorkflowCards() {
+      workflowCards.replaceChildren(
+        ...state.workflowSteps.map((step) => {
+          const card = document.createElement("section");
+          card.className = `workflow-card${state.selectedPhase === step.phase ? " active" : ""}`;
+
+          const title = document.createElement("div");
+          title.className = "workflow-title";
+          title.textContent = step.title;
+
+          const summary = document.createElement("div");
+          summary.className = "workflow-summary";
+          summary.textContent = step.summary;
+
+          const gate = document.createElement("div");
+          gate.className = "workflow-gate";
+          gate.textContent = step.gate;
+
+          const actions = document.createElement("div");
+          actions.className = "workflow-actions";
+
+          const focusButton = document.createElement("button");
+          focusButton.type = "button";
+          focusButton.className = "secondary";
+          focusButton.textContent = state.selectedPhase === step.phase ? "Selected" : "Use This Stage";
+          focusButton.addEventListener("click", () => {
+            state.selectedPhase = step.phase;
+            updatePhaseUi();
+            renderWorkflowCards();
+            if (state.workspace) {
+              selectPhase(step.phase);
+            }
+            schedulePlanRefresh();
+          });
+
+          const docsLink = document.createElement("a");
+          docsLink.className = "preview-link";
+          docsLink.href = `/api/feature-research/artifact-raw?path=${encodeURIComponent(step.docs_path)}`;
+          docsLink.target = "_blank";
+          docsLink.rel = "noreferrer";
+          docsLink.textContent = "Open doc";
+
+          actions.append(focusButton, docsLink);
+          card.append(title, summary, gate, actions);
+          return card;
+        })
+      );
+    }
+
+    function updatePhaseUi() {
+      const phase = state.selectedPhase;
+      const selectedStep = state.workflowSteps.find((step) => step.phase === phase);
+      phaseCopy.textContent = selectedStep
+        ? `${selectedStep.title} selected. ${state.phaseDescriptions[phase] || ""}`
+        : (state.phaseDescriptions[phase] || "");
+      previewButton.textContent = selectedStep ? `Preview ${selectedStep.title}` : "Preview Workspace";
+      runButton.textContent = selectedStep ? `Run ${selectedStep.title}` : "Run Selected Stage";
+
+      if (phase === "exploration") {
+        windowPanel.hidden = true;
+        windowCopy.textContent = "";
+        setWindowValues(null);
+        return;
+      }
+
+      windowPanel.hidden = false;
+      windowCopy.textContent = phase === "validation"
+        ? "Optional override for the validation train and test windows."
+        : "Optional override for the portfolio-addition train and test windows.";
+      setWindowValues(selectedPhaseDefaults());
+    }
+
+    function renderConfiguredSummary(defaults) {
+      renderCards(configuredCards, [
+        { label: "Configured bias node", value: defaults.configured_module },
+        { label: "Configured search space", value: defaults.configured_search_space },
+        { label: "Config source", value: defaults.config_source_path },
+      ]);
+      configuredDescription.textContent = defaults.configured_module_description || "";
+    }
+
+    function renderList(target, values) {
+      target.replaceChildren(
+        ...values.map((value) => {
+          const item = document.createElement("li");
+          item.textContent = value;
+          return item;
+        })
+      );
+    }
+
+    function renderFields(fields) {
+      fieldList.replaceChildren(
+        ...fields.map((field) => {
+          const item = document.createElement("li");
+          item.className = "field-row";
+
+          const label = document.createElement("div");
+          label.className = "field-label";
+          label.textContent = field.label;
+
+          const value = document.createElement("div");
+          value.className = "field-value";
+          value.textContent = field.value;
+
+          item.append(label, value);
+          return item;
+        })
+      );
+    }
+
+    function renderCards(target, cards) {
+      dashboard.renderCards(target, cards);
+    }
+
+    function renderPlan(plan) {
+      planTitle.textContent = plan.title;
+      planDescription.textContent = plan.description;
+      const diagnostics = plan.combo_diagnostics || {};
+      renderCards(comboCards, [
+        { label: "Raw combos", value: String(diagnostics.raw_combo_count ?? "0") },
+        { label: "Loaded combos", value: String(diagnostics.loaded_combo_count ?? "0") },
+        {
+          label: "Effective combos",
+          value: diagnostics.effective_combo_count == null
+            ? "Unavailable"
+            : Number(diagnostics.effective_combo_count).toFixed(2),
+        },
+        { label: "Evaluation combo", value: diagnostics.evaluation_combo_label || "n/a" },
+      ]);
+      renderFields(plan.fields);
+      renderList(stepList, plan.will_run);
+      renderList(noteList, plan.notes);
+      commandBox.value = plan.command;
+      copyStatus.textContent = "";
+    }
+
+    function schedulePlanRefresh() {
+      if (state.planRefreshTimer) {
+        clearTimeout(state.planRefreshTimer);
+      }
+      state.planRefreshTimer = setTimeout(() => {
+        state.planRefreshTimer = null;
+        previewPlan().catch(() => {
+          errorEl.textContent = "Unable to refresh the run plan.";
+        });
+      }, 350);
+    }
+
+    function buildVaultCommitCtaHtml(commit) {
+      if (!commit || !commit.configured) {
+        return "";
+      }
+      const ready = Boolean(commit.ready);
+      const gateStatus = commit.gate_status || "missing";
+      const gateLabel = gateStatus === "passed"
+        ? "Portfolio addition passed"
+        : gateStatus === "skipped"
+        ? "First strategy — gate skipped"
+        : gateStatus === "failed"
+        ? "Portfolio addition failed"
+        : "Portfolio gate not run yet";
+      const preview = commit.preview || {};
+      const path = preview.ensemble_dir_repo_relative || preview.ensemble_dir || "Configure vault_save in feature_research/config.py";
+      return `
+        <div class="vault-commit-cta">
+          <h3>Ready to commit?</h3>
+          <p style="margin: 0; color: #cbd5e1;">
+            ${escapeHtml(gateLabel)}. ${ready
+              ? "Save the frozen evaluation combo to the vault when you are satisfied with the research."
+              : "Resolve the blockers in the setup rail before saving."}
+          </p>
+          <div class="vault-commit-meta">
+            <div>Target: ${escapeHtml(String(path))}</div>
+            ${preview.feature_column ? `<div>Feature: ${escapeHtml(String(preview.feature_column))}</div>` : ""}
+          </div>
+          ${ready
+            ? `<button type="button" class="success vault-inline-save">Save to Vault</button>`
+            : `<p style="margin: 0; color: #fca5a5;">${escapeHtml((commit.blockers || []).join(" "))}</p>`}
+        </div>
+      `;
+    }
+
+    function renderVaultCommitPanel(commit, savedResult = null) {
+      state.vaultCommit = commit || null;
+      if (!commit || !commit.configured) {
+        vaultCommitPanel.hidden = true;
+        return;
+      }
+      vaultCommitPanel.hidden = false;
+      vaultCommitPanel.classList.toggle("ready", Boolean(commit.ready));
+      vaultCommitPanel.classList.toggle("blocked", !commit.ready);
+
+      const gateStatus = commit.gate_status || "missing";
+      const gateText = gateStatus === "passed"
+        ? `<strong class="pass">Portfolio addition passed</strong> — vault commit is unlocked.`
+        : gateStatus === "skipped"
+        ? `<strong class="pass">First strategy</strong> — portfolio gate skipped; you may still commit.`
+        : gateStatus === "failed"
+        ? `<strong class="fail">Portfolio addition failed</strong> — do not save this strategy.`
+        : "Run <strong>Validation</strong> first to produce the portfolio addition gate report.";
+
+      vaultCommitStatus.innerHTML = gateText;
+
+      const preview = commit.preview || {};
+      const target = commit.target || {};
+      const metaLines = [
+        `Vault profile: ${target.vault_profile || "prop"}`,
+        preview.vault_root ? `Vault root: ${preview.vault_root}` : null,
+        preview.ensemble_dir_repo_relative ? `Ensemble: ${preview.ensemble_dir_repo_relative}` : null,
+        preview.feature_column ? `Feature column: ${preview.feature_column}` : null,
+        preview.model_id ? `Model id: ${preview.model_id}` : null,
+        commit.module_name ? `Module: ${commit.module_name}` : null,
+        target.weight_hierarchy_group ? `Weight group: ${target.weight_hierarchy_group}` : null,
+        preview.tickers ? `Tickers: ${preview.tickers.join(", ")}` : null,
+      ].filter(Boolean);
+      vaultCommitMeta.innerHTML = metaLines.map((line) => `<div>${escapeHtml(line)}</div>`).join("");
+
+      const blockers = commit.blockers || [];
+      vaultCommitBlockers.hidden = blockers.length === 0;
+      vaultCommitBlockers.replaceChildren(
+        ...blockers.map((blocker) => {
+          const item = document.createElement("li");
+          item.textContent = blocker;
+          return item;
+        })
+      );
+
+      if (savedResult && savedResult.result) {
+        const saved = savedResult.result;
+        vaultCommitResult.hidden = false;
+        vaultCommitResult.innerHTML = `
+          Saved to <code>${escapeHtml(saved.ensemble_dir_repo_relative || saved.ensemble_dir || "")}</code>
+          · model <code>${escapeHtml(String(saved.model_id || ""))}</code>
+        `;
+      } else {
+        vaultCommitResult.hidden = true;
+        vaultCommitResult.textContent = "";
+      }
+
+      vaultSaveButton.disabled = !commit.ready;
+      vaultCommitHint.textContent = commit.cli_command
+        ? `Terminal fallback: ${commit.cli_command}`
+        : "";
+    }
+
+    async function refreshVaultCommitPreview() {
+      const response = await fetch("/api/feature-research/vault-save/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload()),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to refresh vault commit preview.");
+      }
+      renderVaultCommitPanel(payload.vault_commit, state.vaultSaveResult);
+      return payload.vault_commit;
+    }
+
+    async function saveStrategyToVault() {
+      const commit = state.vaultCommit;
+      if (!commit || !commit.ready) {
+        errorEl.textContent = "Vault save is not ready yet.";
+        return;
+      }
+      const preview = commit.preview || {};
+      const targetPath = preview.ensemble_dir_repo_relative || preview.ensemble_dir || "the configured vault";
+      const confirmed = window.confirm(
+        `Save this strategy to the vault?\n\nTarget: ${targetPath}\nFeature: ${preview.feature_column || "unknown"}`
+      );
+      if (!confirmed) {
+        return;
+      }
+      errorEl.textContent = "";
+      vaultSaveButton.disabled = true;
+      vaultPreviewButton.disabled = true;
+      try {
+        const response = await fetch("/api/feature-research/vault-save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(buildPayload()),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Vault save failed.");
+        }
+        state.vaultSaveResult = payload;
+        renderVaultCommitPanel(state.vaultCommit, payload);
+        vaultCommitHint.textContent = "Strategy saved to the vault.";
+      } catch (saveError) {
+        errorEl.textContent = saveError.message || "Vault save failed.";
+      } finally {
+        vaultSaveButton.disabled = !(state.vaultCommit && state.vaultCommit.ready);
+        vaultPreviewButton.disabled = false;
+      }
+    }
+
+    function wireInlineVaultSaveButtons(root) {
+      root.querySelectorAll(".vault-inline-save").forEach((button) => {
+        button.addEventListener("click", () => {
+          saveStrategyToVault().catch(() => {
+            errorEl.textContent = "Unable to save strategy to the vault.";
+          });
+        });
+      });
+    }
+
+    function buildPayload() {
+      const payload = {
+        phase: state.selectedPhase,
+        tickers: tickersInput.value.trim(),
+      };
+      if (state.selectedPhase !== "exploration") {
+        ["train_start", "train_end", "val_start", "val_end"].forEach((key) => {
+          payload[key] = document.getElementById(key).value;
+        });
+      }
+      return payload;
+    }
+
+    function formatBytes(size) {
+      if (!Number.isFinite(size)) {
+        return "";
+      }
+      if (size < 1024) {
+        return `${size} B`;
+      }
+      if (size < 1024 * 1024) {
+        return `${(size / 1024).toFixed(1)} KB`;
+      }
+      return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function lineChartSvg(chart) {
+      const values = chart.y || [];
+      if (!values.length) {
+        return "";
+      }
+      const width = 800;
+      const height = 220;
+      const padding = 16;
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const span = Math.max(max - min, 1e-9);
+      const points = values.map((value, index) => {
+        const x = padding + (index / Math.max(values.length - 1, 1)) * (width - padding * 2);
+        const y = height - padding - ((value - min) / span) * (height - padding * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+      return `
+        <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${chart.label}">
+          <polyline fill="none" stroke="#38bdf8" stroke-width="2.5" points="${points}"></polyline>
+        </svg>
+      `;
+    }
+
+    function artifactRawUrl(relativePath) {
+      return `/api/feature-research/artifact-raw?path=${encodeURIComponent(relativePath)}`;
+    }
+
+    async function loadArtifactPreview(relativePath) {
+      if (state.panelCache[relativePath]) {
+        return state.panelCache[relativePath];
+      }
+      const response = await fetch(
+        `/api/feature-research/artifact-preview?path=${encodeURIComponent(relativePath)}`
+      );
+      const payload = await response.json();
+      if (response.ok) {
+        state.panelCache[relativePath] = payload;
+      }
+      return payload;
+    }
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[char]));
+    }
+
+    function renderTablePreview(preview) {
+      const chartHtml = preview.chart
+        ? `<div class="inline-chart">${lineChartSvg(preview.chart)}</div>`
+        : "";
+      const rows = preview.rows.map((row) => `
+        <tr>${preview.columns.map((column) => `<td>${escapeHtml(row[column] ?? "")}</td>`).join("")}</tr>
+      `).join("");
+      return `
+        <div class="metric-card">
+          <div class="metric-label">Rows</div>
+          <div class="metric-value">${preview.row_count}</div>
+        </div>
+        ${chartHtml}
+        <div style="overflow:auto;">
+          <table>
+            <thead>
+              <tr>${preview.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function buildEmbedElement(panel) {
+      const rawUrl = artifactRawUrl(panel.relative_path);
+      if (panel.kind === "image") {
+        const image = document.createElement("img");
+        image.className = "report-image";
+        image.src = rawUrl;
+        image.alt = panel.title;
+        return image;
+      }
+      const iframe = document.createElement("iframe");
+      iframe.className = "embed-viewer";
+      iframe.src = rawUrl;
+      iframe.title = panel.title;
+      return iframe;
+    }
+
+    function activeEmbedPanelId(phase, sectionId, embedPanels) {
+      const stored = state.activeEmbedPanels[`${phase}:${sectionId}`];
+      if (stored && embedPanels.some((panel) => panel.panel_id === stored)) {
+        return stored;
+      }
+      return embedPanels[0].panel_id;
+    }
+
+    function renderEmbedSwitcher(phase, sectionId, embedPanels, host, openLink) {
+      const switcher = document.createElement("div");
+      switcher.className = "embed-switcher";
+      const stage = document.createElement("div");
+      stage.className = "embed-stage";
+
+      const renderActive = () => {
+        const currentId = activeEmbedPanelId(phase, sectionId, embedPanels);
+        const panel = embedPanels.find((entry) => entry.panel_id === currentId) || embedPanels[0];
+        stage.replaceChildren();
+        stage.append(buildEmbedElement(panel));
+        if (openLink) {
+          openLink.href = artifactRawUrl(panel.relative_path);
+        }
+        switcher.querySelectorAll("button").forEach((button) => {
+          button.classList.toggle("active", button.dataset.panelId === panel.panel_id);
+        });
+      };
+
+      embedPanels.forEach((panel) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.panelId = panel.panel_id;
+        button.textContent = panel.title;
+        button.addEventListener("click", () => {
+          state.activeEmbedPanels[`${phase}:${sectionId}`] = panel.panel_id;
+          renderActive();
+        });
+        switcher.append(button);
+      });
+
+      renderActive();
+      host.append(switcher, stage);
+    }
+
+    async function renderDataPanel(panel, body) {
+      body.innerHTML = `<div class="results-empty">Loading ${escapeHtml(panel.title)}…</div>`;
+      const preview = await loadArtifactPreview(panel.relative_path);
+      if (preview.error) {
+        body.innerHTML = `<div class="results-empty">${escapeHtml(preview.error)}</div>`;
+        return;
+      }
+      if (preview.kind === "table") {
+        body.innerHTML = renderTablePreview(preview);
+        return;
+      }
+      if (preview.kind === "json") {
+        body.innerHTML = `<pre>${escapeHtml(JSON.stringify(preview.data, null, 2))}</pre>`;
+        return;
+      }
+      body.innerHTML = `<pre>${escapeHtml(preview.text || "")}</pre>`;
+    }
+
+    async function renderValidationRobustnessSummaryPanel(panel, body) {
+      body.innerHTML = `<div class="results-empty">Loading ${escapeHtml(panel.title)}…</div>`;
+      const preview = await loadArtifactPreview(panel.relative_path);
+      if (preview.error || preview.kind !== "json") {
+        body.innerHTML = `<div class="results-empty">${escapeHtml(preview.error || "Summary unavailable.")}</div>`;
+        return;
+      }
+      const payload = preview.data || {};
+      const sharpe = payload.sharpe_comparison || {};
+      const cusum = payload.cusum || {};
+      const bands = payload.equity_curve_bands || {};
+      const rolling = payload.rolling_sharpe_zscore || {};
+      const rank = payload.rank_correlation || {};
+      const ciIs = sharpe.ci_is || {};
+      const ciVal = sharpe.ci_val || {};
+      const cards = [
+        {
+          label: "IS Sharpe",
+          value: `${Number(sharpe.sr_is ?? 0).toFixed(2)} [${Number(ciIs.lower ?? 0).toFixed(2)}, ${Number(ciIs.upper ?? 0).toFixed(2)}]`,
+        },
+        {
+          label: "Val Sharpe",
+          value: `${Number(sharpe.sr_val ?? 0).toFixed(2)} [${Number(ciVal.lower ?? 0).toFixed(2)}, ${Number(ciVal.upper ?? 0).toFixed(2)}]`,
+        },
+        {
+          label: "Degradation ratio",
+          value: Number(sharpe.degradation_ratio ?? 0).toFixed(2),
+        },
+        {
+          label: "CI overlap",
+          value: sharpe.ci_overlap ? "Yes" : "No",
+        },
+        {
+          label: "CUSUM",
+          value: cusum.passed ? "PASS" : "FAIL",
+        },
+        {
+          label: "Equity bands",
+          value: `${bands.passed ? "PASS" : "FAIL"} (${(Number(bands.fraction_below_lower ?? 0) * 100).toFixed(0)}% below lower)`,
+        },
+        {
+          label: "Rolling SR z-score",
+          value: `${rolling.passed ? "PASS" : "FAIL"} (${(Number(rolling.fraction_below_threshold ?? 0) * 100).toFixed(0)}% below z)`,
+        },
+        {
+          label: "Rank correlation ρ",
+          value: Number(rank.spearman_rho ?? 0).toFixed(2),
+        },
+        {
+          label: "Overall",
+          value: payload.all_passed ? "PASS" : "FAIL",
+        },
+      ];
+      const cardHtml = cards.map((card) => `
+        <div class="metric-card">
+          <div class="metric-label">${escapeHtml(card.label)}</div>
+          <div class="metric-value">${escapeHtml(card.value)}</div>
+        </div>
+      `).join("");
+      body.innerHTML = `
+        <div class="table-panel-body">
+          <div class="card-grid">${cardHtml}</div>
+          <p style="margin-top: 16px; color: var(--muted);">${escapeHtml(payload.interpretation || "")}</p>
+          <details style="margin-top: 16px;">
+            <summary class="preview-link" style="cursor: pointer;">Full validation robustness JSON</summary>
+            <pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>
+          </details>
+        </div>
+      `;
+    }
+
+    function formatWeightPct(value) {
+      return `${(Number(value || 0) * 100).toFixed(1)}%`;
+    }
+
+    function formatWeightDelta(value) {
+      const n = Number(value || 0);
+      const sign = n >= 0 ? "+" : "";
+      return `${sign}${(n * 100).toFixed(1)}%`;
+    }
+
+    function weightLayerMethodLabel(context, meta) {
+      const method = String(context.weight_layer_method || meta.weight_layer_method || "unknown");
+      if (context.weight_layer_hierarchy_mode === "asset_first" || method === "hierarchy_equal") {
+        return "hierarchy_equal (asset-first)";
+      }
+      return method;
+    }
+
+    function buildWeightBudgetBarsHtml(detail) {
+      const before = detail.asset_budgets_without || {};
+      const after = detail.asset_budgets_with || {};
+      const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort();
+      if (!keys.length) {
+        return "";
+      }
+      const rows = keys.map((key) => {
+        const b = Number(before[key] || 0);
+        const a = Number(after[key] || 0);
+        const max = Math.max(b, a, 0.001);
+        return `
+          <div class="wl-budget-row">
+            <div class="wl-budget-label">
+              <span>${escapeHtml(key)}</span>
+              <span>${formatWeightPct(b)} → ${formatWeightPct(a)} (${formatWeightDelta(a - b)})</span>
+            </div>
+            <div class="wl-budget-track">
+              <div class="wl-bar-before" title="Before"><span style="width:${(b / max) * 100}%"></span></div>
+              <div class="wl-bar-after" title="After"><span style="width:${(a / max) * 100}%"></span></div>
+            </div>
+          </div>`;
+      }).join("");
+      return `
+        <div class="wl-budget-bars">
+          <div class="wl-budget-label" style="margin-bottom: 4px;">
+            <span>Asset-class budget (global stream weights)</span>
+            <span style="color:#64748b;">gray = before · blue = after</span>
+          </div>
+          ${rows}
+        </div>`;
+    }
+
+    function buildWeightTreeNodeHtml(node, depth = 0) {
+      if (!node || typeof node !== "object") {
+        return "";
+      }
+      const type = String(node.type || "");
+      const delta = Number(node.weight_delta || 0);
+      const deltaClass = delta > 0.0001 ? "wl-delta-pos" : delta < -0.0001 ? "wl-delta-neg" : "";
+      const weightLine = `
+        <span class="wl-tree-weights">
+          ${formatWeightPct(node.weight_without)} → ${formatWeightPct(node.weight_with)}
+          <span class="${deltaClass}">(${formatWeightDelta(delta)})</span>
+        </span>`;
+      if (type === "stream") {
+        const label = String(node.model_name || node.stream_id || "stream");
+        const ticker = node.ticker ? `${node.ticker} · ` : "";
+        const candidate = node.is_candidate_stream ? " wl-candidate" : "";
+        return `
+          <li class="wl-tree-node${candidate}">
+            <div class="wl-tree-head">
+              <span class="wl-tree-id">${escapeHtml(ticker + label)}${node.is_candidate_stream ? " (candidate)" : ""}</span>
+              ${weightLine}
+            </div>
+          </li>`;
+      }
+      const id = String(node.id || type);
+      const count = node.stream_count != null ? ` · ${node.stream_count} stream(s)` : "";
+      const children = Array.isArray(node.children) ? node.children : [];
+      const childHtml = children.length
+        ? `<ul>${children.map((child) => buildWeightTreeNodeHtml(child, depth + 1)).join("")}</ul>`
+        : "";
+      return `
+        <li class="wl-tree-node">
+          <div class="wl-tree-head">
+            <span class="wl-tree-id">${escapeHtml(id)}${escapeHtml(count)}</span>
+            ${weightLine}
+          </div>
+          ${childHtml}
+        </li>`;
+    }
+
+    function buildWeightLayerStructureHtml(context, meta) {
+      const detail = context.weight_layer_detail;
+      if (!detail || typeof detail !== "object") {
+        return "";
+      }
+      const method = weightLayerMethodLabel(context, meta);
+      const metaItems = [
+        ["Method", method],
+        ["FDM (before → after)", `${detail.fdm_without ?? "—"} → ${detail.fdm_with ?? "—"} (cap ${detail.fdm_max ?? "—"})`],
+        ["Global streams", `${detail.stream_count_without ?? "—"} → ${detail.stream_count_with ?? "—"}`],
+        ["Ensembles", `${detail.ensemble_count_without ?? "—"} → ${detail.ensemble_count_with ?? "—"}`],
+      ];
+      const metaGrid = metaItems.map(([label, value]) => `
+        <div class="wl-meta-item"><strong>${escapeHtml(label)}</strong>${escapeHtml(String(value))}</div>
+      `).join("");
+
+      const candidateCallout = Array.isArray(detail.candidate_streams) && detail.candidate_streams.length
+        ? `<div class="wl-callout">
+            <strong>Candidate allocation</strong> (${escapeHtml(String(detail.candidate_key || context.candidate_key || "candidate"))}):
+            ${detail.candidate_streams.map((row) =>
+              `${escapeHtml(String(row.asset_class || "?"))}/${escapeHtml(String(row.style_group || "?"))} · ${escapeHtml(String(row.model_name || row.stream_id || ""))} = ${formatWeightPct(row.weight_with)}`
+            ).join(" · ")}
+            <br/>Combined candidate stream weight: <strong>${formatWeightPct(detail.candidate_weight_total)}</strong>
+          </div>`
+        : "";
+
+      const tree = Array.isArray(detail.tree) ? detail.tree : [];
+      const treeHtml = tree.length
+        ? `<ul class="wl-tree">${tree.map((node) => buildWeightTreeNodeHtml(node)).join("")}</ul>`
+        : `<p style="color: var(--muted); margin: 0;">No hierarchy tree in report.</p>`;
+
+      const outline = Array.isArray(detail.hierarchy_outline_with) ? detail.hierarchy_outline_with : [];
+      const outlineHtml = outline.length && detail.hierarchy_mode === "asset_first"
+        ? `<details style="margin-top: 12px;">
+            <summary class="preview-link" style="cursor: pointer;">Hierarchy outline (with candidate)</summary>
+            <table class="artifact-table" style="margin-top: 8px; width: 100%; font-size: 0.85rem;">
+              <thead><tr><th>Path</th><th>Kind</th><th>Leaves</th></tr></thead>
+              <tbody>${outline.filter((row) => row.kind === "group").map((row) => `
+                <tr>
+                  <td><code>${escapeHtml(String(row.path || ""))}</code></td>
+                  <td>group</td>
+                  <td>${Number(row.child_leaves || 0)}</td>
+                </tr>`).join("")}</tbody>
+            </table>
+          </details>`
+        : "";
+
+      return `
+        <div class="wl-section">
+          <h4>Weight layer structure</h4>
+          <p style="color: var(--muted); font-size: 0.9rem; margin: 0 0 12px;">
+            Three-level asset-first tree: <code>root → asset class → vault style group → instrument stream</code>.
+            Sibling groups split weight equally at each level; adding a strategy refits all stream weights on IS+validation.
+          </p>
+          <div class="wl-meta-grid">${metaGrid}</div>
+          ${buildWeightBudgetBarsHtml(detail)}
+          ${candidateCallout}
+          ${treeHtml}
+          ${outlineHtml}
+        </div>`;
+    }
+
+    async function renderPortfolioAdditionSummaryPanel(panel, body) {
+      body.innerHTML = `<div class="results-empty">Loading ${escapeHtml(panel.title)}…</div>`;
+      const preview = await loadArtifactPreview(panel.relative_path);
+      if (preview.error || preview.kind !== "json") {
+        body.innerHTML = `<div class="results-empty">${escapeHtml(preview.error || "Summary unavailable.")}</div>`;
+        return;
+      }
+      const payload = preview.data || {};
+      const meta = payload.meta || {};
+      const evalBanner = meta.eval_start && meta.eval_end
+        ? `Evaluation data: IS + Validation ${meta.eval_start} → ${meta.eval_end}. No project test zone data is used here.`
+        : "Evaluation data: IS + Validation. No project test zone data is used here.";
+
+      if (payload.skipped) {
+        body.innerHTML = `
+          <div class="table-panel-body">
+            <p class="raw-data-banner">${escapeHtml(evalBanner)}</p>
+            <p class="raw-data-banner">${escapeHtml(payload.interpretation || "Portfolio addition gate skipped.")}</p>
+            ${buildVaultCommitCtaHtml(state.vaultCommit)}
+          </div>
+        `;
+        wireInlineVaultSaveButtons(body);
+        return;
+      }
+
+      const context = payload.context || {};
+      const primaryScope = String(payload.primary_gate_scope || context.primary_gate_scope || "sleeve");
+      const sleeveLabel = String(payload.sleeve_label || context.sleeve_label || "sleeve");
+      const portfolioBlock = payload.portfolio || context.portfolio_gate || {};
+      const portfolioEmpirical = portfolioBlock.empirical_comparison || {};
+      const portfolioPassed = Boolean(payload.portfolio_passed ?? portfolioBlock.passed);
+
+      const hurdle = payload.analytical_hurdle || {};
+      const empirical = payload.empirical_comparison || {};
+      const riskImpact = payload.risk_impact || {};
+      const gateCriteria = payload.gate_criteria || {};
+      const portfolioRisk = portfolioBlock.risk_impact || {};
+      const portfolioGateCriteria = portfolioBlock.gate_criteria || {};
+      const legacyRisk = !riskImpact || Object.keys(riskImpact).length === 0;
+      const pairwise = payload.pairwise_redundancy || {};
+      const weight = payload.weight_assessment || {};
+      const idm = payload.idm_improvement || {};
+      const drawdownDetail = context.drawdown_detail || {};
+      const peerRows = Array.isArray(context.pairwise_peers) ? context.pairwise_peers : [];
+      const weightMembers = Array.isArray(context.weight_layer_members) ? context.weight_layer_members : [];
+      const ci = empirical.delta_sr_ci || {};
+      const overallPass = Boolean(payload.passed);
+      const hurdlePass = Boolean(hurdle.passed);
+      const empiricalPass = Boolean(empirical.passed);
+      const riskPass = Boolean(riskImpact.passed);
+      const formatPct = (value) => `${(Number(value ?? 0) * 100).toFixed(1)}%`;
+      const formatDeltaPct = (value) => {
+        const n = Number(value ?? 0);
+        return `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
+      };
+      const formatNum = (value, digits = 3) => Number(value ?? 0).toFixed(digits);
+      const formatDeltaSr = (value) => {
+        const n = Number(value ?? 0);
+        const abs = Math.abs(n);
+        if (!Number.isFinite(n)) return "n/a";
+        if (abs < 0.00005) return "0.0000";
+        if (abs < 0.01) return `${n >= 0 ? "+" : ""}${n.toFixed(4)}`;
+        return `${n >= 0 ? "+" : ""}${n.toFixed(3)}`;
+      };
+      const passCell = (passed, advisory) => {
+        if (advisory) return '<span style="color: var(--muted);">—</span>';
+        return passed
+          ? '<span style="color: #3ba272;">PASS</span>'
+          : '<span style="color: #e45756;">FAIL</span>';
+      };
+      const buildRiskScorecardTable = (risk, criteria, scopeLabel, scopeEmpirical) => {
+        if (!risk || Object.keys(risk).length === 0) {
+          return `<p style="color: var(--muted);">${escapeHtml(scopeLabel)}: risk metrics unavailable — re-run validation after upgrading the gate.</p>`;
+        }
+        const emp = scopeEmpirical && typeof scopeEmpirical === "object" ? scopeEmpirical : empirical;
+        const deltaSrThreshold = Number(emp.delta_sr_threshold ?? 0.02);
+        const srWithout = Number(risk.sr_without ?? emp.sr_without ?? 0);
+        const srWith = Number(risk.sr_with ?? emp.sr_with ?? 0);
+        const deltaSr = Number(risk.delta_sr ?? emp.delta_sr ?? 0);
+        const stressReliable = Boolean(risk.stress_metrics_reliable);
+        const rows = [
+          [
+            `Sharpe (ΔSR ≥ ${deltaSrThreshold.toFixed(2)})`,
+            formatNum(srWithout, 3),
+            formatNum(srWith, 3),
+            formatDeltaSr(deltaSr),
+            criteria.delta_sr ?? emp.passed,
+            true,
+          ],
+          ["Max drawdown", formatPct(risk.max_dd_without), formatPct(risk.max_dd_with), formatDeltaPct(risk.delta_max_dd), criteria.max_dd ?? risk.passed_max_dd, true],
+          ["Ulcer index", formatNum(risk.ulcer_without), formatNum(risk.ulcer_with), formatNum(risk.delta_ulcer), criteria.ulcer ?? risk.passed_ulcer, true],
+          ["Stress max DD", formatPct(risk.stress_max_dd_without), formatPct(risk.stress_max_dd_with), formatDeltaPct(risk.delta_stress_max_dd), stressReliable ? (criteria.stress_max_dd ?? risk.passed_stress_max_dd) : null, stressReliable],
+          ["Sortino", formatNum(risk.sortino_without), formatNum(risk.sortino_with), formatNum(risk.delta_sortino, 2), null, false],
+          ["Calmar", formatNum(risk.calmar_without), formatNum(risk.calmar_with), formatNum(risk.delta_calmar, 2), null, false],
+        ];
+        const stressNote = stressReliable
+          ? ""
+          : `<p style="color: #e45756; font-size: 0.9rem; margin-top: 8px;">Stress max DD leg skipped (${Number(risk.n_stress_periods ?? 0)} stress bars; need ≥ 30).</p>`;
+        const srSpread = srWith - srWithout;
+        return `
+          <h4 style="margin: 12px 0 8px;">${escapeHtml(scopeLabel)}</h4>
+          <p style="color: var(--muted); font-size: 0.85rem; margin: 0 0 8px;">
+            Gate ΔSR is from block-bootstrap on sleeve/portfolio return series (threshold ${deltaSrThreshold.toFixed(2)}).
+            Simple SR spread (with − without) = ${formatDeltaSr(srSpread)}.
+          </p>
+          <table class="artifact-table" style="width: 100%;">
+            <thead><tr><th>Metric</th><th>Without</th><th>With</th><th>Δ</th><th>Gate</th></tr></thead>
+            <tbody>${rows.map(([label, without, withVal, delta, passed, inGate]) => `
+              <tr>
+                <td>${escapeHtml(label)}${inGate ? "" : " <span style=\"color:var(--muted);font-size:0.85em;\">(context)</span>"}</td>
+                <td>${without}</td>
+                <td>${withVal}</td>
+                <td>${delta}</td>
+                <td>${passCell(Boolean(passed), !inGate)}</td>
+              </tr>`).join("")}</tbody>
+          </table>${stressNote}`;
+      };
+      const weightFloor = Number(weight.weight_floor ?? 0.03);
+      const weightAssigned = Number(empirical.weight_assigned ?? weight.weight_assigned ?? 0);
+      const weightBelowFloor = weightAssigned < weightFloor && empiricalPass;
+      const idmDelta = Number(idm.delta_idm ?? 0);
+      const idmNote = idmDelta > 0.10
+        ? "Material diversification — low correlation with existing portfolio"
+        : idmDelta >= 0.02
+        ? "Modest diversification benefit"
+        : idmDelta < 0
+        ? "IDM decreases — strategy more correlated than average existing pair"
+        : "Negligible diversification — strategy highly correlated with existing set";
+      const ddUplift = Number(
+        drawdownDetail.corr_drawdown_uplift
+        ?? (Number(hurdle.corr_drawdown_conditional ?? 0) - Number(hurdle.corr_unconditional ?? 0))
+      );
+      const portEmpiricalPass = Number(portfolioEmpirical.delta_sr ?? 0) >= Number(portfolioEmpirical.delta_sr_threshold ?? 0.02);
+      const scopeBanner = primaryScope === "sleeve"
+        ? `Primary gate: sleeve <strong>${escapeHtml(sleeveLabel)}</strong> (asset class / style). Full-portfolio metrics are shown for context.`
+        : "Primary gate: full portfolio.";
+      const cards = [
+        {
+          title: `Composite gate (${escapeHtml(sleeveLabel)})`,
+          verdict: overallPass ? "PASS" : "FAIL",
+          lines: [
+            `Sharpe leg: ${empiricalPass ? "PASS" : "FAIL"} · Risk leg: ${legacyRisk ? "n/a" : (riskPass ? "PASS" : "FAIL")}`,
+            `ΔSR: ${formatDeltaSr(empirical.delta_sr)} (required ≥ ${Number(empirical.delta_sr_threshold ?? 0.02).toFixed(2)})`,
+            legacyRisk ? "Re-run validation for max DD / ulcer / stress metrics." : `ΔmaxDD ${formatDeltaPct(riskImpact.delta_max_dd)} · Δulcer ${formatNum(riskImpact.delta_ulcer)}`,
+          ],
+        },
+        {
+          title: `Sleeve ΔSR (${escapeHtml(sleeveLabel)})`,
+          verdict: empiricalPass ? "PASS" : "FAIL",
+          lines: [
+            `SR without: ${Number(empirical.sr_without ?? 0).toFixed(2)} · with: ${Number(empirical.sr_with ?? 0).toFixed(2)}`,
+            `ΔSR: ${formatDeltaSr(empirical.delta_sr)} (required ≥ ${Number(empirical.delta_sr_threshold ?? 0.02).toFixed(2)})`,
+            `Sleeve weight share: ${(Number(payload.sleeve_weight_assigned ?? context.sleeve_weight_assigned ?? weightAssigned) * 100).toFixed(0)}%`,
+            `Peers in sleeve: ${(Array.isArray(payload.sleeve_peer_ensembles) ? payload.sleeve_peer_ensembles : context.sleeve_peer_ensembles || []).join(", ") || "none"}`,
+          ],
+        },
+        {
+          title: "Full portfolio ΔSR (context)",
+          verdict: portEmpiricalPass ? "PASS" : "FAIL",
+          lines: [
+            `SR without: ${Number(portfolioEmpirical.sr_without ?? 0).toFixed(2)} · with: ${Number(portfolioEmpirical.sr_with ?? 0).toFixed(2)}`,
+            `ΔSR: ${formatDeltaSr(portfolioEmpirical.delta_sr)} (required ≥ ${Number(portfolioEmpirical.delta_sr_threshold ?? 0.02).toFixed(2)})`,
+            `Portfolio gate would ${portfolioPassed ? "pass" : "fail"} on global scope alone`,
+          ],
+        },
+        {
+          title: "Sleeve theoretical case",
+          verdict: hurdlePass ? "PASS" : "WARNING",
+          lines: [
+            `SR new: ${Number(hurdle.sr_new ?? 0).toFixed(2)} · Sleeve SR: ${Number(hurdle.sr_portfolio ?? 0).toFixed(2)}`,
+            `Correlation hurdle: ${Number(hurdle.hurdle ?? 0).toFixed(2)}`,
+            `Margin: ${Number(hurdle.margin ?? 0) >= 0 ? "+" : ""}${Number(hurdle.margin ?? 0).toFixed(2)}`,
+            `Effective correlation: ${Number(hurdle.corr_effective ?? 0).toFixed(2)} (uncond ${Number(hurdle.corr_unconditional ?? 0).toFixed(2)} · DD ${Number(hurdle.corr_drawdown_conditional ?? 0).toFixed(2)})`,
+          ],
+        },
+        {
+          title: "Sleeve empirical CI",
+          verdict: empiricalPass ? "PASS" : "FAIL",
+          lines: [
+            `ΔSR CI: [${Number(ci.lower ?? 0) >= 0 ? "+" : ""}${Number(ci.lower ?? 0).toFixed(2)}, ${Number(ci.upper ?? 0) >= 0 ? "+" : ""}${Number(ci.upper ?? 0).toFixed(2)}]`,
+            `Global stream weight (all sleeves): ${(weightAssigned * 100).toFixed(0)}%${weightBelowFloor ? " ⚠ below floor" : ""}`,
+          ],
+        },
+        {
+          title: "Pairwise redundancy",
+          verdict: pairwise.flagged ? "WARNING" : "PASS",
+          lines: [
+            `Max pairwise corr: ${Number(pairwise.max_pairwise_corr ?? 0).toFixed(2)}`,
+            `Most similar: ${escapeHtml(String(pairwise.most_similar_strategy || "n/a"))}`,
+          ],
+        },
+        {
+          title: "IDM (context)",
+          verdict: "INFO",
+          lines: [
+            `IDM without: ${Number(idm.idm_without ?? 0).toFixed(2)} · with: ${Number(idm.idm_with ?? 0).toFixed(2)} · Δ ${idmDelta >= 0 ? "+" : ""}${idmDelta.toFixed(2)}`,
+            idmNote,
+          ],
+        },
+      ];
+      const riskScorecardHtml = `
+        <details style="margin-top: 16px;" open>
+          <summary class="preview-link" style="cursor: pointer;">Portfolio risk scorecard (composite gate)</summary>
+          <div style="margin-top: 12px;">
+            ${buildRiskScorecardTable(
+              { ...riskImpact, sr_without: empirical.sr_without, sr_with: empirical.sr_with, delta_sr: empirical.delta_sr },
+              gateCriteria,
+              `Sleeve — ${sleeveLabel}`,
+              empirical,
+            )}
+            ${buildRiskScorecardTable(
+              { ...portfolioRisk, sr_without: portfolioEmpirical.sr_without, sr_with: portfolioEmpirical.sr_with, delta_sr: portfolioEmpirical.delta_sr },
+              portfolioGateCriteria,
+              "Full portfolio (context)",
+              portfolioEmpirical,
+            )}
+          </div>
+        </details>`;
+      const peerTable = peerRows.length
+        ? `<table class="artifact-table" style="margin-top: 16px; width: 100%;">
+            <thead><tr><th>Existing member</th><th>ρ vs candidate</th><th>Flag</th></tr></thead>
+            <tbody>${peerRows.map((row) => `
+              <tr>
+                <td>${escapeHtml(String(row.peer_member || ""))}</td>
+                <td>${Number(row.pearson_vs_candidate ?? 0).toFixed(2)}</td>
+                <td>${row.flagged ? "⚠ overlap" : "ok"}</td>
+              </tr>`).join("")}</tbody>
+          </table>`
+        : "";
+      const sortedWeightMembers = [...weightMembers].sort((a, b) => {
+        const assetCmp = String(a.asset_class || "").localeCompare(String(b.asset_class || ""));
+        if (assetCmp !== 0) return assetCmp;
+        const styleCmp = String(a.style_group || "").localeCompare(String(b.style_group || ""));
+        if (styleCmp !== 0) return styleCmp;
+        return Number(b.weight_with ?? 0) - Number(a.weight_with ?? 0);
+      });
+      const assetBudgets = context.asset_class_budgets && typeof context.asset_class_budgets === "object"
+        ? Object.entries(context.asset_class_budgets)
+            .map(([name, weight]) => `${escapeHtml(name)} ${(Number(weight) * 100).toFixed(0)}%`)
+            .join(" · ")
+        : "";
+      const weightMethodLabel = weightLayerMethodLabel(context, meta);
+      const weightLayerStructureHtml = buildWeightLayerStructureHtml(context, meta);
+      const weightTable = sortedWeightMembers.length
+        ? `<table class="artifact-table" style="margin-top: 16px; width: 100%;">
+            <thead><tr><th>Asset</th><th>Style</th><th>Stream</th><th>Before</th><th>After</th><th>Δ</th></tr></thead>
+            <tbody>${sortedWeightMembers.map((row) => `
+              <tr${row.is_candidate_stream ? ' style="background: rgba(245,133,24,0.08);"' : ""}>
+                <td>${escapeHtml(String(row.asset_class || "—"))}</td>
+                <td>${escapeHtml(String(row.style_group || "—"))}</td>
+                <td>${escapeHtml(String(row.model_name || row.stream_id || ""))}${row.is_candidate_stream ? " (candidate)" : ""}</td>
+                <td>${formatWeightPct(row.weight_without)}</td>
+                <td>${formatWeightPct(row.weight_with)}</td>
+                <td>${formatWeightDelta(row.weight_delta)}</td>
+              </tr>`).join("")}</tbody>
+          </table>`
+        : "";
+      const drawdownLines = [
+        ["Drawdown overlap ratio", Number(drawdownDetail.drawdown_overlap ?? hurdle.drawdown_overlap ?? 0), drawdownDetail.drawdown_overlap_flagged || hurdle.drawdown_overlap_flagged, "pct"],
+        ["Joint drawdown depth", Number(drawdownDetail.joint_drawdown_depth ?? hurdle.joint_drawdown_depth ?? 0), drawdownDetail.joint_dd_depth_flagged || hurdle.joint_dd_depth_flagged, "pct"],
+        ["Drawdown corr uplift", ddUplift, drawdownDetail.drawdown_corr_uplift_flagged || hurdle.drawdown_corr_uplift_flagged, "num"],
+        ["Stress periods", Number(drawdownDetail.n_stress_periods ?? hurdle.n_stress_periods ?? 0), false, "int"],
+      ];
+      const drawdownHtml = drawdownLines.map(([label, value, flagged, kind]) => {
+        const display = kind === "pct"
+          ? `${(Number(value) * 100).toFixed(0)}%`
+          : kind === "int"
+          ? String(Math.round(Number(value)))
+          : `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(2)}`;
+        return `<div style="color:${flagged ? "#e45756" : "var(--muted)"};">${escapeHtml(String(label))}: ${display}${flagged ? " ⚠" : ""}</div>`;
+      }).join("");
+      const cardHtml = cards.map((card) => `
+        <div class="metric-card">
+          <div class="metric-label">${escapeHtml(card.title)} · ${escapeHtml(card.verdict)}</div>
+          ${card.lines.map((line) => `<div class="metric-value">${line}</div>`).join("")}
+        </div>
+      `).join("");
+      body.innerHTML = `
+        <div class="table-panel-body">
+          <p class="raw-data-banner">${escapeHtml(evalBanner)}</p>
+          <p class="raw-data-banner">${scopeBanner}</p>
+          <p class="raw-data-banner"><strong>Overall: ${overallPass ? "PASS" : "FAIL"}</strong> (sleeve composite: Sharpe + risk) — ${escapeHtml(payload.interpretation || "")}</p>
+          <div class="card-grid">${cardHtml}</div>
+          ${riskScorecardHtml}
+          <details style="margin-top: 16px;" open>
+            <summary class="preview-link" style="cursor: pointer;">Drawdown correlation detail</summary>
+            <div style="margin-top: 12px;">${drawdownHtml}</div>
+          </details>
+          <details style="margin-top: 16px;" open>
+            <summary class="preview-link" style="cursor: pointer;">Weight layer — structure &amp; refit (${escapeHtml(weightMethodLabel)})</summary>
+            <div style="margin-top: 12px;">
+              ${weightLayerStructureHtml}
+            </div>
+          </details>
+          <details style="margin-top: 16px;">
+            <summary class="preview-link" style="cursor: pointer;">Stream weights (before vs after portfolio refit)</summary>
+            ${weightTable || `<p style="color: var(--muted);">No weight-layer member table in report context.</p>`}
+          </details>
+          <details style="margin-top: 16px;">
+            <summary class="preview-link" style="cursor: pointer;">Peer correlation vs candidate</summary>
+            ${peerTable || `<p style="color: var(--muted);">No peer correlation table in report context.</p>`}
+          </details>
+          ${(() => {
+            const renderTearsheetBlock = (title, hint, files, dirName) => {
+              if (!files.length) return "";
+              const dirLabel = escapeHtml(String(dirName || ""));
+              const links = files.map((rel) => {
+                const parts = String(rel).split("/");
+                const scope = parts.slice(-3, -1).join(" / ") || parts.slice(-2, -1).join(" / ");
+                return `<li><code>${escapeHtml(String(rel))}</code>${scope ? ` — ${escapeHtml(scope)}` : ""}</li>`;
+              }).join("");
+              return `<details style="margin-top: 16px;" open>
+              <summary class="preview-link" style="cursor: pointer;">${escapeHtml(title)}${dirLabel ? ` (${dirLabel})` : ""}</summary>
+              <p style="margin-top: 8px; color: var(--muted); font-size: 0.9rem;">${escapeHtml(hint)} Open from the workspace file tree under the validation visualization folder (QuantStats tearsheets panel uses clearer titles).</p>
+              <ul style="margin-top: 8px; font-size: 0.9rem;">${links}</ul>
+            </details>`;
+            };
+            const portfolioTs = Array.isArray(context.portfolio_tearsheet_files) ? context.portfolio_tearsheet_files : [];
+            const sleeveTs = Array.isArray(context.sleeve_tearsheet_files) ? context.sleeve_tearsheet_files : [];
+            const blocks = [
+              renderTearsheetBlock(
+                "Full portfolio & candidate strategy tearsheets",
+                "Full book with/without the candidate ensemble, plus standalone candidate-ensemble returns (not the global portfolio).",
+                portfolioTs,
+                context.portfolio_tearsheets_dir,
+              ),
+              renderTearsheetBlock(
+                "Sleeve tearsheets",
+                "Sleeve-scoped book with/without the candidate on train, validation, and train+validation.",
+                sleeveTs,
+                context.sleeve_tearsheets_dir,
+              ),
+            ].filter(Boolean);
+            if (!blocks.length) {
+              return `<p style="margin-top: 16px; color: var(--muted); font-size: 0.9rem;">Gate tearsheets: not generated (re-run validation with <code>portfolio_addition_gate.emit_tearsheets</code> / <code>emit_sleeve_tearsheets</code> enabled).</p>`;
+            }
+            return blocks.join("");
+          })()}
+          <p style="margin-top: 16px; color: var(--muted);">
+            See Matplotlib reports for correlation heatmap, drawdown correlation chart, ΔSR bootstrap histogram, and risk-impact deltas.
+          </p>
+          <p style="margin-top: 12px; color: var(--muted); font-size: 0.9rem;">
+            This result is final. Do not adjust parameters, change the weight layer, or re-run the gate after modifying the strategy.
+          </p>
+          ${buildVaultCommitCtaHtml(state.vaultCommit)}
+          <details style="margin-top: 16px;">
+            <summary class="preview-link" style="cursor: pointer;">Full portfolio addition JSON</summary>
+            <pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>
+          </details>
+        </div>
+      `;
+      wireInlineVaultSaveButtons(body);
+    }
+
+    async function renderPerturbationSummaryPanel(panel, body) {
+      body.innerHTML = `<div class="results-empty">Loading ${escapeHtml(panel.title)}…</div>`;
+      const preview = await loadArtifactPreview(panel.relative_path);
+      if (preview.error || preview.kind !== "json") {
+        body.innerHTML = `<div class="results-empty">${escapeHtml(preview.error || "Summary unavailable.")}</div>`;
+        return;
+      }
+      const payload = preview.data || {};
+      const metricName = payload.perturbation_metric || "metric";
+      const status = payload.passed ? "PASS" : "FAIL";
+      const cards = [
+        { label: "Peak", value: Number(payload.peak_metric ?? 0).toFixed(4) },
+        { label: "Median (neighbours)", value: Number(payload.median_metric ?? 0).toFixed(4) },
+        { label: "Optimism bias", value: `${Number(payload.optimism_bias ?? 0) >= 0 ? "+" : ""}${Number(payload.optimism_bias ?? 0).toFixed(4)}` },
+        { label: "Stability ratio", value: Number(payload.stability_ratio ?? 0).toFixed(4) },
+        { label: "Floor", value: Number(payload.metric_floor ?? 0).toFixed(2) },
+        { label: "Result", value: status },
+      ];
+      const cardHtml = cards.map((card) => `
+        <div class="metric-card">
+          <div class="metric-label">${escapeHtml(card.label)}</div>
+          <div class="metric-value">${escapeHtml(card.value)}</div>
+        </div>
+      `).join("");
+      const neighbors = Array.isArray(payload.neighbor_runs)
+        ? payload.neighbor_runs.filter((row) => row.role === "neighbor")
+        : [];
+      const neighborRows = neighbors.map((row) => `
+        <tr>
+          <td>${escapeHtml(String(row.param_changed || "—"))}</td>
+          <td>${escapeHtml(String(row.direction || "—"))}</td>
+          <td>${Number(row.metric ?? 0).toFixed(4)}</td>
+        </tr>
+      `).join("");
+      const chosenParams = payload.chosen_params || {};
+      const chosenLabel = Object.entries(chosenParams)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(", ");
+      body.innerHTML = `
+        <div class="table-panel-body">
+          <p class="preview-link">Chosen combo: ${escapeHtml(chosenLabel || "unknown")} (${escapeHtml(metricName)})</p>
+          <div class="card-grid">${cardHtml}</div>
+          ${payload.interpretation ? `<p style="margin-top: 16px;">${escapeHtml(String(payload.interpretation))}</p>` : ""}
+          ${neighborRows ? `
+            <h4 style="margin-top: 20px;">Neighbour runs</h4>
+            <table class="data-table">
+              <thead>
+                <tr><th>Parameter</th><th>Direction</th><th>${escapeHtml(metricName)}</th></tr>
+              </thead>
+              <tbody>${neighborRows}</tbody>
+            </table>
+          ` : ""}
+          <details style="margin-top: 16px;">
+            <summary class="preview-link" style="cursor: pointer;">Full perturbation JSON</summary>
+            <pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>
+          </details>
+        </div>
+      `;
+    }
+
+    async function renderRobustnessSummaryPanel(panel, body) {
+      body.innerHTML = `<div class="results-empty">Loading ${escapeHtml(panel.title)}…</div>`;
+      const preview = await loadArtifactPreview(panel.relative_path);
+      if (preview.error || preview.kind !== "json") {
+        body.innerHTML = `<div class="results-empty">${escapeHtml(preview.error || "Summary unavailable.")}</div>`;
+        return;
+      }
+      const payload = preview.data || {};
+      const nEffective = payload.n_effective || {};
+      const cards = [
+        { label: "Module", value: payload.feature_name ?? "unknown" },
+        { label: "Raw combos", value: String(payload.n_combinations ?? "unknown") },
+        {
+          label: "Effective combos",
+          value: nEffective.n_effective == null ? "unknown" : Number(nEffective.n_effective).toFixed(2),
+        },
+      ];
+      const cardHtml = cards.map((card) => `
+        <div class="metric-card">
+          <div class="metric-label">${escapeHtml(card.label)}</div>
+          <div class="metric-value">${escapeHtml(card.value)}</div>
+        </div>
+      `).join("");
+      body.innerHTML = `
+        <div class="table-panel-body">
+          <div class="card-grid">${cardHtml}</div>
+          <details style="margin-top: 16px;">
+            <summary class="preview-link" style="cursor: pointer;">Full robustness JSON</summary>
+            <pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>
+          </details>
+        </div>
+      `;
+    }
+
+    function createReportPanel(panel) {
+      const shell = document.createElement("article");
+      shell.className = "report-panel";
+      const header = document.createElement("div");
+      header.className = "report-panel-header";
+      header.innerHTML = `
+        <h3 class="report-panel-title">${escapeHtml(panel.title)}</h3>
+        <a class="preview-link" href="${artifactRawUrl(panel.relative_path)}" target="_blank" rel="noreferrer">Open in new tab</a>
+      `;
+      const body = document.createElement("div");
+      body.className = "report-panel-body";
+      shell.append(header, body);
+      return { shell, body };
+    }
+
+    function sortPivotLabels(values) {
+      const numeric = values.every((value) => value !== "" && !Number.isNaN(Number(value)));
+      return [...values].sort((left, right) => {
+        if (numeric) {
+          return Number(left) - Number(right);
+        }
+        return String(left).localeCompare(String(right));
+      });
+    }
+
+    function pivotFieldLabel(payload, field) {
+      return payload?.field_labels?.[field] || field;
+    }
+
+    function pivotMetricLabel(payload, metric) {
+      return payload?.metric_labels?.[metric] || metric;
+    }
+
+    function groupedParamOptions(payload, fields) {
+      const groups = new Map();
+      fields.forEach((field) => {
+        const group = payload?.field_groups?.[field] || "Parameters";
+        const bucket = groups.get(group) || [];
+        bucket.push(field);
+        groups.set(group, bucket);
+      });
+      return [...groups.entries()];
+    }
+
+    function buildPivotMatrix(records, { rowField, colField, metric, filters }) {
+      const filtered = records.filter((record) =>
+        Object.entries(filters).every(([key, value]) => !value || String(record[key]) === value)
+      );
+      const rowLabels = sortPivotLabels([...new Set(filtered.map((record) => String(record[rowField] ?? "")))]);
+      const colLabels = sortPivotLabels([...new Set(filtered.map((record) => String(record[colField] ?? "")))]);
+      const buckets = new Map();
+      filtered.forEach((record) => {
+        const bucketKey = `${record[rowField]}|${record[colField]}`;
+        const numeric = Number(record[metric]);
+        if (Number.isNaN(numeric)) {
+          return;
+        }
+        const bucket = buckets.get(bucketKey) || [];
+        bucket.push(numeric);
+        buckets.set(bucketKey, bucket);
+      });
+      const cells = rowLabels.map((rowLabel) =>
+        colLabels.map((colLabel) => {
+          const values = buckets.get(`${rowLabel}|${colLabel}`) || [];
+          if (!values.length) {
+            return null;
+          }
+          return values.reduce((total, value) => total + value, 0) / values.length;
+        })
+      );
+      const flatValues = cells.flat().filter((value) => value !== null);
+      const vmin = flatValues.length ? Math.min(...flatValues) : 0;
+      const vmax = flatValues.length ? Math.max(...flatValues) : 1;
+      return { rowLabels, colLabels, cells, vmin, vmax: vmin === vmax ? vmax + 1e-9 : vmax };
+    }
+
+    function pivotCellColor(value, vmin, vmax) {
+      if (value === null) {
+        return null;
+      }
+      const ratio = Math.max(0, Math.min(1, (value - vmin) / (vmax - vmin)));
+      const hue = Math.round(215 - ratio * 155);
+      const lightness = Math.round(28 + ratio * 34);
+      return `hsl(${hue} 68% ${lightness}%)`;
+    }
+
+    function renderPivotHeatmapTable(matrix, metric, payload) {
+      const rowLabel = pivotFieldLabel(payload, matrix.rowField);
+      const colLabel = pivotFieldLabel(payload, matrix.colField);
+      const metricLabel = pivotMetricLabel(payload, metric);
+      const header = `
+        <tr>
+          <th class="pivot-corner">${escapeHtml(rowLabel)} × ${escapeHtml(colLabel)}</th>
+          ${matrix.colLabels.map((label) => `<th>${escapeHtml(label)}</th>`).join("")}
+        </tr>
+      `;
+      const body = matrix.rowLabels.map((rowLabel, rowIndex) => {
+        const cells = matrix.colLabels.map((colLabel, colIndex) => {
+          const value = matrix.cells[rowIndex][colIndex];
+          if (value === null) {
+            return `<td class="pivot-empty">—</td>`;
+          }
+          const background = pivotCellColor(value, matrix.vmin, matrix.vmax);
+          return `<td class="pivot-cell" style="background:${background}">${escapeHtml(value.toFixed(2))}</td>`;
+        }).join("");
+        return `<tr><th class="pivot-row-label">${escapeHtml(rowLabel)}</th>${cells}</tr>`;
+      }).join("");
+      return `
+        <div class="pivot-summary-line">
+          <strong>${escapeHtml(metricLabel)}</strong>
+          · rows = ${escapeHtml(rowLabel)}
+          · columns = ${escapeHtml(colLabel)}
+        </div>
+        <div class="pivot-scale-note">
+          Color scale ${matrix.vmin.toFixed(2)} to ${matrix.vmax.toFixed(2)} (darker = higher ${escapeHtml(metricLabel)})
+        </div>
+        <div class="pivot-table-wrap">
+          <table class="pivot-heatmap">
+            <thead>${header}</thead>
+            <tbody>${body}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    async function loadPivotPayload(phase) {
+      if (state.pivotCache[phase]) {
+        return state.pivotCache[phase];
+      }
+      const response = await fetch(`/api/feature-research/pivot-data?phase=${encodeURIComponent(phase)}`);
+      const payload = await response.json();
+      if (response.ok) {
+        state.pivotCache[phase] = payload;
+      }
+      return payload;
+    }
+
+    function defaultPivotSelection(dataset, payload) {
+      const rowField = payload.default_row_field
+        || dataset.param_fields[0]
+        || "";
+      const colField = payload.default_col_field
+        || dataset.param_fields.find((field) => field !== rowField)
+        || "";
+      const filters = Object.fromEntries(
+        (dataset.filter_fields || []).map((field) => {
+          const options = dataset.value_options[field] || [];
+          return [field, options[0] || ""];
+        })
+      );
+      return {
+        datasetId: dataset.id,
+        rowField,
+        colField,
+        metric: payload.default_metric,
+        filters,
+      };
+    }
+
+    function renderPivotExplorer(phase, host) {
+      host.innerHTML = `<div class="results-empty">Loading parameter pivot explorer…</div>`;
+      loadPivotPayload(phase)
+        .then((payload) => {
+          if (!payload || !payload.available || !payload.datasets?.length) {
+            host.innerHTML = `<div class="results-empty">Parameter-sensitivity CSVs are not ready yet. Run exploration, then refresh the workspace.</div>`;
+            return;
+          }
+
+          const cacheKey = `${phase}:selection`;
+          const datasetById = Object.fromEntries(payload.datasets.map((dataset) => [dataset.id, dataset]));
+          const defaultDataset = payload.datasets.find(
+            (entry) => entry.id === payload.default_dataset_id
+          ) || payload.datasets[0];
+          const selection = state.pivotCache[cacheKey]
+            || defaultPivotSelection(defaultDataset, payload);
+          if (!datasetById[selection.datasetId]) {
+            Object.assign(selection, defaultPivotSelection(payload.datasets[0], payload));
+          }
+          const dataset = datasetById[selection.datasetId];
+          const paramOptions = [...dataset.param_fields];
+          const metricOptions = payload.metrics || [payload.default_metric];
+          const filterFields = dataset.filter_fields || [];
+
+          const explorer = document.createElement("section");
+          explorer.className = "pivot-explorer";
+          explorer.innerHTML = `
+            <div class="pivot-explorer-header">
+              <h3>Parameter sensitivity</h3>
+              <p id="pivot-explorer-copy">
+                Explore how a performance metric changes across two parameter dimensions.
+                Each cell shows the average metric for every combo with that row/column pair.
+              </p>
+            </div>
+            <div class="pivot-controls" id="pivot-controls"></div>
+            <div id="pivot-heatmap"></div>
+          `;
+
+          const controls = explorer.querySelector("#pivot-controls");
+          const heatmapHost = explorer.querySelector("#pivot-heatmap");
+          const pivotCopy = explorer.querySelector("#pivot-explorer-copy");
+          if (pivotCopy && payload.pivot_hint) {
+            pivotCopy.textContent = payload.pivot_hint;
+          }
+
+          const persistSelection = () => {
+            state.pivotCache[cacheKey] = { ...selection };
+          };
+
+          const renderHeatmap = () => {
+            if (!selection.rowField || !selection.colField || selection.rowField === selection.colField) {
+              heatmapHost.innerHTML = `<div class="results-empty">Choose two different parameter fields for rows and columns.</div>`;
+              return;
+            }
+            const matrix = buildPivotMatrix(dataset.records, {
+              rowField: selection.rowField,
+              colField: selection.colField,
+              metric: selection.metric,
+              filters: selection.filters,
+            });
+            matrix.rowField = selection.rowField;
+            matrix.colField = selection.colField;
+            heatmapHost.innerHTML = renderPivotHeatmapTable(matrix, selection.metric, payload);
+          };
+
+          const addSelect = (label, key, options, onChange, { optionLabelFor } = {}) => {
+            const wrapper = document.createElement("label");
+            wrapper.textContent = label;
+            const select = document.createElement("select");
+            options.forEach((optionValue) => {
+              const option = document.createElement("option");
+              option.value = optionValue;
+              option.textContent = optionLabelFor ? optionLabelFor(optionValue) : optionValue;
+              option.selected = optionValue === selection[key];
+              select.appendChild(option);
+            });
+            select.addEventListener("change", () => {
+              selection[key] = select.value;
+              persistSelection();
+              onChange();
+            });
+            wrapper.append(select);
+            controls.append(wrapper);
+          };
+
+          const addGroupedSelect = (label, key, fields, onChange) => {
+            const wrapper = document.createElement("label");
+            wrapper.textContent = label;
+            const select = document.createElement("select");
+            groupedParamOptions(payload, fields).forEach(([groupName, groupFields]) => {
+              const optgroup = document.createElement("optgroup");
+              optgroup.label = groupName;
+              groupFields.forEach((field) => {
+                const option = document.createElement("option");
+                option.value = field;
+                option.textContent = pivotFieldLabel(payload, field);
+                option.selected = field === selection[key];
+                optgroup.appendChild(option);
+              });
+              select.appendChild(optgroup);
+            });
+            select.addEventListener("change", () => {
+              selection[key] = select.value;
+              persistSelection();
+              onChange();
+            });
+            wrapper.append(select);
+            controls.append(wrapper);
+          };
+
+          const swapAxes = () => {
+            const previousRow = selection.rowField;
+            selection.rowField = selection.colField;
+            selection.colField = previousRow;
+            persistSelection();
+            renderPivotExplorer(phase, host);
+          };
+
+          if (payload.datasets.length > 1) {
+            addSelect(
+              "Dataset",
+              "datasetId",
+              payload.datasets.map((entry) => entry.id),
+              () => {
+                const nextDataset = datasetById[selection.datasetId];
+                Object.assign(selection, defaultPivotSelection(nextDataset, payload));
+                renderPivotExplorer(phase, host);
+              },
+              {
+                optionLabelFor: (datasetId) => {
+                  const entry = datasetById[datasetId];
+                  return entry?.label || datasetId;
+                },
+              }
+            );
+          }
+
+          addGroupedSelect("Rows", "rowField", paramOptions, () => {
+            if (selection.colField === selection.rowField) {
+              selection.colField = paramOptions.find((field) => field !== selection.rowField) || "";
+            }
+            persistSelection();
+            renderPivotExplorer(phase, host);
+          });
+          addGroupedSelect(
+            "Columns",
+            "colField",
+            paramOptions.filter((field) => field !== selection.rowField),
+            renderHeatmap
+          );
+          addSelect(
+            "Metric",
+            "metric",
+            metricOptions,
+            renderHeatmap,
+            { optionLabelFor: (metric) => pivotMetricLabel(payload, metric) }
+          );
+
+          const swapButton = document.createElement("button");
+          swapButton.type = "button";
+          swapButton.className = "pivot-swap-button";
+          swapButton.textContent = "Swap rows ↔ columns";
+          swapButton.addEventListener("click", swapAxes);
+          controls.append(swapButton);
+
+          filterFields.forEach((field) => {
+            const options = dataset.value_options[field] || [];
+            if (!selection.filters[field] && options.length) {
+              selection.filters[field] = options[0];
+            }
+            const wrapper = document.createElement("label");
+            wrapper.textContent = pivotFieldLabel(payload, field);
+            const select = document.createElement("select");
+            options.forEach((optionValue) => {
+              const option = document.createElement("option");
+              option.value = optionValue;
+              option.textContent = optionValue;
+              option.selected = optionValue === selection.filters[field];
+              select.appendChild(option);
+            });
+            select.addEventListener("change", () => {
+              selection.filters[field] = select.value;
+              persistSelection();
+              renderHeatmap();
+            });
+            wrapper.append(select);
+            controls.append(wrapper);
+          });
+
+          persistSelection();
+          renderHeatmap();
+          host.replaceChildren(explorer);
+        })
+        .catch(() => {
+          host.innerHTML = `<div class="results-empty">Unable to load the parameter pivot explorer.</div>`;
+        });
+    }
+
+    async function renderSectionPanels(phase, section, container) {
+      container.replaceChildren();
+      const phaseView = activePhaseView();
+      const isRawSection = Boolean(section.is_raw_data);
+      const showPivotExplorer = !isRawSection
+        && section.id === "parameter_sensitivity"
+        && phaseView?.pivot_explorer?.available;
+
+      if (!section.panels.length && !showPivotExplorer) {
+        container.innerHTML = `<div class="results-empty">No outputs in this section yet.</div>`;
+        return;
+      }
+
+      const embedPanels = isRawSection
+        ? []
+        : section.panels.filter((panel) => panel.view_type === "embed");
+      const summaryPanels = isRawSection
+        ? section.panels
+        : section.panels.filter((panel) => panel.view_type !== "embed");
+
+      const stack = document.createElement("div");
+      stack.className = "panel-stack";
+
+      if (isRawSection) {
+        const banner = document.createElement("p");
+        banner.className = "raw-data-banner";
+        banner.textContent = "Tabular exports and JSON dumps live here so plots and summaries stay readable above. Use Open in new tab to download or inspect a file.";
+        stack.append(banner);
+      }
+
+      if (showPivotExplorer) {
+        const pivotHost = document.createElement("div");
+        stack.append(pivotHost);
+        renderPivotExplorer(phase, pivotHost);
+      } else if (
+        section.id === "parameter_sensitivity"
+        && !embedPanels.length
+        && !summaryPanels.length
+      ) {
+        const placeholder = document.createElement("div");
+        placeholder.className = "results-empty";
+        placeholder.textContent = "Run exploration to generate parameter-sensitivity CSVs, then refresh for the pivot explorer.";
+        stack.append(placeholder);
+      }
+
+      if (embedPanels.length === 1) {
+        const { shell, body } = createReportPanel(embedPanels[0]);
+        body.append(buildEmbedElement(embedPanels[0]));
+        stack.append(shell);
+      } else if (embedPanels.length > 1) {
+        const { shell, body } = createReportPanel({
+          title: section.label,
+          relative_path: embedPanels[0].relative_path,
+        });
+        const openLink = shell.querySelector(".preview-link");
+        renderEmbedSwitcher(phase, section.id, embedPanels, body, openLink);
+        stack.append(shell);
+      }
+
+      summaryPanels.forEach((panel) => {
+        const { shell, body } = createReportPanel(panel);
+        body.classList.add(panel.view_type === "table" ? "table-panel-body" : "text-panel-body");
+        stack.append(shell);
+        const renderPanel = panel.relative_path.endsWith("validation_robustness_report.json")
+          ? renderValidationRobustnessSummaryPanel
+          : panel.relative_path.endsWith("portfolio_addition_report.json")
+          ? renderPortfolioAdditionSummaryPanel
+          : panel.relative_path.endsWith("robustness_report.json")
+          ? renderRobustnessSummaryPanel
+          : panel.relative_path.endsWith("perturbation_report.json")
+          ? renderPerturbationSummaryPanel
+          : renderDataPanel;
+        renderPanel(panel, body).catch(() => {
+          body.innerHTML = `<div class="results-empty">Unable to load ${escapeHtml(panel.title)}.</div>`;
+        });
+      });
+
+      if (!stack.children.length) {
+        stack.innerHTML = `<div class="results-empty">No primary outputs in this section yet. Check Raw data for CSV/JSON exports.</div>`;
+      }
+
+      container.append(stack);
+    }
+
+    function activePhaseView() {
+      return dashboard.activePhaseView();
+    }
+
+    function ensureActiveSection(phaseView) {
+      return dashboard.ensureActiveSection(phaseView);
+    }
+
+    function renderPhaseSummary(phaseView) {
+      dashboard.renderPhaseSummary(phaseView);
+    }
+
+    function renderSectionContent(phaseView) {
+      dashboard.renderSectionContent(phaseView);
+    }
+
+    function selectPhase(phase) {
+      dashboard.selectPhase(phase);
+    }
+
+    function focusResultsDashboard(phase) {
+      dashboard.focusResultsDashboard(phase);
+    }
+
+    function renderWorkspace() {
+      dashboard.renderWorkspace();
+    }
+
+    function renderJob(job) {
+      state.currentJob = job;
+      if (!job) {
+        renderCards(jobCards, [{ label: "Run status", value: "Idle" }]);
+        jobLog.hidden = true;
+        jobLog.textContent = "";
+        return;
+      }
+      renderCards(jobCards, [
+        { label: "Status", value: job.status },
+        { label: "Phase", value: job.phase },
+        { label: "Configured bias node", value: job.configured_module },
+        { label: "Output path", value: job.output_path || "n/a" },
+      ]);
+      if (job.log_text) {
+        jobLog.hidden = false;
+        jobLog.textContent = job.log_text;
+      } else {
+        jobLog.hidden = true;
+        jobLog.textContent = "";
+      }
+    }
+
+    function setBusy(isBusy) {
+      [previewButton, runButton, refreshButton].forEach((button) => {
+        button.disabled = isBusy;
+      });
+    }
+
+    function applyServerState(payload, options = {}) {
+      if (payload.plan) {
+        renderPlan(payload.plan);
+      }
+      if (payload.workspace) {
+        const completedPhase = options.completedPhase || null;
+        if (completedPhase) {
+          state.panelCache = {};
+          state.pivotCache = {};
+          dashboard.panelCache = state.panelCache;
+        }
+        state.workspace = payload.workspace;
+        renderWorkspace();
+        if (completedPhase) {
+          dashboard.applyCompletedPhase(completedPhase);
+        }
+      }
+      renderJob(payload.job || null);
+    }
+
+    async function loadDefaults() {
+      const response = await fetch("/api/feature-research/defaults");
+      const payload = await response.json();
+      state.defaults = payload.defaults;
+      state.phaseDescriptions = Object.fromEntries(
+        payload.defaults.phase_options.map((option) => [option.value, option.description])
+      );
+      state.workflowSteps = payload.defaults.workflow_steps;
+
+      state.selectedPhase = payload.defaults.default_phase;
+      tickersInput.value = payload.defaults.default_tickers;
+      tickerHint.textContent = `Available ticker universe: ${payload.defaults.ticker_options.join(", ")}`;
+      renderConfiguredSummary(payload.defaults);
+      renderWorkflowCards();
+      updatePhaseUi();
+      applyServerState(payload);
+      maybePollJob();
+    }
+
+    async function previewPlan(options = {}) {
+      errorEl.textContent = "";
+      copyStatus.textContent = "";
+      setBusy(true);
+      const response = await fetch("/api/feature-research/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload()),
+      });
+      const payload = await response.json();
+      setBusy(false);
+      if (!response.ok) {
+        errorEl.textContent = payload.error || "Unable to build a run plan.";
+        return;
+      }
+      applyServerState(payload, options);
+    }
+
+    async function refreshWorkspace() {
+      return previewPlan();
+    }
+
+    async function runPhase() {
+      errorEl.textContent = "";
+      copyStatus.textContent = "";
+      if (state.planRefreshTimer) {
+        clearTimeout(state.planRefreshTimer);
+        state.planRefreshTimer = null;
+      }
+      setBusy(true);
+      const planResponse = await fetch("/api/feature-research/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload()),
+      });
+      const planPayload = await planResponse.json();
+      if (!planResponse.ok) {
+        setBusy(false);
+        errorEl.textContent = planPayload.error || "Unable to build a run plan.";
+        return;
+      }
+      applyServerState(planPayload);
+      const response = await fetch("/api/feature-research/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload()),
+      });
+      const payload = await response.json();
+      setBusy(false);
+      if (!response.ok) {
+        errorEl.textContent = payload.error || "Unable to start the run.";
+        return;
+      }
+      renderJob(payload.job || null);
+      maybePollJob();
+    }
+
+    async function pollLatestJob() {
+      const response = await fetch("/api/feature-research/jobs/latest");
+      const payload = await response.json();
+      const job = payload.job || null;
+      renderJob(job);
+      if (job && (job.status === "queued" || job.status === "running")) {
+        return;
+      }
+      if (state.pollingHandle) {
+        clearInterval(state.pollingHandle);
+        state.pollingHandle = null;
+      }
+      const completedPhase = job ? job.phase : null;
+      if (completedPhase) {
+        state.selectedPhase = completedPhase;
+      }
+      previewPlan({ completedPhase }).catch(() => {
+        errorEl.textContent = "Run finished, but the workspace failed to refresh.";
+      });
+    }
+
+    function maybePollJob() {
+      if (!state.currentJob || !["queued", "running"].includes(state.currentJob.status)) {
+        return;
+      }
+      if (state.pollingHandle) {
+        clearInterval(state.pollingHandle);
+      }
+      state.pollingHandle = setInterval(() => {
+        pollLatestJob().catch(() => {
+          errorEl.textContent = "Unable to refresh job status.";
+        });
+      }, 3000);
+    }
+
+    tickersInput.addEventListener("input", schedulePlanRefresh);
+    tickersInput.addEventListener("change", schedulePlanRefresh);
+    ["train_start", "train_end", "val_start", "val_end"].forEach((key) => {
+      document.getElementById(key).addEventListener("change", schedulePlanRefresh);
+    });
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (state.planRefreshTimer) {
+        clearTimeout(state.planRefreshTimer);
+        state.planRefreshTimer = null;
+      }
+      previewPlan();
+    });
+
+    runButton.addEventListener("click", () => {
+      runPhase().catch(() => {
+        errorEl.textContent = "Unable to start the selected phase.";
+      });
+    });
+
+    refreshButton.addEventListener("click", () => {
+      refreshWorkspace().catch(() => {
+        errorEl.textContent = "Unable to refresh workspace results.";
+      });
+    });
+
+    resetButton.addEventListener("click", () => {
+      if (!state.defaults) {
+        return;
+      }
+      state.selectedPhase = state.defaults.default_phase;
+      tickersInput.value = state.defaults.default_tickers;
+      renderConfiguredSummary(state.defaults);
+      renderWorkflowCards();
+      updatePhaseUi();
+      previewPlan();
+    });
+
+    vaultPreviewButton.addEventListener("click", () => {
+      refreshVaultCommitPreview().catch(() => {
+        errorEl.textContent = "Unable to refresh vault commit preview.";
+      });
+    });
+
+    vaultSaveButton.addEventListener("click", () => {
+      saveStrategyToVault().catch(() => {
+        errorEl.textContent = "Unable to save strategy to the vault.";
+      });
+    });
+
+    copyButton.addEventListener("click", async () => {
+      if (!commandBox.value) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(commandBox.value);
+        copyStatus.textContent = "Command copied.";
+      } catch (_error) {
+        copyStatus.textContent = "Clipboard access failed. Copy the command manually.";
+      }
+    });
+
+    loadDefaults().catch(() => {
+      errorEl.textContent = "Unable to load feature_research defaults.";
+    });
+  </script>
+</body>
+</html>

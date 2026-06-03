@@ -26,6 +26,9 @@ class BinningResearchConfig:
     strategy: Direction = Direction.LONG
     rolling_window: int = 252
     rolling_min_periods: int = 126
+    feature_col_substr: str | None = None
+    strategy_bias_spec: dict[str, Any] | None = None
+    """When set (e.g. locked ``cumulative_rsi_signal``), decile metrics use strategy PnL."""
 
 
 def load_binning_research_config() -> BinningResearchConfig:
@@ -34,26 +37,24 @@ def load_binning_research_config() -> BinningResearchConfig:
     This config is intentionally independent from ``feature_research.config.load_config()``.
     The main feature-research config now describes the signed-signal trading pipeline,
     while this file is the single source of truth for continuous-node binning / EDA work.
+
+    Cyclical RSI (4, 120, 2) — 10 quantile bins; LONG uses bin index 0 (lowest decile).
     """
-    tickers = [Ticker.NQ]
+    tickers = [Ticker.ES, Ticker.NQ]
     start = datetime(2000, 1, 1)
     end = datetime(2019, 1, 1)
     timeframe = TimeFrame.D
     bias_spec: dict[str, Any] = {
-        "module_name": "filter_gate",
+        "module_name": "cyclical_rsi",
         "timeframes": [timeframe],
         "params": {
-            # Removed 'adx_filter', only use cyclical_rsi as signal.
-            "signal_module": "cyclical_rsi",
-            "signal_params": {
-                "short_period": list(range(2, 7)),
-                "long_period": list(range(80, 141, 10)),
-                "rsi_period": list(range(2, 6)),
-            },
+            "short_period": 4,
+            "long_period": 120,
+            "rsi_period": 2,
         },
     }
     target_col = "log_return_ewsd"
-    reports_dir = Path("feature_research") / "in_sample" / "results" / "continuous" / "filter_gate"
+    reports_dir = Path("feature_research") / "in_sample" / "results" / "continuous" / "cyclical_rsi_4_120_2"
     return BinningResearchConfig(
         enabled=True,
         tickers=tickers,
@@ -68,4 +69,5 @@ def load_binning_research_config() -> BinningResearchConfig:
         strategy=Direction.LONG,
         rolling_window=252,
         rolling_min_periods=126,
+        feature_col_substr=None,
     )

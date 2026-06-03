@@ -16,9 +16,11 @@ from feature_research.in_sample.data_loader import (
     load_candles_for_config,
     populate_cache_if_needed,
 )
+from feature_selection.validation.objective_metrics import (
+    resolve_objective_metric_name as resolve_objective_metric,
+)
 from utils.evaluation.walkforward.config import WalkforwardResearchConfig
 from utils.evaluation.walkforward.evaluators import build_signed_signal_walkforward_evaluator
-from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from utils.evaluation.permutation_test.permutation_nulls import (
     _joblib_tqdm,
     aggregate_oos_metric_from_report,
@@ -73,7 +75,7 @@ def load_research_data(config: object) -> tuple[
                 + ", ".join(
                     f"{t.name}: {r[0].date()}–{r[1].date()}" for t, r in ranges.items()
                 )
-                + ". Narrow config.start/end or oos_window.test_end to match."
+                + ". Narrow config.start/end or research_window.val_end to match."
                 if ranges
                 else " Check data/ohlc_data or narrow config.start/end."
             )
@@ -104,6 +106,17 @@ def load_research_data(config: object) -> tuple[
         data.combo_signal_target,
         portfolio_candles,
     )
+
+
+ResearchDataBundle = tuple[
+    pd.DataFrame,
+    pd.Series,
+    list[dict],
+    object,
+    object | None,
+    dict | None,
+    pd.DataFrame | None,
+]
 
 
 def _two_unit_train_windows(
@@ -260,14 +273,14 @@ def run_permutation_for_phase(
     Uses vector shuffle only for the null distribution (``run_vector_shuffle`` must be True).
     This function consolidates the main logic from both run_oos_permutation.py
     and run_validation_permutation.py. The main difference is the window source
-    (config.oos_window vs config.validation_window).
+    (config.research_window).
 
     Parameters
     ----------
     phase : {"oos", "validation"}
         Which phase to run permutation test for.
     config : object
-        Research configuration (must have oos_window or validation_window, bias_spec, etc.)
+        Research configuration (must have research_window, bias_spec, etc.)
     args : argparse.Namespace
         Parsed command-line arguments (nreps, seed, n_jobs, output_dir).
 
@@ -277,12 +290,14 @@ def run_permutation_for_phase(
         Exit code (0 for success, 1 for error).
     """
     # Import here to avoid circular dependencies and expensive imports at module level
-    from feature_research.core_helpers import build_runtime_walkforward_config
+    from feature_research._internal.core_helpers import build_runtime_walkforward_config
     from feature_research.config import load_config
     from feature_research.in_sample.data_loader import load_candles_for_config
     from utils.evaluation.walkforward.config import WalkforwardResearchConfig
     from utils.evaluation.walkforward.io import resolve_walkforward_output_dir
-    from utils.evaluation.walkforward.metrics import resolve_objective_metric
+    from feature_selection.validation.objective_metrics import (
+        resolve_objective_metric_name as resolve_objective_metric,
+    )
     from utils.evaluation.permutation_test.permutation_core import (
         _compute_fixed_oos_signal_by_fold,
         aggregate_per_ticker_metrics,
@@ -306,35 +321,20 @@ def run_permutation_for_phase(
 
     # Get window and phase-specific details
     if phase == "oos":
-        # Helper for OOS effective window
-        def _effective_oos_window(cfg):
-            oos = getattr(cfg, "oos_window", None)
-            if oos is None:
-                raise ValueError("config.oos_window is not set.")
-            validation = getattr(cfg, "validation_window", None)
-            if validation is None:
-                return oos
-            from feature_research.config import OOSWindowConfig
-            return OOSWindowConfig(
-                train_start=validation.train_start,
-                train_end=validation.test_end,
-                test_start=oos.test_start,
-                test_end=oos.test_end,
-            )
-
-        window = _effective_oos_window(config)
-        phase_label = "OOS"
+        phase_label = "Portfolio Addition"
         phase_subdir = "oos"
         report_filename = "oos_permutation_report.json"
     elif phase == "validation":
-        window = getattr(config, "validation_window", None)
-        if window is None:
-            raise ValueError("config.validation_window is not set.")
         phase_label = "Validation"
         phase_subdir = "validation"
         report_filename = "validation_permutation_report.json"
     else:
         print(f"Error: Unknown phase {phase}.")
+        return 1
+
+    window = getattr(config, "research_window", None)
+    if window is None:
+        print("Error: config.research_window is not set.")
         return 1
 
     # Determine run parameters
@@ -425,12 +425,15 @@ def run_permutation_for_phase(
         config: object,
         lbl: str | None = None,
         return_return_matrix: bool = False,
+        research_bundle: ResearchDataBundle | None = None,
     ) -> tuple[float, np.ndarray] | tuple[float, np.ndarray, pd.Index, np.ndarray, pd.Series]:
         prefix = f"[{lbl}] " if lbl else ""
 
-        data_start = min(config.start, window.train_start)
-        data_end = max(config.end, window.test_end)
-        config_phase = replace(config, start=data_start, end=data_end)
+        if research_bundle is None:
+            data_start = min(config.start, window.train_start)
+            data_end = max(config.end, window.test_end)
+            config_phase = replace(config, start=data_start, end=data_end)
+            research_bundle = load_research_data(config_phase)
 
         (
             reference_candles,
@@ -440,7 +443,7 @@ def run_permutation_for_phase(
             _research_config,
             feature_data_by_combo,
             portfolio_candles_df,
-        ) = load_research_data(config_phase)
+        ) = research_bundle
 
         train_start = pd.Timestamp(window.train_start)
         train_end = pd.Timestamp(window.train_end)
@@ -582,10 +585,15 @@ def run_permutation_for_phase(
         original_metric = aggregate_per_ticker_metrics(per_ticker_originals)
         null_metrics = aggregate_per_ticker_nulls(per_ticker_nulls)
     else:
+        data_start = min(config.start, window.train_start)
+        data_end = max(config.end, window.test_end)
+        config_phase = replace(config, start=data_start, end=data_end)
+        shared_bundle = load_research_data(config_phase)
         original_metric, null_metrics = _run_permutation_once(
             config=config,
             lbl=None,
             return_return_matrix=False,
+            research_bundle=shared_bundle,
         )
 
     p_value, critical_value, passed = compute_significance(

@@ -19,7 +19,37 @@ Related documents:
 
 ## 2. Portfolio-Level Monitoring
 
-The individual strategy monitoring tests (CUSUM, rolling Sharpe, drawdown cone) run per-strategy across the holdout window exactly as specified in `monitoring.md`. The output is a list of strategies flagged for culling by pre-specified monitoring rules.
+### 2.0 Implemented windows and traffic light (portfolio research)
+
+In `portfolio_research`, strategy and portfolio monitoring use **two distinct windows**:
+
+| Window | Span | Role |
+|--------|------|------|
+| **Reference μ** | `validation_window` (default 2018–2022) | Clean OOS drift baseline for CUSUM and equity bands — do not roll forward |
+| **Reference σ** | `train_window` + `validation_window` (pooled), or weighted toward validation if train/val vol differ by >30% | Stable volatility for CUSUM allowance, rolling Sharpe z-scores, and band width |
+| **Evaluation** | Trailing 12 calendar months ending at `test_window.end` | Answers “is the strategy alive **now**?” |
+
+The full holdout block (e.g. 2023–2026) is still used to **generate** returns; only the **evaluation slice** feeds the four robustness tests. At each calendar month-end inside the holdout, the same tests re-run on the trailing 12 months; results are stored in `monitoring_history.csv` (no per-month plots).
+
+**Traffic light** (vote count on failed tests among Sharpe CI, CUSUM, rolling Sharpe z-score, equity bands):
+
+| State | Failed tests | Advisory weight |
+|-------|----------------|-----------------|
+| Green | 0–1 | 1.0 (full) |
+| Yellow | 2 | 0.5 (reduce, monitor) |
+| Red | 3–4 | 0.0 (halt / researcher review) |
+
+Monitoring is **advisory** in Phase 1: optional `monitoring_weight_overrides` in config override advisory weights for display only; the pipeline does not auto-cull strategies.
+
+**Artifacts** (under `results/holdout/`):
+
+- `monitoring_rollup.csv` — current status per strategy plus prior two month-end traffic lights
+- `strategies/<name>/holdout_robustness_report.json` — current evaluation + `monitoring` block
+- `strategies/<name>/monitoring_history.csv` — month-end time series
+- `strategies/<name>/matplotlib/` — plots for the **current** trailing window only
+- `strategies/<name>/<strategy>_full_period_tearsheet.html` — QuantStats tearsheet over **train + validation + full holdout** (DD and metrics for the entire timeline)
+
+The individual strategy monitoring tests (CUSUM, rolling Sharpe, equity bands, Sharpe CI) run per-strategy on the **trailing evaluation window** as specified above. Researchers use the traffic light and history to decide whether to reduce or zero weight — not an automated kill switch.
 
 Beyond individual strategy monitoring, the same tests are applied to the **combined portfolio return stream**. This catches a specific failure mode that per-strategy monitoring cannot: multiple strategies each underperforming by a small, individually-insignificant amount, which collectively represents a portfolio-level structural break.
 
@@ -27,9 +57,9 @@ Beyond individual strategy monitoring, the same tests are applied to the **combi
 
 Using IS portfolio parameters $\mu_P$ (mean daily portfolio return) and $\sigma_P$ (daily portfolio return std):
 
-$$z_t = \frac{r_t^P - \mu_P}{\sigma_P}, \quad S_t = \sum_{i=1}^{t} z_i, \quad C = \frac{\max_t |S_t|}{\sqrt{T_\text{holdout}}}$$
+$$z_t = \frac{r_t^P - \mu_P}{\sigma_P}, \quad S_t = \sum_{i=1}^{t} z_i, \quad C = \frac{\max(0, -\min_t S_t)}{\sqrt{T_\text{holdout}}}$$
 
-Same critical values as individual strategy CUSUM: $C > 1.36$ at the 5% level flags a portfolio-level structural break.
+Same lower envelope as individual strategy CUSUM: $\min_t S_t < -1.36\sqrt{T_\text{holdout}}$ at the 5% level flags portfolio-level underperformance. Upper-envelope breaches do not fail.
 
 A portfolio CUSUM trigger without any individual strategy CUSUM triggers indicates a systemic problem — the market environment is unfavourable to all strategies simultaneously, or the correlation structure has changed so that strategies that diversified in IS are no longer doing so. Neither justifies portfolio modification, but both are important diagnostic information.
 

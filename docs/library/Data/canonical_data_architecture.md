@@ -48,7 +48,7 @@ Raw providers disagree on schema, roll conventions, timestamps, and data quality
 
 - Canonical daily futures history anchor is **Norgate adjusted continuous**.
 - IB is live-gap updater and fallback source, never an unbounded overwrite of overlapping history.
-- Reconciliation policy is configured in `deployment/config/canonical_source_priority.json` and loaded by `utils/data/source_reconciliation.py`.
+- Source priority is enforced in ingestion paths (for example `utils/cache/runtime/ib_candle_ratio_align.py` and Norgate migration scripts), not a standalone JSON policy loader.
 
 ## IB append reconciliation (mandatory)
 

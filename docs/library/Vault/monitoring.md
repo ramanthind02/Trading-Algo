@@ -74,11 +74,11 @@ Re-saving an already-vaulted model is safe — `FileExistsError` is silenced.
 
 ## API
 
-**Module**: `ensemble/monitoring_store.py`
+**Module**: `ensemble/vault/monitoring_store.py`
 
 ### Initialize (IS seed — called automatically by `save_to_vault`)
 ```python
-from ensemble.monitoring_store import initialize_monitoring
+from ensemble.vault.monitoring_store import initialize_monitoring
 
 path = initialize_monitoring(
     ensemble_dir='vault/D/mean_reversion_indices/mr_indices_long',
@@ -95,7 +95,7 @@ Raises `FileExistsError` if the file already exists.
 
 ### Append Live / OOS Data
 ```python
-from ensemble.monitoring_store import append_monitoring_data
+from ensemble.vault.monitoring_store import append_monitoring_data
 
 append_monitoring_data(
     ensemble_dir='vault/D/mean_reversion_indices/mr_indices_long',
@@ -112,7 +112,7 @@ Idempotent: deduplicates on date index (last write wins for any repeated date).
 
 ### Load for Analysis
 ```python
-from ensemble.monitoring_store import load_monitoring_data
+from ensemble.vault.monitoring_store import load_monitoring_data
 
 # All periods
 df = load_monitoring_data(ensemble_dir, feature_name, model_id)

@@ -965,7 +965,9 @@ def add_feature_to_ensemble(
     )
 
     model_id = generate_model_id("signed_signal", {}, bias_node_params=resolved_bias_node_spec)
-    feature_file = features_dir / f"{feature_name}.json"
+    from ensemble.vault.feature_files import feature_json_stem
+
+    feature_file = features_dir / f"{feature_json_stem(feature_name)}.json"
     serializable_bias_spec = _normalize_bias_node_spec_for_storage(resolved_bias_node_spec)
     if _validate_existing_feature_file(
         feature_file=feature_file,
@@ -1171,7 +1173,7 @@ def get_all_base_model_names(ensemble_dir: Optional[str] = None) -> List[str]:
 
 def ensure_vault_cache_coverage(
     vault_ensemble_dirs: Sequence[str],
-    start_date: datetime,
+    start_date: Optional[datetime],
     end_date: datetime,
     refresh_mode: str = "missing_stale_only",
 ) -> Dict[str, Any]:

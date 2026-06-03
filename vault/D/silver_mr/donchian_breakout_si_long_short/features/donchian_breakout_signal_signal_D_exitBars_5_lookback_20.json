@@ -1,0 +1,38 @@
+{
+  "feature_name": "donchian_breakout_signal_signal_D_exitBars_5_lookback_20",
+  "created_at": "2026-06-02T02:27:43.712606+00:00",
+  "updated_at": "2026-06-02T02:27:43.712606+00:00",
+  "bias_node_spec": {
+    "module_name": "donchian_breakout_signal",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "lookback": 20,
+      "exit_bars": 5
+    }
+  },
+  "tickers": [
+    "SI"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_donchian-breakout-signal_d_exit-bars_5_lookback_20",
+      "model_name": "donchian_breakout_signal_signal_D_exitBars_5_lookback_20::signed_signal_donchian-breakout-signal_d_exit-bars_5_lookback_20",
+      "model_type": "signed_signal",
+      "feature_column": "donchian_breakout_signal_signal_D_exitBars_5_lookback_20",
+      "strategy": "long_short",
+      "bias_node_spec": {
+        "module_name": "donchian_breakout_signal",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "lookback": 20,
+          "exit_bars": 5
+        }
+      }
+    }
+  ],
+  "weight_hierarchy_group": "silver_mr"
+}

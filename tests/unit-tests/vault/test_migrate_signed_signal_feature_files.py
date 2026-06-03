@@ -49,16 +49,16 @@ def test_migrate_legacy_signed_signal_strips_binning_keys() -> None:
 
 def test_migrate_merges_bias_node_params_into_top_spec() -> None:
     legacy = {
-        "feature_name": "rebalancing_signal_D_crossTickers_TLT",
+        "feature_name": "rebalancing_flow_signal_D_crossTickers_TLT_flow_both",
         "bias_node_spec": {
-            "module_name": "rebalancing",
+            "module_name": "rebalancing_flow",
             "timeframes": ["D"],
         },
         "tickers": ["ES"],
         "base_models": [
             {
                 "model_id": "rule_based_3_cross_tickers_tlt",
-                "model_name": "rebalancing_signal_D_crossTickers_TLT::rule_based_3_cross_tickers_tlt",
+                "model_name": "rebalancing_flow_signal_D_crossTickers_TLT_flow_both::rule_based_3_cross_tickers_tlt",
                 "bias_node_params": {"cross_tickers": ["TLT"]},
                 "binning_model_type": "rule_based",
                 "strategy": "long",

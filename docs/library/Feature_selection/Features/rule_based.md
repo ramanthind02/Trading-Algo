@@ -12,7 +12,7 @@ For native discrete features, focus on:
 - turnover and persistence
 - parameter stability
 
-See [[Feature_selection/Phase_1_IS/eda]].
+See [[Feature_selection/exploration]].
 
 ## Contract
 

@@ -86,7 +86,7 @@ def test_invalid_builtin_name_raises_with_supported_names() -> None:
         (metric_sharpe, pd.Series([-0.01, -0.01, -0.01]), float('-inf')),
         (metric_sharpe, pd.Series([0.0, 0.0, 0.0]), 0.0),
         (metric_sortino, pd.Series([0.01, 0.01, 0.01]), float('inf')),
-        (metric_sortino, pd.Series([-0.01, -0.01, -0.01]), float('-inf')),
+        (metric_sortino, pd.Series([-0.01, -0.01, -0.01]), -1.0),
         (metric_sortino, pd.Series([0.0, 0.0, 0.0]), 0.0),
         (metric_calmar, pd.Series([0.01, 0.01, 0.01]), float('inf')),
         (metric_calmar, pd.Series([0.0, 0.0, 0.0]), 0.0),

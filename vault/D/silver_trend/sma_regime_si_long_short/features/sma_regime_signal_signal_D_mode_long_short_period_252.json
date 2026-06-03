@@ -1,0 +1,37 @@
+{
+  "feature_name": "sma_regime_signal_signal_D_mode_long_short_period_252",
+  "created_at": "2026-06-02T04:15:55.066676+00:00",
+  "updated_at": "2026-06-02T04:15:55.066676+00:00",
+  "bias_node_spec": {
+    "module_name": "sma_regime_signal",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "period": 252,
+      "mode": "long_short"
+    }
+  },
+  "tickers": [
+    "SI"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_sma-regime-signal_d_mode_long-short_period_252",
+      "model_name": "sma_regime_signal_signal_D_mode_long_short_period_252::signed_signal_sma-regime-signal_d_mode_long-short_period_252",
+      "model_type": "signed_signal",
+      "feature_column": "sma_regime_signal_signal_D_mode_long_short_period_252",
+      "strategy": "long_short",
+      "bias_node_spec": {
+        "module_name": "sma_regime_signal",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "period": 252,
+          "mode": "long_short"
+        }
+      }
+    }
+  ]
+}

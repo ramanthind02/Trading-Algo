@@ -12,13 +12,15 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from feature_research.core_helpers import combo_key
+from feature_research._internal.core_helpers import combo_key
+from feature_selection.validation.objective_metrics import (
+    resolve_objective_metric_name as resolve_objective_metric,
+)
 from utils.evaluation.permutation_test.permutation_nulls import (
     _joblib_tqdm,
     aggregate_oos_metric_from_report,
     permute_target_in_two_units,
 )
-from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from utils.evaluation.walkforward.portfolio_evaluator import _signal_return_series
 from utils.evaluation.walkforward.selected_params_codec import decode_selected_params_list
 from utils.evaluation.walkforward.runner import run_portfolio_simulation
@@ -32,31 +34,9 @@ def _compute_metrics_from_returns_matrix(
     if nreps == 0 or ncols == 0:
         # Nothing to measure → zero metrics
         return np.zeros(nreps, dtype=float)
-    if objective_metric_name == "sharpe":
-        means = all_returns.mean(axis=1)
-        stds = all_returns.std(axis=1, ddof=0)
-        out = np.zeros_like(means, dtype=float)
-        np.divide(means, stds, out=out, where=stds > 0)
-        return out
-    if objective_metric_name == "mean_return":
-        return all_returns.mean(axis=1)
-    if objective_metric_name == "t_stat":
-        means = all_returns.mean(axis=1)
-        stds = all_returns.std(axis=1, ddof=0)
-        ratio = np.zeros_like(means, dtype=float)
-        np.divide(means, stds, out=ratio, where=stds > 0)
-        return ratio * np.sqrt(ncols)
-    if objective_metric_name == "sortino":
-        means = all_returns.mean(axis=1)
-        neg_mask = all_returns < 0
-        downside_sq = np.where(neg_mask, all_returns ** 2, 0.0).mean(axis=1)
-        downside_std = np.sqrt(downside_sq)
-        out = np.zeros_like(means, dtype=float)
-        np.divide(means, downside_std, out=out, where=downside_std > 0)
-        return out
     metric_fn = resolve_objective_metric(objective_metric_name)
     return np.array(
-        [metric_fn(pd.Series(all_returns[i])) for i in range(nreps)],
+        [metric_fn(pd.Series(row, dtype=np.float64)) for row in all_returns],
         dtype=float,
     )
 

@@ -10,9 +10,12 @@ The reasoning is conservative by design: if a strategy cannot improve the portfo
 
 **What the gate is not:** It is not a mechanism to tune or improve a strategy. It is a binary pass/fail. A strategy that fails cannot be adjusted in response to this result and re-evaluated — that would convert the validation data into a fitness function. Failure means the strategy is discarded and a new development cycle begins from scratch.
 
+For local `Trading-Algo` docs and code, this is the canonical `portfolio_addition` phase. Some compatibility surfaces still use the older `oos` name for commands or artifact folders, but the workflow meaning is portfolio admission, not a separate fourth strategy phase.
+
 Related documents:
 - `docs/SaaS/robustness_tests/validation.md` — individual strategy validation; must pass before this gate
 - `docs/SaaS/weight_layer.md` — weight layer method; must be selected before this gate runs
+- `docs/SaaS/weight_layer_spec.md` — asset-first `hierarchy_equal` tree used by the portfolio addition gate (default in feature-research `PortfolioSourceConfig`)
 - `docs/SaaS/zone_manager.md` §8 — contamination doctrine
 - `docs/SaaS/research_flow.md` — where this gate sits in the end-to-end sequence
 
@@ -23,26 +26,57 @@ Related documents:
 The gate runs after:
 1. The strategy has passed all IS robustness tests
 2. The strategy has passed all validation robustness tests
-3. The weight layer method has been selected (IS walk-forward CV)
+3. The weight layer method has been selected (IS cross-validation)
 
-The gate requires at least one strategy already committed to the portfolio. For the first strategy, the gate is skipped — there is no existing portfolio to compare against.
+The gate requires at least one strategy already committed to the portfolio. For the first strategy, the gate is skipped — there is no existing portfolio to compare against, so there is nothing to compare against.
 
 **Data used:** Combined IS + validation return series. The exact date range is the union of all IS and validation zone bars the strategy was evaluated on. No data from the project test zone is used at any point.
 
+**Sequence of checks:** §3 pairwise redundancy (warning) → §4 analytical hurdle (soft gate) → §5 empirical ΔSR (primary gate) → §6 weight assessment (advisory) → §7 IDM (context only).
+
 ---
 
-## 3. The Analytical Hurdle
+## 3. Pairwise Redundancy Check
 
-**What it answers:** Can this strategy theoretically improve the portfolio, given its Sharpe and its correlation with the existing portfolio?
+**What it answers:** Is the new strategy too similar to any single strategy already in the portfolio?
 
-From portfolio theory, adding a new strategy to an existing portfolio improves the portfolio's Sharpe ratio if and only if:
+The analytical hurdle in §4 measures correlation against the *portfolio as a whole*. That can look deceptively low: if your portfolio has eight strategies and the new one overlaps heavily with just one of them, the portfolio-level number gets diluted by all the others. The weight layer will recognise the overlap and assign a tiny weight — but by then you've already run the full gate. This check catches the problem up front.
+
+**Procedure:** Compute the return correlation between the new strategy and each existing strategy individually, over the combined IS + validation data. Flag if any single pairwise correlation exceeds 0.75.
+
+```python
+@dataclass(frozen=True)
+class PairwiseRedundancyResult:
+    max_pairwise_corr: float        # highest correlation with any single existing strategy
+    most_similar_strategy: str      # name of the most correlated existing strategy
+    flagged: bool                   # max_pairwise_corr > 0.75
+```
+
+**This is a warning, not a hard gate.** A flag means: "this strategy largely does what an existing strategy already does — be deliberate about why you're adding it." A flagged strategy can still pass the gate if the empirical comparison shows a genuine improvement. The flag just ensures the researcher notices the overlap rather than discovering it after the fact from a near-zero weight.
+
+| Max pairwise correlation | Interpretation |
+|---|---|
+| < 0.50 | No meaningful overlap with any individual strategy |
+| 0.50 – 0.75 | Partial overlap — worth noting but not alarming |
+| > 0.75 | High overlap with at least one existing strategy — flag raised |
+| > 0.90 | Near-duplicate — almost certainly zero-weighted by the weight layer |
+
+---
+
+## 4. The Analytical Hurdle
+
+**What it answers:** Does the new strategy's performance justify adding it, given how correlated it is with the existing portfolio?
+
+The key insight is that correlation and Sharpe trade off against each other. A strategy that is nearly uncorrelated with the rest of the portfolio adds diversification value even with a modest Sharpe. A strategy that moves in lockstep with the portfolio needs to be materially better than the portfolio to earn its place.
+
+From portfolio theory, adding a new strategy improves the portfolio's Sharpe ratio if and only if:
 
 $$SR_\text{new} > \rho_{\text{new}, P} \times SR_P$$
 
 where:
-- $SR_\text{new}$ = NW-adjusted Sharpe of the new strategy on combined IS + val data
+- $SR_\text{new}$ = Sharpe of the new strategy on combined IS + val data
 - $\rho_{\text{new}, P}$ = **effective correlation** of the new strategy with the existing portfolio (see §3.1)
-- $SR_P$ = NW-adjusted Sharpe of the existing portfolio on the same data
+- $SR_P$ = Sharpe of the existing portfolio on the same data
 
 The right-hand side is the **correlation hurdle** — the minimum Sharpe the new strategy must demonstrate to be worth adding at any positive weight.
 
@@ -70,11 +104,11 @@ class AnalyticalHurdleResult:
     joint_drawdown_depth: float      # avg combined portfolio DD when both in drawdown
 ```
 
-**Role in the gate:** Soft gate. Failing is a strong signal to discard, but the empirical comparison (§4) is the primary gate.
+**Role in the gate:** Soft gate. Failing is a strong signal to discard, but the empirical comparison (§5) is the primary gate.
 
 ---
 
-### 3.1 Drawdown Correlation Analysis
+### 4.1 Drawdown Correlation Analysis
 
 Unconditional return correlation is measured across all market conditions and includes quiet periods where both strategies are doing little. The correlations that matter most for portfolio risk are those during drawdown periods — when both strategies are losing simultaneously, the diversification assumption is most consequential.
 
@@ -133,20 +167,26 @@ These are observational alerts, not additional gates. They inform the researcher
 
 ---
 
-## 4. Empirical Portfolio Sharpe Comparison (Primary Gate)
+## 5. Empirical Sharpe Comparison (Primary Gate — Sleeve Scope)
 
-**What it answers:** Does the portfolio's Sharpe actually improve when this strategy is added at the weight the algorithm assigns?
+**What it answers:** Does the **sleeve's** combined Sharpe improve — by a meaningful amount — when this strategy is added at the weight the algorithm assigns **within that sleeve**?
 
-The analytical hurdle is derived from two-asset theory and assumes the new strategy receives a meaningful, theoretically optimal weight. In practice the weight layer may assign the strategy a small weight due to its correlation structure with the full set of existing strategies — making the empirical improvement negligible even when the analytical hurdle is cleared.
+In feature-research, a *sleeve* is the asset-first weight-layer bucket `asset_class / style_group` (for example `equity_indices / momentum`), derived from the candidate's `weight_hierarchy_group` and tickers. The gate runs portfolio phases on **only the ensembles that contribute streams to that sleeve**, then refits the weight layer on that subset. Pass/fail (`passed` on `portfolio_addition_report.json`) follows the **sleeve composite gate** (Sharpe + risk legs below).
 
-The empirical test cuts through this: it uses the actual weight layer output.
+**Full-portfolio metrics** (same checks on the global combined portfolio) are computed in parallel and stored under `portfolio` in the report JSON for context. A strategy can pass its sleeve but fail globally (or the reverse); the UI shows both.
+
+**What the legacy full-portfolio-only description measured:** Does the portfolio's Sharpe actually improve — by a meaningful amount — when this strategy is added at the weight the algorithm assigns?
+
+The analytical hurdle is based on simplified two-asset theory. It doesn't know what weight the strategy will actually receive once it enters a larger portfolio. A strategy can clear the hurdle but still receive a tiny weight from the weight layer (because it overlaps with several existing strategies simultaneously), making the real-world improvement negligible.
+
+The empirical test cuts through this: it uses the actual weight layer output and requires the improvement to meet a minimum bar.
 
 **Procedure:**
 
 1. Compute the combined IS + validation portfolio return stream **without** the new strategy, using the weight layer's current fitted weights.
 2. Re-fit the weight layer **with** the new strategy included, using the same IS data and the same weight layer method.
 3. Compute the combined IS + validation portfolio return stream **with** the new strategy.
-4. NW-adjust both Sharpe ratios.
+4. Compute both Sharpe ratios on the same combined sample.
 5. Compute $\Delta SR = SR_\text{with} - SR_\text{without}$.
 6. Block bootstrap CI on $\Delta SR$ (block length $L = T^{1/3}$, 1000 iterations).
 
@@ -156,20 +196,60 @@ class EmpiricalComparisonResult:
     sr_without: float               # portfolio Sharpe without new strategy
     sr_with: float                  # portfolio Sharpe with new strategy added
     delta_sr: float                 # sr_with - sr_without
+    delta_sr_threshold: float       # minimum required improvement (default 0.02)
     delta_sr_ci: BootstrapCI        # 95% bootstrap CI on delta_sr
     weight_assigned: float          # weight the weight layer gave the new strategy
-    passed: bool                    # delta_sr > 0
+    passed: bool                    # delta_sr >= delta_sr_threshold
 ```
 
-**Pass condition:** $\Delta SR > 0$.
+**Pass condition:** ΔSR ≥ 0.02.
 
-This is deliberately permissive. The user's principle applies: if the strategy cannot produce a positive $\Delta SR$ even on the data it was trained on, it cannot do so out-of-sample. A $\Delta SR$ that is positive but within the bootstrap CI of zero is still a pass — the point estimate must simply be positive.
+The threshold exists because a ΔSR of +0.001 is indistinguishable from rounding noise — it adds a strategy to the portfolio for no practical benefit. The 0.02 floor is small enough that any genuinely useful strategy clears it easily, but large enough to filter out cases where the weight layer assigned a near-zero allocation and the improvement is purely cosmetic.
 
-**Interpreting the bootstrap CI:** If the CI on $\Delta SR$ is entirely above zero, the improvement is statistically distinguishable from noise. If the CI straddles zero, the improvement is real but small — the researcher should weigh this against the added portfolio complexity. Neither case changes the pass/fail outcome — only $\Delta SR > 0$ determines it.
+The core principle still holds: if the strategy cannot improve the portfolio on data it was trained on, it cannot do so out-of-sample. The threshold just ensures "improvement" means something measurable.
+
+**Interpreting the bootstrap CI:** If the CI on ΔSR is entirely above zero, the improvement is robust across resampled time blocks. If the CI straddles zero, the improvement is present on average but sensitive to the specific period — the researcher should note this as a fragility signal. The CI is context, not a separate gate leg.
 
 ---
 
-## 5. Weight Assessment
+## 5.2 Portfolio Risk Impact (Composite Gate — Sleeve Scope)
+
+**What it answers:** When the strategy is added at its fitted weight, does the **sleeve portfolio** get meaningfully worse on downside risk — not just better on Sharpe?
+
+The composite primary gate requires **all** of the following on the same IS + validation sample:
+
+| Leg | Pass condition (defaults) |
+|-----|---------------------------|
+| Sharpe (§5) | ΔSR ≥ 0.02 |
+| Max drawdown | ΔmaxDD ≥ −0.01 (≤ 1 pp deeper MDD allowed) |
+| Ulcer index | Δulcer ≤ +0.05 |
+| Stress max drawdown | Δstress_maxDD ≥ −0.01 on stress bars |
+
+**Stress bars** reuse §4.1: either the candidate or the sleeve portfolio (without the new strategy) is in drawdown below −5% (rolling 252-bar peak). If fewer than 30 stress bars exist, the stress leg is skipped (`stress_metrics_reliable: false`) and does not fail the gate; the UI warns.
+
+Sortino and Calmar are reported for context only — they do not gate admission.
+
+```python
+@dataclass(frozen=True)
+class PortfolioRiskImpactResult:
+    max_dd_without: float
+    max_dd_with: float
+    delta_max_dd: float
+    ulcer_without: float
+    ulcer_with: float
+    delta_ulcer: float
+    stress_max_dd_without: float
+    stress_max_dd_with: float
+    delta_stress_max_dd: float
+    stress_metrics_reliable: bool
+    passed: bool  # AND of max_dd, ulcer, stress legs
+```
+
+`portfolio_addition_report.json` includes `gate_criteria` with per-leg booleans and `portfolio_risk_impact.csv` for offline review.
+
+---
+
+## 6. Weight Assessment
 
 **What it answers:** Does the weight layer assign the strategy a meaningful weight, or is it effectively zero-weighted?
 
@@ -183,11 +263,11 @@ class WeightAssessmentResult:
     meaningful: bool                # weight_assigned >= weight_floor
 ```
 
-**Alert threshold:** weight < 3%. Below this, the strategy is flagged as negligibly weighted. This is not a hard gate — the researcher may accept a small weight if they expect the strategy's role to grow as the portfolio evolves, or if the 1% diversification benefit is nonetheless the right decision. But the platform surfaces it explicitly so the decision is deliberate.
+**Alert threshold:** weight < 3%. Below this, the strategy is flagged as negligibly weighted. This is not a hard gate — the researcher may accept a small weight if they expect the strategy's role to grow as the portfolio evolves, or if the small diversification benefit is nonetheless the right decision. But the platform surfaces it explicitly so the decision is deliberate.
 
 ---
 
-## 6. IDM Improvement
+## 7. IDM Improvement
 
 **What it answers:** Does adding this strategy increase the portfolio's Instrument Diversification Multiplier — the direct measure of portfolio-level diversification?
 
@@ -212,45 +292,56 @@ class IDMImprovementResult:
 | < 0.02 | Negligible diversification — strategy is highly correlated with the existing set |
 | < 0 | IDM decreases — strategy is more correlated than the average existing pair (unusual) |
 
-$\Delta$IDM is observational — it does not gate the decision. It explains *why* the analytical hurdle result came out as it did. A negative $\Delta$IDM alongside a failed analytical hurdle tells the researcher the strategy is redundant with the existing set. A positive $\Delta$IDM alongside a cleared analytical hurdle tells them the portfolio genuinely benefits from the diversification.
+ΔIDM is observational — it does not gate the decision. It explains *why* the analytical hurdle result came out as it did. A negative ΔIDM alongside a failed analytical hurdle tells the researcher the strategy is redundant with the existing set. A positive ΔIDM alongside a cleared analytical hurdle confirms the portfolio genuinely benefits from the diversification.
 
 ---
 
-## 7. Interpretation and Decision Logic
+## 8. Interpretation and Decision Logic
 
-The four tests address distinct concerns. Reading them together tells the full story:
+The checks address distinct concerns. Reading them together tells the full story:
 
 ```
+Pairwise redundancy flagged? (max single-strategy correlation > 0.75)
+    YES → The new strategy is very similar to an existing one. Proceed with caution —
+          the weight layer will likely assign it a small allocation. Not a hard gate,
+          but note it before continuing.
+    ↓
+
 Analytical hurdle passed?
-    NO → Strategy's Sharpe is too low given its correlation with the portfolio.
-         Check ΔIDM: if close to zero, the strategy is largely redundant. Discard.
-         If empirical ΔSR > 0 despite hurdle failure, weight is negligible (see Test 3).
+    NO → The strategy's Sharpe is too low given how correlated it is with the portfolio.
+         Check ΔIDM: if near zero, the strategy is largely redundant. Discard.
     YES ↓
 
-Empirical ΔSR > 0?
-    NO → Strategy does not improve the portfolio at the weight the algorithm assigns.
-         Even if analytically it should help, the weight layer sees no room for it
-         in the current portfolio's correlation structure. Discard.
+Empirical ΔSR ≥ 0.02?
+    NO → Sharpe leg failed. Discard.
     YES ↓
 
-Weight assigned ≥ floor?
-    NO → Strategy adds value in principle but is effectively zero-weighted.
-         Adding it produces negligible improvement at the cost of monitoring complexity.
-         Researcher decides — flag is advisory, not a hard gate.
+Portfolio risk impact passed?
+    (max DD, ulcer, stress max DD within tolerances)
+    NO → Sharpe improved but sleeve downside risk worsened materially. Discard.
+    YES ↓
+
+Weight assigned ≥ floor (3%)?
+    NO → The strategy adds value in principle but the weight layer considers it nearly
+         negligible. Adding it produces near-zero improvement at the cost of monitoring
+         complexity. Researcher decides — this flag is advisory, not a hard gate.
     YES ↓
 
 PASS — Strategy approved for portfolio inclusion.
 ```
 
-**Special case — hurdle failed, ΔSR > 0, weight < floor:**
-The strategy has a very low weight, which is why the empirical test just barely passes despite the analytical hurdle failing. The weight assessment flag (Test 3) captures this. The researcher should be aware they are adding a strategy that the weight layer considers nearly negligible.
+**Special case — redundancy flagged, hurdle cleared, ΔSR ≥ 0.02, weight < floor:**
+The pairwise flag predicted this outcome. The strategy overlaps heavily with one existing strategy, so the weight layer gave it almost nothing. The improvement is technically above the threshold but marginal. The researcher should decide whether that small allocation is worth the added maintenance.
 
-**Special case — hurdle cleared, ΔSR > 0, weight < floor:**
-The strategy is genuinely good but the portfolio is already well-diversified in the direction this strategy covers. The marginal benefit is real but small. A reasonable decision is to proceed but note the limited impact.
+**Special case — hurdle cleared, ΔSR ≥ 0.02, weight < floor:**
+The strategy is genuinely useful but the portfolio is already well-diversified in the direction it covers. The marginal benefit is real but small. A reasonable decision is to proceed but note the limited impact.
+
+**Special case — hurdle failed, ΔSR ≥ 0.02, weight < floor:**
+The very low weight is why the empirical test just barely clears the threshold despite failing the hurdle. The researcher should be aware they are adding a strategy the weight layer considers nearly negligible.
 
 ---
 
-## 8. Contamination Discipline
+## 9. Contamination Discipline
 
 **Binary gate only.** The result of the portfolio addition gate is pass or fail. The following actions are explicitly prohibited after viewing results:
 
@@ -260,7 +351,7 @@ The strategy is genuinely good but the portfolio is already well-diversified in 
 | Discarding the strategy after failing | No | Gate result used for its intended purpose |
 | Adjusting the strategy's parameters to improve ΔSR and re-running | **Yes** | Validation + IS data becomes a fitness function |
 | Changing the strategy's target instruments to reduce correlation | **Yes** | Strategy redesigned in response to gate outcome |
-| Re-running the gate with a different weight layer method to find one where ΔSR > 0 | **Yes** | Weight layer selection becomes a fitness function |
+| Re-running the gate with a different weight layer method to find one where ΔSR ≥ 0.02 | **Yes** | Weight layer selection becomes a fitness function |
 
 The weight layer method is locked before this gate runs (see `weight_layer.md` §5). It cannot be changed to make a failing strategy pass.
 
@@ -268,14 +359,16 @@ If the strategy fails, the researcher may develop a **new, independent** strateg
 
 ---
 
-## 9. UI Surface
+## 10. UI Surface
 
-### 9.1 Portfolio Addition Gate Summary Card
+### 10.1 Portfolio Addition Gate Summary Card
 
 ```
 ┌─ Portfolio Addition Gate ────────────────────────────────────────────┐
 │  New strategy:     ES_MEAN_REV_14                                     │
 │  Evaluation data:  IS + Validation   2018-01-01 → 2021-12-31         │
+│                                                                       │
+│  Pairwise check:   max corr 0.28 vs NQ_MEAN_REV_14   ✓  no overlap  │
 │                                                                       │
 │  Existing portfolio SR:    0.94                                       │
 │  New strategy SR:          0.61   correlation to portfolio:  0.31    │
@@ -283,6 +376,7 @@ If the strategy fails, the researcher may develop a **new, independent** strateg
 │                                                                       │
 │  Portfolio SR without:     0.94                                       │
 │  Portfolio SR with:        1.08   ΔSR:  +0.14   CI: [+0.02, +0.26]  │
+│  Required ΔSR:             0.02   ✓                                  │
 │                                                                       │
 │  Weight assigned:          0.14   ✓  above floor (0.03)              │
 │  IDM without:              1.42   IDM with:  1.51   ΔIDM:  +0.09     │
@@ -292,12 +386,14 @@ If the strategy fails, the researcher may develop a **new, independent** strateg
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-### 9.2 Failure Card with Diagnostic
+### 10.2 Failure Card with Diagnostic
 
 ```
 ┌─ Portfolio Addition Gate ────────────────────────────────────────────┐
 │  New strategy:     ES_BREAKOUT_50                                     │
 │  Evaluation data:  IS + Validation   2018-01-01 → 2021-12-31         │
+│                                                                       │
+│  Pairwise check:   max corr 0.81 vs ES_BREAKOUT_30   ⚠  high overlap │
 │                                                                       │
 │  Existing portfolio SR:    0.94                                       │
 │  New strategy SR:          0.52   correlation to portfolio:  0.74    │
@@ -305,15 +401,16 @@ If the strategy fails, the researcher may develop a **new, independent** strateg
 │                                                                       │
 │  Portfolio SR without:     0.94                                       │
 │  Portfolio SR with:        0.91   ΔSR:  -0.03   CI: [-0.12, +0.06]  │
+│  Required ΔSR:             0.02   ✗                                  │
 │                                                                       │
 │  Weight assigned:          0.06                                       │
 │  IDM without:              1.42   IDM with:  1.40   ΔIDM:  -0.02     │
 │                                                                       │
 │  Result:   FAIL  ✗                                                    │
-│  Diagnostic: strategy is too correlated with the existing portfolio   │
-│  to improve diversification. Its Sharpe does not clear the hurdle    │
-│  set by that correlation. The portfolio does not benefit from its     │
-│  addition on IS + validation data.                                    │
+│  Diagnostic: this strategy is highly similar to ES_BREAKOUT_30       │
+│  already in the portfolio. Its Sharpe isn't high enough to justify    │
+│  adding something so correlated, and the portfolio Sharpe falls       │
+│  when it is included.                                                 │
 │                                                                       │
 │  [Discard Strategy]                                                   │
 │                                                                       │
@@ -323,44 +420,60 @@ If the strategy fails, the researcher may develop a **new, independent** strateg
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
+### 10.3 Sleeve portfolio tearsheets (validation phase)
+
+When the gate runs as part of **Validation**, QuantStats HTML tearsheets are written for the **sleeve** scope (the same ensembles used for the primary composite gate):
+
+- **With peers in sleeve:** six files — sleeve portfolio without vs with candidate × train, validation, and concatenated train+validation.
+- **First in sleeve:** three files — with-candidate only (train, validation, train+validation).
+
+Files live under `…/validation/sleeve_tearsheets_<asset>_<style>/` (for example `sleeve_tearsheets_equity_indices_mean_reversion_indices/`). Toggle with `portfolio_addition_gate.emit_sleeve_tearsheets` (default on). No extra portfolio refits beyond those already executed for the gate.
+
 ---
 
-## 10. Computation Contract
+## 11. Computation Contract
 
-### 10.1 Inputs
+### 11.1 Inputs
 
 | Field | Type | Source | Description |
 |---|---|---|---|
 | `new_strategy_returns` | `pd.Series` | Backtest engine | Daily returns of new strategy on IS + val data |
 | `existing_portfolio_returns` | `pd.Series` | Portfolio engine | Daily combined portfolio returns on IS + val data |
+| `individual_strategy_returns` | `pd.DataFrame` | Portfolio engine | Per-strategy return series (for pairwise redundancy check) |
 | `strategy_is_returns` | `pd.DataFrame` | Backtest engine | Per-strategy IS returns (for weight layer refit) |
 | `weight_layer_config` | `WeightLayerConfig` | Portfolio config | Locked weight layer method and config |
+| `pairwise_corr_threshold` | `float` | Platform config | Default 0.75 |
+| `delta_sr_threshold` | `float` | Platform config | Default 0.02 |
 | `weight_floor` | `float` | Platform config | Default 0.03 |
 | `n_bootstrap` | `int` | Platform config | Default 1000 |
 
-### 10.2 Outputs
+### 11.2 Outputs
 
 ```python
 @dataclass(frozen=True)
 class PortfolioAdditionReport:
-    # §3 — Analytical hurdle
+    # §3 — Pairwise redundancy check
+    pairwise_redundancy: PairwiseRedundancyResult
+
+    # §4 — Analytical hurdle
     analytical_hurdle: AnalyticalHurdleResult
 
-    # §4 — Empirical comparison
+    # §5 — Empirical comparison
     empirical_comparison: EmpiricalComparisonResult
 
-    # §5 — Weight assessment
+    # §6 — Weight assessment
     weight_assessment: WeightAssessmentResult
 
-    # §6 — IDM improvement
+    # §7 — IDM improvement
     idm_improvement: IDMImprovementResult
 
     # Aggregate
-    passed: bool                    # delta_sr > 0 (primary gate)
+    passed: bool                    # delta_sr >= delta_sr_threshold (primary gate)
+    redundancy_warning: bool        # max pairwise corr > pairwise_corr_threshold
     weight_warning: bool            # weight_assigned < weight_floor
-    interpretation: str             # sentence-level diagnostic for UI
+    interpretation: str             # plain-English diagnostic for UI
 ```
 
-### 10.3 Worker Behaviour
+### 11.3 Worker Behaviour
 
 All portfolio addition gate tests run as a single synchronous job triggered when the researcher clicks "Check Portfolio Fit" from the strategy validation results view. The weight layer refit (with new strategy included) is the most expensive step — it runs on the IS data only, using the same CV procedure as the original weight layer selection. Results are cached against the strategy version ID and the current portfolio version ID; they are invalidated if either changes.

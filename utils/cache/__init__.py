@@ -1,8 +1,7 @@
 """Cache package exports. Implementation modules live under ``utils.cache.runtime``."""
 
-from .runtime.backtest import Backtest
 from .runtime.bootstrap_source_candles import bootstrap_source_candles
-from .runtime.central_cache import CentralCache, CentralCacheStore
+from .runtime.central_cache import CentralCacheStore
 from .runtime.central_cache_errors import (
     ArtifactLifecycleError,
     ArtifactMissingError,
@@ -25,7 +24,6 @@ from .runtime.cross_ticker_store import (
     SCALAR_LIST_PARAM_KEYS,
     extract_cross_ticker_names,
 )
-from .runtime.ingest_source_candles import ingest_source_candles
 from .runtime.live_cache_refresh import (
     ActiveLivePortfolioConfig,
     LiveCacheRefreshManifest,
@@ -48,20 +46,17 @@ __all__ = [
     "ArtifactMissingError",
     "ArtifactRecord",
     "ArtifactScope",
-    "Backtest",
     "ActiveLivePortfolioConfig",
     "BaseModelMaterializationIdentity",
     "bootstrap_source_candles",
     "CacheCoverageError",
     "CacheRequest",
     "CleanupSummary",
-    "CentralCache",
     "CentralCacheError",
     "CentralCacheStore",
     "CROSS_TICKERS_PARAM_KEY",
     "CoverageWindow",
     "CrossTickerDataStore",
-    "ingest_source_candles",
     "LiveCacheRefreshManifest",
     "LiveCacheRefreshRunSummary",
     "LookupMode",

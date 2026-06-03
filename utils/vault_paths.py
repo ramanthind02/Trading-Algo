@@ -79,6 +79,8 @@ def default_vault_discovery_dirnames() -> tuple[str, ...]:
     Uses the first path component of :func:`resolve_vault_prop` / :func:`resolve_vault_personal`
     when those roots lie under the repo; always appends ``vault`` and ``vault_personal`` if
     missing so discovery still sees standard layouts when env points outside the repo.
+
+    Prefer :func:`vault_discovery_dirnames_for_profile` when a caller must stay inside one vault.
     """
     repo = project_root().resolve()
     out: list[str] = []
@@ -95,3 +97,39 @@ def default_vault_discovery_dirnames() -> tuple[str, ...]:
         if fallback not in out:
             out.append(fallback)
     return tuple(out)
+
+
+def _repo_relative_vault_top_name(vault_root: Path) -> str | None:
+    repo = project_root().resolve()
+    try:
+        rel = vault_root.resolve().relative_to(repo)
+    except ValueError:
+        return None
+    return rel.parts[0] if rel.parts else None
+
+
+def vault_discovery_dirnames_for_profile(profile: VaultProfile) -> tuple[str, ...]:
+    """Repo-relative top-level directory for one vault profile (prop or personal)."""
+    top = _repo_relative_vault_top_name(resolve_vault_root_for_profile(profile))
+    if top is not None:
+        return (top,)
+    return (_DEFAULT_VAULT_DIRNAME if profile == "prop" else _DEFAULT_VAULT_PERSONAL_DIRNAME,)
+
+
+def vault_discovery_dirnames_for_root(vault_root: str | Path) -> tuple[str, ...]:
+    """Repo-relative top-level directory for an explicit vault root path."""
+    top = _repo_relative_vault_top_name(_normalize_vault_root(Path(vault_root)))
+    if top is not None:
+        return (top,)
+    return (_normalize_vault_root(Path(vault_root)).name,)
+
+
+def resolve_portfolio_vault_discovery_dirnames(
+    *,
+    vault_profile: VaultProfile | None = "prop",
+    vault_root: str | Path | None = None,
+) -> tuple[str, ...]:
+    """Resolve which repo-relative vault top-level folder(s) to scan for ensembles."""
+    if vault_root is not None:
+        return vault_discovery_dirnames_for_root(vault_root)
+    return vault_discovery_dirnames_for_profile(vault_profile or "prop")

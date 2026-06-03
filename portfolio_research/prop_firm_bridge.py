@@ -1,21 +1,24 @@
-"""Bridge portfolio phase outputs to prop-firm simulators (simple returns + dispatch)."""
+"""Bridge portfolio phase outputs to QuantFoundry Core prop-firm simulation."""
 from __future__ import annotations
 
-from typing import Literal
-
 import pandas as pd
+from quantfoundry_core.prop_firm import (
+    PortfolioPayoutPolicyConfig,
+    PortfolioPayoutPolicyMode,
+    PortfolioSimulationConfig,
+    PurchasePolicyConfig,
+    ReturnEngineConfig,
+    build_return_series,
+    create_simulator_for_firm,
+)
+from quantfoundry_core.prop_firm.simulator import CfdPortfolioSimulator
 
 from ensemble.portfolio_impl.portfolio_tester import (
     aggregate_intraday_returns_to_daily,
     calculate_strategy_returns_from_positions,
 )
+from portfolio_research.config import PortfolioResearchConfig, PropFirmReportConfig
 from portfolio_research.pipelines.portfolio_test import PhaseResult
-from prop_firms.apex.provider import create_apex_simulator
-from prop_firms.base.portfolio_models import ReturnEngineConfig
-from prop_firms.base.return_engine import build_return_series
-from prop_firms.base.enums import PayoutPolicy, ResetPolicy
-from prop_firms.base.models import SimulationRequest, SimulationResult
-from prop_firms.lucid.provider import create_lucid_simulator
 
 
 def build_prop_firm_returns(phase: PhaseResult) -> pd.Series:
@@ -38,54 +41,91 @@ def build_prop_firm_returns(phase: PhaseResult) -> pd.Series:
         idx = idx.tz_localize(None)
     daily = daily.copy()
     daily.index = idx
-    daily = daily.sort_index(kind="stable").astype(float)
-    return daily
+    return daily.sort_index(kind="stable").astype(float)
+
+
+def return_engine_for_phase(
+    phase_name: str,
+    report_cfg: PropFirmReportConfig,
+    portfolio_cfg: PortfolioResearchConfig,
+) -> ReturnEngineConfig:
+    """Return-engine window aligned to the portfolio research phase being simulated."""
+    match phase_name:
+        case "train":
+            start = portfolio_cfg.train_window.start
+            end = portfolio_cfg.train_window.end
+        case "validation":
+            start = portfolio_cfg.validation_window.start
+            end = portfolio_cfg.validation_window.end
+        case "test":
+            start = portfolio_cfg.test_window.start
+            end = portfolio_cfg.test_window.end
+        case _:
+            raise ValueError(
+                f"return_engine_for_phase expects train/validation/test, got {phase_name!r}"
+            )
+    return ReturnEngineConfig(
+        target_annual_volatility=report_cfg.return_target_annual_volatility,
+        target_sharpe=report_cfg.return_target_sharpe,
+        annualization_factor=report_cfg.return_annualization_factor,
+        start_date=start.strftime("%Y-%m-%d"),
+        end_date=end.strftime("%Y-%m-%d"),
+        random_seed=report_cfg.return_random_seed,
+    )
+
+
+def return_engine_for_research(
+    report_cfg: PropFirmReportConfig,
+    portfolio_cfg: PortfolioResearchConfig,
+) -> ReturnEngineConfig:
+    """Return-engine window aligned to portfolio research train→test span."""
+    return ReturnEngineConfig(
+        target_annual_volatility=report_cfg.return_target_annual_volatility,
+        target_sharpe=report_cfg.return_target_sharpe,
+        annualization_factor=report_cfg.return_annualization_factor,
+        start_date=portfolio_cfg.train_window.start.strftime("%Y-%m-%d"),
+        end_date=portfolio_cfg.test_window.end.strftime("%Y-%m-%d"),
+        random_seed=report_cfg.return_random_seed,
+    )
+
+
+def portfolio_simulation_config(
+    phase_name: str,
+    report_cfg: PropFirmReportConfig,
+    portfolio_cfg: PortfolioResearchConfig,
+) -> PortfolioSimulationConfig:
+    """Build QF portfolio simulation config from portfolio research settings."""
+    return PortfolioSimulationConfig(
+        account_code=report_cfg.account_code,
+        challenge_vol_multiplier=report_cfg.challenge_vol_multiplier,
+        funded_vol_multiplier=report_cfg.funded_vol_multiplier,
+        purchase_policy=PurchasePolicyConfig(
+            funded_account_cap=report_cfg.funded_account_cap,
+            challenge_account_cap=report_cfg.challenge_account_cap,
+            challenges_per_purchase_window=report_cfg.challenges_per_purchase_window,
+        ),
+        payout_policy=PortfolioPayoutPolicyConfig(
+            mode=PortfolioPayoutPolicyMode.AGGRESSIVE,
+            buffer_amount=report_cfg.payout_buffer_amount,
+            withdrawal_fraction=report_cfg.payout_withdrawal_fraction,
+        ),
+        return_engine=return_engine_for_phase(phase_name, report_cfg, portfolio_cfg),
+    )
 
 
 def align_portfolio_returns_with_report_engine(
     raw_returns: pd.Series,
-    return_engine: ReturnEngineConfig,
+    phase_name: str,
+    report_cfg: PropFirmReportConfig,
+    portfolio_cfg: PortfolioResearchConfig,
 ) -> pd.Series:
-    """Apply the same date filter and optional target-vol scaling as ``build_return_series``.
-
-    Uses ``PortfolioSimulationConfig.return_engine`` from
-    ``prop_firms.report_config`` so portfolio-backed runs match the report runner
-    semantics for external replay.
-    """
+    """Apply the same date filter and optional target-vol scaling as external replay."""
     return build_return_series(
-        config=return_engine,
+        config=return_engine_for_phase(phase_name, report_cfg, portfolio_cfg),
         external_returns=raw_returns,
-        data_path=None,
     )
 
 
-def run_prop_firm_simulation(
-    *,
-    provider: Literal["lucid", "apex"],
-    account_code: str,
-    returns: pd.Series,
-    held_contracts: pd.DataFrame | None = None,
-    payout_policy: PayoutPolicy = PayoutPolicy.AUTO_MAX,
-    reset_policy: ResetPolicy = ResetPolicy.NO_RESETS,
-    payout_amount: float | None = None,
-    max_resets: int = 0,
-    starting_balance_override: float | None = None,
-) -> SimulationResult:
-    """Run Lucid or Apex rule engine on a return stream."""
-    request = SimulationRequest(
-        account_code=account_code,
-        returns=returns,
-        held_contracts=held_contracts,
-        payout_policy=payout_policy,
-        reset_policy=reset_policy,
-        payout_amount=payout_amount,
-        max_resets=max_resets,
-        starting_balance_override=starting_balance_override,
-    )
-    if provider == "lucid":
-        engine = create_lucid_simulator()
-    elif provider == "apex":
-        engine = create_apex_simulator()
-    else:
-        raise ValueError(f"provider must be 'lucid' or 'apex', got {provider!r}")
-    return engine.simulate(request)
+def create_prop_firm_portfolio_simulator(firm_id: str) -> CfdPortfolioSimulator:
+    """Load the bundled CFD portfolio simulator for a firm preset."""
+    return create_simulator_for_firm(firm_id)

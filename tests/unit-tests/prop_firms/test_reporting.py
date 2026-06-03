@@ -1,7 +1,7 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
-
 import pandas as pd
 
 from prop_firms import (
@@ -10,6 +10,7 @@ from prop_firms import (
     create_lucid_portfolio_simulator,
     generate_portfolio_report,
 )
+from quantfoundry_core.prop_firm import create_simulator_for_firm
 
 
 class TestPropFirmReporting(unittest.TestCase):
@@ -104,6 +105,47 @@ class TestPropFirmReporting(unittest.TestCase):
 
             html_text = artifacts.report_html_path.read_text(encoding="utf-8")
             self.assertIn("challenge_expired", html_text)
+
+    def test_generate_portfolio_report_writes_monthly_breakdown_and_rolling(self) -> None:
+        simulator = create_simulator_for_firm("fundednext")
+        returns = pd.Series(
+            0.0004,
+            index=pd.bdate_range("2021-01-04", "2024-12-31"),
+        )
+        config = PortfolioSimulationConfig(account_code="50000")
+        result = simulator.simulate(returns=returns, config=config)
+        rolling = simulator.simulate_rolling(
+            returns=returns,
+            config=config,
+            window_months=12,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            artifacts = generate_portfolio_report(
+                result=result,
+                output_dir=Path(tmp_dir),
+                report_stem="qf_rolling_report",
+                save_csvs=True,
+                rolling=rolling,
+            )
+
+            self.assertTrue(artifacts.monthly_breakdown_csv_path is not None)
+            self.assertTrue(artifacts.monthly_breakdown_csv_path.exists())
+            self.assertTrue(artifacts.rolling_pooled_monthly_stats_csv_path is not None)
+            self.assertTrue(artifacts.rolling_pooled_monthly_stats_csv_path.exists())
+            self.assertTrue(artifacts.rolling_batch_statistics_json_path is not None)
+            batch_payload = json.loads(
+                artifacts.rolling_batch_statistics_json_path.read_text(encoding="utf-8")
+            )
+            self.assertGreater(batch_payload["n_runs"], 0)
+
+            report_text = artifacts.report_markdown_path.read_text(encoding="utf-8")
+            self.assertIn("Rolling Window EV", report_text)
+            self.assertIn("Steady-State Monthly EV", report_text)
+
+            html_text = artifacts.report_html_path.read_text(encoding="utf-8")
+            self.assertIn("Rolling Window EV", html_text)
+            self.assertIn("data:image/png;base64,", html_text)
 
 
 if __name__ == "__main__":

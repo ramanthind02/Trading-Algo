@@ -247,8 +247,8 @@ Full reference: [[bias_nodes/composed_nodes]].
 ## Related
 
 - [[bias_nodes/index]] — bias-node doc hub
-- [[Feature_selection/pipeline]] — EDA, permutation, walkforward after the feature is discrete
-- [[Feature_selection/Phase_1_IS/eda]] — in-sample EDA detail
+- [[Feature_selection/pipeline]] — exploration, validation, and portfolio-addition flow after the feature is discrete
+- [[Feature_selection/exploration]] — exploration-stage EDA detail
 - [[Ensemble/base_model]] — historical ensemble “member” wording (schema may still say base model; conceptually frozen discrete bindings)
 - [[multi_timeframe]] — portfolio orchestration and lookback across timeframes
 - [[live_multi_timeframe]] — live fetch schedule and rebalance loop

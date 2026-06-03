@@ -1118,12 +1118,14 @@ def test_run_portfolio_simulation_generates_per_fold_ticker_tearsheets_when_enab
         tearsheets_dir=tmp_path / "tearsheets",
     )
 
-    # Single fold: tearsheets written at tearsheets/ root (no fold_0/), clear names.
+    # Single fold: per-ticker HTML tearsheets still generated via generate_tearsheet.
     assert any("ES_tearsheet.html" in path for path in output_files)
     assert any("NQ_tearsheet.html" in path for path in output_files)
-    assert any("train_ensemble_tearsheet.html" in path for path in output_files)
-    assert any("validation_ensemble_tearsheet.html" in path for path in output_files)
-    assert any("train_and_validation_ensemble_tearsheet.html" in path for path in output_files)
+    # Single fold: ensemble train/validation returns are written as CSVs (not HTML),
+    # consumed by the UI to render inline tearsheets.
+    tearsheets_dir = tmp_path / "tearsheets"
+    assert (tearsheets_dir / "wf_candidate_train_returns.csv").exists()
+    assert (tearsheets_dir / "wf_candidate_validation_returns.csv").exists()
 
 
 def test_run_portfolio_simulation_generates_aggregate_ticker_tearsheets_when_enabled(

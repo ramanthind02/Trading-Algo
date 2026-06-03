@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Portfolio Research Workspace</title>
+  <link rel="stylesheet" href="/static/research_workspace.css" />
+  <style>
+    :root { color-scheme: light dark; font-family: Inter, system-ui, sans-serif; background: #111827; color: #e5e7eb; }
+    body { margin: 0; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <h1>Portfolio Research Workspace</h1>
+    <p class="lede">
+      Two-fold holdout evaluation, per-strategy monitoring (trailing 12-month traffic lights, monthly history),
+      and portfolio-level holdout analytics. Open the <strong>Monitoring status</strong> section for rollup tables,
+      trend charts, and advisory weights.
+    </p>
+
+    <div class="app-grid">
+      <aside class="setup-rail">
+        <section class="panel">
+          <h2>Run Setup</h2>
+          <p class="section-copy">Choose tickers and fit mode, then run the full pipeline or a single stage. Artifacts appear in the dashboard by stage tab.</p>
+          <div id="workflow-cards" class="workflow-cards"></div>
+          <label for="phase">Phase</label>
+          <select id="phase"></select>
+          <label for="tickers">Tickers</label>
+          <input id="tickers" />
+          <label for="fit-mode">Portfolio fit mode</label>
+          <select id="fit-mode">
+            <option value="ROLLING_HOLDOUT">Rolling holdout (default)</option>
+            <option value="SINGLE_FIT">Single fit</option>
+          </select>
+          <div class="button-row">
+            <button id="preview-btn" class="secondary" type="button">Preview plan</button>
+            <button id="run-btn" type="button">Run all phases</button>
+          </div>
+          <p id="error" class="error"></p>
+        </section>
+        <details class="plan-details panel">
+          <summary id="plan-title">Run plan</summary>
+          <p id="plan-description" class="section-copy"></p>
+          <ul id="step-list" class="step-list"></ul>
+          <textarea id="command" class="code-block" readonly spellcheck="false"></textarea>
+        </details>
+      </aside>
+
+      <main class="results-main">
+        <section class="panel run-status-panel">
+          <h2>Run Status</h2>
+          <div id="job-cards" class="card-grid"></div>
+          <div id="job-log" class="job-log" hidden></div>
+        </section>
+        <section class="panel results-dashboard" id="results-dashboard">
+          <div class="results-header">
+            <h2>Results Dashboard</h2>
+            <p class="section-copy" style="margin-bottom: 0;">
+              After a phase completes, artifacts load here by category: tearsheets, robustness, portfolio analytics, and raw exports.
+            </p>
+            <div id="phase-tabs" class="tabs"></div>
+            <div id="phase-summary-cards" class="card-grid"></div>
+          </div>
+          <div id="phase-dashboards"></div>
+        </section>
+      </main>
+    </div>
+  </main>
+
+  <script src="/static/research_workspace.js"></script>
+  <script>
+    const state = {
+      defaults: null,
+      workflowSteps: [],
+      selectedPhase: "full_pipeline",
+      workspace: null,
+      activeSections: {},
+      activeEmbedPanels: {},
+      panelCache: {},
+      currentJob: null,
+      pollingHandle: null,
+    };
+
+    const phaseEl = document.getElementById("phase");
+    const tickersEl = document.getElementById("tickers");
+    const fitModeEl = document.getElementById("fit-mode");
+    const errorEl = document.getElementById("error");
+    const planTitle = document.getElementById("plan-title");
+    const planDescription = document.getElementById("plan-description");
+    const stepList = document.getElementById("step-list");
+    const commandBox = document.getElementById("command");
+    const workflowCards = document.getElementById("workflow-cards");
+    const jobCards = document.getElementById("job-cards");
+    const jobLog = document.getElementById("job-log");
+    const phaseTabs = document.getElementById("phase-tabs");
+    const phaseDashboards = document.getElementById("phase-dashboards");
+    const phaseSummaryCards = document.getElementById("phase-summary-cards");
+    const resultsDashboard = document.getElementById("results-dashboard");
+
+    const dashboard = new ResearchWorkspace({
+      apiPrefix: "/api/portfolio-research",
+      state,
+      features: { workflow: true, pivot: false, vault: false },
+      elements: { phaseTabs, phaseDashboards, phaseSummaryCards, resultsDashboard },
+    });
+
+    function renderCards(target, cards) {
+      dashboard.renderCards(target, cards);
+    }
+
+    function renderWorkflowCards() {
+      workflowCards.replaceChildren(
+        ...state.workflowSteps.map((step) => {
+          const card = document.createElement("section");
+          card.className = `workflow-card${state.selectedPhase === step.phase ? " active" : ""}`;
+          const title = document.createElement("div");
+          title.className = "workflow-title";
+          title.textContent = step.title;
+          const summary = document.createElement("div");
+          summary.className = "workflow-summary";
+          summary.textContent = step.summary;
+          const gate = document.createElement("div");
+          gate.className = "workflow-gate";
+          gate.textContent = step.gate;
+          const actions = document.createElement("div");
+          actions.className = "workflow-actions";
+          const focusButton = document.createElement("button");
+          focusButton.type = "button";
+          focusButton.className = "secondary";
+          focusButton.textContent = state.selectedPhase === step.phase ? "Selected" : "Use This Stage";
+          focusButton.addEventListener("click", () => {
+            state.selectedPhase = step.phase;
+            phaseEl.value = step.phase;
+            renderWorkflowCards();
+            dashboard.selectPhase(step.phase);
+            refreshPlan();
+          });
+          actions.append(focusButton);
+          card.append(title, summary, gate, actions);
+          return card;
+        })
+      );
+    }
+
+    function renderPlan(plan) {
+      planTitle.textContent = plan.title;
+      planDescription.textContent = plan.description;
+      stepList.replaceChildren(
+        ...plan.will_run.map((step) => {
+          const item = document.createElement("li");
+          item.textContent = step;
+          return item;
+        })
+      );
+      commandBox.value = plan.command;
+    }
+
+    function renderJob(job) {
+      state.currentJob = job;
+      if (!job) {
+        renderCards(jobCards, [{ label: "Run status", value: "Idle" }]);
+        jobLog.hidden = true;
+        return;
+      }
+      renderCards(jobCards, [
+        { label: "Status", value: job.status },
+        { label: "Phase", value: job.phase },
+        { label: "Output", value: job.output_path || "n/a" },
+      ]);
+      if (job.log_text) {
+        jobLog.hidden = false;
+        jobLog.textContent = job.log_text;
+      } else {
+        jobLog.hidden = true;
+      }
+    }
+
+    function updateRunButtonLabel() {
+      document.getElementById("run-btn").textContent =
+        phaseEl.value === "full_pipeline" ? "Run all phases" : "Run phase";
+    }
+
+    function payload() {
+      return {
+        phase: phaseEl.value,
+        tickers: tickersEl.value,
+        fit_mode: fitModeEl.value,
+      };
+    }
+
+    async function refreshPlan(options = {}) {
+      errorEl.textContent = "";
+      const res = await fetch("/api/portfolio-research/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload()),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errorEl.textContent = data.error || "Unable to build plan.";
+        return;
+      }
+      renderPlan(data.plan);
+      state.workspace = data.workspace;
+      state.selectedPhase = data.workspace.selected_phase || state.selectedPhase;
+      phaseEl.value = state.selectedPhase;
+      dashboard.renderWorkspace();
+      if (options.completedPhase) {
+        dashboard.applyCompletedPhase(options.completedPhase);
+      }
+      renderJob(data.job);
+    }
+
+    async function loadDefaults() {
+      const res = await fetch("/api/portfolio-research/defaults");
+      const data = await res.json();
+      state.defaults = data.defaults;
+      state.workflowSteps = data.defaults.workflow_steps || [];
+      phaseEl.innerHTML = data.defaults.phase_options
+        .map((o) => `<option value="${o.value}">${o.label}</option>`)
+        .join("");
+      phaseEl.value = data.defaults.default_phase;
+      state.selectedPhase = data.defaults.default_phase;
+      tickersEl.value = data.defaults.default_tickers.join(",");
+      fitModeEl.value = data.defaults.portfolio_fit_mode || "ROLLING_HOLDOUT";
+      updateRunButtonLabel();
+      renderWorkflowCards();
+      renderPlan(data.plan);
+      state.workspace = data.workspace;
+      dashboard.renderWorkspace();
+      if (data.job) {
+        pollJob(data.job.job_id);
+      }
+    }
+
+    async function runPhase() {
+      errorEl.textContent = "";
+      const res = await fetch("/api/portfolio-research/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload()),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        errorEl.textContent = data.error || "Run failed.";
+        return;
+      }
+      pollJob(data.job.job_id);
+    }
+
+    async function pollJob(jobId) {
+      const res = await fetch(`/api/portfolio-research/jobs/${jobId}`);
+      const data = await res.json();
+      const job = data.job;
+      renderJob(job);
+      if (job.status === "running" || job.status === "queued") {
+        setTimeout(() => pollJob(jobId), 2000);
+        return;
+      }
+      const completedPhase =
+        job.phase === "full_pipeline" ? "prop_firm_reports" : job.phase;
+      await refreshPlan({ completedPhase });
+    }
+
+    document.getElementById("preview-btn").addEventListener("click", () => refreshPlan());
+    document.getElementById("run-btn").addEventListener("click", runPhase);
+    phaseEl.addEventListener("change", () => {
+      state.selectedPhase = phaseEl.value;
+      updateRunButtonLabel();
+      renderWorkflowCards();
+      refreshPlan();
+    });
+
+    loadDefaults().catch(() => {
+      errorEl.textContent = "Unable to load portfolio research defaults.";
+    });
+  </script>
+</body>
+</html>

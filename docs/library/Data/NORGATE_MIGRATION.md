@@ -1,5 +1,12 @@
 # Norgate Canonical Candle Rebuild
 
+> [!warning] Adjusted candles are **additive** back-adjusted
+> `ohlc_data` is built from Norgate `&XX_CCB` (additive back-adjustment). This preserves
+> point/dollar moves but distorts **percentage** returns, which biases volatility-based
+> position sizing and cross-asset % signals. See
+> [[back_adjustment_percentage_distortion]] before using these candles for any
+> percentage-return or vol-target work.
+
 ## Overview
 
 This repository treats Norgate continuous futures as the canonical historical source for daily/weekly/monthly futures candles.
@@ -50,12 +57,7 @@ This command:
 
 ## Source priority
 
-Source priority is configuration-driven via:
-
-- `deployment/config/canonical_source_priority.json`
-- `utils/data/source_reconciliation.py`
-
-Default futures daily priority:
+Default futures daily priority (enforced in migration and cache ingest code):
 
 1. `norgate`
 2. `ib` fallback for live gaps

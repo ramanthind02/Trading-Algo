@@ -181,11 +181,19 @@ positions = global_p.predict_from_cache(query)
 
 ---
 
-## Portfolio research — inclusion gates
+## Portfolio research — portfolio addition gate
 
-Research-phase workflow for deciding whether to **add a new vault ensemble (candidate)** to an existing portfolio configuration. It reuses the same **train / validation / test** windows as `portfolio_research.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
+This section describes the local portfolio-fit workflow for deciding whether to **add a new vault ensemble (candidate)** to an existing portfolio configuration.
 
-**Principle:** Gate on **validation data only**; treat the **test** window as a one-shot sanity check after you already accept the candidate on validation.
+> [!important]
+> Canonical workflow authority lives in `docs/SaaS/robustness_tests/portfolio_addition.md`. Use that document for the conceptual gate definition and contamination rules.
+
+> [!note]
+> Some local code, config, and CLI names still use the older term `inclusion`. Treat that as migration-era compatibility terminology for the **portfolio addition** phase.
+
+The local workflow reuses the same **train / validation / test** windows as `portfolio_research.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
+
+**Principle:** The target workflow is `exploration -> validation -> portfolio_addition`. For local compatibility tooling, the portfolio-addition checks still appear under `inclusion`-named config and CLI surfaces.
 
 | Step | What it checks | Default rule (tunable in config) |
 |------|----------------|----------------------------------|
@@ -199,8 +207,8 @@ Research-phase workflow for deciding whether to **add a new vault ensemble (cand
 
 ### Configuration
 
-- **`PortfolioInclusionConfig`** in `feature_research/config.py`: thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), optional default candidate path/key.
-- **`ResearchConfig.portfolio_inclusion`**: holds defaults; `feature_research.config.load_config()` returns a default `PortfolioInclusionConfig()`.
+- **`PortfolioInclusionConfig`** in `feature_research/config.py`: compatibility-era config for the portfolio-addition gate. It holds thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), and optional default candidate path/key.
+- **`ResearchConfig.portfolio_inclusion`**: current compatibility container for those defaults while the package migrates toward explicit `portfolio_addition` naming.
 - **Baseline portfolio** (tickers, train/validation/test windows, `ensemble_dirs`, weight layer, etc.) still comes from **`portfolio_research.config.load_config()`** — the CLI loads both configs.
 
 ### CLI
@@ -213,14 +221,16 @@ From the repo root (venv Python), pass a **repo-relative** path to the candidate
 
 With ``portfolio_inclusion.candidate_repo_relative_path`` set in ``feature_research.config.load_config()``, no CLI arguments are required. Optional overrides: ``--candidate-path``, ``--candidate-key``, ``--emit-tearsheets`` / ``--no-emit-tearsheets``, ``--no-preflight``.
 
+The command name is expected to change as the migration finishes; until then, interpret it as the local entrypoint for the portfolio-addition phase.
+
 ### Artifacts
 
 Under `output_root` / `portfolio_inclusion.output_subdir`: `inclusion_<candidate_key>_summary.csv`, `_corr_by_peer_and_ticker.csv` (Pearson + Spearman per peer–ticker), `_standalone_by_ensemble.csv`, `_uplift_by_window.csv`.
 
 ### Code entrypoints
 
-- `feature_research/inclusion_gates.py` — `run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …
-- `feature_research/run_inclusion_gates.py` — CLI
+- `feature_research/inclusion_gates.py` — compatibility implementation of the portfolio-addition decision (`run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …)
+- `feature_research/run_inclusion_gates.py` — compatibility CLI
 
 **See also:** [[Cache/user_guide]] (portfolio workflow and preflight), [[Vault/user_guide]] (ensemble layout).
 
@@ -334,4 +344,4 @@ All written to `output_root / {phase} / futures_sim /`:
 
 ---
 
-**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]] (portfolio workflow; inclusion gates summary cross-linked there)
+**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]] (portfolio workflow; portfolio-addition summary cross-linked there)

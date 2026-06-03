@@ -266,11 +266,17 @@ class GlobalPortfolio:
         if signals_df.empty:
             raise ValueError("Global strategy signals are empty after normalization")
 
-        # Step 4 — fit WeightLayer (optional returns kept for API compatibility)
+        # Step 4 — fit WeightLayer (instrument returns for optional SR tilt)
+        sr_adjustment = bool(
+            getattr(getattr(self.weight_layer, "_wl_config", None), "sr_adjustment", False)
+        )
+        fit_returns: pd.Series | pd.DataFrame = (
+            instrument_returns if sr_adjustment else global_returns
+        )
         self.weight_layer.fit(
             forecast_vectors=encoded_fit_vectors,
             signals=signals_df,
-            returns=global_returns,
+            returns=fit_returns,
         )
         self.weight_layer_diagnostics_ = self.weight_layer.get_diagnostics()
         self.global_adapter_diagnostics_ = build_global_adapter_rollups(

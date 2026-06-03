@@ -1,4 +1,4 @@
-"""Run feature-research OOS once, then export feature–vault correlation CSV (Power BI).
+"""Run feature-research OOS once, then export feature-vault correlation CSV.
 
 Loads ``ResearchConfig`` from ``feature_research.config.load_config`` and
 ``PortfolioResearchConfig`` from ``portfolio_research.config.load_config``.
@@ -20,7 +20,7 @@ from pathlib import Path
 from feature_research.config import load_config as load_feature_research_config
 from feature_research.pipeline import run_oos_pipeline_with_bundle
 from portfolio_research.config import load_config as load_portfolio_research_config
-from portfolio_research.correlation_export import write_vault_correlation_powerbi_long
+from portfolio_research.correlation_export import write_vault_correlation_visualization_long
 from portfolio_research.vault_correlation import (
     build_vault_correlation_long_rows,
     resolve_default_vault_root,
@@ -33,7 +33,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run signed-signal OOS walkforward (feature_research.config.load_config) "
-            "and write vault vs research correlation CSV under portfolio output_root."
+            "and write Matplotlib-ready vault vs research correlation CSV under "
+            "portfolio output_root."
         )
     )
     parser.add_argument(
@@ -92,7 +93,9 @@ def main(argv: list[str] | None = None) -> int:
         extended_end=bundle.extended_end,
         vault_root=vault_root,
     )
-    csv_path = write_vault_correlation_powerbi_long(rows, out_dir / "vault_correlation_long")
+    csv_path = write_vault_correlation_visualization_long(
+        rows, out_dir / "vault_correlation_long"
+    )
     logger.info("Wrote %s", csv_path)
     return 0
 

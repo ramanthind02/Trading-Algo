@@ -29,27 +29,9 @@ Or pass the script path (repo root is prepended to ``sys.path`` before imports):
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-
-def _prepend_repo_root_to_syspath() -> None:
-    """Allow ``python path/to/save_feature_to_vault.py`` without PYTHONPATH."""
-    start = Path(__file__).resolve()
-    for parent in (start.parent, *start.parents):
-        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            root = str(parent)
-            if root not in sys.path:
-                sys.path.insert(0, root)
-            return
-    raise RuntimeError(
-        "Could not locate repository root (no pyproject.toml or .git above this file)."
-    )
-
-
-_prepend_repo_root_to_syspath()
-
-from feature_research.bootstrap import ensure_repo_root_on_syspath
+from utils.repo_bootstrap import ensure_repo_root_on_syspath
 
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
@@ -59,7 +41,8 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from ensemble.vault_manager import create_ensemble_directory, initialize_vault
+from ensemble.vault.manager import create_ensemble_directory, get_ensemble_path
+from ensemble.vault_manager import initialize_vault
 from feature_research.config import (
     VaultSaveConfig,
     load_config,
@@ -69,10 +52,17 @@ from feature_selection.base_models.feature_base_model import BaseModel
 from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
 
 
+# Params that are legitimately list-valued at a frozen combo (not exploration grids).
+_STRUCTURAL_LIST_PARAM_KEYS: frozenset[str] = frozenset({"cross_tickers"})
+
+
 def _params_contain_grid(params: object) -> bool:
     if not isinstance(params, dict):
         return False
-    return any(isinstance(v, list) for v in params.values())
+    return any(
+        isinstance(v, list) and k not in _STRUCTURAL_LIST_PARAM_KEYS
+        for k, v in params.items()
+    )
 
 
 def _normalize_bias_spec_for_model(raw: Mapping[str, Any]) -> dict[str, Any]:
@@ -113,19 +103,22 @@ def _resolve_ensemble_dir(
     if not name:
         raise ValueError("vault_save.ensemble_name is required when existing_ensemble_dir is unset.")
     root = vault_save_effective_vault_root(vault_save)
+    group = vault_save.weight_hierarchy_group
     if dry_run:
-        preview = (
-            root
-            / timeframe.name
-            / f"{name}_{coerce_direction(direction, field_name='direction').value}"
+        return get_ensemble_path(
+            timeframe,
+            name,
+            direction,
+            vault_root=str(root),
+            weight_hierarchy_group=group,
         )
-        return str(preview)
     return create_ensemble_directory(
         timeframe,
         name,
         direction,
         tickers=tickers,
         vault_root=str(root),
+        weight_hierarchy_group=group,
     )
 
 

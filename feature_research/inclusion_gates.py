@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass, replace
@@ -18,12 +19,21 @@ from ensemble.portfolio_impl.portfolio_cache import (
     _query_volatility_from_cache,
 )
 from ensemble.vault_manager import load_ensemble_from_vault
-from feature_research.config import PortfolioInclusionConfig, ResearchConfig
-from feature_selection.validation.objective_metrics import metric_calmar
-from metrics.performance.sharpe import SharpeRatio
-from metrics.performance.sortino import SortinoRatio
-from portfolio_research.config import PortfolioResearchConfig
+from feature_research.config import (
+    PortfolioInclusionConfig,
+    ResearchConfig,
+    resolve_portfolio_benchmark_ticker,
+)
+from feature_selection.validation.objective_metrics import (
+    metric_calmar,
+    metric_sharpe,
+    metric_sortino,
+)
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from portfolio_research.config import (
+    PortfolioResearchConfig,
+    scoped_tickers_for_ensemble_dirs,
+)
 from portfolio_research.pipelines.portfolio_test import (
     PhaseResult,
     _enable_cache,
@@ -98,8 +108,9 @@ def materialize_inclusion_candidate_from_eval_bias_spec(
     Writes outside the repo ``vault/`` tree (under a temp directory). Returns ``(ensemble_dir,
     tmp_root)``; caller must ``shutil.rmtree(tmp_root)`` when finished.
 
-    Tickers are taken from ``portfolio_config`` so the candidate matches the baseline portfolio
-    universe. ``weight_hierarchy_group`` is written into the feature JSON and used when creating
+    Tickers default from ``portfolio_config``; when ``research.portfolio_inclusion.candidate_tickers``
+    is set, only those symbols are written on the candidate feature (e.g. GC-only IBS in a
+    multi-instrument prop book). ``weight_hierarchy_group`` is written into the feature JSON and used when creating
     the ensemble directory so layout matches grouped vault ensembles (path layout only; inclusion
     still combines streams with ``ledoit_wolf_min_corr``).
     """
@@ -108,7 +119,15 @@ def materialize_inclusion_candidate_from_eval_bias_spec(
     from feature_selection.base_models.feature_base_model import BaseModel
 
     bias_spec = _normalize_bias_spec_for_model(dict(research.eval_bias_spec))
-    tickers = list(portfolio_config.tickers)
+    inclusion = research.portfolio_inclusion
+    candidate_tickers = inclusion.candidate_tickers
+    tickers = (
+        list(candidate_tickers)
+        if candidate_tickers is not None
+        else list(research.tickers)
+        if research.tickers
+        else list(portfolio_config.tickers)
+    )
     direction = research.strategy
 
     first_tf = bias_spec["timeframes"][0]
@@ -162,11 +181,11 @@ def _rebuild_weight_layer_kwargs(
     config: PortfolioResearchConfig,
     ensemble_dirs: Mapping[str, str],
 ) -> dict[str, Any]:
-    from ensemble.vault.hierarchy_spec import build_hierarchy_spec_for_ensemble_dirs
+    from ensemble.vault.hierarchy_spec import build_asset_first_hierarchy_spec_for_ensemble_dirs
 
     wl_kw = dict(config.weight_layer_kwargs)
     if config.weight_layer_method == "hierarchy_equal":
-        wl_kw["hierarchy_spec"] = build_hierarchy_spec_for_ensemble_dirs(
+        wl_kw["hierarchy_spec"] = build_asset_first_hierarchy_spec_for_ensemble_dirs(
             _REPO_ROOT,
             ensemble_dirs,
             strict_group=True,
@@ -180,10 +199,20 @@ def config_with_ensemble_dirs(
     ensemble_dirs: Mapping[str, str],
 ) -> PortfolioResearchConfig:
     """Clone config with new ``ensemble_dirs`` and rebuilt hierarchy when needed."""
-    return replace(
+    scoped_tickers = scoped_tickers_for_ensemble_dirs(config.tickers, ensemble_dirs)
+    scoped_config = replace(
         config,
         ensemble_dirs=dict(ensemble_dirs),
-        weight_layer_kwargs=_rebuild_weight_layer_kwargs(config, ensemble_dirs),
+        tickers=scoped_tickers,
+        benchmark_ticker=resolve_portfolio_benchmark_ticker(
+            baseline_mode=config.baseline_mode,
+            portfolio_tickers=scoped_tickers,
+            benchmark_ticker=config.benchmark_ticker,
+        ),
+    )
+    return replace(
+        scoped_config,
+        weight_layer_kwargs=_rebuild_weight_layer_kwargs(scoped_config, ensemble_dirs),
     )
 
 
@@ -388,11 +417,9 @@ def _concat_returns(a: pd.Series, b: pd.Series) -> pd.Series:
 
 
 def _metrics_bundle(returns: pd.Series, *, annualization: float = _DAILY_ANN) -> dict[str, float]:
-    sh = SharpeRatio(annualization_factor=annualization)
-    so = SortinoRatio(annualization_factor=annualization)
     return {
-        "sharpe": float(sh.compute(returns)),
-        "sortino": float(so.compute(returns)),
+        "sharpe": float(metric_sharpe(returns, annualization_factor=annualization)),
+        "sortino": float(metric_sortino(returns, annualization_factor=annualization)),
         "calmar": float(metric_calmar(returns, annualization_factor=annualization)),
     }
 
@@ -437,25 +464,79 @@ def _standalone_metrics_row_for_single_ensemble(
     )
 
 
+def _returns_suitable_for_quantstats_tearsheet(returns: pd.Series) -> bool:
+    """QuantStats R² / regression metrics require non-constant strategy returns."""
+    clean = returns.astype(float).dropna()
+    if len(clean) < 2:
+        return False
+    return float(clean.std(ddof=1)) > 1e-12
+
+
+@dataclass(frozen=True)
+class TearsheetComparisonLabels:
+    """Human-readable scope for with/without candidate comparison tearsheets."""
+
+    scope_title: str
+    without_dir_name: str = "portfolio_without_candidate"
+    with_dir_name: str = "portfolio_with_candidate"
+
+
 def _write_portfolio_phase_tearsheet(
     phase_result: PhaseResult,
     *,
     output_root: Path,
     output_dir_name: str,
     phase_title: str,
-) -> Path:
-    """Match ``portfolio_test._evaluate_phase`` combined portfolio HTML naming/layout."""
-    portfolio_dir = Path(output_root) / output_dir_name / "portfolio"
-    portfolio_dir.mkdir(parents=True, exist_ok=True)
-    out = portfolio_dir / f"Portfolio_{phase_title}_window_tearsheet.html"
+    feature_name: str | None = None,
+    output_filename: str = "tearsheet.html",
+) -> Path | None:
+    """Write one QuantStats HTML tearsheet for a portfolio phase result."""
+    if not _returns_suitable_for_quantstats_tearsheet(phase_result.combined_strategy_returns):
+        logger.info(
+            "Skipping QuantStats tearsheet for %s: constant or insufficient strategy returns",
+            feature_name or phase_title,
+        )
+        return None
+    out_dir = Path(output_root) / output_dir_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / output_filename
     generate_tearsheet(
         strategy_returns=phase_result.combined_strategy_returns,
         baseline_returns=phase_result.combined_baseline_returns,
-        feature_name=f"Portfolio {phase_title} Test",
+        feature_name=feature_name or f"{phase_title} window",
         output_file=str(out),
         mode="html",
     )
     return out
+
+
+def _append_tearsheet_path(paths: list[Path], path: Path | None) -> None:
+    if path is not None:
+        paths.append(path)
+
+
+def _write_concat_portfolio_tearsheet(
+    *,
+    output_path: Path,
+    strategy_returns: pd.Series,
+    baseline_returns: pd.Series,
+    feature_name: str,
+) -> Path | None:
+    if not _returns_suitable_for_quantstats_tearsheet(strategy_returns):
+        logger.info(
+            "Skipping QuantStats tearsheet for %s: constant or insufficient strategy returns",
+            feature_name,
+        )
+        return None
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    generate_tearsheet(
+        strategy_returns=strategy_returns,
+        baseline_returns=baseline_returns,
+        feature_name=feature_name,
+        output_file=str(output_path),
+        mode="html",
+    )
+    return output_path
 
 
 def _write_inclusion_tearsheets_from_phases(
@@ -465,85 +546,306 @@ def _write_inclusion_tearsheets_from_phases(
     phase_without_val: PhaseResult,
     phase_with_tr: PhaseResult,
     phase_with_val: PhaseResult,
+    skip_without_tearsheets: bool = False,
+    labels: TearsheetComparisonLabels | None = None,
 ) -> tuple[Path, ...]:
     """Write with/without portfolio HTML for train, validation, and train+val (concat), no extra fits."""
+    scope = labels or TearsheetComparisonLabels(scope_title="Portfolio comparison")
     root = Path(tearsheets_root)
     root.mkdir(parents=True, exist_ok=True)
-    w_root = root / "portfolio_without_candidate"
-    i_root = root / "portfolio_with_candidate"
+    w_root = root / scope.without_dir_name
+    i_root = root / scope.with_dir_name
     w_root.mkdir(parents=True, exist_ok=True)
     i_root.mkdir(parents=True, exist_ok=True)
 
     paths: list[Path] = []
-    paths.append(
-        _write_portfolio_phase_tearsheet(
-            phase_without_tr,
-            output_root=w_root,
-            output_dir_name="train",
-            phase_title="Train",
+    if not skip_without_tearsheets:
+        _append_tearsheet_path(
+            paths,
+            _write_portfolio_phase_tearsheet(
+                phase_without_tr,
+                output_root=w_root,
+                output_dir_name="train",
+                phase_title="Train",
+                feature_name=f"{scope.scope_title} — train (without candidate)",
+            ),
         )
-    )
-    paths.append(
-        _write_portfolio_phase_tearsheet(
-            phase_without_val,
-            output_root=w_root,
-            output_dir_name="validation",
-            phase_title="Validation",
+        _append_tearsheet_path(
+            paths,
+            _write_portfolio_phase_tearsheet(
+                phase_without_val,
+                output_root=w_root,
+                output_dir_name="validation",
+                phase_title="Validation",
+                feature_name=f"{scope.scope_title} — validation (without candidate)",
+            ),
         )
-    )
-    pdir_w = w_root / "train_plus_validation" / "portfolio"
-    pdir_w.mkdir(parents=True, exist_ok=True)
-    out_w = pdir_w / "Portfolio_Train_plus_Validation_window_tearsheet.html"
-    generate_tearsheet(
-        strategy_returns=_concat_returns(
-            phase_without_tr.combined_strategy_returns,
-            phase_without_val.combined_strategy_returns,
-        ),
-        baseline_returns=_concat_returns(
-            phase_without_tr.combined_baseline_returns,
-            phase_without_val.combined_baseline_returns,
-        ),
-        feature_name="Portfolio Train+Validation Test (concatenated)",
-        output_file=str(out_w),
-        mode="html",
-    )
-    paths.append(out_w)
+        _append_tearsheet_path(
+            paths,
+            _write_concat_portfolio_tearsheet(
+                output_path=w_root / "train_plus_validation" / "tearsheet.html",
+                strategy_returns=_concat_returns(
+                    phase_without_tr.combined_strategy_returns,
+                    phase_without_val.combined_strategy_returns,
+                ),
+                baseline_returns=_concat_returns(
+                    phase_without_tr.combined_baseline_returns,
+                    phase_without_val.combined_baseline_returns,
+                ),
+                feature_name=f"{scope.scope_title} — train+validation (without candidate)",
+            ),
+        )
 
-    paths.append(
+    _append_tearsheet_path(
+        paths,
         _write_portfolio_phase_tearsheet(
             phase_with_tr,
             output_root=i_root,
             output_dir_name="train",
             phase_title="Train",
-        )
+            feature_name=f"{scope.scope_title} — train (with candidate)",
+        ),
     )
-    paths.append(
+    _append_tearsheet_path(
+        paths,
         _write_portfolio_phase_tearsheet(
             phase_with_val,
             output_root=i_root,
             output_dir_name="validation",
             phase_title="Validation",
-        )
-    )
-    pdir_i = i_root / "train_plus_validation" / "portfolio"
-    pdir_i.mkdir(parents=True, exist_ok=True)
-    out_i = pdir_i / "Portfolio_Train_plus_Validation_window_tearsheet.html"
-    generate_tearsheet(
-        strategy_returns=_concat_returns(
-            phase_with_tr.combined_strategy_returns,
-            phase_with_val.combined_strategy_returns,
+            feature_name=f"{scope.scope_title} — validation (with candidate)",
         ),
-        baseline_returns=_concat_returns(
-            phase_with_tr.combined_baseline_returns,
-            phase_with_val.combined_baseline_returns,
-        ),
-        feature_name="Portfolio Train+Validation Test (concatenated)",
-        output_file=str(out_i),
-        mode="html",
     )
-    paths.append(out_i)
+    _append_tearsheet_path(
+        paths,
+        _write_concat_portfolio_tearsheet(
+            output_path=i_root / "train_plus_validation" / "tearsheet.html",
+            strategy_returns=_concat_returns(
+                phase_with_tr.combined_strategy_returns,
+                phase_with_val.combined_strategy_returns,
+            ),
+            baseline_returns=_concat_returns(
+                phase_with_tr.combined_baseline_returns,
+                phase_with_val.combined_baseline_returns,
+            ),
+            feature_name=f"{scope.scope_title} — train+validation (with candidate)",
+        ),
+    )
 
     return tuple(paths)
+
+
+def write_candidate_strategy_tearsheets(
+    *,
+    output_root: Path,
+    phase_candidate_tr: PhaseResult | None = None,
+    phase_candidate_val: PhaseResult | None = None,
+    candidate_key: str,
+) -> tuple[Path, ...]:
+    """Candidate-only tearsheets (train / validation / train+validation).
+
+    Uses single-ensemble ``GlobalPortfolio`` phase results for the candidate
+    in isolation (same return basis as sleeve/portfolio gate phases).
+    """
+    root = Path(output_root) / "candidate_strategy"
+
+    if phase_candidate_tr is None or phase_candidate_val is None:
+        return ()
+
+    return _write_with_only_portfolio_tearsheets(
+        tearsheets_root=root,
+        phase_with_tr=phase_candidate_tr,
+        phase_with_val=phase_candidate_val,
+        feature_prefix="Candidate strategy",
+    )
+
+
+def write_full_portfolio_comparison_tearsheets(
+    *,
+    output_root: Path,
+    phase_without_tr: PhaseResult,
+    phase_without_val: PhaseResult,
+    phase_with_tr: PhaseResult,
+    phase_with_val: PhaseResult,
+    portfolio_ticker_names: frozenset[str],
+    skip_without_tearsheets: bool = False,
+) -> tuple[Path, ...]:
+    """Full prop-book global portfolio with vs without the candidate ensemble."""
+    root = Path(output_root) / "full_portfolio"
+    labels = TearsheetComparisonLabels(
+        scope_title="Full portfolio",
+        without_dir_name="without_candidate",
+        with_dir_name="with_candidate",
+    )
+    return _write_inclusion_tearsheets_from_phases(
+        tearsheets_root=root,
+        phase_without_tr=phase_without_tr,
+        phase_without_val=phase_without_val,
+        phase_with_tr=phase_with_tr,
+        phase_with_val=phase_with_val,
+        skip_without_tearsheets=skip_without_tearsheets,
+        labels=labels,
+    )
+
+
+write_candidate_standalone_tearsheets = write_candidate_strategy_tearsheets
+
+
+def gate_tearsheet_panel_title(path: Path) -> str | None:
+    """Map portfolio-gate tearsheet paths to the twelve canonical UI panel titles."""
+    normalized = path.as_posix().lower()
+    if path.suffix.lower() != ".html" or path.name.lower() != "tearsheet.html":
+        return None
+    if "portfolio_gate_tearsheets" not in normalized:
+        return None
+
+    phase_label = ""
+    if "/train_plus_validation/" in normalized:
+        phase_label = "train+validation"
+    elif "/validation/" in normalized:
+        phase_label = "validation"
+    elif "/train/" in normalized:
+        phase_label = "train"
+
+    if "/candidate_strategy/" in normalized or "/candidate_standalone/" in normalized:
+        return f"Candidate strategy — {phase_label}" if phase_label else "Candidate strategy"
+
+    if "/full_portfolio/" in normalized:
+        comparison = (
+            "with candidate"
+            if "/with_candidate/" in normalized
+            else "without candidate"
+        )
+        return f"Full portfolio — {phase_label} ({comparison})"
+
+    if "/sleeve_" in normalized:
+        sleeve_dir = next((part for part in path.parts if part.startswith("sleeve_")), "")
+        sleeve_slug = _display_sleeve_slug(sleeve_dir.removeprefix("sleeve_"))
+        comparison = (
+            "with candidate"
+            if "/with_candidate/" in normalized
+            else "without candidate"
+        )
+        return f"Sleeve ({sleeve_slug}) — {phase_label} ({comparison})"
+
+    return None
+
+
+def _sanitize_tearsheet_path_segment(label: str) -> str:
+    """Filesystem-safe sleeve id; ``/`` in the label becomes ``__`` for round-trip display."""
+    parts = [re.sub(r"[^\w.-]+", "_", part.strip()) for part in label.split("/") if part.strip()]
+    return "__".join(parts) if parts else "sleeve"
+
+
+def _display_sleeve_slug(slug: str) -> str:
+    if "__" in slug:
+        return " / ".join(part.replace("_", " ") for part in slug.split("__"))
+    return slug.replace("_", " ")
+
+
+def _write_with_only_portfolio_tearsheets(
+    *,
+    tearsheets_root: Path,
+    phase_with_tr: PhaseResult,
+    phase_with_val: PhaseResult,
+    feature_prefix: str,
+) -> tuple[Path, ...]:
+    """Train / validation / train+val HTML for a single portfolio path."""
+    root = Path(tearsheets_root)
+    root.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    _append_tearsheet_path(
+        paths,
+        _write_portfolio_phase_tearsheet(
+            phase_with_tr,
+            output_root=root,
+            output_dir_name="train",
+            phase_title="Train",
+            feature_name=f"{feature_prefix} — train",
+        ),
+    )
+    _append_tearsheet_path(
+        paths,
+        _write_portfolio_phase_tearsheet(
+            phase_with_val,
+            output_root=root,
+            output_dir_name="validation",
+            phase_title="Validation",
+            feature_name=f"{feature_prefix} — validation",
+        ),
+    )
+    _append_tearsheet_path(
+        paths,
+        _write_concat_portfolio_tearsheet(
+            output_path=root / "train_plus_validation" / "tearsheet.html",
+            strategy_returns=_concat_returns(
+                phase_with_tr.combined_strategy_returns,
+                phase_with_val.combined_strategy_returns,
+            ),
+            baseline_returns=_concat_returns(
+                phase_with_tr.combined_baseline_returns,
+                phase_with_val.combined_baseline_returns,
+            ),
+            feature_name=f"{feature_prefix} — train+validation",
+        ),
+    )
+    return tuple(paths)
+
+
+def write_sleeve_level_tearsheets(
+    *,
+    output_dir: Path,
+    sleeve_label: str,
+    phase_without_tr: PhaseResult | None = None,
+    phase_without_val: PhaseResult | None = None,
+    phase_with_tr: PhaseResult | None = None,
+    phase_with_val: PhaseResult | None = None,
+) -> tuple[Path, ...]:
+    """Write sleeve-scoped QuantStats HTML (with/without candidate when both sides exist).
+
+    Output layout: ``<output_dir>/sleeve_tearsheets_<label>/...`` mirroring inclusion
+    ``portfolio_without_candidate`` / ``portfolio_with_candidate`` folders. When only
+    ``phase_with_*`` are provided (first strategy in sleeve), writes the with-candidate
+    train, validation, and train+validation tearsheets only.
+    """
+    segment = _sanitize_tearsheet_path_segment(sleeve_label)
+    root = Path(output_dir) / "portfolio_gate_tearsheets" / f"sleeve_{segment}"
+    prefix = f"Sleeve ({sleeve_label})"
+
+    has_without = phase_without_tr is not None and phase_without_val is not None
+    has_with = phase_with_tr is not None and phase_with_val is not None
+    if has_without and has_with:
+        skip_without = not _returns_suitable_for_quantstats_tearsheet(
+            phase_without_tr.combined_strategy_returns
+        )
+        if skip_without:
+            logger.info(
+                "Sleeve %s: empty without-candidate returns; writing with-candidate tearsheets only",
+                sleeve_label,
+            )
+        sleeve_labels = TearsheetComparisonLabels(
+            scope_title=prefix,
+            without_dir_name="without_candidate",
+            with_dir_name="with_candidate",
+        )
+        return _write_inclusion_tearsheets_from_phases(
+            tearsheets_root=root,
+            phase_without_tr=phase_without_tr,
+            phase_without_val=phase_without_val,
+            phase_with_tr=phase_with_tr,
+            phase_with_val=phase_with_val,
+            skip_without_tearsheets=skip_without,
+            labels=sleeve_labels,
+        )
+    if has_with:
+        with_root = root / "with_candidate"
+        return _write_with_only_portfolio_tearsheets(
+            tearsheets_root=with_root,
+            phase_with_tr=phase_with_tr,
+            phase_with_val=phase_with_val,
+            feature_prefix=f"{prefix} (with candidate)",
+        )
+    return ()
 
 
 @dataclass(frozen=True)

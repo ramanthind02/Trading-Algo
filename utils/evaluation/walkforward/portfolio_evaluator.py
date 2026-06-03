@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+import numpy as np
 import pandas as pd
 
-from feature_research.core_helpers import combo_key
+from feature_research._internal.core_helpers import combo_key
+from feature_selection.validation.objective_metrics import (
+    resolve_objective_metric_name as resolve_objective_metric,
+)
 from utils.core.enums import TimeFrame
 from utils.core.helpers import build_feature_column_name
-from utils.evaluation.walkforward.metrics import resolve_objective_metric
 
 
 @dataclass(frozen=True)
@@ -115,6 +119,138 @@ def build_research_portfolio(*_args: object, **_kwargs: object) -> object:
     raise RuntimeError("Legacy fitted portfolio construction is unsupported in frozen-signal research.")
 
 
+_IDM_MAX: float = 2.5
+_FORECAST_CAP: float = 2.0
+
+
+def _vol_scaled_portfolio_returns(
+    selected_params: list[dict[str, Any]],
+    feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame],
+    train_candles: pd.DataFrame,
+    test_candles: pd.DataFrame,
+    *,
+    target_volatility: float,
+    timeframe: TimeFrame,
+    module_name: str,
+    instrument_return_kind: str = "log_intraday",
+) -> pd.Series:
+    """Compute production-equivalent OOS returns for the tearsheet.
+
+    For each selected combo:
+      1. EWSD is computed causally from full candles (train + test) so the EWMA
+         is warm before the test window begins.
+      2. ``forecast_score = min(tau / EWSD[t], 2.0) × signal``
+      3. TFPortfolio is fit on train_candles to obtain IDM + instrument weights.
+      4. ``position_fraction = forecast_score × instrument_weight × IDM``
+      5. ``strategy_return = position_fraction × log_return(close)``
+
+    Returns the mean return series across combos, reindexed to test dates.
+    Falls back to an empty Series if real-candle data is unavailable.
+    """
+    from ensemble.portfolio_impl.portfolio_returns import calculate_returns_from_candles
+    from ensemble.portfolio_impl.portfolio_tester import calculate_strategy_returns_from_positions
+    from ensemble.portfolio_impl.tf_portfolio import TFPortfolio
+    from utils.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
+    from utils.core.ticker_key import normalize_ticker_key
+
+    svc = DailyEWSDVolatilityService()
+    # Deduplicate before computing EWSD: when the train tearsheet is generated the
+    # runner passes test_candles=train_candles, so naively concatenating would double
+    # every row, inserting spurious zero-return bars that understate volatility.
+    full_candles = (
+        pd.concat([train_candles, test_candles], ignore_index=True)
+        .drop_duplicates(subset=["ticker", "datetime"])
+        .sort_values(["ticker", "datetime"])
+    )
+    daily_vol_df = svc.compute_daily_series(full_candles)
+
+    instrument_returns = calculate_returns_from_candles(train_candles)
+    portfolio = TFPortfolio(ensembles=[], trading_timeframe=timeframe, idm_max=_IDM_MAX)
+    portfolio.fit(instrument_returns)
+
+    test_dt_series = pd.to_datetime(test_candles["datetime"]).dt.tz_localize(None)
+    test_lo, test_hi = test_dt_series.min(), test_dt_series.max()
+
+    all_returns: list[pd.Series] = []
+    for params in selected_params:
+        key = combo_key(params)
+        combo_data = feature_data_by_combo.get(key)
+        if combo_data is None or combo_data.empty:
+            continue
+
+        signal_col = "signal" if "signal" in combo_data.columns else "feature"
+        signal_full = combo_data[signal_col].copy()
+        ticker_col = combo_data["ticker"] if "ticker" in combo_data.columns else None
+
+        sig_dt = pd.to_datetime(signal_full.index).tz_localize(None)
+        test_mask = (sig_dt >= test_lo) & (sig_dt <= test_hi)
+        signal = signal_full.loc[test_mask]
+        if signal.empty:
+            continue
+
+        if ticker_col is not None:
+            ticker = ticker_col.loc[test_mask].astype(str)
+        else:
+            ticker = pd.Series(
+                [_normalize_ticker_label(test_candles["ticker"].iloc[0])] * len(signal),
+                index=signal.index,
+            )
+
+        signal_dt_clean = pd.to_datetime(signal.index).tz_localize(None)
+        align_frame = pd.DataFrame(
+            {"datetime": signal_dt_clean, "ticker": ticker.values}
+        )
+        try:
+            aligned = svc.align_daily_volatility_to_candles(daily_vol_df, align_frame)
+        except ValueError:
+            continue
+
+        aligned["_dt_key"] = pd.to_datetime(aligned["datetime"]).dt.tz_localize(None).dt.floor("s")
+        aligned["_tk_key"] = aligned["ticker"].map(normalize_ticker_key)
+        vol_lookup = (
+            aligned
+            .drop_duplicates(subset=["_tk_key", "_dt_key"], keep="last")
+            .set_index(["_tk_key", "_dt_key"])["ewsd_annual_vol"]
+        )
+
+        ticker_norm = ticker.map(normalize_ticker_key)
+        dt_keys = signal_dt_clean.floor("s")
+        mi = pd.MultiIndex.from_arrays([ticker_norm.values, dt_keys])
+        ewsd_arr = vol_lookup.reindex(mi).fillna(target_volatility).to_numpy(dtype=float)
+        ewsd_arr = np.maximum(ewsd_arr, 1e-6)
+
+        forecast_vals = np.minimum(target_volatility / ewsd_arr, _FORECAST_CAP) * signal.to_numpy(dtype=float)
+        forecasts_df = pd.DataFrame(
+            {"ticker": ticker.values, "forecast_score": forecast_vals},
+            index=pd.to_datetime(signal.index),
+        )
+        positions_result = portfolio.predict(forecasts_df)
+        positions_df = pd.DataFrame(
+            {
+                "ticker": positions_result["ticker"].to_numpy(),
+                "datetime": pd.to_datetime(signal.index),
+                "position_fraction": positions_result["position_fraction"].to_numpy(dtype=float),
+            }
+        )
+
+        returns = calculate_strategy_returns_from_positions(
+            positions_df, test_candles,
+            instrument_return_kind=instrument_return_kind,
+        )
+        if returns.empty:
+            continue
+        if getattr(returns.index, "tz", None) is not None:
+            returns.index = returns.index.tz_localize(None)
+        all_returns.append(returns)
+
+    if not all_returns:
+        return pd.Series(dtype=float, name="portfolio_returns")
+
+    combined = pd.concat(all_returns, axis=1).mean(axis=1).rename("portfolio_returns")
+    test_full_index = pd.DatetimeIndex(test_dt_series.unique()).sort_values()
+    return combined.reindex(test_full_index, fill_value=0.0).rename("portfolio_returns")
+
+
 def evaluate_fold_portfolio(
     train_candles: pd.DataFrame,
     test_candles: pd.DataFrame,
@@ -130,8 +266,9 @@ def evaluate_fold_portfolio(
     member_prediction_mode: str | None = None,
     feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
     feature_type: object = None,
+    instrument_return_kind: str = "log_intraday",
 ) -> FoldPortfolioResult:
-    _ = (binning_config, target_volatility, module_name, weight_layer_config, member_prediction_mode, feature_type)
+    _ = (binning_config, module_name, weight_layer_config, member_prediction_mode, feature_type)
     timeframe = _normalize_timeframe(trading_timeframe)
     train_ready = ensure_portfolio_candle_columns(train_candles, timeframe)
     test_ready = ensure_portfolio_candle_columns(test_candles, timeframe)
@@ -170,7 +307,38 @@ def evaluate_fold_portfolio(
         name: float(metric(series[series != 0.0])) if not series[series != 0.0].empty else float("nan")
         for name, series in per_signal_oos_returns.items()
     }
-    combined = pd.concat(per_signal_oos_returns, axis=1).mean(axis=1).rename("portfolio_returns")
+
+    # Use the full production vol-targeting path for portfolio returns when real
+    # OHLCV candles with a ticker column are available (i.e., portfolio_candles_df
+    # was provided to the runner).  Fall back to the legacy EWSD-normalised path
+    # only if vol-scaling fails or candles lack the required columns.
+    combined: pd.Series
+    _has_real_candles = "ticker" in test_ready.columns and "close" in test_ready.columns
+    if _has_real_candles:
+        try:
+            combined = _vol_scaled_portfolio_returns(
+                selected_params=selected_params,
+                feature_data_by_combo=feature_data_by_combo,
+                train_candles=train_ready,
+                test_candles=test_ready,
+                target_volatility=target_volatility,
+                timeframe=timeframe,
+                module_name=module_name,
+                instrument_return_kind=instrument_return_kind,
+            )
+            if combined.empty:
+                raise ValueError("vol-scaled path returned empty series")
+        except Exception as exc:
+            warnings.warn(
+                f"Vol-scaled portfolio returns failed ({exc}); "
+                "falling back to EWSD-normalised signal returns.",
+                UserWarning,
+                stacklevel=2,
+            )
+            combined = pd.concat(per_signal_oos_returns, axis=1).mean(axis=1).rename("portfolio_returns")
+    else:
+        combined = pd.concat(per_signal_oos_returns, axis=1).mean(axis=1).rename("portfolio_returns")
+
     combined = combined.reindex(test_index, fill_value=0.0)
     active_returns = combined[combined != 0.0]
     oos_sharpe = float(metric(active_returns)) if not active_returns.empty else float("nan")

@@ -11,7 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TypeVar
 
-from utils.evaluation.walkforward.metrics import SUPPORTED_OBJECTIVE_METRICS
+from feature_selection.validation.objective_metrics import SUPPORTED_OBJECTIVE_METRIC_NAMES
 
 
 class WeightLayerAlgorithm(str, Enum):
@@ -76,10 +76,10 @@ class WalkforwardResearchConfig:
             raise ValueError("test_step must be >= 1")
         if self.num_steps < 1:
             raise ValueError("num_steps must be >= 1")
-        if self.objective_metric_name not in SUPPORTED_OBJECTIVE_METRICS:
+        if self.objective_metric_name not in SUPPORTED_OBJECTIVE_METRIC_NAMES:
             raise ValueError(
                 "objective_metric_name must be one of: "
-                f"{SUPPORTED_OBJECTIVE_METRICS}"
+                f"{SUPPORTED_OBJECTIVE_METRIC_NAMES}"
             )
         if self.min_fold_samples < 10:
             raise ValueError("min_fold_samples must be >= 10")

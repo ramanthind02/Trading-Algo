@@ -6,7 +6,7 @@ This document specifies the in-sample robustness test suite for QuantFoundry. Th
 
 > **What is the probability that my observed in-sample performance is the product of search rather than genuine edge?**
 
-The tests sit at the end of the research pipeline, after a user has run a parameter sweep and selected their best combination. They do not validate the strategy out-of-sample — that is the walkforward zone's job. They validate the integrity of the in-sample selection itself.
+The tests sit at the end of the exploration phase, after a user has run a parameter sweep and identified the leading combinations. They do not validate the strategy on the later validation slice — that is the validation phase's job. They validate the integrity of the in-sample selection itself.
 
 Related documents:
 - `docs/SaaS/robustness_tests/` — index of all robustness test categories
@@ -84,7 +84,9 @@ def full_grid_permutation_test(
 
 **What it does not measure:** Whether any individual combination is genuinely good. A strategy can pass this test while being a poor individual choice. It can also fail this test even though the underlying signal is real — if the grid is simply too large relative to available data.
 
-**Pass condition:** $p \leq 0.05$ (the real best metric is in the top 5% of what random search would produce).
+**Pass condition (heterogeneous mining / audit):** $p \leq 0.05$ (real best metric in top 5% of random search).
+
+**Gate status (structured parameter families):** treat as a **diagnostic** — report null percentile and flag below the 20th percentile for manual review. Prefer **DSR $\geq 0.95$** as the Mode 2 gate (§4.4). See §4.1 for why plain-Sharpe return-shuffle tests can read conservative on autocorrelated strategy returns.
 
 ---
 
@@ -193,14 +195,14 @@ def deflated_sharpe_ratio(
 
 | DSR Probability | Interpretation |
 |---|---|
-| ≥ 0.95 | Strong evidence of real edge after accounting for search |
-| 0.75 – 0.95 | Moderate evidence; worth walkforward validation |
+| ≥ 0.95 | **Gate:** strong evidence of real edge after search correction — proceed if other gates pass |
+| 0.75 – 0.95 | Moderate evidence; review $N_\text{eff}$, rolling, and vector shuffle before lock |
 | 0.50 – 0.75 | Marginal; result may be search-driven |
 | < 0.50 | Search is the more likely explanation; discard |
 
 **Advantage over permutation test:** Near-zero computation cost. Run on every backtest result automatically.
 
-**Limitation:** Assumes approximate return normality and that the $N_\text{eff}$ estimate is accurate. For highly non-normal strategies or when $N_\text{eff}$ is uncertain, the Full Grid Permutation Test is more reliable because it makes no distributional assumptions and uses the actual search procedure on actual return data.
+**Limitation:** Assumes approximate return normality and that the $N_\text{eff}$ estimate is accurate. For highly non-normal strategies or when $N_\text{eff}$ is uncertain, run the Full Grid Permutation Test as an **empirical diagnostic** — it makes no distributional assumptions and replicates the actual search procedure. For structured indicator families with reliable $N_\text{eff}$, DSR is the preferred **gate**; full-grid discord when DSR passes warrants manual review (§4.3).
 
 ---
 
@@ -231,59 +233,7 @@ This is equivalent to the standard formula for the effective sample size in a co
 
 ---
 
-### 3.5 Newey-West Autocorrelation Correction
-
-**What it answers:** Is the reported t-stat honest, or is it inflated by autocorrelation in the return series?
-
-The standard t-stat formula assumes returns are independently drawn each bar. Continuous signal strategies — particularly slow trend-following — produce positively autocorrelated daily returns by construction: a position held for multiple days generates serially correlated P&L. When returns are autocorrelated, the naive t-stat overstates significance because the denominator ($\sigma / \sqrt{T}$) assumes $T$ independent observations when the effective count is lower.
-
-The Newey-West correction replaces the sample variance in the denominator with the **long-run variance (LRV)**, which accounts for autocovariance across lags:
-
-$$\text{LRV} = \gamma_0 + 2\sum_{k=1}^{L} \left(1 - \frac{k}{L+1}\right)\gamma_k$$
-
-where $\gamma_k = \frac{1}{T}\sum_{t=k+1}^{T}(r_t - \bar{r})(r_{t-k} - \bar{r})$ is the sample autocovariance at lag $k$, and the Bartlett weights $\left(1 - k/(L+1)\right)$ ensure the LRV estimate is positive semi-definite.
-
-The NW-adjusted t-stat is then:
-
-$$t_\text{NW} = \frac{\bar{r}\,\sqrt{T}}{\sqrt{\text{LRV}}} = \frac{t_\text{naive}}{\sqrt{\lambda}}, \quad \lambda = \frac{\text{LRV}}{\gamma_0}$$
-
-$\lambda > 1$ whenever returns are positively autocorrelated, so $t_\text{NW} < t_\text{naive}$. For a slow trend-following strategy $\lambda$ is typically in the range 1.5–3.0, reducing the t-stat by 20–40%.
-
-**Lag selection:** Use the data-driven rule $L = \lfloor 4(T/100)^{2/9} \rfloor$. For an 18-year daily IS period ($T \approx 4{,}500$), this gives $L \approx 9$.
-
-```python
-def newey_west_tstat(returns: np.ndarray, max_lag: int | None = None) -> NWResult:
-    T = len(returns)
-    if max_lag is None:
-        max_lag = int(4 * (T / 100) ** (2 / 9))
-
-    r_bar = returns.mean()
-    demeaned = returns - r_bar
-    gamma_0 = (demeaned ** 2).mean()
-
-    lrv = gamma_0
-    for k in range(1, max_lag + 1):
-        gamma_k = (demeaned[k:] * demeaned[:-k]).mean()
-        lrv += 2 * (1 - k / (max_lag + 1)) * gamma_k
-
-    t_naive = r_bar * np.sqrt(T) / np.sqrt(gamma_0)
-    t_nw = r_bar * np.sqrt(T) / np.sqrt(lrv)
-    inflation_factor = lrv / gamma_0
-
-    return NWResult(
-        t_naive=t_naive,
-        t_nw=t_nw,
-        inflation_factor=inflation_factor,
-        lrv=lrv,
-        max_lag=max_lag,
-    )
-```
-
-**Scope of impact:** The NW-adjusted t-stat is the canonical metric used as input to the Full Grid Permutation Test, Individual Permutation Test, and DSR. All t-stat thresholds and permutation test comparisons in this document operate on $t_\text{NW}$, not $t_\text{naive}$. The inflation factor $\lambda$ is reported alongside results so the researcher can see how much autocorrelation is adjusting the headline number.
-
----
-
-### 3.6 Sharpe Ratio Confidence Interval
+### 3.5 Sharpe Ratio Confidence Interval
 
 **What it answers:** How precisely estimated is the IS Sharpe? What range of true Sharpe values is consistent with the observed data?
 
@@ -294,8 +244,6 @@ The 95% CI uses the same standard error formula as the DSR (§3.3):
 $$\text{SE}(\hat{SR}) = \sqrt{\frac{1 + \frac{1}{2}\hat{SR}^2 - \gamma_1\hat{SR} + \frac{\gamma_2}{4}\hat{SR}^2}{T}}$$
 
 $$\hat{SR} \pm 1.96 \cdot \text{SE}(\hat{SR})$$
-
-Note that the SE here uses $T$ in its raw-observation sense — the Newey-West adjustment affects the t-stat (§3.5) but the Sharpe CI is reported on the unadjusted Sharpe since that is the quantity the researcher optimised. Both are shown.
 
 **Typical magnitudes for daily IS data:**
 
@@ -308,11 +256,11 @@ Note that the SE here uses $T$ in its raw-observation sense — the Newey-West a
 
 The typical IS period of 5–10 years produces a CI width of roughly ±0.4 to ±0.6. A researcher who sees SR = 1.2 with a CI of [0.6, 1.8] should treat the result with substantially more humility than the point estimate suggests.
 
-**UI:** Show as an error bar on the IS Sharpe display. Also show the NW-adjusted Sharpe and its CI side-by-side, so the researcher can see both the headline number and the autocorrelation-corrected version in one glance.
+**UI:** Show as an error bar on the IS Sharpe display so the researcher can see estimate precision at a glance.
 
 ---
 
-### 3.7 Rolling IS Performance
+### 3.6 Rolling IS Performance
 
 **What it answers:** Is the strategy's edge consistent throughout the IS period, or is the aggregate IS Sharpe driven by a single sub-period?
 
@@ -356,60 +304,171 @@ A strategy that fails the rolling test but passes the search-bias and permutatio
 
 ---
 
-## 4. Test Relationships and Interpretation Guide
+## 4. Failure Modes and Test Selection
 
-The tests are complementary, not competing. Each corrects for or reveals a different failure mode:
+Before choosing a test, be precise about which overfitting failure mode you are trying to catch. In-sample research has **two distinct failure modes**:
 
-$$\text{Observed metric} = \underbrace{\text{true edge}}_{\text{what we want}} + \underbrace{\text{autocorrelation inflation}}_{\text{Newey-West}} + \underbrace{\text{finite-sample noise}}_{\text{Individual test, SR CI}} + \underbrace{\text{selection inflation from search}}_{\text{Full Grid, DSR}} + \underbrace{\text{temporal instability}}_{\text{Rolling IS}}$$
+| Failure mode | Question | Typical cause |
+|---|---|---|
+| **1 — Temporal overfitting** | Did this combo only work because its signal values happened to align with this particular return sequence? | Signal timing matters, but there is no durable predictive structure |
+| **2 — Parameter mining** | Did grid search find a peak that a naive search over $N$ correlated trials could have hit on noise? | Genuine family structure, but the *best* combo was selected after comparing many alternatives |
 
-| Test | What it catches | Distributional assumptions | Compute cost | Run automatically? |
-|---|---|---|---|---|
-| Newey-West correction | Autocorrelation inflating t-stat | None | Negligible | Yes — preprocessing |
-| Sharpe CI | Imprecise estimate from short IS period | Approximate normality | Negligible | Yes |
-| Individual Permutation | Finite-sample noise for a single combo | None | Low–Medium | On demand |
-| Full Grid Permutation | Selection inflation from search | None | High | On demand |
-| Deflated Sharpe Ratio | Selection inflation (analytical) | Approximate normality | Negligible | Yes |
-| Rolling IS Performance | Edge concentrated in one sub-period | None | Negligible | Yes |
+**Which test targets which mode:**
 
-**Decision tree for researchers:**
+| Test | Failure mode | What it permutes / corrects |
+|---|---|---|
+| **Vector shuffle** (local: per-combo signal timing null) | Mode 1 | Breaks signal–return temporal alignment; preserves marginal signal distribution |
+| **Individual return-shuffle permutation** (SaaS §3.2) | Mode 1 (single pre-specified combo only) | Breaks return order for one fixed hypothesis |
+| **Full-grid return-shuffle permutation** (§3.1) | Mode 2 | Re-scores entire grid on shuffled returns; empirical null of $\max_i \text{metric}_i$ |
+| **Deflated Sharpe Ratio** (§3.3) | Mode 2 (analytical) | Expected maximum Sharpe under $N_\text{eff}$ trials via extreme-value theory |
+| **Rolling IS / CUSUM** (§3.6) | Temporal instability | Edge concentrated in one sub-period or structural break |
+
+Mode 1 and Mode 2 are **orthogonal**. A strategy can fail Mode 1 (lucky timing) while passing Mode 2 (search bias looks fine), and vice versa. Neither DSR nor full-grid permutation substitutes for a signal-timing null.
+
+---
+
+### 4.1 Why full-grid permutation can fail unexpectedly
+
+For long IS windows ($T \approx 4{,}500$ daily bars), a back-of-envelope IID Sharpe noise floor suggests the null max should sit far below modest observed Sharpes. Empirical full-grid tests often report **high p-values anyway**. Three mechanisms explain the gap:
+
+**1. Strategy-return autocorrelation collapses effective $T$.**
+
+Systematic strategies with holding persistence (e.g. exit rules spanning several bars) produce serially correlated strategy returns. Newey–West diagnostics ($\max\_\text{lag}$, exit horizons) are useful sanity checks. The effective time sample for Sharpe inference is not $T$ — it is closer to $T / (1 + 2\sum_k w_k \rho_k)$. With persistent autocorrelation, $T_\text{eff}$ can fall to a few hundred bars even when $T > 4{,}000$.
+
+At $T_\text{eff} \approx 400$, the per-period Sharpe standard error scales like $\sqrt{252 / 400} \approx 0.79$ annualized. With $N_\text{eff} \approx 2.5$ effective trials, the expected null maximum can land near 0.7 annualized — **above** an observed best of 0.66. The test correctly flags “not surprising under search,” even though the naive $\sqrt{252/T}$ formula suggested overwhelming power.
+
+**2. Plain Sharpe on observed vs IID null returns is not the same experiment.**
+
+Return-shuffle nulls are **IID by construction**. Observed strategy returns are typically **autocorrelated**. Scoring both sides with plain annualized Sharpe assumes IID in both cases, but only the null satisfies that assumption. Newey–West t-stat adapts per series — which helps single-combo inference on real data — but under return shuffle the HAC correction collapses, producing the asymmetry: NW-deflated observed scores vs near-plain null scores when NW is used for both.
+
+Local implementation therefore splits metrics:
+
+- **Combo selection on real data:** NW-adjusted selection metric (e.g. Newey–West t-stat).
+- **Full-grid return-shuffle null:** plain metric (default: annualized Sharpe) on **both** observed and null paths so the comparison is internally consistent under return shuffle.
+
+This removes the NW-vs-null inflation bug but does **not** restore IID-equivalent power when observed returns are autocorrelated and the metric does not encode that structure. That is expected: return-shuffle + plain Sharpe is a conservative, approximate search-bias check, not a perfect substitute for DSR on autocorrelated strategy returns.
+
+**3. Monte Carlo noise at low iteration counts.**
+
+Default local presets often use $M = 100$ null iterations for speed. DSR has no simulation variance and should be preferred as the **gate** for structured grids.
+
+---
+
+### 4.2 Do not pre-filter the grid to “vector-shuffle passers”
+
+It is tempting to run full-grid permutation only on the subset of combos that passed individual vector shuffle. **Do not use that as a valid full-grid gate.**
+
+The passing combos were identified using the **same** return history the full-grid test evaluates. Conditioning the grid on in-sample individual results introduces a **data-dependent selection** that the return-shuffle null does not account for. The full-grid p-value is no longer valid — the two tests are no longer independent.
+
+The only clean two-stage design is **split-sample**: use one holdout window to decide which combos survive individual timing tests, then run full-grid (or DSR) on a **different** historical window with that pre-locked subset. That is architecturally expensive and is not the default exploration workflow.
+
+---
+
+### 4.3 DSR vs full-grid permutation for Mode 2
+
+Both address parameter mining, but DSR is often the **better gate** for focused, theoretically motivated grids:
+
+| Property | Full-grid permutation | DSR |
+|---|---|---|
+| Null mechanism | Empirical: shuffle returns, re-search grid | Analytical: Gumbel / EVT expected $\max SR \mid N_\text{eff}, T$ |
+| $N_\text{eff}$ | Implicit in simulated cross-combo correlations | Explicit from combo return correlation matrix (§3.4) |
+| Non-normality | Implicit in simulated returns | Skewness / kurtosis in $\text{SE}(\hat{SR})$ |
+| Compute | $O(M \times N \times T)$; noisy at small $M$ | Sub-millisecond |
+| Autocorrelated strategy returns | Plain Sharpe null assumes IID; observed side does not | Uses per-period Sharpe SE; still assumes approximate normality |
+| Heterogeneous mining | Strong when combos are unrelated families and $N_\text{eff}$ is hard to estimate | Weaker when cross-combo correlation structure is unreliable |
+
+**DSR is sufficient when:**
+
+- The grid is a **structured family** (same indicator, parameter ranges only — e.g. RSI lookback, momentum window, exit bars).
+- Strategy returns are serially correlated (typical in systematic trading).
+- Effect sizes are modest (annualized SR roughly 0.5–1.0).
+- Parameter ranges are theory-motivated, not exhaustive pattern mining.
+
+**Full-grid permutation is more valuable when:**
+
+- True **heterogeneous data mining** across unrelated indicator families with unpredictable cross-correlations.
+- All grid points are a priori plausible (not padding with obviously bad params).
+- Returns are approximately IID **or** the scoring metric is calibrated consistently on real and null paths.
+- Very large $T$ with effect sizes well above the autocorrelation-adjusted noise floor.
+- High apparent Sharpes ($> 1.5$) where empirical power is unambiguous.
+
+**Keep full-grid as a diagnostic even when DSR gates:** if DSR $\geq 0.95$ but full-grid null percentile $< 20\%$, investigate correlation structure or metric mismatch manually. That pattern suggests something unusual in the grid geometry or return process — not automatic rejection, but worth a human read.
+
+---
+
+### 4.4 Recommended gates vs diagnostics (exploration)
+
+**Required gates before parameter lock:**
+
+| # | Check | Failure mode | Pass condition |
+|---|---|---|---|
+| 1 | **Vector shuffle** (per combo) | Mode 1 — temporal overfitting | Combo passes empirical null quantile at configured $\alpha$ |
+| 2 | **DSR** | Mode 2 — parameter mining | DSR $\geq 0.95$ |
+| 3 | **NW t-stat** (best combo) | Magnitude / HAC-adjusted significance | NW t-stat $\geq 2.0$ on real data |
+| 4 | **Rolling positive fraction** | Temporal consistency | $\geq 70\%$ of rolling windows positive (configurable; SaaS default 60%) |
+| 5 | **CUSUM** | Structural stability | Statistic within 5% critical bounds |
+
+**Report-only diagnostics (do not hard-gate structured grids):**
+
+| # | Check | Role |
+|---|---|---|
+| 6 | **Full-grid return-shuffle permutation** | Report null percentile; flag if $< 20$th percentile for manual review |
+| 7 | **Sharpe CI lower bound** | Sanity check that interval excludes zero |
+
+Vector shuffle is the only standard exploration test that directly addresses **signal timing**. DSR replaces full-grid as the **primary Mode 2 gate** for structured parameter families. Full-grid remains implemented and reported for audit and heterogeneous-mining scenarios.
+
+---
+
+## 5. Test Relationships and Interpretation Guide
+
+The tests are complementary, not competing:
+
+$$\text{Observed metric} = \underbrace{\text{true edge}}_{\text{what we want}} + \underbrace{\text{finite-sample noise}}_{\text{SR CI}} + \underbrace{\text{selection inflation from search}}_{\text{DSR; full-grid diagnostic}} + \underbrace{\text{temporal misalignment}}_{\text{vector shuffle}} + \underbrace{\text{temporal instability}}_{\text{Rolling IS}}$$
+
+| Test | What it catches | Gate or diagnostic | Compute cost |
+|---|---|---|---|
+| Sharpe CI | Imprecise estimate from finite $T$ | Diagnostic | Negligible |
+| Vector shuffle | Signal timing / Mode 1 | **Gate** | Medium |
+| DSR | Search bias / Mode 2 | **Gate** | Negligible |
+| NW t-stat | HAC-adjusted magnitude | **Gate** | Negligible |
+| Rolling IS / CUSUM | Sub-period concentration / breaks | **Gate** | Negligible |
+| Full Grid Permutation | Search bias / Mode 2 (empirical) | **Diagnostic** for structured grids | High |
+| Individual return-shuffle | Single-combo temporal structure (pre-specified only) | On demand | Low–Medium |
+
+**Decision tree for researchers (structured grids):**
 
 ```
 Run parameter search
         |
-        ├─ DSR < 0.50? ──────────────────────────────────────> Discard. Search explains the result.
+        ├─ Any priority combo fails vector shuffle? ───────────> Reject or demote; timing null failed.
         |
-        ├─ 0.50 ≤ DSR < 0.75? ──> Run Full Grid Permutation Test
-        |                                   |
-        |                          p > 0.05? ──────────────────> Discard.
-        |                                   |
-        |                          p ≤ 0.05 ──────────────────> Proceed to walkforward with caution.
+        ├─ DSR < 0.95? ───────────────────────────────────────> Do not lock params. Search likely explains result.
         |
-        └─ DSR ≥ 0.75? ──────────────────────────────────────> Proceed to walkforward validation.
-                                                                 (Full Grid test still recommended)
+        ├─ NW t-stat < 2.0 OR rolling/CUSUM fail? ──────────────> Do not lock params.
+        |
+        └─ All gates pass ──────────────────────────────────────> Review diagnostics (full-grid percentile, Sharpe CI).
+                                                                    Proceed toward parameter sensitivity + lock.
 ```
 
-**The critical distinction — Individual vs Full Grid:**
+**The critical distinction — vector shuffle vs full grid:**
 
-These tests are often confused. A concrete example shows why they cannot substitute for each other:
+These tests answer different questions and must not be substituted for one another.
 
-You search 10,000 parameter combinations. The best has a t-stat of 3.5. You run the Individual Permutation Test on it: $p = 0.001$ — highly significant. You conclude you have found a real strategy.
+Example: 108 combos searched; best NW t-stat = 3.0. Vector shuffle on the winner: $p = 0.02$ — timing looks real. Full-grid plain-Sharpe permutation: $p = 0.75$ — max Sharpe under search is not surprising. DSR with $N_\text{eff} = 2.5$: 0.96 — analytical search correction still passes.
 
-But the Full Grid test tells a different story. You run 1,000 shuffles; each time you search all 10,000 combinations and record the best t-stat. The null distribution has a mean of 4.2. Your real best of 3.5 falls at the 20th percentile. $p = 0.80$.
-
-The Individual test said significant. The Full Grid test said noise. The Full Grid test is correct — the Individual test was answering the wrong question.
+Interpretation: timing structure may be genuine (Mode 1), while empirical full-grid under plain Sharpe + autocorrelated returns is underpowered / miscalibrated (diagnostic discord). **Trust the gate suite (vector shuffle + DSR + NW + rolling)**; use full-grid discord as a prompt to inspect $N_\text{eff}$, autocorrelation, and metric choice — not as an automatic veto when DSR and vector shuffle agree.
 
 ---
 
-## 5. UI Surfaces
+## 6. UI Surfaces
 
-### 5.1 IS Zone Results Panel — Robustness Summary Card
+### 6.1 IS Zone Results Panel — Robustness Summary Card
 
 After any parameter sweep completes, the results panel shows a summary card alongside the Sharpe/performance metrics:
 
 ```
 ┌─ Robustness Check ─────────────────────────────────────────────────┐
 │  IS Sharpe:  1.42   95% CI  [1.13, 1.71]                          │
-│  NW-adjusted Sharpe:  1.19  (autocorr inflation factor: λ = 1.43)  │
 │                                                                     │
 │  Combinations searched:   286                                       │
 │  Avg pairwise corr:        0.76                                     │
@@ -422,9 +481,9 @@ After any parameter sweep completes, the results panel shows a summary card alon
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-NW correction, Sharpe CI, DSR, and rolling IS stability are all computed automatically after every sweep. The Full Grid Permutation Test is triggered manually due to compute cost.
+Sharpe CI, DSR, and rolling IS stability are all computed automatically after every sweep. The Full Grid Permutation Test is triggered manually due to compute cost.
 
-### 5.2 Full Grid Permutation Test Panel
+### 6.2 Full Grid Permutation Test Panel
 
 When triggered, renders:
 - A histogram of the null distribution of best t-stats
@@ -432,7 +491,7 @@ When triggered, renders:
 - The p-value and pass/fail annotation
 - The number of null iterations and estimated confidence in the p-value estimate
 
-### 5.3 DSR Trend View (Multi-Complexity)
+### 6.3 DSR Trend View (Multi-Complexity)
 
 When a researcher runs sweeps at multiple complexity levels (e.g. 1-param → 2-param → 3-param combinations), the UI shows:
 
@@ -443,15 +502,15 @@ When a researcher runs sweeps at multiple complexity levels (e.g. 1-param → 2-
 
 This lets the researcher see the exact point where search outran signal — a visual answer to the overfitting question rather than a single number.
 
-### 5.4 Individual Combination Detail
+### 6.4 Individual Combination Detail
 
 On any individual parameter combination's result row, a secondary action opens a panel running the Individual Permutation Test for that specific combination, showing its null distribution separately from the grid-level test.
 
 ---
 
-## 6. Computation Contract
+## 7. Computation Contract
 
-### 6.1 Inputs
+### 7.1 Inputs
 
 | Field | Type | Source | Description |
 |---|---|---|---|
@@ -461,7 +520,7 @@ On any individual parameter combination's result row, a secondary action opens a
 | `n_permutation_iterations` | `int` | User config | Default 1000 |
 | `n_eff_override` | `float \| None` | User config | Optional manual N_eff override |
 
-### 6.2 Outputs
+### 7.2 Outputs
 
 ```python
 @dataclass(frozen=True)
@@ -471,10 +530,9 @@ class ISRobustnessReport:
     n_eff: float
 
     # always computed — runs synchronously after backtest
-    nw: NWResult                          # §3.5 — NW-adjusted t-stat and inflation factor
-    sharpe_ci: SharpeCI                   # §3.6 — 95% CI on IS Sharpe
+    sharpe_ci: SharpeCI                   # §3.5 — 95% CI on IS Sharpe
     dsr: DSRResult                        # §3.3 — deflated Sharpe probability
-    rolling_is: RollingISResult           # §3.7 — rolling Sharpe and CUSUM break test
+    rolling_is: RollingISResult           # §3.6 — rolling Sharpe and CUSUM break test
 
     # on demand — requires a worker job
     full_grid_permutation: PermutationTestResult | None
@@ -484,14 +542,13 @@ class ISRobustnessReport:
     interpretation: str                   # sentence-level summary for UI display
 ```
 
-### 6.3 Worker Behavior
+### 7.3 Worker Behavior
 
 **Synchronous (API server, no job dispatch):**
-- Newey-West correction (§3.5) — sub-millisecond
-- Sharpe ratio CI (§3.6) — sub-millisecond
+- Sharpe ratio CI (§3.5) — sub-millisecond
 - Deflated Sharpe Ratio (§3.3) — sub-millisecond
 - $N_\text{eff}$ computation — uses pre-computed pairwise correlations from the backtest run
-- Rolling IS performance and CUSUM test (§3.7) — sub-second
+- Rolling IS performance and CUSUM test (§3.6) — sub-second
 
 **On demand (worker job):**
 - Full Grid Permutation Test — dispatches to a worker job; streams progress events back to the UI (percentage complete, estimated time remaining)
@@ -499,12 +556,12 @@ class ISRobustnessReport:
 
 ---
 
-## 7. Implementation Notes
+## 8. Implementation Notes
 
 **Vectorized null distribution:** All $M$ permutations are generated as a single $(M, T)$ matrix. Metrics are applied across the batch dimension simultaneously. No Python-level loops, no per-iteration overhead. Matches the pattern already in use in `feature_selection/validation/permutation_tests.py`.
 
-**Return shuffling vs block bootstrap:** Simple shuffling (iid permutation) is the default. It assumes the null hypothesis is that return order carries no information. It does not preserve autocorrelation in the return series. For strategies that explicitly trade autocorrelation (mean reversion), block bootstrap may be more appropriate — but this is a later extension, not MVP scope.
+**Return shuffling vs block bootstrap:** Simple shuffling (iid permutation) is the default. It assumes the null hypothesis is that return order carries no information. For strategies where preserving local dependence structure matters, block bootstrap may be more appropriate — but this is a later extension, not MVP scope.
 
 **N_eff sensitivity:** The DSR result is sensitive to the N_eff estimate. Report the raw N, average correlation, and N_eff separately so the researcher can audit the calculation. For strategies where the researcher believes their grid is effectively independent (e.g. a calendar mask swept over 12 months), they should be able to override N_eff to N.
 
-**Relationship to walkforward permutation tests:** The in-sample tests described here focus on selection bias within the IS zone. Walkforward permutation tests (return shuffle, pipeline permutation) answer a different question — whether OOS performance is temporally structured. Both suites are needed; they are not substitutes.
+**Relationship to downstream permutation tests:** The in-sample tests described here focus on selection bias within the IS zone. Later validation or portfolio-addition permutation checks answer a different question — whether downstream performance is temporally structured. Both suites are needed; they are not substitutes.

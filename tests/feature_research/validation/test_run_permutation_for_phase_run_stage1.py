@@ -14,8 +14,16 @@ from feature_research.validation.phase_permutation import run_permutation_for_ph
 class _MiniWindow:
     train_start: datetime
     train_end: datetime
-    test_start: datetime
-    test_end: datetime
+    val_start: datetime
+    val_end: datetime
+
+    @property
+    def test_start(self) -> datetime:
+        return self.val_start
+
+    @property
+    def test_end(self) -> datetime:
+        return self.val_end
 
 
 @dataclass(frozen=True)
@@ -29,17 +37,17 @@ class _MiniPerm:
 @dataclass(frozen=True)
 class _MiniCfg:
     permutation: _MiniPerm
-    validation_window: _MiniWindow
+    research_window: _MiniWindow
 
 
 def test_run_permutation_for_phase_raises_when_vector_shuffle_disabled() -> None:
     cfg = _MiniCfg(
         permutation=_MiniPerm(run_vector_shuffle=False),
-        validation_window=_MiniWindow(
+        research_window=_MiniWindow(
             train_start=datetime(2020, 1, 1),
             train_end=datetime(2021, 1, 1),
-            test_start=datetime(2021, 1, 2),
-            test_end=datetime(2022, 1, 1),
+            val_start=datetime(2021, 1, 2),
+            val_end=datetime(2022, 1, 1),
         ),
     )
     args = argparse.Namespace(nreps=None, seed=None, n_jobs=1, output_dir=None)

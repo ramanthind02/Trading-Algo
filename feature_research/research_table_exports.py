@@ -1,4 +1,4 @@
-"""Shared tabular exports for research phases (Power BI CSV tables).
+"""Shared tabular exports for research phases (Matplotlib-ready CSV tables).
 
 In-sample param dimensions are **long-only** (`param_combo_long.csv`): facts
 (`param_sensitivity`, equity, permutation) carry ``param_combo_label`` only; join to
@@ -6,20 +6,41 @@ long param rows for slicers. Phase 0 binning writes long Parquet for combo metad
 """
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
+from quantfoundry_core.metrics import ReturnsValidationError, compute_rolling_sharpe
 
 from feature_research.binning.transforms import build_param_combo_long_table
-from feature_research.core_helpers import combo_key, normalize_datetime_index
+from feature_research.filter_research_labels import (
+    build_filter_exploration_long_pairs,
+    filter_exploration_semantics,
+    research_display_label,
+)
+from feature_research._internal.core_helpers import combo_key, normalize_datetime_index
 from feature_research.in_sample.data_loader import param_combo_label, permutation_combo_display_name
+from feature_research.shared.visualization_paths import (
+    VISUALIZATION_SUBDIR_NAME,
+    canonical_in_sample_visualization_dir,
+    walkforward_visualization_csv_dir,
+)
 from feature_selection.validation.stability_analysis import _param_combo_name
 from utils.core.enums import TimeFrame
+
+
+def return_kind_for_target(target_col: str) -> str:
+    """Map a ``target_col`` name to the matching ``instrument_return_kind``.
+
+    Overnight targets (``overnight_log_return*``) use ``'log_overnight'``;
+    everything else defaults to ``'log_intraday'``.
+    """
+    return "log_overnight" if target_col.startswith("overnight_") else "log_intraday"
 from utils.core.helpers import build_feature_column_name
 from utils.evaluation.walkforward.selected_params_codec import decode_selected_params_list
+
+AGGREGATE_EQUITY_TICKER = "ALL"
 
 _IDM_MAX: float = 2.5
 # Half-year of daily bars; rolling Sharpe uses this window on per-bar strategy returns.
@@ -39,7 +60,7 @@ _WALKFORWARD_EQUITY_ROLLING_COLS: list[str] = [
     "rolling_sharpe_window_bars",
 ]
 
-# Stable CSV schema for Power BI (avoids missing columns after refresh when row dicts differ).
+# Stable CSV schema for visualization consumers (avoids missing columns after refresh).
 _PARAM_SENSITIVITY_POOL_COLS: list[str] = [
     "param_combo_label",
     "feature_name",
@@ -73,7 +94,7 @@ def _assert_unique_param_sensitivity_by_ticker_keys(bt_df: pd.DataFrame) -> None
     if col.duplicated().any():
         dup_vals = col[col.duplicated(keep=False)].unique().tolist()
         raise ValueError(
-            "param_sensitivity_by_ticker_key must be unique per row (Power BI row key). "
+            "param_sensitivity_by_ticker_key must be unique per row (visualization row key). "
             f"Duplicate values: {dup_vals[:25]}"
             + (" …" if len(dup_vals) > 25 else "")
         )
@@ -81,31 +102,29 @@ def _assert_unique_param_sensitivity_by_ticker_keys(bt_df: pd.DataFrame) -> None
 if TYPE_CHECKING:
     from feature_selection.validation.reports import PermutationTestSuite
 
-POWERBI_SUBDIR_NAME = "powerbi"
 
-
-def walkforward_power_bi_dir(
-    output_root: Path,
-    phase: Literal["validation", "oos"],
+def _resolve_in_sample_visualization_dir(
+    *,
+    visualization_parent_dir: Path | None,
+    powerbi_parent_dir: Path | None = None,
 ) -> Path:
-    """Stable folder for validation / OOS Power BI CSVs.
+    """Resolve the stable in-sample visualization directory.
 
-    Path is ``output_root / powerbi / <phase>`` — no ``feature_type`` or ``module_name``,
-    so Power BI data source paths stay fixed when you change bias node or module.
+    ``powerbi_parent_dir`` remains as a compatibility input while call sites migrate
+    away from Power BI naming.
     """
-    return Path(output_root) / POWERBI_SUBDIR_NAME / phase
-
-
-def canonical_in_sample_power_bi_dir() -> Path:
-    """Stable in-repo folder for Power BI imports (does not vary by preset or ``reports_dir``)."""
-    return Path(__file__).resolve().parent / "in_sample" / "results" / POWERBI_SUBDIR_NAME
-
-
-def _resolve_in_sample_power_bi_dir(*, powerbi_parent_dir: Path | None) -> Path:
-    """Default: ``canonical_in_sample_power_bi_dir()``; tests pass ``powerbi_parent_dir`` → ``parent/powerbi``."""
-    if powerbi_parent_dir is None:
-        return canonical_in_sample_power_bi_dir()
-    return powerbi_parent_dir / POWERBI_SUBDIR_NAME
+    if visualization_parent_dir is not None and powerbi_parent_dir is not None:
+        raise ValueError(
+            "Pass only one of visualization_parent_dir or powerbi_parent_dir."
+        )
+    parent_dir = (
+        visualization_parent_dir
+        if visualization_parent_dir is not None
+        else powerbi_parent_dir
+    )
+    if parent_dir is None:
+        return canonical_in_sample_visualization_dir()
+    return parent_dir / VISUALIZATION_SUBDIR_NAME
 
 
 def objective_metric_display_label(spec: object | None) -> str:
@@ -169,28 +188,165 @@ def _equity_curve_frame_for_combo(
 
     instruments = sorted(work["ticker"].unique())
     pieces = [_block_for_instrument(inst) for inst in instruments]
+    if len(instruments) > 1:
+        pieces.append(
+            _aggregate_equity_block_for_combo(
+                work,
+                param_combo_label=param_combo_label,
+                feature_name=feature_name,
+            )
+        )
     return pd.concat(pieces, axis=0, ignore_index=True) if pieces else pd.DataFrame(columns=cols)
 
 
-def write_in_sample_equity_curve_powerbi_csv(
+def _aggregate_equity_block_for_combo(
+    work: pd.DataFrame,
+    *,
+    param_combo_label: str,
+    feature_name: str,
+) -> pd.DataFrame:
+    """Equal-weight mean ``signal * target`` per datetime across instruments, then cumsum."""
+    cols = [
+        "datetime",
+        "param_combo_label",
+        "feature_name",
+        "ticker",
+        "strategy_return",
+        "cumulative_strategy_return",
+    ]
+    strat = pd.to_numeric(work["signal"] * work["target"], errors="coerce").fillna(0.0)
+    by_date = strat.groupby(strat.index).mean().sort_index(kind="mergesort")
+    cumulative = by_date.cumsum()
+    block = pd.DataFrame(
+        {
+            "datetime": by_date.index,
+            "param_combo_label": param_combo_label,
+            "feature_name": feature_name,
+            "ticker": AGGREGATE_EQUITY_TICKER,
+            "strategy_return": by_date.to_numpy(dtype=float),
+            "cumulative_strategy_return": cumulative.to_numpy(dtype=float),
+        }
+    )
+    block["datetime"] = pd.to_datetime(block["datetime"], errors="coerce")
+    return block[cols]
+
+
+def _vol_scaled_equity_frame_for_combo(
+    param_combo_label_str: str,
+    signal: pd.Series,
+    ticker: pd.Series,
+    feature_name: str,
+    params: dict[str, Any],
+    candles: pd.DataFrame,
+    timeframe: TimeFrame,
+    *,
+    target_volatility: float,
+    instrument_return_kind: str = "log_intraday",
+) -> pd.DataFrame:
+    """Per-combo equity frame using production vol-targeting: ``position_fraction × log_return``.
+
+    Delegates to ``_build_portfolio_positions_df`` so the same forecast-scaling and IDM
+    logic used in the validation equity curve is applied here, making both curves
+    directly comparable.  Falls back to an empty DataFrame on any error.
+    """
+    from ensemble.ensemble_utils import normalize_ticker_key
+    from ensemble.portfolio_impl.portfolio_tester import calculate_strategy_returns_from_positions
+
+    cols = list(_WALKFORWARD_EQUITY_BASE_COLS) + ["fold_id"]
+    try:
+        positions_df = _build_portfolio_positions_df(
+            signal,
+            ticker,
+            candles,
+            candles,
+            timeframe,
+            target_volatility=target_volatility,
+        )
+        if positions_df.empty:
+            return pd.DataFrame(columns=cols)
+
+        candle_dt = pd.to_datetime(candles["datetime"]).dt.tz_localize(None)
+        sig_idx = pd.to_datetime(signal.index)
+        if sig_idx.tz is not None:
+            sig_idx = sig_idx.tz_localize(None)
+        sig_lo, sig_hi = sig_idx.min(), sig_idx.max()
+        candles_slice = candles.loc[(candle_dt >= sig_lo) & (candle_dt <= sig_hi)].copy()
+
+        frames: list[pd.DataFrame] = []
+        for raw_t in sorted(positions_df["ticker"].astype(str).unique()):
+            norm_t = normalize_ticker_key(raw_t)
+            t_positions = positions_df[positions_df["ticker"].astype(str) == raw_t].copy()
+            t_candles = candles_slice[
+                candles_slice["ticker"].astype(str).map(normalize_ticker_key) == norm_t
+            ].copy()
+            if t_positions.empty or t_candles.empty:
+                continue
+            returns = calculate_strategy_returns_from_positions(
+                t_positions, t_candles, instrument_return_kind=instrument_return_kind
+            )
+            if returns.empty:
+                continue
+            returns_idx = normalize_datetime_index(returns.index)
+            block = pd.DataFrame(
+                {
+                    "datetime": returns_idx,
+                    "param_combo_label": param_combo_label_str,
+                    "feature_name": feature_name,
+                    "ticker": raw_t,
+                    "strategy_return": returns.to_numpy(dtype=float),
+                    "cumulative_strategy_return": returns.cumsum().to_numpy(dtype=float),
+                    "fold_id": 0,
+                }
+            )
+            frames.append(block)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=cols)
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+
+def write_in_sample_equity_curve_csv(
     combo_store: Mapping[str, tuple[pd.Series, pd.Series, str, pd.Series, dict[str, Any]]],
     *,
-    powerbi_parent_dir: Path | None = None,
+    visualization_parent_dir: Path | None = None,
+    portfolio_candles: pd.DataFrame | None = None,
+    timeframe: TimeFrame = TimeFrame.D,
+    target_volatility: float = 0.15,
+    instrument_return_kind: str = "log_intraday",
+    csv_stem: str = "equity_curve",
 ) -> Path:
-    """Write a single long CSV of per-bar ``signal * target`` and cumulative sum for all combos.
+    """Write a single long CSV of equity curves for all IS combos.
 
-    For multiple instruments, cumulative returns are computed **separately per ticker**
-    (same idea as binning ``add_cumulative_return_columns``), not mixed on duplicate dates.
+    When *portfolio_candles* is provided the equity curve uses production
+    vol-targeting (``position_fraction × log_return``) — the same metric as the
+    validation tearsheet — so both curves are directly comparable.
 
-    Column names align with binning exports (``strategy_return``, ``cumulative_strategy_return``).
-    Writes next to other in-sample Power BI tables under :func:`canonical_in_sample_power_bi_dir`.
+    When *portfolio_candles* is absent the legacy ``signal × log_return_ewsd``
+    path is used as a fallback.
+
+    Column names align with binning exports (``strategy_return``,
+    ``cumulative_strategy_return``).  Writes next to other in-sample
+    visualization CSVs under :func:`canonical_in_sample_visualization_dir`.
     """
-    out_dir = _resolve_in_sample_power_bi_dir(powerbi_parent_dir=powerbi_parent_dir)
+    out_dir = _resolve_in_sample_visualization_dir(
+        visualization_parent_dir=visualization_parent_dir
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
-    frames = [
-        _equity_curve_frame_for_combo(label, sig, tgt, tkr, feat)
-        for label, (sig, tgt, feat, tkr, _) in sorted(combo_store.items())
-    ]
+
+    if portfolio_candles is not None and not portfolio_candles.empty:
+        frames = [
+            _vol_scaled_equity_frame_for_combo(
+                label, sig, tkr, feat, params, portfolio_candles, timeframe,
+                target_volatility=target_volatility,
+                instrument_return_kind=instrument_return_kind,
+            )
+            for label, (sig, _tgt, feat, tkr, params) in sorted(combo_store.items())
+        ]
+    else:
+        frames = [
+            _equity_curve_frame_for_combo(label, sig, tgt, tkr, feat)
+            for label, (sig, tgt, feat, tkr, _) in sorted(combo_store.items())
+        ]
+
     non_empty = [f for f in frames if not f.empty]
     combined = (
         pd.concat(non_empty, axis=0, ignore_index=True)
@@ -206,7 +362,7 @@ def write_in_sample_equity_curve_powerbi_csv(
             ]
         )
     )
-    return _write_frame_csv(combined, out_dir / "equity_curve")
+    return _write_frame_csv(combined, out_dir / csv_stem)
 
 
 def _normalize_ts(ts: pd.Timestamp | object) -> pd.Timestamp:
@@ -222,13 +378,42 @@ def _rolling_sharpe_annualized_series(
     window_bars: int,
     bars_per_year: float,
 ) -> pd.Series:
-    """Rolling Sharpe on per-bar returns, annualized like ``metric_helpers.compute_param_sensitivity_metric``."""
+    """Rolling Sharpe from ``quantfoundry_core.metrics.compute_rolling_sharpe``."""
     x = pd.to_numeric(per_bar_returns, errors="coerce")
     win = max(2, int(window_bars))
-    m = x.rolling(window=win, min_periods=win).mean()
-    st = x.rolling(window=win, min_periods=win).std(ddof=1)
-    ratio = m / st.replace(0.0, float("nan"))
-    return (ratio * math.sqrt(float(bars_per_year))).rename("rolling_sharpe_annualized")
+    periods_per_year = max(1, int(round(float(bars_per_year))))
+    try:
+        snapshot = compute_rolling_sharpe(
+            x,
+            rolling_window=win,
+            periods_per_year=periods_per_year,
+        )
+    except ReturnsValidationError:
+        return pd.Series(float("nan"), index=x.index, name="rolling_sharpe_annualized")
+    return snapshot.to_series().reindex(x.index).rename("rolling_sharpe_annualized")
+
+
+def _rolling_sharpe_group(
+    group: pd.DataFrame,
+    *,
+    window_bars: int,
+    bars_per_year: float,
+) -> pd.Series:
+    indexed_returns = pd.Series(
+        pd.to_numeric(group["strategy_return"], errors="coerce").to_numpy(dtype=float),
+        index=pd.DatetimeIndex(pd.to_datetime(group["datetime"], utc=False)),
+        dtype="float64",
+    )
+    rolled = _rolling_sharpe_annualized_series(
+        indexed_returns,
+        window_bars=window_bars,
+        bars_per_year=bars_per_year,
+    )
+    return pd.Series(
+        rolled.to_numpy(dtype=float),
+        index=group.index,
+        name="rolling_sharpe_annualized",
+    )
 
 
 def enrich_walkforward_equity_df_with_rolling_sharpe(
@@ -237,7 +422,7 @@ def enrich_walkforward_equity_df_with_rolling_sharpe(
     *,
     window_bars: int = DEFAULT_ROLLING_SHARPE_WINDOW_BARS,
 ) -> pd.DataFrame:
-    """Add rolling annualized Sharpe columns for Power BI (per ticker / fold / combo).
+    """Add rolling annualized Sharpe columns for visualization consumers.
 
     ``strategy_return`` must be per-bar; rolling uses the same annualization as
     in-sample param sensitivity Sharpe (``sqrt(bars_per_year)`` × mean / std).
@@ -250,11 +435,17 @@ def enrich_walkforward_equity_df_with_rolling_sharpe(
         )
     keys = ["fold_id", "param_combo_label", "ticker"]
     ordered = df.sort_values([*keys, "datetime"], kind="mergesort")
-    rolled = ordered.groupby(keys, sort=False, group_keys=False)["strategy_return"].transform(
-        lambda ser: _rolling_sharpe_annualized_series(ser, window_bars=win, bars_per_year=bars_py)
-    )
+    rolled_groups = [
+        _rolling_sharpe_group(
+            group,
+            window_bars=win,
+            bars_per_year=bars_py,
+        )
+        for _, group in ordered.groupby(keys, sort=False)
+    ]
+    rolled = pd.concat(rolled_groups, axis=0).sort_index() if rolled_groups else pd.Series(dtype=float)
     return ordered.assign(
-        rolling_sharpe_annualized=rolled.to_numpy(dtype=float),
+        rolling_sharpe_annualized=rolled.reindex(ordered.index).to_numpy(dtype=float),
         rolling_sharpe_window_bars=win,
     )
 
@@ -319,16 +510,81 @@ def _equity_frames_for_selection(
     return frames
 
 
+_FORECAST_CAP: float = 2.0
+
+
+def _vol_scaled_forecast(
+    signal: pd.Series,
+    ticker: pd.Series,
+    eval_candles: pd.DataFrame,
+    *,
+    target_volatility: float,
+) -> pd.Series:
+    """Return vol-targeted forecast: ``F = min(tau / EWSD[t], 2.0) * signal``.
+
+    EWSD is computed causally from *eval_candles* (which should include training
+    history so the EWMA is warmed up before the signal period begins).
+    Falls back to *target_volatility* for any bar where EWSD cannot be resolved.
+    """
+    import numpy as np
+    from utils.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
+    from ensemble.ensemble_utils import normalize_ticker_key
+
+    svc = DailyEWSDVolatilityService()
+    daily_vol_df = svc.compute_daily_series(eval_candles)
+
+    # Build a minimal (datetime, ticker) frame for alignment — no close needed.
+    signal_dt = pd.to_datetime(signal.index).tz_localize(None)
+    signal_candles = pd.DataFrame(
+        {"datetime": signal_dt, "ticker": ticker.astype(str).values}
+    )
+    try:
+        aligned = svc.align_daily_volatility_to_candles(daily_vol_df, signal_candles)
+    except ValueError:
+        # Alignment failed (e.g. ticker not in eval_candles): use default vol.
+        return pd.Series(
+            (target_volatility / target_volatility) * signal.to_numpy(dtype=float),
+            index=signal.index,
+            name="forecast_score",
+        )
+
+    aligned["_dt_key"] = pd.to_datetime(aligned["datetime"]).dt.tz_localize(None).dt.floor("s")
+    aligned["_tk_key"] = aligned["ticker"].map(normalize_ticker_key)
+    vol_lookup = (
+        aligned
+        .drop_duplicates(subset=["_tk_key", "_dt_key"], keep="last")
+        .set_index(["_tk_key", "_dt_key"])["ewsd_annual_vol"]
+    )
+
+    ticker_norm = ticker.astype(str).map(normalize_ticker_key)
+    dt_keys = signal_dt.floor("s")
+    mi = pd.MultiIndex.from_arrays([ticker_norm.values, dt_keys])
+    ewsd = vol_lookup.reindex(mi).fillna(target_volatility).to_numpy(dtype=float)
+    ewsd = np.maximum(ewsd, 1e-6)
+
+    forecast = np.minimum(target_volatility / ewsd, _FORECAST_CAP) * signal.to_numpy(dtype=float)
+    return pd.Series(forecast, index=signal.index, name="forecast_score")
+
+
 def _build_portfolio_positions_df(
     signal: pd.Series,
     ticker: pd.Series,
     train_candles: pd.DataFrame,
+    eval_candles: pd.DataFrame,
     timeframe: TimeFrame,
+    *,
+    target_volatility: float = 0.15,
 ) -> pd.DataFrame:
     """Fit TFPortfolio on training candles and return a positions_df for the signal period.
 
-    Uses TFPortfolio purely for IDM + equal instrument weights — no base models required.
-    ``position_fraction = signal * instrument_weight * IDM``.
+    Applies the full production vol-targeting formula before passing to TFPortfolio:
+
+        forecast_score = min(tau / EWSD[t], 2.0) × signal
+
+    where *tau* is *target_volatility* and EWSD[t] is the causal blended volatility
+    from *eval_candles*.  TFPortfolio then applies instrument weights and IDM:
+
+        position_fraction = forecast_score × instrument_weight × IDM
     """
     from ensemble.portfolio_impl.portfolio_returns import calculate_returns_from_candles
     from ensemble.portfolio_impl.tf_portfolio import TFPortfolio
@@ -338,10 +594,13 @@ def _build_portfolio_positions_df(
     portfolio.fit(instrument_returns)
 
     idx = normalize_datetime_index(signal.index)
+    forecast_score = _vol_scaled_forecast(
+        signal, ticker, eval_candles, target_volatility=target_volatility
+    )
     combined_forecasts = pd.DataFrame(
         {
             "ticker": ticker.astype(str).to_numpy(),
-            "forecast_score": signal.to_numpy(dtype=float),
+            "forecast_score": forecast_score.to_numpy(dtype=float),
         },
         index=idx,
     )
@@ -366,6 +625,7 @@ def _portfolio_equity_frames_for_selection(
     start: pd.Timestamp,
     end: pd.Timestamp,
     fold_id: int,
+    target_volatility: float = 0.15,
 ) -> list[pd.DataFrame]:
     """Equity curve frames using TFPortfolio simulation (actual price returns)."""
     from ensemble.ensemble_utils import normalize_ticker_key
@@ -392,7 +652,10 @@ def _portfolio_equity_frames_for_selection(
         )
 
         try:
-            positions_df = _build_portfolio_positions_df(sig, tkr, train_candles, timeframe)
+            positions_df = _build_portfolio_positions_df(
+                sig, tkr, train_candles, eval_candles, timeframe,
+                target_volatility=target_volatility,
+            )
         except Exception:
             continue
 
@@ -429,7 +692,7 @@ def _portfolio_equity_frames_for_selection(
     return frames
 
 
-def write_walkforward_equity_powerbi_csvs(
+def write_walkforward_equity_csvs(
     *,
     combo_signal_target: Mapping[tuple[tuple[str, object], ...], pd.DataFrame],
     selection_summary_df: pd.DataFrame,
@@ -439,13 +702,14 @@ def write_walkforward_equity_powerbi_csvs(
     holdout_end: object,
     extended_start: object,
     extended_end: object,
-    output_powerbi_dir: Path,
+    output_visualization_dir: Path,
     holdout_csv_stem: str,
     extended_csv_stem: str,
     portfolio_candles: pd.DataFrame | None = None,
     rolling_sharpe_window_bars: int = DEFAULT_ROLLING_SHARPE_WINDOW_BARS,
+    target_volatility: float = 0.15,
 ) -> dict[str, Path]:
-    """Write two equity-curve CSVs for validation or OOS (Power BI, long format).
+    """Write two equity-curve CSVs for validation or OOS (long format).
 
     Each CSV includes **rolling annualized Sharpe** on ``strategy_return`` (same
     annualization as in-sample param sensitivity): columns ``rolling_sharpe_annualized``
@@ -454,11 +718,14 @@ def write_walkforward_equity_powerbi_csvs(
     after sorting by ``datetime`` (first ``window_bars - 1`` rows are NaN per group).
 
     When ``portfolio_candles`` is provided the equity curves are generated via
-    the Portfolio class for a realistic price-return simulation:
+    the full production vol-targeting pipeline:
 
     * ``TFPortfolio`` is fit on the training candles (dates before the holdout
       window) to derive IDM and equal instrument weights.
-    * ``position_fraction = signal × instrument_weight × IDM``
+    * EWSD is computed causally from ``portfolio_candles`` (includes train history
+      for EWMA warm-up).
+    * ``forecast_score = min(target_volatility / EWSD[t], 2.0) × signal``
+    * ``position_fraction = forecast_score × instrument_weight × IDM``
     * ``calculate_strategy_returns_from_positions`` computes lookahead-free
       actual log P&L per ticker.
 
@@ -469,11 +736,12 @@ def write_walkforward_equity_powerbi_csvs(
     test window only.
 
     **Extended** slice: validation → train + validation; OOS → effective train
-    start (train + val when ``validation_window`` is set) through OOS test end.
+    start (train + val when ``research_window`` is set) through validation end.
 
-    All rows carry a ``fold_id`` column so Power BI can filter per fold.
+    All rows carry a ``fold_id`` column so Matplotlib or other CSV consumers can
+    slice per fold.
     """
-    output_powerbi_dir.mkdir(parents=True, exist_ok=True)
+    output_visualization_dir.mkdir(parents=True, exist_ok=True)
     hs, he = _normalize_ts(holdout_start), _normalize_ts(holdout_end)
     xs, xe = _normalize_ts(extended_start), _normalize_ts(extended_end)
     use_portfolio = portfolio_candles is not None and not portfolio_candles.empty
@@ -505,6 +773,7 @@ def write_walkforward_equity_powerbi_csvs(
                     start=hs,
                     end=he,
                     fold_id=fold_id,
+                    target_volatility=target_volatility,
                 )
             )
             extended_parts.extend(
@@ -518,6 +787,7 @@ def write_walkforward_equity_powerbi_csvs(
                     start=xs,
                     end=xe,
                     fold_id=fold_id,
+                    target_volatility=target_volatility,
                 )
             )
         else:
@@ -561,25 +831,26 @@ def write_walkforward_equity_powerbi_csvs(
         window_bars=rolling_sharpe_window_bars,
     )
     return {
-        "holdout": _write_frame_csv(holdout_df, output_powerbi_dir / holdout_csv_stem),
-        "extended": _write_frame_csv(extended_df, output_powerbi_dir / extended_csv_stem),
+        "holdout": _write_frame_csv(holdout_df, output_visualization_dir / holdout_csv_stem),
+        "extended": _write_frame_csv(extended_df, output_visualization_dir / extended_csv_stem),
     }
 
 
-def write_param_sensitivity_powerbi_tables(
+def write_param_sensitivity_tables(
     sensitivity_rows: Sequence[Mapping[str, object]],
     label_param_pairs: Sequence[tuple[str, Mapping[str, Any]]],
     *,
     sensitivity_by_ticker_rows: Sequence[Mapping[str, object]] | None = None,
-    powerbi_parent_dir: Path | None = None,
+    visualization_parent_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Write param-sensitivity metrics and long param dimension for Power BI (CSV only).
+    """Write param-sensitivity metrics and long param dimension as CSV only.
 
     Fact tables omit wide ``param_<key>`` columns; join ``param_combo_label`` to
     ``param_combo_long.csv`` for parameter slicers.
 
-    Writes under :func:`canonical_in_sample_power_bi_dir` unless ``powerbi_parent_dir``
-    is set (tests: files go to ``powerbi_parent_dir / "powerbi"``).
+    Writes under :func:`canonical_in_sample_visualization_dir` unless
+    ``visualization_parent_dir`` is set (tests: files go to
+    ``visualization_parent_dir / "visualization"``).
 
     Metrics (``sharpe`` annualized, ``t_stat``, ``sortino``) use
     ``feature_research.in_sample.metric_helpers.compute_param_sensitivity_metric`` on the
@@ -588,10 +859,11 @@ def write_param_sensitivity_powerbi_tables(
     When ``sensitivity_by_ticker_rows`` is non-empty, also writes ``param_sensitivity_by_ticker.csv``
     (same metrics computed **within** each instrument). Rows are one per
     ``(param_combo_label, ticker)``; ``param_combo_label`` repeats across tickers.
-    In Power BI, mark **only** ``param_sensitivity_by_ticker_key`` as this table’s primary
-    key / row identifier. Do **not** mark ``param_combo_label`` as a key—it repeats (one
-    row per ticker). Relationships to ``param_combo_long`` / ``param_sensitivity`` use
-    ``param_combo_label`` with *many* (by-ticker) → *one* (pooled / long) cardinality.
+    Downstream plotting code should treat **only**
+    ``param_sensitivity_by_ticker_key`` as the row identifier. Do **not** treat
+    ``param_combo_label`` as a key; it repeats once per ticker. Relationships to
+    ``param_combo_long`` / ``param_sensitivity`` use ``param_combo_label`` with
+    *many* (by-ticker) → *one* (pooled / long) cardinality.
 
     Returns
     -------
@@ -599,7 +871,9 @@ def write_param_sensitivity_powerbi_tables(
         Paths keyed by artifact stem: ``param_sensitivity_csv``, ``param_sensitivity_by_ticker_csv``
         (only if by-ticker rows provided), ``param_combo_long_csv``.
     """
-    out_dir = _resolve_in_sample_power_bi_dir(powerbi_parent_dir=powerbi_parent_dir)
+    out_dir = _resolve_in_sample_visualization_dir(
+        visualization_parent_dir=visualization_parent_dir
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     metrics_df = _dataframe_with_columns(
@@ -622,6 +896,85 @@ def write_param_sensitivity_powerbi_tables(
             bt_df, out_dir / "param_sensitivity_by_ticker"
         )
 
+    return paths
+
+
+_FILTER_EXPLORATION_SUMMARY_COLS: list[str] = [
+    "param_combo_label",
+    "research_display_label",
+    "gate_type",
+    "filter_family",
+    "gate_mode",
+    "vol_max_rank",
+    "filter_detail",
+    "n_observations",
+    "n_nonzero_signal",
+    "trade_reduction_pct",
+    "sharpe",
+    "t_stat",
+    "sortino",
+]
+
+
+def write_filter_exploration_tables(
+    sensitivity_rows: Sequence[Mapping[str, object]],
+    combo_store: Mapping[str, tuple[object, object, object, object, Mapping[str, Any]]],
+    *,
+    visualization_parent_dir: Path | None = None,
+) -> dict[str, Path]:
+    """Write filter-focused summary + long pivot CSVs (readable A/B/C exploration)."""
+    out_dir = _resolve_in_sample_visualization_dir(
+        visualization_parent_dir=visualization_parent_dir
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics_by_label = {str(row["param_combo_label"]): dict(row) for row in sensitivity_rows}
+    baseline_n = None
+    summary_rows: list[dict[str, object]] = []
+    long_pairs: list[tuple[str, Mapping[str, Any]]] = []
+
+    for label, (_, _, _, _, params) in sorted(combo_store.items()):
+        metrics = metrics_by_label.get(label, {})
+        display = research_display_label(params, label=label)
+        n_nz = int(metrics.get("n_nonzero_signal", 0) or 0)
+        if display.startswith("A:"):
+            baseline_n = n_nz
+        long_pairs.extend(build_filter_exploration_long_pairs(label, params))
+        semantics = filter_exploration_semantics(params, label=label)
+        trade_red = None
+        if baseline_n and baseline_n > 0 and not display.startswith("A:"):
+            trade_red = round((baseline_n - n_nz) / baseline_n * 100.0, 1)
+        summary_rows.append(
+            {
+                "param_combo_label": label,
+                "research_display_label": display,
+                "gate_type": semantics["gate_type"],
+                "filter_family": semantics["filter_family"],
+                "gate_mode": semantics["gate_mode"],
+                "vol_max_rank": semantics["vol_max_rank"],
+                "filter_detail": semantics["filter_detail"],
+                "n_observations": metrics.get("n_observations"),
+                "n_nonzero_signal": n_nz,
+                "trade_reduction_pct": trade_red,
+                "sharpe": metrics.get("sharpe"),
+                "t_stat": metrics.get("t_stat"),
+                "sortino": metrics.get("sortino"),
+            }
+        )
+
+    summary_df = _dataframe_with_columns(
+        pd.DataFrame(summary_rows),
+        _FILTER_EXPLORATION_SUMMARY_COLS,
+    )
+    long_tbl = build_param_combo_long_table(long_pairs)
+    paths = {
+        "filter_exploration_summary_csv": _write_frame_csv(
+            summary_df, out_dir / "filter_exploration_summary"
+        ),
+        "filter_exploration_long_csv": _write_frame_csv(
+            long_tbl, out_dir / "filter_exploration_long"
+        ),
+    }
     return paths
 
 
@@ -651,22 +1004,30 @@ def permutation_vector_shuffle_records(
             else combo_name
         )
 
-    return [
-        {
-            "feature_name": suite.feature_name,
-            "feature_type": suite.feature_type,
-            "objective_metric": objective_metric_label,
-            "param_combo": combo_name,
-            "param_combo_label": _label(combo_name),
-            "observed_metric": s1.original_metric,
-            "p_value": s1.p_value,
-            "passed": s1.passed,
-            "alpha": s1.alpha,
-            "n_reps": s1.nreps,
-            "critical_value": s1.critical_value,
-        }
-        for combo_name, s1 in sorted(suite.stage1_reports.items())
-    ]
+    rows: list[dict[str, object]] = []
+    for combo_name, s1 in sorted(suite.stage1_reports.items()):
+        null_ge_count = int((s1.null_distribution >= s1.original_metric).sum())
+        p_denominator = int(s1.nreps) + 1
+        p_numerator = null_ge_count + 1
+        rows.append(
+            {
+                "feature_name": suite.feature_name,
+                "feature_type": suite.feature_type,
+                "objective_metric": objective_metric_label,
+                "param_combo": combo_name,
+                "param_combo_label": _label(combo_name),
+                "observed_metric": s1.original_metric,
+                "null_ge_count": null_ge_count,
+                "p_value_numerator": p_numerator,
+                "p_value_denominator": p_denominator,
+                "p_value": s1.p_value,
+                "passed": s1.passed,
+                "alpha": s1.alpha,
+                "n_reps": s1.nreps,
+                "critical_value": s1.critical_value,
+            }
+        )
+    return rows
 
 
 def write_permutation_vector_shuffle_exports(
@@ -674,10 +1035,14 @@ def write_permutation_vector_shuffle_exports(
     *,
     objective_metric_label: str,
     param_grid: list[dict[str, Any]] | None = None,
+    visualization_parent_dir: Path | None = None,
     powerbi_parent_dir: Path | None = None,
 ) -> dict[str, Path]:
-    """Write vector-shuffle permutation CSV next to other in-sample Power BI tables."""
-    out_dir = _resolve_in_sample_power_bi_dir(powerbi_parent_dir=powerbi_parent_dir)
+    """Write vector-shuffle permutation CSV next to other in-sample visualization CSVs."""
+    out_dir = _resolve_in_sample_visualization_dir(
+        visualization_parent_dir=visualization_parent_dir,
+        powerbi_parent_dir=powerbi_parent_dir,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = permutation_vector_shuffle_records(
         suite, objective_metric_label, param_grid=param_grid

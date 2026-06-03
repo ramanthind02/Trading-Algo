@@ -82,6 +82,37 @@ def test_weight_layer_rejects_unknown_kwargs() -> None:
         WeightLayer(weight_method="equal_signal", rho_cut=0.7)
 
 
+def test_weight_layer_factory_accepts_sr_adjustment_kwargs() -> None:
+    spec = {
+        "type": "group",
+        "id": "root",
+        "children": [
+            {
+                "type": "group",
+                "id": "equity_indices",
+                "children": [
+                    {
+                        "type": "group",
+                        "id": "momentum",
+                        "children": [{"type": "leaf", "stream_id": "ES::D::m1"}],
+                    }
+                ],
+            }
+        ],
+    }
+    layer = WeightLayer(
+        weight_method="hierarchy_equal",
+        hierarchy_spec=spec,
+        fdm_max=2.0,
+        sr_adjustment=True,
+        sr_avg=0.5,
+        sr_p_step=0.01,
+        sr_min_years=5.0,
+    )
+    assert layer._wl_config.sr_adjustment is True
+    assert layer._wl_config.sr_min_years == pytest.approx(5.0)
+
+
 def test_equal_signal_weights_all_models_equally() -> None:
     layer = WeightLayer(weight_method="equal_signal")
     forecasts = _make_forecasts(

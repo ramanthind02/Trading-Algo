@@ -67,6 +67,7 @@ class CaseyPercentCSignal(BiasNode):
         strategy_mode: DirectionInput = "long",
         exit_policy: str = "threshold_or_bars",
         exit_bars: int = 5,
+        negate_signal: bool = False,
     ) -> None:
         super().__init__(ticker, tf)
 
@@ -93,6 +94,7 @@ class CaseyPercentCSignal(BiasNode):
         if exit_bars < 1:
             raise ValueError("exit_bars must be >= 1")
         self.exit_bars = exit_bars
+        self.negate_signal = negate_signal
 
         self.alpha = 2.0 / (float(ema_lookback) + 1.0)
         self.module_name = "casey_percent_c_signal"
@@ -258,6 +260,9 @@ class CaseyPercentCSignal(BiasNode):
 
         signal = self._apply_position_rules(percent_c)
         self.prev_percent_c = percent_c
+
+        if self.negate_signal:
+            signal = -signal
 
         self.output.append(float(signal))
         return [float(signal)]

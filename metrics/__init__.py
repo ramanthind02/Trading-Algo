@@ -1,40 +1,25 @@
 """
 Centralized Trading Metrics Library
 
-This package provides a centralized location for all trading-related metrics including
-performance metrics (Sharpe, Sortino, Calmar), risk metrics (drawdown, VaR), and
-equity curve calculations.
-
-Author: Trading Research Team
-Date: 2025-01-XX
+Compatibility shell: performance scalars live in
+``feature_selection.validation.objective_metrics`` (backed by
+``quantfoundry_core.metrics``). Risk and equity helpers remain here for
+prop-firm simulation and drawdown utilities.
 """
 
-from metrics.performance import (
-    ObjectiveMetric,  # Base class (kept for backward compat)
-    SharpeRatio,
-    SortinoRatio,
-)
+from feature_selection.validation.objective_metrics import metric_sharpe, metric_sortino
 
-from metrics.risk import (
-    max_drawdown,
-    drawdown_series,
-)
-
-from metrics.equity import (
-    cumulative_returns,
-    equity_curve,
-    equity_peak,
-    equity_tracking,
-)
+from metrics.equity import cumulative_returns, equity_curve, equity_peak
+from metrics.risk import drawdown_series, max_drawdown
 
 __all__ = [
-    # Performance
-    'ObjectiveMetric', 'SharpeRatio', 'SortinoRatio',
-    # Risk
-    'max_drawdown', 'drawdown_series',
-    # Equity
-    'cumulative_returns', 'equity_curve', 'equity_peak', 'equity_tracking',
+    "cumulative_returns",
+    "drawdown_series",
+    "equity_curve",
+    "equity_peak",
+    "max_drawdown",
+    "metric_sharpe",
+    "metric_sortino",
 ]
 
-__version__ = '1.0.0'
-
+__version__ = "1.0.0"

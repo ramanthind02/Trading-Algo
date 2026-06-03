@@ -171,12 +171,12 @@ def load_fundednext_report_config() -> FundedNextPortfolioReportConfig:
     # ==========================================================================
     # EDIT BELOW
     # ==========================================================================
-    # Max allocation $300K = 6 x $50K accounts. Challenge fee $300, refunded on
-    # first payout after passing both 2-step phases.
+    # FundedNext preset allows 6 funded slots ($300k); use 10**9 for unlimited funded
+    # concurrency (organic max still bounded by challenge_account_cap).
     simulation = PortfolioSimulationConfig(
         account_code="50000",
         purchase_policy=PurchasePolicyConfig(
-            funded_account_cap=6,
+            funded_account_cap=10**9,
             challenge_account_cap=6,
             challenges_per_purchase_window=1,
         ),
