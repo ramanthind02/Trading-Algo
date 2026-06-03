@@ -124,8 +124,11 @@ def fetch_mt5_daily_candles(
     Returns a DataFrame with the standard candle columns:
     ``[datetime, open, high, low, close, volume, ticker, timeframe]``.
 
-    Strips weekend / zero-volume rows AND the current-day forming bar so
-    only completed daily bars reach the cache.
+    Strips the current-day forming bar (still in progress, so its close /
+    high / low aren't final) so only completed daily bars reach the
+    cache and the forecast pipeline sees stable inputs throughout the
+    day. Zero-volume (e.g. holiday) bars are kept — the bias pipeline
+    handles them downstream.
 
     Empty DataFrame if MT5 cannot select the symbol or returns no data.
     """
@@ -136,7 +139,7 @@ def fetch_mt5_daily_candles(
         logger.warning("MT5 could not select symbol %s (ticker=%s)", mt5_symbol, ticker_str)
         return pd.DataFrame()
 
-    # +5 buffer so we still get the requested count after dropping current bar / weekends.
+    # +5 buffer so we still get the requested count after dropping the current bar.
     rates = mt5.copy_rates_from_pos(mt5_symbol, mt5.TIMEFRAME_D1, 0, lookback_days + 5)
     if rates is None or len(rates) == 0:
         logger.warning("MT5 returned no rates for %s (ticker=%s)", mt5_symbol, ticker_str)
@@ -149,10 +152,9 @@ def fetch_mt5_daily_candles(
     df["ticker"] = ticker_str
     df["timeframe"] = TimeFrame.D
 
-    # Drop weekend / no-activity bars.
-    df = df.loc[df["volume"] > 0].copy()
-
-    # Drop the in-progress current-day bar (per rubber-duck critique).
+    # Drop the in-progress current-day bar — its close / high / low are
+    # not final yet, so using it would make the forecast drift through the
+    # day. Bias models are trained on closed daily bars.
     today = _broker_today_date(mt5, mt5_symbol)
     df = df.loc[df["datetime"] < today].copy()
 

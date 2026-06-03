@@ -39,19 +39,17 @@
   },
 
   "mt5": {
-    "_comment_magic": "Magic number ranges identify OUR orders so we never touch positions opened by other strategies/manual trades on the same account. Each account should have a unique magic_number; default_magic_number is used when an account omits it.",
+    "_comment_magic": "Magic number ranges identify OUR orders so we never touch positions opened by other strategies/manual trades on the same account. Each account should have a unique magic_number; default_magic_number is used when an account omits it. Magic-number filtering is the ONLY isolation between our trades and other positions on the account.",
     "default_magic_number": 90420,
     "default_deviation_points": 20,
     "sizing_basis": "equity",
-    "force_min_lot_if_signal": false,
-    "abort_if_unmanaged_position": true,
     "verify_account_after_login": true,
     "currency_conversion": "usd_via_mt5"
   },
 
   "accounts": [
     {
-      "_comment": "Example FTMO 100K demo account. Replace label, magic_number, and env var names per your setup. The env vars listed below must be set in your environment (or .env) before running with --execute.",
+      "_comment": "Example FTMO 100K demo account. Replace label, magic_number, and env var names per your setup. The env vars listed below must be set in your environment (or .env) before running with --execute. Per-account `max_daily_loss_pct` is supported and overrides the global execution default.",
       "label": "ftmo_100k_demo_a",
       "username_env": "MT5_FTMO_100K_DEMO_A_USERNAME",
       "password_env": "MT5_FTMO_100K_DEMO_A_PASSWORD",
@@ -77,15 +75,12 @@
     "min_rebalance_notional_usd": 50,
     "rebalance_mode": "hybrid_close_on_flip",
 
-    "max_orders_per_run_per_account": 8,
     "order_fill_timeout_seconds": 30,
     "post_order_retry_attempts": 1,
-    "require_live_flag_for_real_money": true,
 
-    "_comment_safety": "Optional preflight gates. max_spread_points caps acceptable spread; max_margin_usage_pct prevents margin-call risk; max_daily_loss_pct enforces prop-firm DLL.",
-    "max_spread_points": 50,
+    "_comment_safety": "Remaining preflight gates (after stripping unnecessary filters). max_margin_usage_pct prevents margin-call risk by capping fraction of free margin we'll commit. max_daily_loss_pct defaults to 0.05 (5%) to match FTMO's daily-loss-limit; it only fires when an account also sets `sod_balance_env_var` so the orchestrator knows the start-of-day balance. Per-account `max_daily_loss_pct` overrides this default.",
     "max_margin_usage_pct": 0.95,
-    "max_daily_loss_pct": null,
+    "max_daily_loss_pct": 0.05,
 
     "_comment_audit": "Per-run JSON audit log directory (created if missing). Each run writes one file with plans + decisions + execution results for post-mortem analysis.",
     "audit_dir": "logs/cfd_prop_audit"
