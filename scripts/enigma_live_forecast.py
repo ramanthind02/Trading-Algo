@@ -30,7 +30,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 import pandas as pd
 
@@ -76,6 +76,7 @@ from utils.vault_paths import resolve_vault_root
 DEFAULT_CONFIG_PATH = "configs/live_forecast_config.json"
 DEFAULT_CONFIG_PATH_PROP = "configs/live_forecast_config_prop.json"
 DEFAULT_CONFIG_PATH_PERSONAL = "configs/live_forecast_config_personal.json"
+DEFAULT_CONFIG_PATH_CFD_PROP = "configs/live_forecast_config_cfd_prop.json"
 
 
 # ==============================================================================
@@ -1017,20 +1018,28 @@ def _strength_label(forecast: float) -> str:
 def format_console_output(
     forecasts_df: pd.DataFrame,
     shares_df: pd.DataFrame,
-    capital: float,
-    profile: str = "prop",
+    capital: Optional[float],
+    profile: str = "futures_prop",
 ) -> str:
-    """Format results for console display (profile-aware: futures vs ETFs)."""
+    """Format results for console display (profile-aware: futures vs ETFs vs CFDs)."""
     lines = []
     lines.append("=" * 70)
-    title = "PROP (MICRO FUTURES)" if profile == "prop" else "PERSONAL (ETFs)"
+    if profile == "futures_prop" or profile == "prop":
+        title = "PROP (MICRO FUTURES)"
+    elif profile == "cfd_prop":
+        title = "CFD PROP (MT5 -- per-account sizing)"
+    else:
+        title = "PERSONAL (ETFs)"
     lines.append(
         f"ENIGMA ALGOS FORECAST -- {title} -- "
         f"{datetime.now().strftime('%Y-%m-%d %H:%M PST')}"
     )
     lines.append("=" * 70)
     lines.append("")
-    lines.append(f"Account Capital: ${capital:,.2f} USD")
+    if profile == "cfd_prop" or capital is None:
+        lines.append("Account Capital: <per-account, fetched from MT5 at execute time>")
+    else:
+        lines.append(f"Account Capital: ${capital:,.2f} USD")
     lines.append("")
 
     lines.append("FORECASTS & SIGNALS:")
@@ -1047,7 +1056,7 @@ def format_console_output(
     lines.append("")
 
     total_target = 0.0
-    if profile == "prop":
+    if profile == "futures_prop" or profile == "prop":
         lines.append("FUTURES POSITIONS (micro contracts):")
         lines.append(
             f"  {'Ticker':<6} {'Contract':<8} {'Price':>10} {'Allocate $':>12} "
@@ -1066,7 +1075,8 @@ def format_console_output(
                 f"{frac_sign}{abs(row['contracts_fractional']):>10.3f} "
                 f"{row['contracts_whole']:>+7d}"
             )
-        total_pct = (total_target / capital * 100) if capital > 0 else 0
+        cap_for_pct = capital if capital is not None else 0.0
+        total_pct = (total_target / cap_for_pct * 100) if cap_for_pct > 0 else 0
         lines.append("  " + "-" * 60)
         total_sign = "+" if total_target >= 0 else "-"
         lines.append(
@@ -1077,6 +1087,18 @@ def format_console_output(
         lines.append("Note: Forecast > 0 = bullish, < 0 = bearish.")
         lines.append("      Fractional = target sizing before rounding; Whole = what to trade.")
         lines.append("      Target % can exceed 100% due to diversification multipliers.")
+    elif profile == "cfd_prop":
+        lines.append("CFD TARGETS (per-account sizing applied at execute time):")
+        lines.append(f"  {'Ticker':<6} {'Target %':>10}")
+        lines.append("  " + "-" * 22)
+        for _, row in shares_df.iterrows():
+            pct = float(row["position_pct"])
+            sign = "+" if pct >= 0 else ""
+            lines.append(f"  {row['ticker']:<6} {sign}{pct:>9.1f}%")
+        lines.append("")
+        lines.append("Note: Forecast > 0 = bullish, < 0 = bearish.")
+        lines.append("      Lot sizes are computed per MT5 account inside run_mt5_execution")
+        lines.append("      using each account's live equity/balance.")
     else:
         lines.append("ETF POSITIONS (fractional shares):")
         lines.append(
@@ -1090,7 +1112,8 @@ def format_console_output(
                 f"  {row['ticker']:<6} {row['etf']:<5} ${row['etf_price']:>8.2f} "
                 f"{sign}${abs(row['target_dollars']):>9.2f} {row['shares_fractional']:>10.3f}"
             )
-        total_pct = (total_target / capital * 100) if capital > 0 else 0
+        cap_for_pct = capital if capital is not None else 0.0
+        total_pct = (total_target / cap_for_pct * 100) if cap_for_pct > 0 else 0
         lines.append("  " + "-" * 50)
         lines.append(
             f"  {'TOTAL':<6} {'':<5} {'':<9} "
@@ -1106,20 +1129,24 @@ def format_console_output(
 
 def format_telegram_message(
     shares_df: pd.DataFrame,
-    capital: float,
-    profile: str = "prop",
+    capital: Optional[float],
+    profile: str = "futures_prop",
 ) -> str:
     """Format results for Telegram notification (profile-aware)."""
     lines = []
-    heading = (
-        "*ENIGMA ALGOS FORECAST -- PROP*"
-        if profile == "prop"
-        else "*ENIGMA ALGOS FORECAST -- PERSONAL*"
-    )
+    if profile == "futures_prop" or profile == "prop":
+        heading = "*ENIGMA ALGOS FORECAST -- FUTURES PROP*"
+    elif profile == "cfd_prop":
+        heading = "*ENIGMA ALGOS FORECAST -- CFD PROP*"
+    else:
+        heading = "*ENIGMA ALGOS FORECAST -- PERSONAL*"
     lines.append(heading)
     lines.append(f"_{datetime.now().strftime('%Y-%m-%d %H:%M PST')}_")
     lines.append("")
-    lines.append(f"Capital: ${capital:,.2f}")
+    if profile == "cfd_prop" or capital is None:
+        lines.append("Capital: _per-MT5-account (fetched live)_")
+    else:
+        lines.append(f"Capital: ${capital:,.2f}")
     lines.append("")
 
     lines.append("*SIGNALS* (forecast > 0 = bullish)")
@@ -1134,7 +1161,7 @@ def format_telegram_message(
     lines.append("")
 
     total_dollars = 0.0
-    if profile == "prop":
+    if profile == "futures_prop" or profile == "prop":
         lines.append("*POSITIONS* (micro futures)")
         lines.append("```")
         lines.append(f"{'Sym':<4} {'Price':>10} {'Frac':>7} {'Whole':>6}")
@@ -1149,9 +1176,21 @@ def format_telegram_message(
         lines.append("-" * 32)
         total_sign = "+" if total_dollars >= 0 else "-"
         total_str = f"{total_sign}${abs(total_dollars):,.0f}"
-        total_pct = (total_dollars / capital * 100) if capital > 0 else 0
+        cap_for_pct = capital if capital is not None else 0.0
+        total_pct = (total_dollars / cap_for_pct * 100) if cap_for_pct > 0 else 0
         lines.append(f"{'TOTAL':<4} {total_str:>10} {total_pct:>+7.0f}%")
         lines.append("```")
+    elif profile == "cfd_prop":
+        lines.append("*TARGET ALLOCATIONS* (CFD, per-account sizing)")
+        lines.append("```")
+        lines.append(f"{'Ticker':<6} {'Target %':>10}")
+        lines.append("-" * 18)
+        for _, row in shares_df.iterrows():
+            pct = float(row["position_pct"])
+            lines.append(f"{row['ticker']:<6} {pct:>+10.1f}%")
+        lines.append("```")
+        lines.append("")
+        lines.append("_Lot sizes are computed per MT5 account at execute time._")
     else:
         lines.append("*POSITIONS* (ETF fractional shares)")
         lines.append("```")
@@ -1166,7 +1205,8 @@ def format_telegram_message(
                 f"{row['etf']:<5} {price_str:>9} {dollars_str:>8} {row['shares_fractional']:>7.2f}"
             )
         lines.append("-" * 33)
-        total_pct = (total_dollars / capital * 100) if capital > 0 else 0
+        cap_for_pct = capital if capital is not None else 0.0
+        total_pct = (total_dollars / cap_for_pct * 100) if cap_for_pct > 0 else 0
         total_str = f"${total_dollars:.0f}"
         lines.append(f"{'TOTAL':<5} {'':>9} {total_str:>8} ({total_pct:.0f}%)")
         lines.append("```")
@@ -1184,12 +1224,15 @@ def main():
     parser = argparse.ArgumentParser(description="Enigma Live Forecast Pipeline")
     parser.add_argument(
         "--profile",
-        choices=["prop", "personal"],
-        default="prop",
+        choices=["prop", "futures_prop", "personal", "cfd_prop"],
+        default="futures_prop",
         help=(
-            "Signal profile. 'prop' uses vault/ and sizes micro futures; "
-            "'personal' uses vault_personal/, sizes ETF shares, fetches a "
-            "partial 15-min daily candle for today, and posts to the personal channel."
+            "Signal profile. 'futures_prop' (formerly 'prop') uses vault/ and sizes "
+            "micro futures via IB; 'personal' uses vault_personal/, sizes ETF shares "
+            "via IB, fetches a partial 15-min daily candle for today, and posts to "
+            "the personal channel; 'cfd_prop' uses vault_cfd_prop/ and sizes CFD "
+            "lots per-MT5-account (see scripts/enigma_cfd_prop_forecast.py). "
+            "'prop' is a deprecated alias for 'futures_prop'."
         ),
     )
     parser.add_argument("--config", default=None, help="Path to config file (profile default if omitted)")
@@ -1225,7 +1268,18 @@ def main():
     )
     args = parser.parse_args()
 
+    # Normalise the deprecated 'prop' alias to 'futures_prop' so the rest of
+    # the script can branch on canonical names. Emit a notice so users update
+    # their cron entries.
     profile = args.profile
+    if profile == "prop":
+        print(
+            "[deprecation] --profile prop is deprecated; please use "
+            "--profile futures_prop. Continuing as futures_prop.",
+            file=sys.stderr,
+        )
+        profile = "futures_prop"
+        args.profile = "futures_prop"
 
     # Pick config file based on profile (fall back to legacy shared config if
     # a profile-specific one does not exist yet).
@@ -1236,9 +1290,12 @@ def main():
             config_candidate = project_root / args.config
         config_path = config_candidate
     else:
-        profile_default = (
-            DEFAULT_CONFIG_PATH_PROP if profile == "prop" else DEFAULT_CONFIG_PATH_PERSONAL
-        )
+        if profile == "cfd_prop":
+            profile_default = DEFAULT_CONFIG_PATH_CFD_PROP
+        elif profile == "personal":
+            profile_default = DEFAULT_CONFIG_PATH_PERSONAL
+        else:  # futures_prop
+            profile_default = DEFAULT_CONFIG_PATH_PROP
         profile_path = project_root / profile_default
         legacy_path = project_root / DEFAULT_CONFIG_PATH
         config_path = profile_path if profile_path.exists() else legacy_path
@@ -1250,29 +1307,62 @@ def main():
     with open(config_path, "r") as f:
         config = json.load(f)
 
-    # Profile-specific vault root override: prop -> vault/, personal -> vault_personal/
+    # Profile-specific vault root override:
+    #   futures_prop -> vault/, personal -> vault_personal/, cfd_prop -> vault_cfd_prop/
     # unless the config already has an explicit override.
     if "portfolio" in config and "vault_root" not in config.get("portfolio", {}):
         config.setdefault("portfolio", {})
     if profile == "personal":
         config["portfolio"]["vault_root"] = config["portfolio"].get("vault_root") or "vault_personal"
+    elif profile == "cfd_prop":
+        config["portfolio"]["vault_root"] = config["portfolio"].get("vault_root") or "vault_cfd_prop"
     else:
         config["portfolio"]["vault_root"] = config["portfolio"].get("vault_root") or "vault"
 
-    # Apply overrides
-    capital = args.capital or config["account"]["capital_usd"]
-    port = args.port or config["connection"]["port"]
+    # Apply overrides. For cfd_prop, capital is per-MT5-account and is fetched
+    # at runtime by run_mt5_execution; the config has no global capital_usd.
+    if profile == "cfd_prop":
+        capital = float(args.capital) if args.capital else None
+    else:
+        capital = args.capital or config["account"]["capital_usd"]
+    # IB connection block is optional when data.source != "ib" (e.g. cfd_prop
+    # using data.source="mt5" doesn't need TWS at all).
+    connection_cfg = config.get("connection") or {}
+    port = args.port or connection_cfg.get("port", 7497)
     data_cfg = config.get("data") or {}
     instruments: Dict[str, Any] = config["instruments"]
 
+    # Hard guard: data.source="mt5" is only allowed for the cfd_prop profile
+    # because MT5 writes CFD prices into the shared CentralCacheStore which
+    # would corrupt cross-profile signals for futures_prop / personal.
+    data_source = str(data_cfg.get("source", "ib")).lower()
+    if data_source not in ("ib", "mt5"):
+        print(f"Error: unsupported data.source={data_source!r} (expected 'ib' or 'mt5').")
+        sys.exit(1)
+    if data_source == "mt5" and profile != "cfd_prop":
+        print(
+            f"Error: data.source='mt5' is only supported for profile='cfd_prop' "
+            f"(got profile={profile!r}). Writing MT5 CFD prices to the shared "
+            "central cache would corrupt futures_prop/personal signals."
+        )
+        sys.exit(1)
+
     print("=" * 60)
-    header = "Prop Firms (futures)" if profile == "prop" else "Personal Account (ETFs)"
+    if profile == "futures_prop":
+        header = "Prop Firms (futures)"
+    elif profile == "personal":
+        header = "Personal Account (ETFs)"
+    else:  # cfd_prop
+        header = "Prop Firms (CFDs via MT5)"
     print(f"Enigma Live Forecast Pipeline -- {header}")
     print("=" * 60)
     print(f"Profile: {profile}")
     print(f"Config: {config_path}")
     print(f"Vault: {config['portfolio']['vault_root']}")
-    print(f"Capital: ${capital:,.2f}")
+    if capital is not None:
+        print(f"Capital: ${capital:,.2f}")
+    else:
+        print("Capital: <per-account, fetched from MT5 at execute time>")
     print(f"Port: {port} ({'Paper' if port == 7497 else 'Live' if port == 7496 else 'Custom'})")
     print(f"Dry Run: {args.dry_run}")
 
@@ -1297,45 +1387,66 @@ def main():
     for tk, cov in cache_status.get("coverage", {}).items():
         print(f"  {tk}: {cov['start'].date()} to {cov['end'].date()}")
 
-    # Create IB client
-    ib_config = IBConfig(
-        host=config["connection"]["host"],
-        port=port,
-        client_id=config["connection"]["client_id"]
-    )
-    client = IBDataClient(ib_config)
+    # Data-source dispatch. Three modes:
+    #   * use_cached_only=true: skip everything, use parquet-bootstrapped cache.
+    #   * data.source="mt5":    pull dailies from MT5 (cfd_prop only).
+    #   * data.source="ib":     pull dailies from IB TWS (default for prop/personal).
+    use_cached_only = bool(data_cfg.get("use_cached_only", False))
+    if use_cached_only:
+        print("\n3. Skipping data fetch (data.use_cached_only=true). Using cached parquets only.")
+        client = None
+    elif data_source == "mt5":
+        print("\n3. Using MT5 as data source (data.source='mt5'). No TWS connection required.")
+        client = None
+    else:
+        ib_config = IBConfig(
+            host=connection_cfg.get("host", "127.0.0.1"),
+            port=port,
+            client_id=connection_cfg.get("client_id", 1),
+        )
+        client = IBDataClient(ib_config)
 
     try:
-        # Connect to TWS
-        print("\n3. Connecting to TWS...")
-        client.connect_to_ib()
+        if use_cached_only:
+            runtime_daily = None
+            partial_overlay_df = None
+        elif data_source == "mt5":
+            from scripts.mt5_data_fetch import sync_mt5_dailies_into_central_cache
+            runtime_daily, partial_overlay_df = sync_mt5_dailies_into_central_cache(
+                config=config,
+                required_tickers=required_tickers,
+            )
+        else:
+            # Connect to TWS (IB path)
+            print("\n3. Connecting to TWS...")
+            client.connect_to_ib()
 
-        # Wait for connection (nextValidId callback sets connected=True)
-        max_wait = 10
-        waited = 0
-        while not client.connected and waited < max_wait:
-            time.sleep(0.5)
-            waited += 0.5
+            # Wait for connection (nextValidId callback sets connected=True)
+            max_wait = 10
+            waited = 0
+            while not client.connected and waited < max_wait:
+                time.sleep(0.5)
+                waited += 0.5
 
-        if not client.connected:
-            print("ERROR: Could not connect to TWS.")
-            print("Please ensure:")
-            print("  1. TWS or IB Gateway is running")
-            print("  2. API is enabled in TWS settings")
-            print(f"  3. Port {port} is correct")
-            sys.exit(1)
+            if not client.connected:
+                print("ERROR: Could not connect to TWS.")
+                print("Please ensure:")
+                print("  1. TWS or IB Gateway is running")
+                print("  2. API is enabled in TWS settings")
+                print(f"  3. Port {port} is correct")
+                sys.exit(1)
 
-        print("Connected to TWS successfully!")
+            print("Connected to TWS successfully!")
 
-        # Brief pause to ensure API is fully ready
-        time.sleep(1)
+            # Brief pause to ensure API is fully ready
+            time.sleep(1)
 
-        runtime_daily, partial_overlay_df = sync_ib_fetched_dailies_into_central_cache(
-            config=config,
-            required_tickers=required_tickers,
-            client=client,
-            profile=profile,
-        )
+            runtime_daily, partial_overlay_df = sync_ib_fetched_dailies_into_central_cache(
+                config=config,
+                required_tickers=required_tickers,
+                client=client,
+                profile=profile,
+            )
 
         # Step 6: Refresh stale bias node caches
         print("\n6. Refreshing bias caches...")
@@ -1412,7 +1523,7 @@ def main():
             if ticker_str in instruments:
                 position_tickers.add(ticker_str)
 
-        if profile == "prop":
+        if profile == "futures_prop":
             # Futures sizing: use last-close futures prices from fetched candles
             # (no extra TWS round-trip needed) and compute micro contract counts.
             print("\n9. Using latest futures prices from runtime daily frame...")
@@ -1440,6 +1551,25 @@ def main():
                     "of one micro's price×$/point notional, so int(round(fractional contracts)) "
                     "stays 0. This matches portfolio_research futures_sim (same round rule)."
                 )
+        elif profile == "cfd_prop":
+            # CFD prop: no per-instrument $ sizing here. Each MT5 account's
+            # equity/balance is fetched at execute time and lots are computed
+            # per-account inside execution.run_mt5_execution. The console/
+            # Telegram preview just shows target % allocations.
+            print(
+                "\n9. CFD prop profile: skipping global $ sizing. Per-account lot "
+                "sizing will run in execution.run_mt5_execution."
+            )
+            # Use latest (one row per ticker) and project the columns the
+            # formatters and downstream MT5 orchestrator need.
+            shares_df = pd.DataFrame({
+                "ticker": [
+                    (t.name if hasattr(t, "name") else str(t)) for t in latest["ticker"]
+                ],
+                "forecast": latest["forecast_score"].astype(float).values,
+                "position_fraction": latest["position_fraction"].astype(float).values,
+                "position_pct": (latest["position_fraction"].astype(float) * 100.0).values,
+            })
         else:
             # ETF sizing: fetch current ETF prices from TWS and compute fractional shares.
             print("\n9. Fetching current ETF prices...")
@@ -1458,26 +1588,35 @@ def main():
         # Log position sizing calculation
         print("\n" + "=" * 60)
         print("POSITION SIZING CALCULATION:")
-        print(f"  Capital: ${capital:,.2f}")
-        total_dollars = 0
-        for _, row in shares_df.iterrows():
-            ticker = row["ticker"]
-            pos_frac = row["position_pct"] / 100
-            target_dollars = row["target_dollars"]
-            total_dollars += target_dollars
-            print(f"  {ticker}: position_fraction={pos_frac:.4f} x ${capital:,.0f} = ${target_dollars:.2f}")
-        print(f"  TOTAL: ${total_dollars:.2f} ({total_dollars/capital*100:.1f}% of capital)")
-        print("=" * 60)
+        if profile == "cfd_prop":
+            print("  Capital: <per-account, fetched from MT5 at execute time>")
+            for _, row in shares_df.iterrows():
+                ticker = row["ticker"]
+                pos_frac = float(row["position_pct"]) / 100.0
+                print(f"  {ticker}: position_fraction={pos_frac:+.4f}")
+            print("=" * 60)
+        else:
+            print(f"  Capital: ${capital:,.2f}")
+            total_dollars = 0
+            for _, row in shares_df.iterrows():
+                ticker = row["ticker"]
+                pos_frac = row["position_pct"] / 100
+                target_dollars = row["target_dollars"]
+                total_dollars += target_dollars
+                print(f"  {ticker}: position_fraction={pos_frac:.4f} x ${capital:,.0f} = ${target_dollars:.2f}")
+            print(f"  TOTAL: ${total_dollars:.2f} ({total_dollars/capital*100:.1f}% of capital)")
+            print("=" * 60)
 
         # Display results
         print("\n" + format_console_output(positions_df, shares_df, capital, profile=profile))
 
         # Telegram: route to the profile-appropriate bot/channel.
-        notifier = (
-            TelegramNotifier.for_prop_firms()
-            if profile == "prop"
-            else TelegramNotifier.for_personal_account()
-        )
+        if profile == "cfd_prop":
+            notifier = TelegramNotifier.for_cfd_prop()
+        elif profile == "personal":
+            notifier = TelegramNotifier.for_personal_account()
+        else:  # futures_prop
+            notifier = TelegramNotifier.for_prop_firms()
         message = format_telegram_message(shares_df, capital, profile=profile)
         if not args.dry_run:
             print(f"\n11. Sending Telegram notification ({profile})...")
@@ -1492,15 +1631,33 @@ def main():
             print(message)
             print("-" * 40)
 
-        # Step 12: optional IB auto-execution (personal profile only).
-        from execution.run_execution import run_auto_execution
-        run_auto_execution(
-            args=args,
-            config=config,
-            shares_df=shares_df,
-            capital=capital,
-            profile=profile,
-        )
+        # Step 12: profile-specific execution dispatch.
+        if profile == "cfd_prop":
+            # CFD prop execution is multi-account MT5 + batch approval; the
+            # IB-based run_auto_execution path does not apply. The MT5
+            # orchestrator is added in Phase 2 of the cfd_prop rollout.
+            try:
+                from execution.run_mt5_execution import run_cfd_prop_execution
+            except ImportError:
+                print(
+                    "\n12. CFD prop execution: execution.run_mt5_execution is not "
+                    "available yet (Phase 2). Forecast frame produced; no orders placed."
+                )
+            else:
+                run_cfd_prop_execution(
+                    args=args,
+                    config=config,
+                    forecasts_df=shares_df,
+                )
+        else:
+            from execution.run_execution import run_auto_execution
+            run_auto_execution(
+                args=args,
+                config=config,
+                shares_df=shares_df,
+                capital=capital,
+                profile=profile,
+            )
 
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
@@ -1510,7 +1667,7 @@ def main():
         traceback.print_exc()
     finally:
         # Disconnect
-        if client.connected:
+        if client is not None and client.connected:
             print("\nDisconnecting from TWS...")
             client.disconnect_from_ib()
 

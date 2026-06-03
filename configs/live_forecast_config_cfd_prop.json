@@ -1,0 +1,93 @@
+{
+  "_comment": "CFD prop-firm profile: trades CFDs via MetaTrader 5 across one or more prop-firm accounts. Forecast is generated ONCE for all accounts; per-account sizing uses each account's live balance/equity from MT5. Credentials are env-var NAMES only -- real values live in .env (gitignored).",
+
+  "portfolio": {
+    "vault_root": "vault_cfd_prop",
+    "target_volatility": 0.15,
+    "max_position_pct": 2.5,
+    "idm_max": 2.5
+  },
+
+  "connection": {
+    "_comment": "IB TWS connection — only used when data.source='ib'. cfd_prop defaults to data.source='mt5' so the FTMO VPS does NOT need TWS installed. Kept here as a fallback in case the user wants to switch back to IB sourcing. port 7497=paper, 7496=live. client_id must be unique across all live scripts that share the same TWS instance.",
+    "host": "127.0.0.1",
+    "port": 7497,
+    "client_id": 4
+  },
+
+  "tradeable_tickers": ["ES", "NQ", "GC", "SI"],
+
+  "instruments": {
+    "ES": {"mt5_symbol": "US500.cash", "sec_type": "CONTFUT", "exchange": "CME"},
+    "NQ": {"mt5_symbol": "US100.cash", "sec_type": "CONTFUT", "exchange": "CME"},
+    "GC": {"mt5_symbol": "XAUUSD",     "sec_type": "CONTFUT", "exchange": "COMEX"},
+    "SI": {"mt5_symbol": "XAGUSD",     "sec_type": "CONTFUT", "exchange": "COMEX"}
+  },
+
+  "data": {
+    "_comment_source": "data.source='mt5' fetches daily OHLC via MetaTrader 5 (uses each ticker's instruments[*].mt5_symbol). data.source='ib' falls back to IB TWS (and requires the connection block above). For cfd_prop we default to 'mt5' so the FTMO VPS is fully self-contained (MT5 = data AND execution).",
+    "source": "mt5",
+    "_comment_use_cached_only": "Emergency-only escape hatch: when true, skip data fetch entirely and just use whatever is already in the cache (bootstrapped from data/ohlc_data parquets). Useful if both TWS and MT5 are unavailable.",
+    "use_cached_only": false,
+    "_comment_lookback": "Lookback windows. mt5_min_bars_per_ticker is the fail-fast threshold per required ticker; if MT5 returns fewer bars for any required ticker, the run aborts loudly (no silent fallback to stale cache).",
+    "min_lookback_days": 500,
+    "max_lookback_days": 500,
+    "prediction_daily_max_bars": 500,
+    "mt5_min_bars_per_ticker": 100,
+    "_comment_mt5_terminal_path": "Optional explicit terminal path for the data fetch. If unset, falls back to the first enabled account's terminal_path.",
+    "mt5_terminal_path": null
+  },
+
+  "mt5": {
+    "_comment_magic": "Magic number ranges identify OUR orders so we never touch positions opened by other strategies/manual trades on the same account. Each account should have a unique magic_number; default_magic_number is used when an account omits it.",
+    "default_magic_number": 90420,
+    "default_deviation_points": 20,
+    "sizing_basis": "equity",
+    "force_min_lot_if_signal": false,
+    "abort_if_unmanaged_position": true,
+    "verify_account_after_login": true,
+    "currency_conversion": "usd_via_mt5"
+  },
+
+  "accounts": [
+    {
+      "_comment": "Example FTMO 100K demo account. Replace label, magic_number, and env var names per your setup. The env vars listed below must be set in your environment (or .env) before running with --execute.",
+      "label": "ftmo_100k_demo_a",
+      "username_env": "MT5_FTMO_100K_DEMO_A_USERNAME",
+      "password_env": "MT5_FTMO_100K_DEMO_A_PASSWORD",
+      "server_env":   "MT5_FTMO_100K_DEMO_A_SERVER",
+      "terminal_path": "C:/Program Files/FTMO Global Markets MT5 Terminal/terminal64.exe",
+      "magic_number": 90421,
+      "symbol_overrides": {},
+      "enabled": true
+    }
+  ],
+
+  "execution": {
+    "_comment_approval": "Default-on-timeout 'cancel' is the conservative choice. To enable 'no answer in 5 min = execute', set default_on_timeout to 'approve'. Even with 'approve', a Telegram/network outage detected during polling will still cancel (fail-closed).",
+    "approval_mode": "batch_with_per_account_cancel",
+    "approval_timeout_seconds": 300,
+    "default_on_timeout": "cancel",
+    "_comment_authorized": "authorized_telegram_user_ids is a whitelist of numeric Telegram user IDs allowed to approve/cancel. Leave empty + set allow_any_approver=false to fail-closed during initial setup. To find your user ID, DM @userinfobot in Telegram.",
+    "authorized_telegram_user_ids": [633351651, 1065592953],
+    "allow_any_approver": false,
+
+    "_comment_sizing": "min_rebalance_lots is a hard floor in lots (never trade less). min_rebalance_notional_usd is a dead-band on the dollar value of the delta (skip noise). rebalance_mode: hybrid_close_on_flip is described in docs/library/live_forecast/cfd_prop_workflow.md.",
+    "min_rebalance_lots": 0.01,
+    "min_rebalance_notional_usd": 50,
+    "rebalance_mode": "hybrid_close_on_flip",
+
+    "max_orders_per_run_per_account": 8,
+    "order_fill_timeout_seconds": 30,
+    "post_order_retry_attempts": 1,
+    "require_live_flag_for_real_money": true,
+
+    "_comment_safety": "Optional preflight gates. max_spread_points caps acceptable spread; max_margin_usage_pct prevents margin-call risk; max_daily_loss_pct enforces prop-firm DLL.",
+    "max_spread_points": 50,
+    "max_margin_usage_pct": 0.95,
+    "max_daily_loss_pct": null,
+
+    "_comment_audit": "Per-run JSON audit log directory (created if missing). Each run writes one file with plans + decisions + execution results for post-mortem analysis.",
+    "audit_dir": "logs/cfd_prop_audit"
+  }
+}

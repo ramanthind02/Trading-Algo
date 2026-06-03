@@ -34,6 +34,13 @@ _PROP_CHAT_ID = "-1002856645393"
 _PERSONAL_BOT_TOKEN = "8698079967:AAEXjTkAJcHsh1B88E-dRa-YIQVLuQly6NE"
 _PERSONAL_CHAT_ID = "-1003955204069"
 
+# CFD prop-firm channel. Intentionally has NO hardcoded fallback so we can
+# never accidentally post real-money CFD approvals to the wrong channel.
+# Both values MUST come from the environment (TELEGRAM_CFD_PROP_BOT_TOKEN /
+# TELEGRAM_CFD_PROP_CHAT_ID). When either is unset the notifier logs-only.
+_CFD_PROP_BOT_TOKEN: Optional[str] = None
+_CFD_PROP_CHAT_ID: Optional[str] = None
+
 
 class TelegramNotifier:
     """
@@ -93,6 +100,43 @@ class TelegramNotifier:
                 "Set TELEGRAM_PERSONAL_CHAT_ID to enable sends."
             )
         return instance
+
+    @classmethod
+    def for_cfd_prop(cls) -> "TelegramNotifier":
+        """Notifier bound to the CFD prop-firm signal channel.
+
+        Unlike the prop-futures and personal-account notifiers, this one has
+        **no hardcoded fallback credentials**. Both the bot token and chat id
+        must come from the environment:
+
+        - ``TELEGRAM_CFD_PROP_BOT_TOKEN``
+        - ``TELEGRAM_CFD_PROP_CHAT_ID``
+
+        If either is unset, the notifier logs rather than sending so we never
+        cross-post CFD prop-firm execution approvals into another channel by
+        accident, and the CFD execution orchestrator should refuse to request
+        approval (fail closed) when this notifier is in logs-only mode.
+        """
+        token = os.environ.get("TELEGRAM_CFD_PROP_BOT_TOKEN", _CFD_PROP_BOT_TOKEN)
+        chat_id = os.environ.get("TELEGRAM_CFD_PROP_CHAT_ID", _CFD_PROP_CHAT_ID)
+        instance = cls.__new__(cls)
+        instance.token = token
+        instance.chat_id = chat_id
+        instance.base_url = f"https://api.telegram.org/bot{token}" if token else ""
+        if not token or not chat_id:
+            logger.warning(
+                "CFD prop-firm Telegram is not fully configured "
+                "(token=%s, chat_id=%s). Messages will be logged only. "
+                "Set TELEGRAM_CFD_PROP_BOT_TOKEN and TELEGRAM_CFD_PROP_CHAT_ID "
+                "to enable sends.",
+                "set" if token else "unset",
+                "set" if chat_id else "unset",
+            )
+        return instance
+
+    def is_configured(self) -> bool:
+        """Return True iff both bot token and chat id are set (sends will go out)."""
+        return bool(self.token) and bool(self.chat_id)
     
     def send_forecast_update(
         self, 
@@ -356,6 +400,42 @@ class TelegramNotifier:
             logger.error(f"send_with_inline_keyboard failed: {e}")
             return None
 
+    def send_with_inline_keyboard_rows(
+        self,
+        text: str,
+        button_rows: List[List[Dict[str, str]]],
+    ) -> Optional[int]:
+        """Send a message with an inline keyboard, one button row per inner list.
+
+        Used by :func:`execution.approval_flow.request_batch_approval` to lay
+        out approve_all / cancel_all / per-account cancel rows distinctly.
+        """
+        if not self.token or not self.chat_id:
+            logger.info(f"Telegram not configured. Would send: {text}")
+            return None
+        try:
+            reply_markup = {"inline_keyboard": button_rows}
+            response = requests.post(
+                f"{self.base_url}/sendMessage",
+                data={
+                    "chat_id": self.chat_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                    "reply_markup": json.dumps(reply_markup),
+                },
+                timeout=10,
+            )
+            if response.status_code != 200:
+                logger.error(
+                    f"Telegram sendMessage (rows) error: {response.status_code} - {response.text}"
+                )
+                return None
+            return int(response.json()["result"]["message_id"])
+        except Exception as e:
+            logger.error(f"send_with_inline_keyboard_rows failed: {e}")
+            return None
+
     def edit_message_text(self, message_id: int, text: str) -> bool:
         """Edit a previously-sent message, clearing its inline keyboard."""
         if not self.token or not self.chat_id:
@@ -431,6 +511,34 @@ class TelegramNotifier:
         """
         test_message = "🧪 **FORECAST SYSTEM TEST**\n✅ Telegram connection working"
         return self.send_message(test_message)
+
+    def probe_health(self) -> bool:
+        """Lightweight reachability probe used by approval flow.
+
+        Calls ``getMe`` (no side effects, no message sent) and returns True
+        iff the bot token is valid and the API is reachable. Used by
+        :func:`execution.approval_flow.request_approval` and
+        :func:`execution.approval_flow.request_batch_approval` to distinguish
+        a real user-timeout from a Telegram outage when ``default_on_timeout``
+        is set to ``APPROVED`` (fail-closed on outage).
+        """
+        if not self.token:
+            return False
+        try:
+            response = requests.get(f"{self.base_url}/getMe", timeout=5)
+            if response.status_code != 200:
+                logger.warning(
+                    f"Telegram health probe returned {response.status_code}: {response.text[:200]}"
+                )
+                return False
+            payload = response.json()
+            return bool(payload.get("ok", False))
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Telegram health probe network error: {e}")
+            return False
+        except Exception as e:
+            logger.warning(f"Telegram health probe failed: {e}")
+            return False
 
 # Utility function for easy access
 def create_telegram_notifier() -> TelegramNotifier:
