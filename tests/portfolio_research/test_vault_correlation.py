@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from portfolio_research.correlation_export import write_vault_correlation_powerbi_long
+from portfolio_research.correlation_export import write_vault_correlation_visualization_long
 from portfolio_research.vault_correlation import (
     build_vault_correlation_long_rows,
     candidate_returns_long_frame,
@@ -43,7 +43,7 @@ def _minimal_signed_feature_json(stem: str, *, tf: str = "D") -> str:
 }}"""
 
 
-def test_write_vault_correlation_powerbi_long_schema(tmp_path: Path) -> None:
+def test_write_vault_correlation_visualization_long_schema(tmp_path: Path) -> None:
     rows = [
         {
             "fold_id": 0,
@@ -59,7 +59,7 @@ def test_write_vault_correlation_powerbi_long_schema(tmp_path: Path) -> None:
             "n_obs": 10,
         }
     ]
-    out = write_vault_correlation_powerbi_long(rows, tmp_path / "vault_correlation_long")
+    out = write_vault_correlation_visualization_long(rows, tmp_path / "vault_correlation_long")
     assert out.exists()
     df = pd.read_csv(out)
     assert list(df.columns) == [

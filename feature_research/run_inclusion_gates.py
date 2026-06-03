@@ -25,22 +25,6 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-
-def _prepend_repo_root_to_syspath() -> None:
-    start = Path(__file__).resolve()
-    for parent in (start.parent, *start.parents):
-        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            root = str(parent)
-            if root not in sys.path:
-                sys.path.insert(0, root)
-            return
-    raise RuntimeError(
-        "Could not locate repository root (no pyproject.toml or .git above this file)."
-    )
-
-
-_prepend_repo_root_to_syspath()
-
 from utils.repo_bootstrap import ensure_repo_root_on_syspath
 
 ensure_repo_root_on_syspath(Path(__file__).resolve())

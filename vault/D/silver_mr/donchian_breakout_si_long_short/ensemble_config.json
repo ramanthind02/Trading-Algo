@@ -1,0 +1,10 @@
+{
+  "timeframe": "D",
+  "ensemble_name": "donchian_breakout_si",
+  "direction": "long_short",
+  "tickers": [
+    "SI"
+  ],
+  "created_at": "2026-06-02T02:27:43.711914+00:00",
+  "updated_at": "2026-06-02T02:27:43.711914+00:00"
+}

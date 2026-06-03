@@ -56,7 +56,8 @@ If your venv directory is named `venv` instead of `.venv`, use `.\venv\Scripts\p
 
 ## Visualization Policy
 
-- Prefer tabular or JSON/CSV research outputs over in-repo plotting.
+- Keep research artifacts CSV-first: pipelines write tabular or JSON/CSV outputs, and
+  Matplotlib is the preferred plotting consumer for research charts.
 - Keep QuantStats tearsheets, prop-firm HTML reports, and Norgate migration QA plots unless the task explicitly says otherwise.
 
 ## Testing Boundaries
@@ -124,7 +125,7 @@ Non-daily forecasts are forward-filled to a daily grid before `WeightLayer` runs
 - **Cache** (`cache/`, `utils/cache_manager.py`): Stores computed bias node outputs per node type
 - **Vault:** default prop tree `vault/`, personal `vault_personal/` (env overrides in `utils/vault_paths.py`; see `docs/library/Vault/vault.md`). Validated feature storage by timeframe under `<vault_root>/D|W|M/`. Working ensembles use a **nested** layout `<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble_leaf>/` (groups: `mean_reversion_indices`, `buy_hold`, `es_tlt`, `seasonal`, `momentum`) so on-disk folders match the manual global weight hierarchy; feature JSONs carry `weight_hierarchy_group`. Legacy flat `<vault_root>/<TF>/<ensemble_leaf>/` is still supported for discovery and cache preflight.
 - **Deployment** (`deployment/`): REST forecast server, production training pipeline, Telegram notifier, MT5 connector
-- **Live Trading**: Interactive Brokers integration via `scripts/tws_live_forecast.py`
+- **Live Trading**: Interactive Brokers integration via `scripts/enigma_live_forecast.py`
 
 ### Control Files (JSON)
 

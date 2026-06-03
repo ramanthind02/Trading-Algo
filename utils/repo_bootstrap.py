@@ -34,3 +34,12 @@ def ensure_repo_root_on_syspath(start: Path | None = None) -> Path:
 def ensure_project_root_on_path(start: Path | None = None) -> Path:
     """Backward-compatible alias used by older scripts."""
     return ensure_repo_root_on_syspath(start)
+
+
+def resolve_repo_path(path: Path | str, *, repo_root: Path | None = None) -> Path:
+    """Resolve ``path`` against the repository root when it is not absolute."""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    root = repo_root or require_repo_root()
+    return root / candidate

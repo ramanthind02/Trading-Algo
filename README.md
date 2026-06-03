@@ -53,4 +53,3 @@ See:
 
 - `utils/cache/runtime/ib_candle_ratio_align.py`
 - `scripts/enigma_live_forecast.py`
-- `deployment/config/canonical_source_priority.json`

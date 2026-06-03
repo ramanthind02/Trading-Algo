@@ -1,4 +1,4 @@
-"""Unit tests for Power BI / tabular research exports."""
+"""Unit tests for visualization / tabular research exports."""
 from __future__ import annotations
 
 import json
@@ -11,13 +11,15 @@ import pytest
 from feature_research.binning.transforms import build_param_combo_long_table
 from feature_research.core_helpers import combo_key
 from feature_research.research_table_exports import (
+    _vol_scaled_forecast,
+    canonical_in_sample_visualization_dir,
     objective_metric_display_label,
     permutation_vector_shuffle_records,
-    walkforward_power_bi_dir,
-    write_in_sample_equity_curve_powerbi_csv,
-    write_param_sensitivity_powerbi_tables,
+    walkforward_visualization_csv_dir,
+    write_in_sample_equity_curve_csv,
+    write_param_sensitivity_tables,
     write_permutation_vector_shuffle_exports,
-    write_walkforward_equity_powerbi_csvs,
+    write_walkforward_equity_csvs,
 )
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
 from feature_selection.validation.stability_analysis import _param_combo_name
@@ -32,10 +34,11 @@ from utils.core.enums import TimeFrame
 from utils.evaluation.walkforward.selected_params_codec import serialize_selected_params
 
 
-def test_walkforward_power_bi_dir_stable_under_output_root(tmp_path: Path) -> None:
+def test_walkforward_visualization_dir_stable_under_output_root(tmp_path: Path) -> None:
     root = tmp_path / "shared_results"
-    assert walkforward_power_bi_dir(root, "validation") == root / "powerbi" / "validation"
-    assert walkforward_power_bi_dir(root, "oos") == root / "powerbi" / "oos"
+    assert walkforward_visualization_csv_dir(root, "validation") == root / "visualization" / "validation"
+    assert walkforward_visualization_csv_dir(root, "oos") == root / "visualization" / "oos"
+    assert canonical_in_sample_visualization_dir().name == "visualization"
 
 
 def test_objective_metric_display_label_builtin() -> None:
@@ -47,7 +50,7 @@ def test_objective_metric_display_label_none() -> None:
     assert objective_metric_display_label(None) == "unknown"
 
 
-def test_write_param_sensitivity_powerbi_tables(tmp_path: Path) -> None:
+def test_write_param_sensitivity_tables(tmp_path: Path) -> None:
     rows = [
         {
             "param_combo_label": "a=1",
@@ -73,14 +76,14 @@ def test_write_param_sensitivity_powerbi_tables(tmp_path: Path) -> None:
             "sortino": 0.8,
         }
     ]
-    paths = write_param_sensitivity_powerbi_tables(
-        rows, pairs, sensitivity_by_ticker_rows=by_ticker, powerbi_parent_dir=tmp_path
+    paths = write_param_sensitivity_tables(
+        rows, pairs, sensitivity_by_ticker_rows=by_ticker, visualization_parent_dir=tmp_path
     )
     assert paths["param_sensitivity_csv"].exists()
     assert paths["param_sensitivity_by_ticker_csv"].exists()
     assert paths["param_combo_long_csv"].exists()
     assert "param_combo_wide_csv" not in paths
-    assert not (tmp_path / "powerbi" / "param_combo_wide.csv").exists()
+    assert not (tmp_path / "visualization" / "param_combo_wide.csv").exists()
     df = pd.read_csv(paths["param_sensitivity_csv"])
     assert "param_a" not in df.columns
     assert float(df["sharpe"].iloc[0]) == pytest.approx(0.5)
@@ -126,8 +129,11 @@ def test_param_combo_long_flattens_filter_gate_like_flat_bias(tmp_path: Path) ->
             "exit_bars": 10,
         },
     }
-    paths = write_param_sensitivity_powerbi_tables(
-        rows, [("combo_x", gate_params)], sensitivity_by_ticker_rows=[], powerbi_parent_dir=tmp_path
+    paths = write_param_sensitivity_tables(
+        rows,
+        [("combo_x", gate_params)],
+        sensitivity_by_ticker_rows=[],
+        visualization_parent_dir=tmp_path,
     )
     long_df = pd.read_csv(paths["param_combo_long_csv"])
     keys = set(long_df["param_key"].tolist())
@@ -174,21 +180,24 @@ def test_write_param_sensitivity_omits_by_ticker_when_empty(tmp_path: Path) -> N
             "sortino": 0.9,
         }
     ]
-    paths = write_param_sensitivity_powerbi_tables(
-        rows, [("a=1", {"a": 1})], sensitivity_by_ticker_rows=[], powerbi_parent_dir=tmp_path
+    paths = write_param_sensitivity_tables(
+        rows,
+        [("a=1", {"a": 1})],
+        sensitivity_by_ticker_rows=[],
+        visualization_parent_dir=tmp_path,
     )
     assert "param_sensitivity_by_ticker_csv" not in paths
     assert "param_combo_long_csv" in paths
     assert "param_combo_wide_csv" not in paths
 
 
-def test_write_in_sample_equity_curve_powerbi_csv(tmp_path: Path) -> None:
+def test_write_in_sample_equity_curve_csv(tmp_path: Path) -> None:
     idx = pd.date_range("2020-01-01", periods=3, freq="D", tz="UTC")
     sig = pd.Series([1.0, -1.0, 0.0], index=idx, name="signal")
     tgt = pd.Series([0.01, 0.02, 0.03], index=idx, name="target")
     tkr = pd.Series(["ES"] * 3, index=idx, dtype=str)
     store = {"combo_a": (sig, tgt, "feat_x", tkr, {"k": 1})}
-    path = write_in_sample_equity_curve_powerbi_csv(store, powerbi_parent_dir=tmp_path)
+    path = write_in_sample_equity_curve_csv(store, visualization_parent_dir=tmp_path)
     assert path.exists()
     df = pd.read_csv(path)
     assert list(df.columns) == [
@@ -214,10 +223,13 @@ def _make_ohlcv_candles(
 ) -> pd.DataFrame:
     """Synthetic OHLCV candles for portfolio simulation tests."""
     closes = [base_price * (1 + daily_return) ** i for i in range(len(dates))]
+    # Opens are set 0.05 % below their bar's close so log(close/open) is non-zero,
+    # which keeps intraday-return-based rolling Sharpe from collapsing to NaN.
+    opens = [c * 0.9995 for c in closes]
     return pd.DataFrame(
         {
             "datetime": dates,
-            "open": closes,
+            "open": opens,
             "high": [c * 1.001 for c in closes],
             "low": [c * 0.999 for c in closes],
             "close": closes,
@@ -228,7 +240,7 @@ def _make_ohlcv_candles(
     )
 
 
-def test_write_walkforward_equity_powerbi_csvs_holdout_and_extended(tmp_path: Path) -> None:
+def test_write_walkforward_equity_csvs_holdout_and_extended(tmp_path: Path) -> None:
     """Legacy path (no portfolio_candles): signal × target cumsum."""
     params = {"long_period": 100, "rsi_period": 2, "short_period": 4}
     key = combo_key(params)
@@ -258,7 +270,7 @@ def test_write_walkforward_equity_powerbi_csvs_holdout_and_extended(tmp_path: Pa
         ]
     )
     out = tmp_path / "pb_legacy"
-    paths = write_walkforward_equity_powerbi_csvs(
+    paths = write_walkforward_equity_csvs(
         combo_signal_target=combo_map,
         selection_summary_df=summary,
         module_name="cyclical_rsi",
@@ -267,7 +279,7 @@ def test_write_walkforward_equity_powerbi_csvs_holdout_and_extended(tmp_path: Pa
         holdout_end=pd.Timestamp("2020-01-06"),
         extended_start=pd.Timestamp("2020-01-01"),
         extended_end=pd.Timestamp("2020-01-06"),
-        output_powerbi_dir=out,
+        output_visualization_dir=out,
         holdout_csv_stem="equity_curve_validation_only",
         extended_csv_stem="equity_curve_train_and_validation",
         rolling_sharpe_window_bars=2,
@@ -287,7 +299,7 @@ def test_write_walkforward_equity_powerbi_csvs_holdout_and_extended(tmp_path: Pa
     assert float(dh["strategy_return"].sum()) == pytest.approx(0.012 + 0.010 + 0.011)
 
 
-def test_write_walkforward_equity_powerbi_csvs_portfolio_path(tmp_path: Path) -> None:
+def test_write_walkforward_equity_csvs_portfolio_path(tmp_path: Path) -> None:
     """Portfolio path: TFPortfolio IDM + calculate_strategy_returns_from_positions."""
     params = {"long_period": 100, "rsi_period": 2, "short_period": 4}
     key = combo_key(params)
@@ -322,7 +334,7 @@ def test_write_walkforward_equity_powerbi_csvs_portfolio_path(tmp_path: Path) ->
     holdout_start = full_dates[10]
     holdout_end = full_dates[-1]
     out = tmp_path / "pb_portfolio"
-    paths = write_walkforward_equity_powerbi_csvs(
+    paths = write_walkforward_equity_csvs(
         combo_signal_target=combo_map,
         selection_summary_df=summary,
         module_name="cyclical_rsi",
@@ -331,7 +343,7 @@ def test_write_walkforward_equity_powerbi_csvs_portfolio_path(tmp_path: Path) ->
         holdout_end=holdout_end,
         extended_start=extended_start,
         extended_end=holdout_end,
-        output_powerbi_dir=out,
+        output_visualization_dir=out,
         holdout_csv_stem="equity_curve_validation_only",
         extended_csv_stem="equity_curve_train_and_validation",
         portfolio_candles=candles,
@@ -355,6 +367,65 @@ def test_write_walkforward_equity_powerbi_csvs_portfolio_path(tmp_path: Path) ->
     assert (pd.to_numeric(dh["strategy_return"], errors="coerce") >= 0).all()
 
 
+def test_write_walkforward_equity_csvs_vol_scaling_applied(tmp_path: Path) -> None:
+    """Vol-targeting is applied: high-vol candles produce smaller position_fractions than low-vol.
+
+    Two runs with the same signal but different candle volatilities (via daily_return).
+    Because the EWSD tracks daily_return, a higher daily_return → higher sigma →
+    lower ``forecast_score = tau / sigma`` → smaller ``strategy_return`` magnitude.
+    """
+    import numpy as np
+    from feature_research.research_table_exports import _vol_scaled_forecast
+
+    params = {"p": 1}
+    key = combo_key(params)
+    dates = pd.date_range("2020-01-02", periods=50, freq="B")
+
+    def _run(daily_ret: float) -> pd.Series:
+        signal = pd.Series([1.0] * len(dates), index=dates, name="signal")
+        ticker_s = pd.Series(["ES"] * len(dates), index=dates, name="ticker")
+        candles = _make_ohlcv_candles(dates, ticker="ES", daily_return=daily_ret)
+        fs = _vol_scaled_forecast(
+            signal, ticker_s, candles, target_volatility=0.15
+        )
+        return fs
+
+    # Low-vol candles → EWSD < tau → forecast > 1.0 (up to cap)
+    # High-vol candles → EWSD > tau → forecast < 1.0
+    low_vol_fs = _run(0.001)   # ~1.6% annual vol → forecast capped at 2.0
+    high_vol_fs = _run(0.02)   # ~32% annual vol → forecast ≈ 0.15/0.32 ≈ 0.47
+
+    # After warm-up (skip first few bars) low-vol should have larger forecast
+    lo_mean = float(low_vol_fs.iloc[10:].mean())
+    hi_mean = float(high_vol_fs.iloc[10:].mean())
+    assert lo_mean > hi_mean, (
+        f"Expected low-vol forecast ({lo_mean:.3f}) > high-vol ({hi_mean:.3f})"
+    )
+    # High-vol forecast should be < 1.0 (below target vol: no leverage needed)
+    assert hi_mean < 1.0, f"High-vol forecast should be < 1.0, got {hi_mean:.3f}"
+    # Low-vol forecast should hit the cap (2.0) for most bars
+    assert lo_mean >= 1.5, f"Low-vol forecast should be near cap 2.0, got {lo_mean:.3f}"
+
+
+def test_equity_curve_includes_all_ticker_aggregate(tmp_path: Path) -> None:
+    d0 = pd.Timestamp("2020-01-01", tz="UTC")
+    d1 = pd.Timestamp("2020-01-02", tz="UTC")
+    idx = pd.Index([d0, d0, d0, d1, d1, d1])
+    sig = pd.Series([1.0, 1.0, 1.0, 1.0, 1.0, 1.0], index=idx)
+    tgt = pd.Series([0.06, 0.03, 0.09, 0.02, -0.04, 0.10], index=idx)
+    tkr = pd.Series(["ES", "NQ", "GC", "ES", "NQ", "GC"], index=idx, dtype=str)
+    store = {"combo_a": (sig, tgt, "feat_x", tkr, {"k": 1})}
+    path = write_in_sample_equity_curve_csv(store, visualization_parent_dir=tmp_path)
+    df = pd.read_csv(path)
+    combined = df.loc[df["ticker"].eq("ALL")].reset_index(drop=True)
+    assert len(combined) == 2
+    assert float(combined["strategy_return"].iloc[0]) == pytest.approx(0.06)
+    assert float(combined["strategy_return"].iloc[1]) == pytest.approx(0.08 / 3.0)
+    assert float(combined["cumulative_strategy_return"].iloc[1]) == pytest.approx(
+        0.06 + (0.08 / 3.0)
+    )
+
+
 def test_equity_curve_separate_cumsum_per_ticker_on_duplicate_dates(tmp_path: Path) -> None:
     """Same calendar date for ES and NQ: each instrument gets its own cumsum (no cross-mixing)."""
     d = pd.Timestamp("2020-01-03", tz="UTC")
@@ -363,7 +434,7 @@ def test_equity_curve_separate_cumsum_per_ticker_on_duplicate_dates(tmp_path: Pa
     tgt = pd.Series([0.01, -0.02, 0.03, -0.04], index=idx)
     tkr = pd.Series(["ES", "NQ", "ES", "NQ"], index=idx, dtype=str)
     store = {"c1": (sig, tgt, "f", tkr, {})}
-    path = write_in_sample_equity_curve_powerbi_csv(store, powerbi_parent_dir=tmp_path)
+    path = write_in_sample_equity_curve_csv(store, visualization_parent_dir=tmp_path)
     df = pd.read_csv(path)
     es = df.loc[df["ticker"].eq("ES")].reset_index(drop=True)
     nq = df.loc[df["ticker"].eq("NQ")].reset_index(drop=True)
@@ -432,7 +503,9 @@ def test_permutation_vector_shuffle_records_and_export(tmp_path: Path) -> None:
     assert recs[0]["param_combo_label"] == "p1"
     assert recs[0]["objective_metric"] == "sharpe"
     out = write_permutation_vector_shuffle_exports(
-        suite, objective_metric_label="sharpe", powerbi_parent_dir=tmp_path
+        suite,
+        objective_metric_label="sharpe",
+        visualization_parent_dir=tmp_path,
     )
     assert out["permutation_vector_shuffle_csv"].exists()
     df = pd.read_csv(out["permutation_vector_shuffle_csv"])
@@ -443,6 +516,9 @@ def test_permutation_vector_shuffle_records_and_export(tmp_path: Path) -> None:
         "param_combo",
         "param_combo_label",
         "observed_metric",
+        "null_ge_count",
+        "p_value_numerator",
+        "p_value_denominator",
         "p_value",
         "passed",
         "alpha",
@@ -495,4 +571,4 @@ def test_permutation_vector_shuffle_records_resolves_readable_label() -> None:
     )
     recs = permutation_vector_shuffle_records(suite, "mean_return", param_grid=[grid_params])
     assert recs[0]["param_combo"] == combo_key
-    assert recs[0]["param_combo_label"] == "lookback_14"
+    assert recs[0]["param_combo_label"] == "lb14"

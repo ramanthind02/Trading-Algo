@@ -57,11 +57,15 @@ def test_portfolio_tester_log_and_baseline_returns_shape() -> None:
 
     baseline_eq = calculate_baseline_returns(candles, equal_weight=True)
     baseline_single = calculate_baseline_returns(candles, equal_weight=False)
+    baseline_es = calculate_baseline_returns(candles, benchmark_ticker="ES")
 
     assert isinstance(baseline_eq, pd.Series)
     assert isinstance(baseline_single, pd.Series)
+    assert isinstance(baseline_es, pd.Series)
     assert not baseline_eq.empty
     assert not baseline_single.empty
+    assert not baseline_es.empty
+    pd.testing.assert_series_equal(baseline_es, baseline_single)
 
 
 def test_strategy_returns_normalize_ticker_keys_between_positions_and_candles() -> None:

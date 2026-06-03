@@ -20,6 +20,8 @@ def test_taxonomy_registry_declares_expected_class_names() -> None:
     assert CANONICAL_MODULE_CLASSES["cyclical_rsi_signal"] == "CyclicalRSISignal"
     assert CANONICAL_MODULE_CLASSES["cumulative_rsi_signal"] == "CumulativeRSISignal"
     assert CANONICAL_MODULE_CLASSES["casey_percent_c_signal"] == "CaseyPercentCSignal"
+    assert CANONICAL_MODULE_CLASSES["percent_b_signal"] == "PercentBSignal"
+    assert CANONICAL_MODULE_CLASSES["regime_lrsi_signal"] == "RegimeLrsiSignal"
     assert CANONICAL_MODULE_CLASSES["envelope_reversion_signal"] == "EnvelopeReversionSignal"
     assert CANONICAL_MODULE_CLASSES["williamsr_signal"] == "WilliamsRSignal"
     assert CANONICAL_MODULE_CLASSES["williamsrsignal"] == "WilliamsRSignal"

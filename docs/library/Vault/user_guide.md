@@ -74,11 +74,12 @@ portfolio_id = global_portfolio.save_to_vault(
 
 ## Research workflow
 
-1. Research the idea in `feature_research`.
-2. If it is continuous, convert the idea into a native signed-signal node before production.
-3. Save the signed-signal feature to the vault.
-4. Build and evaluate portfolios.
-5. Save a snapshot when you need a frozen deployment artifact.
+1. Research the idea in `feature_research` using the canonical three-phase model: `exploration -> validation -> portfolio_addition`.
+2. Treat `docs/SaaS/robustness_tests/` as the workflow source of truth; local module names are still migrating toward that structure.
+3. If the idea is continuous, convert it into a native signed-signal node before production.
+4. Save the signed-signal feature to the vault only after it has survived the individual research phases.
+5. Build and evaluate portfolios.
+6. Save a snapshot when you need a frozen deployment artifact.
 
 ## Related
 

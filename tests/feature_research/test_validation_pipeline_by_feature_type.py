@@ -13,7 +13,7 @@ from feature_research.config import (
     FeatureType,
     InSampleDefaultsCatalog,
     InSamplePhaseDefaultsConfig,
-    OOSWindowConfig,
+    ResearchWindowConfig,
 )
 from feature_research.config import ResearchConfig, load_config
 from feature_research.pipeline import run_validation_pipeline
@@ -51,13 +51,12 @@ def _build_signed_signal_config_rsi_lookback_grid(tmp_path: Path) -> ResearchCon
         feature_type=FeatureType.SIGNED_SIGNAL,
         in_sample_defaults=in_sample_defaults,
         param_sensitivity=base.param_sensitivity,
-        validation_window=OOSWindowConfig(
+        research_window=ResearchWindowConfig(
             train_start=datetime(2020, 1, 1),
             train_end=datetime(2020, 2, 10),
-            test_start=datetime(2020, 2, 11),
-            test_end=datetime(2020, 3, 10),
+            val_start=datetime(2020, 2, 11),
+            val_end=datetime(2020, 3, 10),
         ),
-        oos_window=base.oos_window,
         n_jobs=base.n_jobs,
         output_root=tmp_path / "shared_results",
         generate_ticker_tearsheets=base.generate_ticker_tearsheets,
@@ -104,13 +103,12 @@ def _build_signed_signal_config(tmp_path: Path) -> ResearchConfig:
         feature_type=FeatureType.SIGNED_SIGNAL,
         in_sample_defaults=in_sample_defaults,
         param_sensitivity=base.param_sensitivity,
-        validation_window=OOSWindowConfig(
+        research_window=ResearchWindowConfig(
             train_start=datetime(2020, 1, 1),
             train_end=datetime(2020, 2, 10),
-            test_start=datetime(2020, 2, 11),
-            test_end=datetime(2020, 3, 10),
+            val_start=datetime(2020, 2, 11),
+            val_end=datetime(2020, 3, 10),
         ),
-        oos_window=base.oos_window,
         n_jobs=base.n_jobs,
         output_root=tmp_path / "shared_results",
         generate_ticker_tearsheets=base.generate_ticker_tearsheets,

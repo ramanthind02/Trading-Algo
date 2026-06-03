@@ -1,20 +1,21 @@
-"""Shared pipeline utilities for OOS and validation evaluation phases."""
+"""Shared pipeline utilities for validation and portfolio-addition evaluation phases."""
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
-from feature_research.config import OOSWindowConfig
-from feature_research.core_helpers import (
+from feature_research.config import ResearchWindowConfig
+from feature_research._internal.core_helpers import (
     build_runtime_walkforward_config,
     normalize_timeframe_from_bias_spec,
 )
-from feature_research.pipelines.types import OosCorrelationBundle
+from feature_research.shared.contracts import OosCorrelationBundle
 from feature_research.research_table_exports import (
-    write_walkforward_equity_powerbi_csvs,
-    walkforward_power_bi_dir,
+    walkforward_visualization_csv_dir,
+    write_walkforward_equity_csvs,
 )
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
@@ -45,29 +46,14 @@ EvaluationPipelineResult = tuple["WalkforwardRunReport", OosCorrelationBundle | 
 SIGNED_SIGNAL_FEATURE_TYPE = "signed_signal"
 
 
-def _effective_oos_window(config: "ResearchConfig") -> OOSWindowConfig:
-    oos = config.oos_window
-    if oos is None:
+def _require_research_window(config: "ResearchConfig") -> ResearchWindowConfig:
+    window = config.research_window
+    if window is None:
         raise ValueError(
-            "OOS window is not set (config.oos_window is None). "
+            "Research window is not set (config.research_window is None). "
             "Set it in feature_research.config.load_config()."
         )
-    if config.validation_window is None:
-        return oos
-    vw = config.validation_window
-    # Fit-through date for OOS: include validation holdout only while it ends before true OOS
-    # test. If validation test_end extends into (or past) the OOS test window, keep using
-    # ``oos.train_end`` so train_end < test_start still holds (temporary long validation spans).
-    proposed_train_end = vw.test_end
-    train_end = (
-        oos.train_end if proposed_train_end >= oos.test_start else proposed_train_end
-    )
-    return OOSWindowConfig(
-        train_start=vw.train_start,
-        train_end=train_end,
-        test_start=oos.test_start,
-        test_end=oos.test_end,
-    )
+    return window
 
 
 def _run_evaluation_pipeline(
@@ -75,24 +61,18 @@ def _run_evaluation_pipeline(
     config: "ResearchConfig",
     output_dir: str | None = None,
 ) -> EvaluationPipelineResult:
+    window = _require_research_window(config)
     if phase == "oos":
-        window = _effective_oos_window(config)
-        phase_label = "OOS"
+        phase_label = "Portfolio Addition"
         phase_subdir = "oos"
     elif phase == "validation":
-        if config.validation_window is None:
-            raise ValueError(
-                "Validation window is not set (config.validation_window is None). "
-                "Set it in feature_research.config.load_config()."
-            )
-        window = config.validation_window
         phase_label = "Validation"
         phase_subdir = "validation"
     else:
         raise ValueError(f"Unknown phase: {phase}")
 
     data_start = min(config.start, window.train_start)
-    data_end = max(config.end, window.test_end)
+    data_end = max(config.end, window.val_end)
     config_phase = replace(config, start=data_start, end=data_end)
 
     covered_tickers = get_tickers_with_coverage_for_config(
@@ -118,18 +98,18 @@ def _run_evaluation_pipeline(
         )
         train_start_c = max(window.train_start, effective_start.to_pydatetime())
         train_end_c = min(window.train_end, effective_end.to_pydatetime())
-        test_start_c = max(window.test_start, effective_start.to_pydatetime())
-        test_end_c = min(window.test_end, effective_end.to_pydatetime())
-        if train_start_c >= train_end_c or test_start_c >= test_end_c or train_end_c > test_start_c:
+        val_start_c = max(window.val_start, effective_start.to_pydatetime())
+        val_end_c = min(window.val_end, effective_end.to_pydatetime())
+        if train_start_c >= train_end_c or val_start_c >= val_end_c or train_end_c > val_start_c:
             raise ValueError(
                 "Insufficient data after narrowing to available range "
-                "(train/test window would be empty or invalid)."
+                "(train/validation window would be empty or invalid)."
             )
-        window = OOSWindowConfig(
+        window = ResearchWindowConfig(
             train_start=train_start_c,
             train_end=train_end_c,
-            test_start=test_start_c,
-            test_end=test_end_c,
+            val_start=val_start_c,
+            val_end=val_end_c,
         )
         print(
             f"[{phase_label}] No full coverage; using narrowed range "
@@ -149,28 +129,30 @@ def _run_evaluation_pipeline(
         output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
+    _stage_start = time.perf_counter()
+
     populate_cache_if_needed(config_phase, bias_spec=config.eval_bias_spec)
     expanded = expand_bias_specs(config.eval_bias_spec)
     feature_type_label = SIGNED_SIGNAL_FEATURE_TYPE.upper()
-    window_label = "Val" if phase == "validation" else "Test"
+    window_label = "Val"
     print(f"\n{'='*64}")
     print(f"{phase_label} Pipeline: {config.eval_bias_spec['module_name'].upper()} ({feature_type_label})")
     print(f"Tickers : {[t.name for t in config_phase.tickers]}")
     print(f"Train   : {window.train_start.date()} -> {window.train_end.date()}")
-    print(f"{window_label}     : {window.test_start.date()} -> {window.test_end.date()}")
+    print(f"{window_label}     : {window.val_start.date()} -> {window.val_end.date()}")
     print(f"Combos  : {len(expanded)}")
     print(f"{'='*64}\n")
 
     train_start = pd.Timestamp(window.train_start)
     train_end = pd.Timestamp(window.train_end)
-    test_start = pd.Timestamp(window.test_start)
-    test_end = pd.Timestamp(window.test_end)
+    val_start = pd.Timestamp(window.val_start)
+    val_end = pd.Timestamp(window.val_end)
     runtime_config = build_runtime_walkforward_config(
         config,
         train_start=train_start,
         train_end=train_end,
-        test_start=test_start,
-        test_end=test_end,
+        test_start=val_start,
+        test_end=val_end,
     )
 
     data = load_signed_signal_research_data(config_phase, expanded, print_loaded=True)
@@ -183,7 +165,7 @@ def _run_evaluation_pipeline(
     portfolio_candles = load_portfolio_candles(config_phase)
     fold_rows = build_fold_rows_from_explicit_specs(
         reference_index,
-        [(window.train_start, window.train_end, window.test_start, window.test_end)],
+        [(window.train_start, window.train_end, window.val_start, window.val_end)],
         min_fold_samples=runtime_config.min_fold_samples,
     )
     if not fold_rows:
@@ -209,68 +191,96 @@ def _run_evaluation_pipeline(
         config.eval_bias_spec,
         fallback=config.timeframe,
     )
-    powerbi_dir = walkforward_power_bi_dir(config.output_root, phase_subdir)
+    visualization_dir = walkforward_visualization_csv_dir(config.output_root, phase_subdir)
     oos_correlation_bundle: OosCorrelationBundle | None = None
-    if phase == "oos" and config.oos_window is not None:
-        ow_bundle = config.oos_window
-        ew_bundle = _effective_oos_window(config)
+    if phase == "oos":
         oos_correlation_bundle = OosCorrelationBundle(
             combo_signal_target=data.combo_signal_target,
             selection_summary_df=report.selection_summary_df,
             eval_tf=eval_tf,
             research_eval_bias_spec=dict(config.eval_bias_spec),
             target_col=config.target_col,
-            extended_start=ew_bundle.train_start,
-            extended_end=ow_bundle.test_end,
+            extended_start=window.train_start,
+            extended_end=window.val_end,
             module_name=str(config.eval_bias_spec["module_name"]),
         )
     if not report.selection_summary_df.empty:
-        if phase == "validation" and config.validation_window is not None:
-            vw = config.validation_window
-            pbi_paths = write_walkforward_equity_powerbi_csvs(
-                combo_signal_target=data.combo_signal_target,
-                selection_summary_df=report.selection_summary_df,
-                module_name=str(config.eval_bias_spec["module_name"]),
-                timeframe=eval_tf,
-                holdout_start=vw.test_start,
-                holdout_end=vw.test_end,
-                extended_start=vw.train_start,
-                extended_end=vw.test_end,
-                output_powerbi_dir=powerbi_dir,
-                holdout_csv_stem="equity_curve_validation_only",
-                extended_csv_stem="equity_curve_train_and_validation",
-                portfolio_candles=portfolio_candles,
-            )
-            print(
-                f"[{phase_label}] Power BI equity: {pbi_paths['holdout'].name}, "
-                f"{pbi_paths['extended'].name} -> {powerbi_dir}"
-            )
-        elif phase == "oos" and config.oos_window is not None:
-            ow = config.oos_window
-            ew = _effective_oos_window(config)
-            pbi_paths = write_walkforward_equity_powerbi_csvs(
-                combo_signal_target=data.combo_signal_target,
-                selection_summary_df=report.selection_summary_df,
-                module_name=str(config.eval_bias_spec["module_name"]),
-                timeframe=eval_tf,
-                holdout_start=ow.test_start,
-                holdout_end=ow.test_end,
-                extended_start=ew.train_start,
-                extended_end=ow.test_end,
-                output_powerbi_dir=powerbi_dir,
-                holdout_csv_stem="equity_curve_oos_test_only",
-                extended_csv_stem="equity_curve_train_val_and_test",
-                portfolio_candles=portfolio_candles,
-            )
-            print(
-                f"[{phase_label}] Power BI equity: {pbi_paths['holdout'].name}, "
-                f"{pbi_paths['extended'].name} -> {powerbi_dir}"
-            )
+        holdout_csv_stem = (
+            "equity_curve_validation_only"
+            if phase == "validation"
+            else "equity_curve_portfolio_addition_val_only"
+        )
+        extended_csv_stem = (
+            "equity_curve_train_and_validation"
+            if phase == "validation"
+            else "equity_curve_train_and_val_for_portfolio_addition"
+        )
+        visualization_paths = write_walkforward_equity_csvs(
+            combo_signal_target=data.combo_signal_target,
+            selection_summary_df=report.selection_summary_df,
+            module_name=str(config.eval_bias_spec["module_name"]),
+            timeframe=eval_tf,
+            holdout_start=window.val_start,
+            holdout_end=window.val_end,
+            extended_start=window.train_start,
+            extended_end=window.val_end,
+            output_visualization_dir=visualization_dir,
+            holdout_csv_stem=holdout_csv_stem,
+            extended_csv_stem=extended_csv_stem,
+            portfolio_candles=portfolio_candles,
+            target_volatility=config.tearsheet_target_annual_volatility,
+        )
+        print(
+            f"[{phase_label}] Visualization equity CSVs: "
+            f"{visualization_paths['holdout'].name}, "
+            f"{visualization_paths['extended'].name} -> {visualization_dir}"
+        )
     write_walkforward_artifacts(
         report=report,
         feature_type=SIGNED_SIGNAL_FEATURE_TYPE,
         module_name=str(config.eval_bias_spec["module_name"]),
         root_dir=config.output_root,
         output_subdir=phase_subdir,
+    )
+    print(
+        f"[{phase_label}] Walkforward stage completed in "
+        f"{time.perf_counter() - _stage_start:.1f}s"
+    )
+    if phase == "validation" and config.validation_robustness.enabled:
+        from feature_research.validation.robustness_runner import run_and_write_validation_robustness
+
+        _robustness_start = time.perf_counter()
+        visualization_dir.mkdir(parents=True, exist_ok=True)
+        robustness_artifacts = run_and_write_validation_robustness(
+            config,
+            output_dir=visualization_dir,
+            selection_summary_df=report.selection_summary_df,
+            eval_research_data=data,
+        )
+        if robustness_artifacts:
+            print(
+                f"[{phase_label}] Validation robustness report: "
+                f"{robustness_artifacts['json'].name} -> {visualization_dir} "
+                f"({time.perf_counter() - _robustness_start:.1f}s)"
+            )
+    if phase == "validation" and config.portfolio_addition_gate.enabled:
+        from feature_research.portfolio_addition.gate_runner import (
+            run_and_write_portfolio_addition_gate,
+        )
+
+        _gate_start = time.perf_counter()
+        gate_artifacts = run_and_write_portfolio_addition_gate(
+            config,
+            output_dir=visualization_dir,
+        )
+        if gate_artifacts:
+            print(
+                f"[{phase_label}] Portfolio addition gate report: "
+                f"{gate_artifacts['json'].name} -> {visualization_dir} "
+                f"({time.perf_counter() - _gate_start:.1f}s)"
+            )
+    print(
+        f"[{phase_label}] Total pipeline time: "
+        f"{time.perf_counter() - _stage_start:.1f}s"
     )
     return report, oos_correlation_bundle

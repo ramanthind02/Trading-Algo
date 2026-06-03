@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-from feature_research.config import FeatureType, ResearchConfig
+from feature_research.config import FeatureType, ResearchConfig, VectorShuffleScope
+from feature_research.exploration.filter_gate_catalog import resolved_exploration_bias_spec
 from feature_research.in_sample.data_loader import (
     expand_bias_specs,
     first_bias_spec,
@@ -14,7 +15,7 @@ from feature_research.in_sample.data_loader import (
     populate_cache_if_needed,
 )
 from feature_research.research_table_exports import (
-    canonical_in_sample_power_bi_dir,
+    canonical_in_sample_visualization_dir,
     objective_metric_display_label,
     permutation_vector_shuffle_records,
     write_permutation_vector_shuffle_exports,
@@ -22,7 +23,10 @@ from feature_research.research_table_exports import (
 from feature_selection.validation.objective_metrics import ObjectiveMetricSpec, resolve_objective_metric
 from feature_selection.validation.orchestration import run_permutation_test_suite
 from feature_selection.validation.stability_analysis import _param_combo_name
-from feature_research.core_helpers import combo_key
+from feature_research._internal.core_helpers import combo_key
+from feature_research.pipelines.permutation_signals import (
+    load_quantile_binned_permutation_research_data,
+)
 from utils.evaluation.walkforward.research_data import (
     build_reference_target,
     load_signed_signal_research_data,
@@ -30,6 +34,47 @@ from utils.evaluation.walkforward.research_data import (
 
 if TYPE_CHECKING:
     from feature_selection.validation.reports import PermutationTestSuite
+    from quantfoundry_core.robustness import PermutationTestResult
+
+
+def _full_grid_permutation_markdown_lines(
+    full_grid: "PermutationTestResult",
+    *,
+    selection_metric_label: str,
+) -> list[str]:
+    """Markdown section for SaaS full-grid search-bias results (robustness / Core)."""
+
+    best = full_grid.observed_best_combination
+    best_label = best.label or ", ".join(f"{key}={value}" for key, value in best.params.items())
+    metric_obj = getattr(full_grid, "metric", None)
+    metric_name = (
+        getattr(metric_obj, "metric_name", selection_metric_label)
+        if metric_obj is not None
+        else selection_metric_label
+    )
+    return [
+        "## Full-grid search-bias permutation (SaaS §3.1)",
+        "",
+        "Runs inside the **robustness** step: each null iteration shuffles the target "
+        "return series and re-scores the **entire** parameter grid. Uses a **plain** "
+        f"(non-HAC) metric (`{metric_name}`) for both observed and null scores so the "
+        "return-shuffle null is calibrated fairly — NW/HAC correction collapses under IID "
+        "shuffled returns and would inflate null max scores relative to the real-data path. "
+        "Combo selection on real data still uses the NW-adjusted exploration metric "
+        f"(`{selection_metric_label}`). This is **not** the per-combo vector-shuffle below.",
+        "",
+        "| Grid size | Observed best (plain metric) | p-value | Null iterations |",
+        "|----------:|-----------------------------:|--------:|----------------:|",
+        (
+            f"| {full_grid.n_combinations} | {best_label} "
+            f"({full_grid.observed_score:.4f}) | {full_grid.p_value:.4f} | "
+            f"{full_grid.config.n_permutations} |"
+        ),
+        "",
+        "Canonical detail: `robustness_summary.md`, `robustness_summary.csv` (`full_grid_p_value`), "
+        "and `robustness_report.json` → `full_grid_permutation`.",
+        "",
+    ]
 
 
 def _require_permutation_enabled(config: ResearchConfig) -> None:
@@ -42,22 +87,60 @@ def _require_permutation_enabled(config: ResearchConfig) -> None:
         )
 
 
+def _filter_param_grid_to_selected_combo(
+    param_grid: list[dict[str, Any]],
+    *,
+    selected_combo_name: str,
+) -> list[dict[str, Any]]:
+    matched = [
+        spec for spec in param_grid if _param_combo_name(spec) == selected_combo_name
+    ]
+    if len(matched) != 1:
+        raise ValueError(
+            f"Expected exactly one param-grid entry for selected combo {selected_combo_name!r}; "
+            f"found {len(matched)} among {len(param_grid)} expanded specs."
+        )
+    return matched
+
+
+def _resolve_vector_shuffle_param_grid(
+    config: ResearchConfig,
+    param_grid: list[dict[str, Any]],
+    *,
+    selected_combo_name: str | None,
+) -> list[dict[str, Any]]:
+    scope = config.permutation.vector_shuffle_scope
+    if scope is VectorShuffleScope.FULL_GRID:
+        return param_grid
+    if selected_combo_name is None:
+        raise ValueError(
+            "vector_shuffle_scope=selected_combo requires a robustness winner "
+            "(run with robustness.enabled=True before permutation)."
+        )
+    return _filter_param_grid_to_selected_combo(
+        param_grid,
+        selected_combo_name=selected_combo_name,
+    )
+
+
 def write_permutation_summary(
     suite: "PermutationTestSuite",
     output_dir: Path,
     *,
     objective_metric: ObjectiveMetricSpec | None = None,
     param_grid: list[dict[str, Any]] | None = None,
+    full_grid_permutation: "PermutationTestResult | None" = None,
+    selection_metric_label: str | None = None,
 ) -> tuple[Path, Path]:
     """Write vector-shuffle permutation tables and root ``permutation_summary`` artifacts.
 
-    ``feature_research`` runs vector shuffle only (no pipeline second phase). Detailed
-    CSV for Power BI uses the fixed in-sample ``results/powerbi`` folder (see
-    ``canonical_in_sample_power_bi_dir``); flat CSV/MD stay under ``output_dir``.
+  Vector shuffle is written here. When ``full_grid_permutation`` is provided (from the
+  robustness step), a leading markdown section documents the search-bias test so readers
+  are not misled into thinking vector-shuffle is the only permutation run.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     label = objective_metric_display_label(objective_metric)
-    pbi = write_permutation_vector_shuffle_exports(
+    visualization_exports = write_permutation_vector_shuffle_exports(
         suite, objective_metric_label=label, param_grid=param_grid
     )
     rows = permutation_vector_shuffle_records(suite, label, param_grid=param_grid)
@@ -66,27 +149,59 @@ def write_permutation_summary(
     pd.DataFrame(rows).to_csv(csv_path, index=False)
 
     fs = suite.funnel_stats
+    metric_label = selection_metric_label or label
     md_lines = [
         "# In-Sample Permutation Summary",
         "",
         f"**Feature:** {suite.feature_name}  |  **Type:** {suite.feature_type}  |  **Objective:** `{label}`",
         "",
-        "## Vector shuffle",
+    ]
+    if full_grid_permutation is not None:
+        md_lines.extend(
+            _full_grid_permutation_markdown_lines(
+                full_grid_permutation,
+                selection_metric_label=metric_label,
+            )
+        )
+    md_lines.extend(
+        [
+        f"## Vector shuffle ({'selected combo' if fs.total_params == 1 else 'per combo'})",
         "",
         "| Tested | Passed |",
         "|--------|--------|",
         f"| {fs.total_params} | {fs.stage1_pass} |",
         "",
-    ]
+        ]
+    )
     md_lines.extend(
         [
+            "## P-value formula (vector shuffle)",
+            "",
+            "One-sided Monte Carlo with +1 pseudo-count: "
+            "`p_value = (1 + null_ge_count) / (n_reps + 1)`, where `null_ge_count` is the "
+            "number of null replicates with metric ≥ observed. With `n_reps=100`, only "
+            "multiples of `1/101` are possible (not `1/100`). `passed` uses the empirical "
+            f"`{1 - float(rows[0]['alpha']) if rows else 0.9:.0%}` null quantile (`critical_value`), "
+            "not `p_value <= alpha` alone.",
+            "",
             "## Scope",
             "",
-            "Each row is one **expanded** param combo from the same grid as in-sample EDA. "
-            "For ``feature_type=CONTINUOUS``, each combo is "
-            "**quantile-binned** per ticker (``binning_params.bin_counts[0]``) then mapped to "
-            "±1/0 from ``strategy`` (LONG: lowest bin long; SHORT: highest bin short; "
-            "LONG_SHORT: both tails). Signed-signal nodes use native discrete output.",
+            (
+                "Single **selected** param combo — the robustness selection-metric winner."
+                if fs.total_params == 1
+                else "Each row is one **expanded** param combo from the same grid as in-sample EDA."
+            )
+            + " "
+            + (
+                "Signed-signal nodes use native discrete output."
+                if fs.total_params == 1
+                else (
+                    "For ``feature_type=CONTINUOUS``, each combo is "
+                    "**quantile-binned** per ticker (``binning_params.bin_counts[0]``) then mapped to "
+                    "±1/0 from ``strategy`` (LONG: lowest bin long; SHORT: highest bin short; "
+                    "LONG_SHORT: both tails). Signed-signal nodes use native discrete output."
+                )
+            ),
             "",
             "## Per-combo results",
             "",
@@ -105,7 +220,11 @@ def write_permutation_summary(
     md_lines.extend(
         [
             "",
-            f"Power BI: `{pbi['permutation_vector_shuffle_csv'].name}` in `{canonical_in_sample_power_bi_dir()}`",
+            (
+                "Visualization CSV: "
+                f"`{visualization_exports['permutation_vector_shuffle_csv'].name}` in "
+                f"`{canonical_in_sample_visualization_dir()}`"
+            ),
             f"Flat summary: `permutation_summary.csv` (columns include `param_combo` = stable key, "
             "`param_combo_label` = readable).",
             "",
@@ -120,10 +239,13 @@ def write_permutation_summary(
 def run_permutation_pipeline(
     config: ResearchConfig,
     output_dir: Path,
+    *,
+    selected_combo_name: str | None = None,
 ) -> tuple["PermutationTestSuite", list[dict[str, Any]]]:
-    """Run vector-shuffle permutation on the expanded research param grid.
+    """Run vector-shuffle permutation on the exploration param grid or one selected combo.
 
-    Uses the same ``bias_spec`` / ``feature_type`` as in-sample EDA (full grid).
+    When ``config.permutation.vector_shuffle_scope`` is ``selected_combo``, pass
+    ``selected_combo_name`` from the robustness selection-metric winner.
 
     Returns
     -------
@@ -135,11 +257,12 @@ def run_permutation_pipeline(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     # Full-span cache warmup (same as EDA); permutation loads use training slice below.
-    populate_cache_if_needed(config)
+    exploration_spec = resolved_exploration_bias_spec(config)
+    populate_cache_if_needed(config, bias_spec=exploration_spec)
 
     config = replace(config, start=tr_start, end=tr_end)
     perm_load_config = config
-    expanded = expand_bias_specs(perm_load_config.bias_spec)
+    expanded = expand_bias_specs(exploration_spec)
     if not expanded:
         raise ValueError("No parameter combinations available for permutation suite.")
 
@@ -187,10 +310,20 @@ def run_permutation_pipeline(
     first_combo_frame = data.combo_signal_target[first_combo_key]
     signal_column = "signal" if "signal" in first_combo_frame.columns else "feature"
     feature_col = str(first_combo_frame[signal_column].name or "signal")
-    param_grid = data.successful_param_grid
+    param_grid = _resolve_vector_shuffle_param_grid(
+        config,
+        data.successful_param_grid,
+        selected_combo_name=selected_combo_name,
+    )
+    scope_label = (
+        f"selected combo {selected_combo_name!r}"
+        if config.permutation.vector_shuffle_scope is VectorShuffleScope.SELECTED_COMBO
+        else f"{len(param_grid)} combos"
+    )
+    print(f"Permutation: vector shuffle on {scope_label} ({load_mode}) ...")
     cached_signals_by_combo: dict[str, pd.Series] = {
         _param_combo_name(params): combo_frame["signal"]
-        for params in data.successful_param_grid
+        for params in param_grid
         for combo_frame in [data.combo_signal_target[combo_key(params)]]
     }
 

@@ -22,8 +22,8 @@ class InSamplePermutationConfig:
     run_stage1: bool = True
     # Reserved for callers that still thread pipeline-permutation reps; vector shuffle paths
     # ignore these and run sequential NumPy loops.
-    n_jobs_combos: int = 1
-    n_jobs_reps: int = 1
+    n_jobs_combos: int = 8
+    n_jobs_reps: int = 8
 
 
 @dataclass(frozen=True)

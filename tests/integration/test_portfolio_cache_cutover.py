@@ -12,7 +12,7 @@ from ensemble.vault_manager import (
 )
 from utils.cache.runtime.central_cache import CentralCacheStore
 from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
-from utils.cache.runtime.ingest_source_candles import ingest_source_candles
+from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
 from utils.core.enums import TimeFrame
 
 
@@ -24,7 +24,7 @@ def test_monthly_buy_hold_portfolio_runs_from_central_cache(
     start = datetime(2022, 1, 31)
     end = datetime(2022, 6, 30)
 
-    ingest_summary = ingest_source_candles(
+    ingest_summary = bootstrap_source_candles(
         tickers=tickers,
         timeframes=[TimeFrame.D, TimeFrame.M],
         start_date=start,

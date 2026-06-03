@@ -76,6 +76,7 @@
 - Run relevant integration tests when cross-layer behavior changes.
 - Run full suite (`pytest tests/`) before finalizing substantial architecture or pipeline changes.
 - If numerical formulas or scaling behavior changes, update/add tests that pin expected outputs.
+- **No researcher `load_config()` tests**: Do not add tests that import or assert on `feature_research.config.load_config()` or `portfolio_research.config.load_config()`. Do not add `test_config.py` files targeting researcher config defaults. Build explicit dataclass fixtures (see `tests/feature_research/support/fixtures.py`) instead.
 
 ## DRY And SRP
 
@@ -99,5 +100,6 @@
 
 ## Visualization Policy
 
-- Research charts and exploratory dashboards should move to Power BI or other external BI tooling.
+- Keep research artifacts CSV-first: pipelines write tabular outputs, and Matplotlib is the
+  preferred plotting consumer for charts and exploratory dashboards.
 - Keep Python-side QuantStats tearsheets, prop-firm HTML reports, and Norgate migration QA plots unless a task explicitly removes one of those keep-list exceptions.

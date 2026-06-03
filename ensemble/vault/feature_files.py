@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+# Linux filename limit is 255; inclusion temp paths add ~100+ chars before ``features/``.
+MAX_FEATURE_FILE_STEM_CHARS = 120
 
 import utils.core.helpers as helpers
 from utils.cache.runtime.cache_paths import win32_extended_path
@@ -18,6 +22,19 @@ LEGACY_MODEL_KEYS = frozenset(
 
 def extract_feature_name(feature_config: dict[str, Any], fallback_stem: str) -> str:
     return feature_config.get("feature_name") or feature_config.get("feature_column") or fallback_stem
+
+
+def feature_json_stem(
+    feature_name: str,
+    *,
+    max_stem_chars: int = MAX_FEATURE_FILE_STEM_CHARS,
+) -> str:
+    """On-disk ``features/*.json`` stem; hashes when the canonical column name is too long."""
+    name = str(feature_name).strip()
+    if len(name) <= max_stem_chars:
+        return name
+    digest = hashlib.md5(name.encode("utf-8")).hexdigest()[:16]
+    return f"feat_{digest}"
 
 
 def validate_signed_signal_bias_node_spec(

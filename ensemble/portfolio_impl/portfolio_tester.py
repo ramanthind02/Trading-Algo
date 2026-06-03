@@ -156,7 +156,7 @@ def calculate_strategy_returns_from_positions(
     candles_df: pd.DataFrame,
     strategy: str = 'long',
     *,
-    instrument_return_kind: Literal['log', 'simple'] = 'log',
+    instrument_return_kind: Literal['log_intraday', 'log_overnight', 'log', 'simple'] = 'log_intraday',
 ) -> pd.Series:
     """
     Calculate strategy returns from position fractions and candles.
@@ -176,10 +176,14 @@ def calculate_strategy_returns_from_positions(
         Columns: datetime, ticker, close
     strategy : str, default='long'
         Kept for backward compatibility; ignored (position is already signed).
-    instrument_return_kind : {'log', 'simple'}, default 'log'
-        Per-bar instrument move: log uses ``diff(log(close))`` (tearsheet path);
-        simple uses ``close.pct_change()`` per ticker (prop-firm simulators compound
-        with ``balance * (1 + r)``).
+    instrument_return_kind : {'log_intraday', 'log_overnight', 'log', 'simple'}, default 'log_intraday'
+        Per-bar instrument move:
+        * ``log_intraday``  — ``log(close/open)`` of the *next* bar; enter-at-open,
+          exit-at-close (CFD intraday, no overnight swap).  **Default.**
+        * ``log_overnight`` — ``log(open/close)`` of the *next* bar; enter-at-close,
+          exit-at-next-open (pure overnight gap, no intraday hold).
+        * ``log``           — ``diff(log(close))`` close-to-close, overnight-inclusive.
+        * ``simple``        — ``close.pct_change()`` per ticker (prop-firm simulators).
 
     Returns
     -------
@@ -200,13 +204,28 @@ def calculate_strategy_returns_from_positions(
         candles_sorted['instrument_return'] = (
             candles_sorted.groupby('ticker')['log_close'].diff()
         )
+    elif instrument_return_kind == 'log_intraday':
+        # Enter at open of the *next* bar, exit at close of the same bar.
+        # instrument_return[t] = log(close[t] / open[t]) — no overnight component.
+        candles_sorted['instrument_return'] = np.log(
+            candles_sorted['close'] / candles_sorted['open']
+        )
+    elif instrument_return_kind == 'log_overnight':
+        # Enter at close of the *current* bar, exit at open of the *next* bar.
+        # instrument_return[t] = log(open[t] / close[t-1]) — pure overnight gap.
+        candles_sorted['instrument_return'] = (
+            candles_sorted.groupby('ticker')['close']
+            .shift(1)
+            .pipe(lambda prev_close: np.log(candles_sorted['open'] / prev_close))
+        )
     elif instrument_return_kind == 'simple':
         candles_sorted['instrument_return'] = (
             candles_sorted.groupby('ticker')['close'].pct_change()
         )
     else:
         raise ValueError(
-            f"instrument_return_kind must be 'log' or 'simple', got {instrument_return_kind!r}"
+            f"instrument_return_kind must be 'log', 'log_intraday', 'log_overnight', or 'simple', "
+            f"got {instrument_return_kind!r}"
         )
 
     # For each (ticker, datetime) in candles, compute the datetime of the next bar
@@ -292,20 +311,45 @@ def calculate_strategy_returns_from_positions(
     return strategy_returns
 
 
+def filter_candles_to_position_tickers(
+    positions_df: pd.DataFrame,
+    candles_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Keep only candle rows for tickers that appear in ``positions_df``."""
+    if positions_df.empty or candles_df.empty or "ticker" not in candles_df.columns:
+        return candles_df
+    position_tickers = frozenset(
+        normalize_ticker_key(ticker) for ticker in positions_df["ticker"].unique()
+    )
+    if not position_tickers:
+        return candles_df
+    filtered = candles_df.copy()
+    filtered["_ticker_key"] = filtered["ticker"].map(normalize_ticker_key)
+    return (
+        filtered.loc[filtered["_ticker_key"].isin(position_tickers)]
+        .drop(columns=["_ticker_key"])
+        .reset_index(drop=True)
+    )
+
+
 def calculate_baseline_returns(
     candles_df: pd.DataFrame,
-    equal_weight: bool = True
+    equal_weight: bool = True,
+    *,
+    benchmark_ticker: str | None = None,
 ) -> pd.Series:
     """
     Calculate baseline (buy-and-hold) returns from candles.
-    
+
     Parameters
     ----------
     candles_df : pd.DataFrame
         Candles DataFrame with columns: datetime, ticker, close
     equal_weight : bool, default=True
-        If True, equal weight all tickers. If False, use single ticker.
-        
+        If True, equal weight all tickers. If False, use the first ticker's returns.
+    benchmark_ticker : str | None, default=None
+        When set, buy-and-hold for this ticker only (``equal_weight`` is ignored).
+
     Returns
     -------
     pd.Series
@@ -327,7 +371,17 @@ def calculate_baseline_returns(
     if valid.empty:
         return _empty_returns_series('baseline_return')
 
-    if equal_weight:
+    if benchmark_ticker is not None:
+        target = normalize_ticker_key(benchmark_ticker)
+        ticker_keys = valid["ticker"].map(normalize_ticker_key)
+        ticker_rows = valid.loc[ticker_keys == target]
+        if ticker_rows.empty:
+            raise ValueError(
+                f"No candle returns for benchmark ticker {benchmark_ticker!r} "
+                f"(normalized key {target!r})."
+            )
+        baseline = ticker_rows.set_index("datetime")["returns"].sort_index()
+    elif equal_weight:
         # Equal-weighted baseline: average across all tickers that have a return on that date
         baseline = (
             valid.groupby('datetime')['returns']
@@ -367,10 +421,13 @@ class PortfolioTester:
     def __init__(
         self,
         portfolio,
-        baseline_mode: str = 'equal_weight'
+        baseline_mode: str = 'equal_weight',
+        *,
+        benchmark_ticker: str | None = None,
     ):
         self.portfolio = portfolio
         self.baseline_mode = baseline_mode
+        self.benchmark_ticker = benchmark_ticker
         
         # Results storage
         self.positions_df: Optional[pd.DataFrame] = None
@@ -541,9 +598,13 @@ class PortfolioTester:
         pd.Series
             Baseline returns indexed by datetime
         """
-        equal_weight = (self.baseline_mode == 'equal_weight')
-        self.baseline_returns = calculate_baseline_returns(candles_df, equal_weight=equal_weight)
-        
+        equal_weight = self.baseline_mode == 'equal_weight'
+        self.baseline_returns = calculate_baseline_returns(
+            candles_df,
+            equal_weight=equal_weight,
+            benchmark_ticker=self.benchmark_ticker,
+        )
+
         return self.baseline_returns
     
     def generate_tearsheet(

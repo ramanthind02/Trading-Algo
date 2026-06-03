@@ -12,6 +12,15 @@ import numpy as np
 import pandas as pd
 from sklearn.covariance import LedoitWolf
 
+from ensemble.ensemble_utils import normalize_ticker_key
+from ensemble.sr_adjustment import (
+    SrAdjustmentParams,
+    apply_hierarchical_sr_tilt,
+    apply_within_group_inv_corr,
+    build_stream_pnl_series,
+    enrich_cluster_metrics_with_sr,
+    pivot_stream_signals,
+)
 from ensemble.weight_hierarchy import (
     compute_equal_split_weights,
     resolve_hierarchy_for_fit,
@@ -48,6 +57,18 @@ class WeightLayerConfig:
     fdm_max: float = 2.0
     hierarchy_spec: Optional[dict[str, object]] = None
     hierarchy_path: Optional[str] = None
+    sr_adjustment: bool = False
+    sr_avg: float = 0.5
+    sr_p_step: float = 0.01
+    sr_std: float = 0.15
+    sr_min_years: float = 5.0
+    sr_tilt_max_depth: Optional[int] = None
+    #: Weighting method applied *within* each hierarchy group below the SR-tilt level.
+    #: ``"equal"`` (default) keeps equal splits within groups.
+    #: ``"inverse_avg_pairwise_corr"`` redistributes mass inside each group using
+    #: inverse-correlation weighting — adds diversification at L2 (style group) and
+    #: L3 (instrument stream) without touching the L1 SR tilt.
+    within_group_method: str = "equal"
 
     def __post_init__(self) -> None:
         if self.weighting_method not in _WEIGHT_METHODS:
@@ -57,6 +78,22 @@ class WeightLayerConfig:
             )
         if self.fdm_max <= 0.0:
             raise ValueError(f"fdm_max must be > 0, got {self.fdm_max}")
+        if self.sr_p_step <= 0.0 or self.sr_p_step >= 1.0:
+            raise ValueError(f"sr_p_step must be in (0, 1), got {self.sr_p_step}")
+        if self.sr_min_years < 0.0:
+            raise ValueError(f"sr_min_years must be >= 0, got {self.sr_min_years}")
+        if self.sr_std <= 0.0:
+            raise ValueError(f"sr_std must be > 0, got {self.sr_std}")
+        if self.sr_tilt_max_depth is not None and self.sr_tilt_max_depth < 1:
+            raise ValueError(
+                f"sr_tilt_max_depth must be >= 1 or None (unlimited), got {self.sr_tilt_max_depth}"
+            )
+        _valid_within = ("equal", "inverse_avg_pairwise_corr")
+        if self.within_group_method not in _valid_within:
+            raise ValueError(
+                f"within_group_method must be one of {_valid_within}, "
+                f"got '{self.within_group_method}'"
+            )
         if self.weighting_method in (
             "hierarchy_equal",
             "inverse_corr_hierarchy",
@@ -431,6 +468,89 @@ def _equal_weights(model_names: List[str]) -> pd.Series:
     return pd.Series({model: equal_weight for model in model_names}, dtype=float)
 
 
+def _rebuild_cluster_weights_from_assignments(
+    leaf_weights: pd.Series,
+    assignments: Dict[str, str],
+) -> Dict[str, float]:
+    cluster_weights: Dict[str, float] = {}
+    for stream_id, path in assignments.items():
+        mass = float(leaf_weights.get(stream_id, 0.0))
+        parts = path.split("/")
+        for i in range(1, len(parts) + 1):
+            prefix = "/".join(parts[:i])
+            cluster_weights[prefix] = cluster_weights.get(prefix, 0.0) + mass
+    return cluster_weights
+
+
+def _apply_sr_tilt_to_hierarchy_weights(
+    model_weights: pd.Series,
+    cluster_assignments: Dict[str, str],
+    cluster_metrics: Dict[str, Dict[str, float | int | None]],
+    ticker_forecasts: pd.DataFrame,
+    available_models: List[str],
+    instrument_returns: pd.DataFrame,
+    config: WeightLayerConfig,
+) -> tuple[pd.Series, Dict[str, float], Dict[str, Dict[str, float | int | None]]]:
+    # Vol-scaled ``forecast`` (pre down-side-vol renormalization) × lagged return.
+    position_pivot = pivot_stream_signals(
+        ticker_forecasts,
+        available_models,
+        value_column="forecast",
+    )
+    if position_pivot.empty:
+        position_pivot = pivot_stream_signals(ticker_forecasts, available_models)
+    stream_pnls = build_stream_pnl_series(
+        position_pivot,
+        instrument_returns,
+        available_models,
+        lag_positions=True,
+    )
+    if len(stream_pnls) < 2:
+        logger.warning(
+            "sr_adjustment skipped: fewer than 2 streams with valid PnL (%d)",
+            len(stream_pnls),
+        )
+        return model_weights, _rebuild_cluster_weights_from_assignments(
+            model_weights, cluster_assignments
+        ), cluster_metrics
+
+    params = SrAdjustmentParams(
+        sr_avg=config.sr_avg,
+        sr_p_step=config.sr_p_step,
+        sr_std=config.sr_std,
+        sr_min_years=config.sr_min_years,
+    )
+    adjusted, _sr_diag = apply_hierarchical_sr_tilt(
+        model_weights,
+        cluster_assignments,
+        stream_pnls,
+        params,
+        max_depth=config.sr_tilt_max_depth,
+    )
+
+    # Optional: inverse-correlation weighting within groups below the SR-tilt level.
+    if config.within_group_method == "inverse_avg_pairwise_corr":
+        within_min_depth = (config.sr_tilt_max_depth or 0) + 1
+        adjusted = apply_within_group_inv_corr(
+            adjusted,
+            cluster_assignments,
+            stream_pnls,
+            min_depth=within_min_depth,
+        )
+
+    cluster_weights = _rebuild_cluster_weights_from_assignments(
+        adjusted, cluster_assignments
+    )
+    metrics = enrich_cluster_metrics_with_sr(
+        cluster_metrics,
+        cluster_assignments,
+        stream_pnls,
+        adjusted,
+        _sr_diag,
+    )
+    return adjusted, cluster_weights, metrics
+
+
 class ClusteredWeightLayer(BaseWeightLayer):
     """Weight layer: equal, inverse-correlation, or manual hierarchy (equal split)."""
 
@@ -449,7 +569,13 @@ class ClusteredWeightLayer(BaseWeightLayer):
         returns: Optional[pd.Series | pd.DataFrame] = None,
     ) -> "ClusteredWeightLayer":
         del signals
-        del returns
+        instrument_returns: pd.DataFrame | None = None
+        if isinstance(returns, pd.DataFrame) and not returns.empty:
+            instrument_returns = returns.astype(float).copy()
+            instrument_returns.index = pd.to_datetime(instrument_returns.index).normalize()
+            instrument_returns = instrument_returns.rename(
+                columns=normalize_ticker_key,
+            )
 
         if not forecast_vectors:
             raise ValueError("forecast_vectors cannot be empty")
@@ -649,6 +775,23 @@ class ClusteredWeightLayer(BaseWeightLayer):
                 model_weights, cluster_assignments, cluster_weights, cluster_metrics = (
                     compute_equal_split_weights(root, available_models)
                 )
+                if (
+                    self._wl_config.sr_adjustment
+                    and self.weight_method == "hierarchy_equal"
+                    and instrument_returns is not None
+                    and len(instrument_returns.columns) >= 1
+                ):
+                    model_weights, cluster_weights, cluster_metrics = (
+                        _apply_sr_tilt_to_hierarchy_weights(
+                            model_weights,
+                            cluster_assignments,
+                            cluster_metrics,
+                            ticker_forecasts,
+                            available_models,
+                            instrument_returns,
+                            self._wl_config,
+                        )
+                    )
                 mean_cluster_corr = mean_signal_corr
 
             self.weights_[ticker] = model_weights
@@ -722,21 +865,30 @@ def WeightLayer(
     if config is None:
         if "risk_tilt_alpha" in kwargs:
             raise ValueError("risk_tilt_alpha is no longer supported by WeightLayer")
+
+        config_field_names = {f.name for f in fields(WeightLayerConfig)}
+        config_kwargs: Dict[str, object] = {
+            "weighting_method": weight_method,
+            "fdm_max": float(kwargs.pop("fdm_max", fdm_max)),
+        }
         hierarchy_spec = kwargs.pop("hierarchy_spec", None)
+        if isinstance(hierarchy_spec, dict):
+            config_kwargs["hierarchy_spec"] = dict(hierarchy_spec)
         hierarchy_path_raw = kwargs.pop("hierarchy_path", None)
-        hp: str | None = None
         if hierarchy_path_raw is not None:
-            hp = str(hierarchy_path_raw).strip() or None
-        config = WeightLayerConfig(
-            weighting_method=weight_method,
-            fdm_max=float(kwargs.pop("fdm_max", fdm_max)),
-            hierarchy_spec=dict(hierarchy_spec) if isinstance(hierarchy_spec, dict) else None,
-            hierarchy_path=hp,
-        )
+            hp = str(hierarchy_path_raw).strip()
+            if hp:
+                config_kwargs["hierarchy_path"] = hp
+
+        for name in list(kwargs.keys()):
+            if name in config_field_names:
+                config_kwargs[name] = kwargs.pop(name)
+
         if kwargs:
             raise TypeError(
                 f"WeightLayer got unexpected keyword arguments: {sorted(kwargs.keys())}"
             )
+        config = WeightLayerConfig(**config_kwargs)
     elif kwargs:
         raise ValueError("Pass either config or keyword overrides, not both")
 

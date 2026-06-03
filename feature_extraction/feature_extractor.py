@@ -169,8 +169,8 @@ def compute_forward_returns(
     tickers have different volatility levels (e.g., NQ is more volatile than ES).
 
     If EWSD features are provided in features_df, returns include
-    log_return_ewsd normalized by EWSD[t+1]. If not provided, log_return_ewsd
-    falls back to unscaled log_return.
+    log_return_ewsd normalized by EWSD[t] (causal — known before Return[t+1]).
+    If not provided, log_return_ewsd falls back to unscaled log_return.
     
     Parameters
     ----------
@@ -188,7 +188,7 @@ def compute_forward_returns(
         DataFrame with columns:
         - raw_return: (close[t+1]/open[t+1]) - 1, shifted forward by 1 period
         - log_return: log(close[t+1]/open[t+1]), shifted forward by 1 period
-        - log_return_ewsd: log_return normalized by EWSD[t+1] when EWSD is available;
+        - log_return_ewsd: log_return normalized by EWSD[t] (causal) when EWSD is available;
           otherwise equal to log_return
         - ticker: ticker identifier
         Indexed by datetime (aligned with features)
@@ -211,19 +211,20 @@ def compute_forward_returns(
     for ticker in candles_df['ticker'].unique():
         ticker_candles = candles_df[candles_df['ticker'] == ticker].copy().sort_values('datetime')
         
-        # Calculate intraday returns: return[t] = close[t] / open[t] - 1
-        # This represents the return from open[t] to close[t] (during day t)
+        # Intraday return: log(close[t] / open[t])
         ticker_candles['log_return'] = _safe_log_return(ticker_candles['close'], ticker_candles['open'])
         ticker_candles['raw_return'] = (ticker_candles['close'] / ticker_candles['open']) - 1
-        
-        # Shift returns forward by 1 period so Feature[t] predicts Return[t+1]
-        # Return[t+1] = (close[t+1]/open[t+1] - 1) is the return for day t+1
-        # After shift(-1): shifted_return[t] = Return[t+1]
-        # This means Feature[t] (at index t) predicts Return[t+1] (the return for the next day)
+        # Overnight return: log(open[t] / close[t-1])
+        ticker_candles['overnight_log_return'] = _safe_log_return(
+            ticker_candles['open'], ticker_candles['close'].shift(1)
+        )
+
+        # Shift all returns forward by 1 so Feature[t] predicts Return[t+1]
         ticker_candles['log_return'] = ticker_candles['log_return'].shift(-1)
         ticker_candles['raw_return'] = ticker_candles['raw_return'].shift(-1)
-        
-        # Drop last row (no forward return available - return was shifted forward)
+        ticker_candles['overnight_log_return'] = ticker_candles['overnight_log_return'].shift(-1)
+
+        # Drop last row (no forward return available)
         ticker_candles = ticker_candles.dropna(subset=['log_return'])
         
         # Normalize ticker to string name to match extract_features format
@@ -248,8 +249,11 @@ def compute_forward_returns(
                 ticker_features_aligned = ticker_features_indexed.reindex(
                     original_datetime_index, method='ffill'
                 )
-                # Return[t+1] should be normalized by EWSD[t+1].
-                ewsd_series = ticker_features_aligned[ewsd_col].shift(-1)
+                # Use EWSD[t] (causal: known before Return[t+1] is realised).
+                # Using EWSD[t+1] would introduce lookahead: the EWMA at t+1 already
+                # incorporates the next return, so crisis-day losses appear smaller
+                # than they would under production position sizing (which uses EWSD[t]).
+                ewsd_series = ticker_features_aligned[ewsd_col]
         
         # Use datetime column as index for targets (after dropping last row due to shift)
         # After shifting returns forward with shift(-1) and dropping last row:
@@ -265,23 +269,30 @@ def compute_forward_returns(
         # etc.
         target_index = original_target_index[:len(ticker_candles)]
         
-        # Compute EWSD-normalized return when EWSD is available.
+        # Compute EWSD-normalized returns when EWSD is available.
         if ewsd_series is not None:
             ewsd_aligned = ewsd_series.reindex(target_index)
             ewsd_values = ewsd_aligned.values
             if len(ewsd_values) > 0 and not np.isnan(ewsd_values).all():
                 ewsd_decimal = ewsd_values / 100.0
                 log_return_ewsd = ticker_candles['log_return'].values / np.maximum(ewsd_decimal, 0.0001)
+                overnight_log_return_ewsd = (
+                    ticker_candles['overnight_log_return'].values / np.maximum(ewsd_decimal, 0.0001)
+                )
             else:
                 log_return_ewsd = ticker_candles['log_return'].values
+                overnight_log_return_ewsd = ticker_candles['overnight_log_return'].values
         else:
             log_return_ewsd = ticker_candles['log_return'].values
+            overnight_log_return_ewsd = ticker_candles['overnight_log_return'].values
 
         # Initialize target dict with returns
         target_dict = {
             'raw_return': ticker_candles['raw_return'].values,
             'log_return': ticker_candles['log_return'].values,
             'log_return_ewsd': log_return_ewsd,
+            'overnight_log_return': ticker_candles['overnight_log_return'].values,
+            'overnight_log_return_ewsd': overnight_log_return_ewsd,
             'ticker': ticker_name
         }
         
@@ -509,36 +520,47 @@ def _extract_features_single_ticker(
     
     # Compute targets (EWSD if available)
     # CRITICAL: Avoid lookahead bias by ensuring Feature[t] predicts Return[t+1]
-    # Feature[t] is computed at end of day t using data up to close[t]
-    # Return[t+1] = (close[t+1]/open[t+1] - 1) is the return from open[t+1] to close[t+1]
-    # This ensures no lookahead: Feature[t] uses only data available at end of day t
-    # and predicts the return for the NEXT day (t+1)
+    # Feature[t] is computed at end of day t using data up to close[t].
+    # Execution model: enter at open[t+1], exit at close[t+1] (intraday, no overnight hold).
+    # Return[t→t+1] = log(close[t+1] / open[t+1]) — avoids overnight swap.
+    # The validation path must use the same intraday definition; see
+    # calculate_strategy_returns_from_positions(instrument_return_kind='log_intraday').
     ewsd_col = _find_feature_column(list(features_df.columns), "ewsd")
-    
-    # Compute intraday returns: Return[t] = (close[t]/open[t] - 1)
-    # This is the return DURING day t (from open to close)
+
+    # Intraday log return: Return[t] = log(close[t] / open[t])
     intraday_log_return = _safe_log_return(price_df['close'], price_df['open'])
     intraday_raw_return = (price_df['close'] / price_df['open']) - 1
-    
-    # Shift returns forward by 1 period so Return[t+1] aligns with Feature[t]
-    # After shift: shifted_return[t] = Return[t+1] = (close[t+1]/open[t+1] - 1)
-    # This means Feature[t] (at index t) predicts Return[t+1] (the return for day t+1)
-    shifted_log_return = intraday_log_return.shift(-1)
-    shifted_raw_return = intraday_raw_return.shift(-1)
-    
-    # Apply EWSD normalization if available (use EWSD[t+1] for Return[t+1]).
+
+    # Overnight log return: Return[t] = log(open[t] / close[t-1])
+    # Execution model: enter at close[t], exit at open[t+1]  (pure gap capture).
+    overnight_log_return = _safe_log_return(
+        price_df['open'], price_df['close'].shift(1)
+    )
+
+    # Shift forward so Return[t+1] sits at index t: Feature[t] predicts Return[t+1]
+    shifted_log_return      = intraday_log_return.shift(-1)
+    shifted_raw_return      = intraday_raw_return.shift(-1)
+    shifted_overnight_return = overnight_log_return.shift(-1)
+
+    # Apply EWSD normalization using EWSD[t] (causal: known before Return[t+1] is realised).
+    # Using EWSD[t+1] would introduce lookahead — the EWMA update on day t+1 already
+    # incorporates the crash/spike return, making crisis-day losses appear smaller than
+    # they actually are under production position sizing (which must use EWSD[t]).
     log_return_ewsd = shifted_log_return.copy()
+    overnight_log_return_ewsd = shifted_overnight_return.copy()
     if ewsd_col and ewsd_col in features_df.columns:
         price_df[ewsd_col] = features_df[ewsd_col]
-        ewsd_shifted = price_df[ewsd_col].shift(-1)
-        ewsd_decimal = ewsd_shifted / 100.0
+        ewsd_decimal = price_df[ewsd_col] / 100.0  # EWSD[t]: vol known at bar t
         log_return_ewsd = shifted_log_return / np.maximum(ewsd_decimal, 0.0001)
-    
+        overnight_log_return_ewsd = shifted_overnight_return / np.maximum(ewsd_decimal, 0.0001)
+
     # Create targets DataFrame
     targets_df = pd.DataFrame({
         'raw_return': shifted_raw_return,
         'log_return': shifted_log_return,
-        'log_return_ewsd': log_return_ewsd
+        'log_return_ewsd': log_return_ewsd,
+        'overnight_log_return': shifted_overnight_return,
+        'overnight_log_return_ewsd': overnight_log_return_ewsd,
     }, index=price_df.index)
     
     # Drop last row (no forward return available - return was shifted forward)
@@ -946,7 +968,8 @@ def extract_features_with_forward_returns(
         )
     
     # Validate target_col is available
-    valid_targets = ['raw_return', 'log_return', 'log_return_ewsd']
+    valid_targets = ['raw_return', 'log_return', 'log_return_ewsd',
+                     'overnight_log_return', 'overnight_log_return_ewsd']
     if target_col not in valid_targets:
         raise ValueError(
             f"target_col must be one of {valid_targets}, got '{target_col}'"
@@ -1025,7 +1048,8 @@ def extract_features_with_forward_returns(
         merged = merged.drop(columns=[col for col in merged.columns if col.endswith('_target')])
 
         # Get aligned features (all columns except target columns)
-        target_cols = ['raw_return', 'log_return', 'log_return_ewsd']
+        target_cols = ['raw_return', 'log_return', 'log_return_ewsd',
+                       'overnight_log_return', 'overnight_log_return_ewsd']
         feature_cols = [col for col in merged.columns if col not in target_cols]
         features_df_aligned = merged[feature_cols].copy()
         
@@ -1054,7 +1078,8 @@ def extract_features_with_forward_returns(
             merged = merged.set_index(datetime_col)
         
         # Get aligned features (all columns except target columns)
-        target_cols = ['raw_return', 'log_return', 'log_return_ewsd']
+        target_cols = ['raw_return', 'log_return', 'log_return_ewsd',
+                       'overnight_log_return', 'overnight_log_return_ewsd']
         feature_cols = [col for col in merged.columns if col not in target_cols]
         features_df_aligned = merged[feature_cols].copy()
         
@@ -1102,114 +1127,6 @@ def extract_features_with_forward_returns(
         targets_aligned = targets_aligned.loc[common_index]
     
     return features_df_aligned, targets_aligned
-
-
-def prepare_candles_and_targets_for_basemodel(
-    candles_df: pd.DataFrame,
-    target_col: str = 'log_return'
-) -> Tuple[pd.DataFrame, pd.Series]:
-    """
-    Prepare candles and targets for BaseModel fitting.
-    
-    This helper function:
-    1. Computes forward returns from candles
-    2. Filters candles to only those with forward returns available
-    3. Resets candles index to integer index (as expected by BaseModel.fit)
-    4. Creates target_series with proper datetime index
-    
-    Parameters
-    ----------
-    candles_df : pd.DataFrame
-        DataFrame with candles. Must have columns: datetime, close, ticker
-        Should be sorted by ticker and datetime
-    target_col : str, default='log_return'
-        Target column to extract from computed forward returns
-        
-    Returns
-    -------
-    Tuple[pd.DataFrame, pd.Series]
-        (candles_df_fit, target_series)
-        - candles_df_fit: Filtered candles with integer index (ready for BaseModel.fit)
-        - target_series: Target values as Series with datetime index
-        
-    Examples
-    --------
-    >>> candles_df = helpers.load_data_multi_ticker(
-    ...     tickers=[Ticker.ES, Ticker.NQ],
-    ...     timeframe=TimeFrame.D,
-    ...     start=datetime(2000, 1, 1),
-    ...     end=datetime(2024, 12, 31)
-    ... )
-    >>> 
-    >>> candles_fit, target_series = prepare_candles_and_targets_for_basemodel(candles_df)
-    >>> 
-    >>> # Now ready to fit BaseModel
-    >>> base_model.fit(candles_fit, target_series)
-    """
-    # Compute forward returns
-    targets_df = compute_forward_returns(candles_df)
-    
-    # Filter candles to match targets (only those with forward returns)
-    # Use simple merge approach for reliable alignment
-    candles_for_merge = candles_df.copy()
-    targets_for_merge = targets_df.reset_index()
-    
-    # Merge on datetime (and ticker if present) to get only candles with forward returns
-    if 'ticker' in candles_for_merge.columns and 'ticker' in targets_for_merge.columns:
-        candles_for_merge['ticker'] = _normalize_ticker_series(candles_for_merge['ticker'])
-        targets_for_merge['ticker'] = _normalize_ticker_series(targets_for_merge['ticker'])
-        
-        candles_filtered = pd.merge(
-            candles_for_merge,
-            targets_for_merge[['datetime', 'ticker']],
-            on=['datetime', 'ticker'],
-            how='inner'
-        )
-    else:
-        candles_filtered = pd.merge(
-            candles_for_merge,
-            targets_for_merge[['datetime']],
-            on='datetime',
-            how='inner'
-        )
-    
-    # Reset index to integer index (BaseModel.fit expects this)
-    candles_fit = candles_filtered.reset_index(drop=True)
-    
-    # Create target_series with proper datetime index
-    # Align targets to match filtered candles
-    if 'ticker' in candles_filtered.columns and 'ticker' in targets_df.columns:
-        # Multi-ticker: merge to align
-        candles_for_target_merge = candles_filtered[['datetime', 'ticker']].copy()
-        targets_for_target_merge = targets_df.reset_index()
-        targets_aligned = pd.merge(
-            candles_for_target_merge,
-            targets_for_target_merge,
-            on=['datetime', 'ticker'],
-            how='inner'
-        )
-        target_series = pd.Series(
-            targets_aligned[target_col].values,
-            index=pd.DatetimeIndex(targets_aligned['datetime']),
-            name=target_col
-        )
-    else:
-        # Single ticker: align by datetime
-        candles_for_target_merge = candles_filtered[['datetime']].copy()
-        targets_for_target_merge = targets_df.reset_index()
-        targets_aligned = pd.merge(
-            candles_for_target_merge,
-            targets_for_target_merge,
-            on='datetime',
-            how='inner'
-        )
-        target_series = pd.Series(
-            targets_aligned[target_col].values,
-            index=pd.DatetimeIndex(targets_aligned['datetime']),
-            name=target_col
-        )
-    
-    return candles_fit, target_series
 
 
 def extract_features_for_bias_node(

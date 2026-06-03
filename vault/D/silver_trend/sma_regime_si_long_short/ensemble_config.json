@@ -1,0 +1,10 @@
+{
+  "timeframe": "D",
+  "ensemble_name": "sma_regime_si",
+  "direction": "long_short",
+  "tickers": [
+    "SI"
+  ],
+  "created_at": "2026-06-02T04:15:55.065666+00:00",
+  "updated_at": "2026-06-02T04:15:55.065666+00:00"
+}

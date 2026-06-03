@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import html
@@ -12,10 +13,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from prop_firms.base.statistics import compute_portfolio_statistics
-from prop_firms.base.portfolio_models import (
+from quantfoundry_core.prop_firm import (
     PortfolioBatchStatistics,
     PortfolioSimulationResult,
+    RollingSimulationResult,
+    compute_portfolio_statistics,
 )
 
 
@@ -27,9 +29,12 @@ class PropFirmReportArtifacts:
     report_html_path: Path
     daily_timeline_csv_path: Path | None = None
     monthly_summary_csv_path: Path | None = None
+    monthly_breakdown_csv_path: Path | None = None
     yearly_summary_csv_path: Path | None = None
     account_summaries_csv_path: Path | None = None
     events_csv_path: Path | None = None
+    rolling_pooled_monthly_stats_csv_path: Path | None = None
+    rolling_batch_statistics_json_path: Path | None = None
 
 
 def generate_portfolio_report(
@@ -37,16 +42,14 @@ def generate_portfolio_report(
     output_dir: Path,
     report_stem: str,
     save_csvs: bool = True,
+    *,
+    rolling: RollingSimulationResult | None = None,
 ) -> PropFirmReportArtifacts:
     """Write readable Markdown/HTML reports and optional CSV artifacts."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stats = compute_portfolio_statistics([result])
-    monthly_summary = _summarize_period(
-        timeline=result.daily_timeline,
-        period="M",
-        label="month",
-    )
+    monthly_summary = _monthly_display_frame(result)
     yearly_summary = _summarize_period(
         timeline=result.daily_timeline,
         period="Y",
@@ -60,6 +63,7 @@ def generate_portfolio_report(
             stats=stats,
             monthly_summary=monthly_summary,
             yearly_summary=yearly_summary,
+            rolling=rolling,
         ),
         encoding="utf-8",
     )
@@ -70,6 +74,7 @@ def generate_portfolio_report(
             monthly_summary=monthly_summary,
             yearly_summary=yearly_summary,
             report_stem=report_stem,
+            rolling=rolling,
         ),
         encoding="utf-8",
     )
@@ -82,24 +87,74 @@ def generate_portfolio_report(
 
     daily_timeline_csv_path = output_dir / f"{report_stem}_daily_timeline.csv"
     monthly_summary_csv_path = output_dir / f"{report_stem}_monthly_summary.csv"
+    monthly_breakdown_csv_path = output_dir / f"{report_stem}_monthly_breakdown.csv"
     yearly_summary_csv_path = output_dir / f"{report_stem}_yearly_summary.csv"
     account_summaries_csv_path = output_dir / f"{report_stem}_account_summaries.csv"
     events_csv_path = output_dir / f"{report_stem}_events.csv"
+    rolling_pooled_monthly_stats_csv_path: Path | None = None
+    rolling_batch_statistics_json_path: Path | None = None
 
     result.daily_timeline.to_csv(daily_timeline_csv_path, index=False)
     monthly_summary.to_csv(monthly_summary_csv_path, index=False)
+    breakdown = _monthly_breakdown_frame(result)
+    if not breakdown.empty:
+        breakdown.to_csv(monthly_breakdown_csv_path, index=False)
+    else:
+        monthly_breakdown_csv_path = None
     yearly_summary.to_csv(yearly_summary_csv_path, index=False)
     result.account_summaries.to_csv(account_summaries_csv_path, index=False)
     result.events.to_csv(events_csv_path, index=False)
+
+    if rolling is not None:
+        rolling_pooled_monthly_stats_csv_path = (
+            output_dir / f"{report_stem}_rolling_pooled_monthly_stats.csv"
+        )
+        rolling_batch_statistics_json_path = (
+            output_dir / f"{report_stem}_rolling_batch_statistics.json"
+        )
+        rolling.pooled_monthly_stats.to_csv(
+            rolling_pooled_monthly_stats_csv_path,
+            index=False,
+        )
+        rolling_batch_statistics_json_path.write_text(
+            json.dumps(rolling.batch_statistics.to_record(), indent=2),
+            encoding="utf-8",
+        )
 
     return PropFirmReportArtifacts(
         report_markdown_path=report_markdown_path,
         report_html_path=report_html_path,
         daily_timeline_csv_path=daily_timeline_csv_path,
         monthly_summary_csv_path=monthly_summary_csv_path,
+        monthly_breakdown_csv_path=monthly_breakdown_csv_path,
         yearly_summary_csv_path=yearly_summary_csv_path,
         account_summaries_csv_path=account_summaries_csv_path,
         events_csv_path=events_csv_path,
+        rolling_pooled_monthly_stats_csv_path=rolling_pooled_monthly_stats_csv_path,
+        rolling_batch_statistics_json_path=rolling_batch_statistics_json_path,
+    )
+
+
+def _monthly_breakdown_frame(result: PortfolioSimulationResult) -> pd.DataFrame:
+    """QF Core monthly breakdown when present (legacy local simulators may omit it)."""
+    breakdown = getattr(result, "monthly_breakdown", None)
+    if breakdown is None or breakdown.empty:
+        return pd.DataFrame()
+    return breakdown
+
+
+def _monthly_display_frame(result: PortfolioSimulationResult) -> pd.DataFrame:
+    """Monthly table for charts and report tables (QF Core breakdown preferred)."""
+    breakdown = _monthly_breakdown_frame(result)
+    if not breakdown.empty:
+        frame = breakdown.copy()
+        if "month" in frame.columns:
+            frame["month"] = frame["month"].astype(str)
+        return frame
+    return _summarize_period(
+        timeline=result.daily_timeline,
+        period="M",
+        label="month",
     )
 
 
@@ -130,11 +185,147 @@ def _summarize_period(
     return summary.drop(columns="_period")
 
 
+_STEADY_STATE_OFFSET_MIN = 6
+_STEADY_STATE_OFFSET_MAX = 11
+
+
+def _rolling_markdown_lines(rolling: RollingSimulationResult | None) -> list[str]:
+    if rolling is None:
+        return []
+    batch = rolling.batch_statistics
+    steady = _rolling_steady_state_slice(rolling.pooled_monthly_stats)
+    lines = [
+        "",
+        "## Rolling Window EV",
+        f"- Window length: `{rolling.window_months}` months",
+        f"- Rolling windows simulated: `{batch.n_runs}`",
+        f"- Expected net cashflow: `${batch.expected_net_cashflow:,.2f}`",
+        f"- Expected trader payouts: `${batch.expected_total_trader_payouts:,.2f}`",
+        f"- Probability negative net cashflow: `{batch.probability_negative_net_cashflow:.2%}`",
+        "",
+        "## Steady-State Monthly EV (offsets 6–11)",
+        _format_table(steady) if not steady.empty else "- Insufficient pooled monthly data",
+        "",
+    ]
+    return lines
+
+
+def _rolling_steady_state_slice(pooled: pd.DataFrame) -> pd.DataFrame:
+    if pooled.empty or "month_offset" not in pooled.columns:
+        return pd.DataFrame()
+    mask = pooled["month_offset"].between(_STEADY_STATE_OFFSET_MIN, _STEADY_STATE_OFFSET_MAX)
+    cols = [
+        "month_offset",
+        "net_cashflow_mean",
+        "net_cashflow_p25",
+        "net_cashflow_p75",
+        "trader_payouts_mean",
+        "challenge_costs_mean",
+    ]
+    present = [col for col in cols if col in pooled.columns]
+    return pooled.loc[mask, present].reset_index(drop=True)
+
+
+def _build_rolling_html_section(rolling: RollingSimulationResult | None) -> str:
+    if rolling is None:
+        return ""
+    batch = rolling.batch_statistics
+    steady = _rolling_steady_state_slice(rolling.pooled_monthly_stats)
+    chart_b64 = _build_rolling_net_cashflow_chart(rolling.pooled_monthly_stats)
+    chart_block = (
+        (
+            "<div class=\"chart-card\">"
+            "<h3>Rolling Net Cashflow by Month Offset</h3>"
+            f"<img class=\"chart\" src=\"data:image/png;base64,{chart_b64}\" "
+            "alt=\"Rolling net cashflow mean and IQR\" />"
+            "</div>"
+        )
+        if chart_b64
+        else ""
+    )
+    return "\n".join(
+        [
+            "<section>",
+            "<h2>Rolling Window EV</h2>",
+            "<div class=\"card-grid compact\">",
+            _metric_card("Rolling windows", str(batch.n_runs)),
+            _metric_card(
+                "Expected net cashflow",
+                _format_currency(batch.expected_net_cashflow),
+            ),
+            _metric_card(
+                "Expected trader payouts",
+                _format_currency(batch.expected_total_trader_payouts),
+            ),
+            _metric_card(
+                "P(negative cashflow)",
+                f"{batch.probability_negative_net_cashflow:.2%}",
+            ),
+            "</div>",
+            "</section>",
+            "<section>",
+            "<h2>Steady-State Monthly EV (offsets 6–11)</h2>",
+            _render_html_table(steady),
+            "</section>",
+            "<section>",
+            "<h2>Rolling Charts</h2>",
+            f"<div class=\"chart-grid\">{chart_block}</div>",
+            "</section>",
+        ]
+    )
+
+
+def _build_rolling_net_cashflow_chart(pooled: pd.DataFrame) -> str:
+    if pooled.empty or "month_offset" not in pooled.columns:
+        return ""
+    required = ("net_cashflow_mean", "net_cashflow_p25", "net_cashflow_p75")
+    if not all(col in pooled.columns for col in required):
+        return ""
+    frame = pooled.sort_values("month_offset", kind="stable")
+    fig, ax = plt.subplots(figsize=(7.0, 3.8), facecolor="#0f172a")
+    ax.set_facecolor("#0f172a")
+    x = frame["month_offset"]
+    ax.fill_between(
+        x,
+        frame["net_cashflow_p25"],
+        frame["net_cashflow_p75"],
+        color="#60a5fa",
+        alpha=0.25,
+        label="P25–P75",
+    )
+    ax.plot(
+        x,
+        frame["net_cashflow_mean"],
+        color="#60a5fa",
+        linewidth=2.0,
+        label="Mean",
+    )
+    ax.axhline(0.0, color="#94a3b8", linewidth=0.8, linestyle="--")
+    ax.set_title(
+        "Rolling Net Cashflow by Month Offset",
+        color="#e2e8f0",
+        fontsize=12,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Month offset in window", color="#cbd5e1", fontsize=9)
+    ax.tick_params(colors="#cbd5e1", labelsize=9)
+    ax.grid(alpha=0.18, linestyle="--", color="#94a3b8")
+    for spine in ax.spines.values():
+        spine.set_color("#334155")
+    legend = ax.legend(frameon=False, fontsize=9)
+    for text in legend.get_texts():
+        text.set_color("#cbd5e1")
+    fig.tight_layout()
+    return _figure_to_base64(fig)
+
+
 def _build_markdown_report(
     result: PortfolioSimulationResult,
     stats: PortfolioBatchStatistics,
     monthly_summary: pd.DataFrame,
     yearly_summary: pd.DataFrame,
+    *,
+    rolling: RollingSimulationResult | None = None,
 ) -> str:
     summary = result.summary
     simulation_cfg = result.account_definition.account_code
@@ -194,12 +385,22 @@ def _build_markdown_report(
             "## Monthly Cashflow (Last 12 Periods)",
             monthly_table,
             "",
+            *_rolling_markdown_lines(rolling),
             "## Output Tables",
             "- Daily timeline CSV",
             "- Monthly summary CSV",
+            "- Monthly breakdown CSV (QF Core)",
             "- Yearly summary CSV",
             "- Account summaries CSV",
             "- Events CSV",
+            *(
+                [
+                    "- Rolling pooled monthly stats CSV",
+                    "- Rolling batch statistics JSON",
+                ]
+                if rolling is not None
+                else []
+            ),
             "",
         ]
     )
@@ -211,6 +412,8 @@ def _build_html_report(
     monthly_summary: pd.DataFrame,
     yearly_summary: pd.DataFrame,
     report_stem: str,
+    *,
+    rolling: RollingSimulationResult | None = None,
 ) -> str:
     summary = result.summary
     provider_label = _provider_report_label(result)
@@ -235,11 +438,13 @@ def _build_html_report(
         .tail(25)
         .reset_index(drop=True)
     )
-    csv_links = _build_csv_links(report_stem=report_stem)
+    csv_links = _build_csv_links(report_stem=report_stem, rolling=rolling is not None)
     chart_cards = _build_chart_cards(
         timeline=result.daily_timeline,
         monthly_summary=monthly_summary,
+        rolling=rolling,
     )
+    rolling_html = _build_rolling_html_section(rolling)
 
     return "\n".join(
         [
@@ -333,6 +538,7 @@ def _build_html_report(
             "<h2>Monthly Cashflow (Last 12 Periods)</h2>",
             _render_html_table(monthly_summary.tail(12).reset_index(drop=True)),
             "</section>",
+            rolling_html,
             "<section class=\"two-col\">",
             "<div>",
             "<h2>Recent Event Log</h2>",
@@ -489,14 +695,23 @@ def _format_date_range(timeline: pd.DataFrame) -> str:
     return f"{trading_days.min().date()} -> {trading_days.max().date()}"
 
 
-def _build_csv_links(report_stem: str) -> str:
-    filenames = (
+def _build_csv_links(report_stem: str, *, rolling: bool = False) -> str:
+    filenames = [
         f"{report_stem}_daily_timeline.csv",
         f"{report_stem}_monthly_summary.csv",
+        f"{report_stem}_monthly_breakdown.csv",
         f"{report_stem}_yearly_summary.csv",
         f"{report_stem}_account_summaries.csv",
         f"{report_stem}_events.csv",
-    )
+    ]
+    if rolling:
+        filenames.extend(
+            [
+                f"{report_stem}_rolling_pooled_monthly_stats.csv",
+                f"{report_stem}_rolling_batch_statistics.json",
+            ]
+        )
+    filenames = tuple(filenames)
     return "\n".join(
         f"<li><a href=\"{html.escape(filename)}\">{html.escape(filename)}</a></li>"
         for filename in filenames
@@ -506,8 +721,10 @@ def _build_csv_links(report_stem: str) -> str:
 def _build_chart_cards(
     timeline: pd.DataFrame,
     monthly_summary: pd.DataFrame,
+    *,
+    rolling: RollingSimulationResult | None = None,
 ) -> str:
-    chart_specs = (
+    chart_specs: list[tuple[str, str]] = [
         (
             "Cumulative Net Cashflow",
             _build_cumulative_cashflow_chart(timeline),
@@ -520,7 +737,7 @@ def _build_chart_cards(
             "Payouts vs Costs",
             _build_payout_cost_chart(monthly_summary),
         ),
-    )
+    ]
     return "".join(
         (
             "<div class=\"chart-card\">"

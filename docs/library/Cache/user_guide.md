@@ -345,11 +345,15 @@ What the runner now does before fitting the portfolio:
 
 This means you do not need a separate manual bootstrap step before a normal portfolio test run.
 
-### Portfolio inclusion gates (candidate strategy)
+### Portfolio addition gate (candidate strategy)
 
-After robustness work on a new vault ensemble, use the **inclusion** research phase: per-peer validation forecast correlation, standalone metrics (Sharpe/Sortino/Calmar) for the candidate and each baseline ensemble, portfolio uplift on train / validation / train+validation, and an **optional test-window** check. Thresholds and CSV output live on `ResearchConfig.portfolio_inclusion`; baseline portfolio comes from `portfolio_research.config.load_config()`. CLI: `python -m feature_research.run_inclusion_gates` (default candidate is `eval_bias_spec` from research config; use ``--candidate-mode vault_path`` and a path for an on-disk ensemble).
+After a strategy clears exploration and validation, use the **portfolio addition** phase to decide whether it should enter the portfolio at all. In current local code, some configs and commands still use the older term `inclusion`, but the target workflow is `exploration -> validation -> portfolio_addition`.
 
-Full specification: [[Ensemble/portfolio]] (section **Portfolio research — inclusion gates**).
+Local compatibility tooling still computes the familiar checks: per-peer validation forecast correlation, standalone metrics (Sharpe/Sortino/Calmar) for the candidate and each baseline ensemble, portfolio uplift on train / validation / train+validation, and an optional test-window check. Thresholds and CSV output currently live on `ResearchConfig.portfolio_inclusion`; baseline portfolio comes from `portfolio_research.config.load_config()`. Compatibility CLI: `python -m feature_research.run_inclusion_gates` (default candidate is `eval_bias_spec` from research config; use ``--candidate-mode vault_path`` and a path for an on-disk ensemble).
+
+Canonical workflow reference: `docs/SaaS/robustness_tests/portfolio_addition.md`.
+
+Implementation detail reference: [[Ensemble/portfolio]] (section **Portfolio research — portfolio addition gate**).
 
 ### Manual portfolio preflight
 
@@ -520,15 +524,28 @@ This is enough for most cases because the runner now performs the cache prefligh
 
 ### Feature research after new data
 
-`feature_research` uses the same central-cache lifecycle. Each pipeline calls `populate_cache_if_needed` up front (bootstrap candles, refresh missing/stale bias artifacts and EWSD), then loads features with cache-backed reads. `ResearchConfig` does not expose `use_cache` / `populate_cache` toggles—that behavior is fixed.
+`feature_research` uses the same central-cache lifecycle. Each pipeline calls `populate_cache_if_needed` up front (bootstrap candles, refresh missing/stale bias artifacts and EWSD), then loads features with cache-backed reads. Cache population uses the **full common OHLC span** available for required tickers—not `ResearchConfig.start` / `end`—so indicators warm up once at data inception; analysis phases slice to train/validation windows only when loading features. `ResearchConfig` does not expose `use_cache` / `populate_cache` toggles—that behavior is fixed.
 
-Typical sequence:
+The documentation target is now a three-phase package structure:
+
+1. `exploration`
+2. `validation`
+3. `portfolio_addition`
+
+The codebase is still in a compatibility-preserving migration, so the practical entrypoints you see today may still use older names.
+
+Typical sequence during migration:
 
 ```bash
 python feature_research/in_sample/run_is.py
 python feature_research/validation/run_validation.py
-python feature_research/oos/run_oos.py
 ```
+
+Interpret these as:
+
+- `in_sample/run_is.py` -> current exploration-era entrypoint
+- `validation/run_validation.py` -> validation phase entrypoint
+- portfolio-addition scaffolding is migrating separately; use the portfolio-addition docs above for the conceptual next step
 
 You usually do not need a separate manual cache step here either, provided the central cache is already bootstrapped and updated.
 

@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 
 from feature_selection.validation.reports import (
@@ -18,17 +21,21 @@ from feature_selection.validation.reports import (
     WalkforwardStabilityReport,
 )
 
-_MINIMAL_PNG = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00"
-    b"\x00\x04\x00\x01\xf6\x178U\x00\x00\x00\x00IEND\xaeB`\x82"
-)
 
-
-def _write_placeholder_png(path: Path, metadata: dict[str, Any]) -> Path:
+def _save_figure(fig: plt.Figure, path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_MINIMAL_PNG + json.dumps(metadata, sort_keys=True).encode("utf-8"))
+    fig.savefig(path, dpi=140, bbox_inches="tight")
+    plt.close(fig)
     return path
+
+
+def _styled_axes(title: str) -> tuple[plt.Figure, plt.Axes]:
+    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    fig.patch.set_facecolor("#ffffff")
+    ax.set_facecolor("#fbfbfc")
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.grid(alpha=0.2, linestyle="--")
+    return fig, ax
 
 
 def _jsonable(value: Any) -> Any:
@@ -48,44 +55,156 @@ def _jsonable(value: Any) -> Any:
 
 
 def plot_null_distribution(report: VectorShuffleReport, output_path: Path) -> Path:
-    return _write_placeholder_png(
-        output_path,
-        {
-            "kind": "null_distribution",
-            "param_combo": report.param_combo,
-            "p_value": report.p_value,
-            "critical_value": report.critical_value,
-        },
+    fig, ax = _styled_axes(f"Null Distribution: {report.param_combo}")
+    null_values = np.asarray(report.null_distribution, dtype=float)
+    n_bins = max(10, min(30, int(np.sqrt(max(len(null_values), 1))) * 2))
+    ax.hist(
+        null_values,
+        bins=n_bins,
+        color="#93c5fd",
+        edgecolor="#1d4ed8",
+        alpha=0.85,
     )
+    ax.axvline(
+        report.critical_value,
+        color="#d97706",
+        linestyle="--",
+        linewidth=2,
+        label=f"critical={report.critical_value:.3f}",
+    )
+    ax.axvline(
+        report.original_metric,
+        color="#15803d",
+        linewidth=2,
+        label=f"observed={report.original_metric:.3f}",
+    )
+    ax.set_xlabel("Metric value")
+    ax.set_ylabel("Frequency")
+    verdict = "PASS" if report.passed else "FAIL"
+    ax.text(
+        0.98,
+        0.95,
+        f"{verdict}\np={report.p_value:.3f}\nalpha={report.alpha:.2f}",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=9,
+        bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#d1d5db"},
+    )
+    ax.legend(loc="upper left")
+    return _save_figure(fig, output_path)
 
 
 def plot_walkforward_stability(
     report: WalkforwardStabilityReport,
     output_path: Path,
 ) -> Path:
-    return _write_placeholder_png(
-        output_path,
-        {
-            "kind": "walkforward_stability",
-            "feature_name": report.feature_name,
-            "is_stable": report.is_stable,
-            "folds": len(report.fold_results),
-        },
+    fig, axes = plt.subplots(ncols=2, figsize=(11, 4.5))
+    fig.patch.set_facecolor("#ffffff")
+
+    param_counts = (
+        np.array([param for fold in report.fold_results for param in fold.top_k_params], dtype=object)
+        if report.fold_results
+        else np.array([], dtype=object)
     )
+    if param_counts.size > 0:
+        params, counts = np.unique(param_counts, return_counts=True)
+        order = np.argsort(counts)
+        axes[0].barh(
+            params[order],
+            counts[order],
+            color="#60a5fa",
+            edgecolor="#1d4ed8",
+        )
+        axes[0].set_xlabel("Selections across folds")
+    else:
+        axes[0].text(0.5, 0.5, "No fold selections", ha="center", va="center")
+        axes[0].set_xticks([])
+        axes[0].set_yticks([])
+    axes[0].set_title("Top-K Selection Frequency", fontsize=11, fontweight="bold")
+    axes[0].set_facecolor("#fbfbfc")
+    axes[0].grid(alpha=0.2, linestyle="--", axis="x")
+
+    fold_labels = [str(fold.fold_id) for fold in report.fold_results]
+    pass_share = [
+        (
+            float(sum(fold.passed_permutation_overlay)) / len(fold.passed_permutation_overlay)
+            if fold.passed_permutation_overlay
+            else 0.0
+        )
+        for fold in report.fold_results
+    ]
+    overlap_rate = float(report.consistency_metrics.get("overlap_rate", 0.0))
+    axes[1].bar(
+        fold_labels,
+        pass_share,
+        color="#34d399",
+        edgecolor="#047857",
+        label="Permutation pass share",
+    )
+    axes[1].axhline(
+        overlap_rate,
+        color="#dc2626",
+        linestyle="--",
+        linewidth=2,
+        label=f"overlap_rate={overlap_rate:.2f}",
+    )
+    axes[1].set_ylim(0.0, 1.05)
+    axes[1].set_ylabel("Share / overlap")
+    axes[1].set_title(
+        f"Walkforward Verdict: {report.stability_verdict}",
+        fontsize=11,
+        fontweight="bold",
+    )
+    axes[1].set_facecolor("#fbfbfc")
+    axes[1].grid(alpha=0.2, linestyle="--", axis="y")
+    axes[1].legend(loc="lower right")
+
+    fig.tight_layout()
+    return _save_figure(fig, output_path)
 
 
 def plot_funnel_diagram(stats: FunnelStatistics, output_path: Path) -> Path:
-    return _write_placeholder_png(
-        output_path,
-        {
-            "kind": "funnel",
-            "total_params": stats.total_params,
-            "stage1_pass": stats.stage1_pass,
-            "stage2_pass": stats.stage2_pass,
-            "stable_params": stats.stable_params,
-            "ensemble_candidates": stats.ensemble_candidates,
-        },
+    fig, ax = _styled_axes("Permutation Funnel")
+    stages = [
+        "Total",
+        "Stage 1",
+        "Stage 2",
+        "Stable",
+        "Candidates",
+    ]
+    values = [
+        stats.total_params,
+        stats.stage1_pass,
+        stats.stage2_pass,
+        stats.stable_params,
+        stats.ensemble_candidates,
+    ]
+    colors = ["#94a3b8", "#60a5fa", "#22c55e", "#f59e0b", "#a855f7"]
+    bars = ax.bar(stages, values, color=colors, edgecolor="#334155")
+    ax.set_ylabel("Count")
+    ax.text(
+        0.98,
+        0.95,
+        f"Savings={stats.computational_savings_pct:.1f}%",
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=9,
+        bbox={"boxstyle": "round,pad=0.35", "facecolor": "white", "edgecolor": "#d1d5db"},
     )
+    _ = [
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            float(value) + 0.05,
+            str(value),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+        for bar, value in zip(bars, values, strict=False)
+    ]
+    return _save_figure(fig, output_path)
 
 
 def _write_json(path: Path, payload: Any) -> Path:
@@ -144,14 +263,14 @@ def _build_markdown(suite: PermutationTestSuite) -> str:
             *ensemble_lines,
             "",
             "## Interpretation Guidance",
-            "- Review JSON and CSV artifacts for Power BI or external analysis.",
-            "- Treat null-distribution image files as compatibility placeholders only.",
+            "- Review JSON and CSV artifacts together with the generated Matplotlib PNGs.",
+            "- Use CSV exports as the canonical inputs for any custom Matplotlib views.",
             "",
             "## Red Flags",
             *(f"- {flag}" for flag in red_flags),
             "",
             "## Next Steps",
-            "- Use Power BI or downstream tabular tooling for research visualizations.",
+            "- Use the exported CSVs as inputs to the repo's Matplotlib visualization flow.",
             "- Keep QuantStats tearsheets and approved HTML report flows in Python.",
         ]
     )

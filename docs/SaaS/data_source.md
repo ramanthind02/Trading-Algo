@@ -114,8 +114,6 @@ Conflicts (for example close deviation above threshold) must be logged and alert
 
 SaaS mirrors this repository implementation:
 
-- policy config: `deployment/config/canonical_source_priority.json`
-- policy loader: `utils/data/source_reconciliation.py`
 - architecture reference: `docs/library/Data/canonical_data_architecture.md`
 - Norgate rebuild flow: `docs/library/Data/NORGATE_MIGRATION.md`
 - IB splice reconciliation: `utils/cache/runtime/ib_candle_ratio_align.py`

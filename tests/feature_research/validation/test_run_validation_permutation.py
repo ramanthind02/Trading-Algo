@@ -9,17 +9,17 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from feature_research.config import OOSWindowConfig
+from feature_research.config import ResearchWindowConfig
 from feature_research.validation.run_validation_permutation import main
 
 
-def test_validation_permutation_main_returns_1_when_validation_window_none() -> None:
+def test_validation_permutation_main_returns_1_when_research_window_none() -> None:
     with (
         patch("sys.argv", ["run_validation_permutation.py"]),
         patch("feature_research.config.load_config") as m_load,
     ):
         config = m_load.return_value
-        config.validation_window = None
+        config.research_window = None
         exit_code = main()
     assert exit_code == 1
 
@@ -37,11 +37,11 @@ def test_validation_permutation_produces_report_and_null_distribution(tmp_path: 
             {"signal": pd.Series(0.1, index=index), "target": reference_target}
         ),
     }
-    validation = OOSWindowConfig(
+    research_window = ResearchWindowConfig(
         train_start=datetime(2020, 1, 1),
         train_end=datetime(2021, 12, 31),
-        test_start=datetime(2022, 1, 1),
-        test_end=datetime(2022, 12, 31),
+        val_start=datetime(2022, 1, 1),
+        val_end=datetime(2022, 12, 31),
     )
 
     def fake_load_research_data(cfg: object) -> tuple:
@@ -77,8 +77,8 @@ def test_validation_permutation_produces_report_and_null_distribution(tmp_path: 
         ),
     ):
         base_config = load_config()
-        config_with_validation = replace(base_config, validation_window=validation)
-        m_load.return_value = config_with_validation
+        config_with_window = replace(base_config, research_window=research_window)
+        m_load.return_value = config_with_window
         with patch(
             "utils.evaluation.walkforward.io.resolve_walkforward_output_dir",
             return_value=tmp_path / "continuous" / "rsi" / "validation",

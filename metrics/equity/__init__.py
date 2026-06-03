@@ -9,12 +9,11 @@ Date: 2025-01-XX
 """
 
 from metrics.equity.cumulative import cumulative_returns, equity_curve
-from metrics.equity.tracking import equity_peak, equity_tracking
+from metrics.equity.tracking import equity_peak
 
 __all__ = [
-    'cumulative_returns',
-    'equity_curve',
-    'equity_peak',
-    'equity_tracking',
+    "cumulative_returns",
+    "equity_curve",
+    "equity_peak",
 ]
 

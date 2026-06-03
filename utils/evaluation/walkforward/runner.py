@@ -14,9 +14,11 @@ import pandas as pd
 
 from ensemble.weight_layer import WeightLayerConfig
 from feature_research.config import BinningAnalysisConfig, FeatureType
-from feature_research.core_helpers import normalize_timeframe_from_bias_spec
+from feature_research._internal.core_helpers import normalize_timeframe_from_bias_spec
+from feature_selection.validation.objective_metrics import (
+    resolve_objective_metric_name as resolve_objective_metric,
+)
 from utils.evaluation.walkforward.config import WalkforwardResearchConfig
-from utils.evaluation.walkforward.metrics import resolve_objective_metric
 from utils.evaluation.walkforward.selected_params_codec import (
     decode_selected_params_list,
     serialize_selected_params,
@@ -196,6 +198,10 @@ def run_portfolio_simulation(
             _tv = 0.0
         tearsheet_vol_target = _tv if _tv > 0.0 else None
 
+    from feature_research.research_table_exports import return_kind_for_target
+    _target_col = getattr(typed_research_config, "target_col", "log_return_ewsd")
+    _instrument_return_kind = return_kind_for_target(_target_col)
+
     rows: list[dict[str, object]] = []
     signal_rows: list[dict[str, object]] = []
     collected_oos_returns: list[pd.Series] = []
@@ -292,12 +298,14 @@ def run_portfolio_simulation(
                 binning_config=binning_config,
                 tickers=typed_research_config.tickers,
                 trading_timeframe=trading_timeframe,
+                target_volatility=tearsheet_vol_target or 0.15,
                 module_name=str(bias_spec_pf.get("module_name", "rsi")),
                 objective_metric_name=objective_metric_name,
                 weight_layer_config=weight_layer_config,
                 member_prediction_mode=member_prediction_mode,
                 feature_data_by_combo=feature_data_by_combo,
                 feature_type=feature_type,
+                instrument_return_kind=_instrument_return_kind,
             )
 
             rows.append(
@@ -343,43 +351,71 @@ def run_portfolio_simulation(
                             binning_config=binning_config,
                             tickers=typed_research_config.tickers,
                             trading_timeframe=trading_timeframe,
+                            target_volatility=tearsheet_vol_target or 0.15,
                             module_name=str(bias_spec_pf.get("module_name", "rsi")),
                             objective_metric_name=objective_metric_name,
                             weight_layer_config=weight_layer_config,
                             member_prediction_mode=member_prediction_mode,
                             feature_data_by_combo=feature_data_by_combo,
                             feature_type=feature_type,
+                            instrument_return_kind=_instrument_return_kind,
                         )
                         train_file = (
                             fold_tearsheet_dir / "train_ensemble_tearsheet.html"
                             if single_fold
                             else fold_tearsheet_dir / f"fold_{fold_id}_train_ensemble_tearsheet.html"
                         )
-                        generate_tearsheet(
-                            strategy_returns=train_result.oos_portfolio_returns,
-                            baseline_returns=train_baseline,
-                            feature_name="Train Ensemble" if single_fold else f"Fold {fold_id} Ensemble (train)",
-                            output_file=str(train_file),
-                            mode="html",
-                            timeframe=tearsheet_timeframe,
-                            target_annual_volatility=tearsheet_vol_target,
+                        from utils.evaluation.walkforward.tearsheet_returns import (
+                            WF_CANDIDATE_TRAIN_RETURNS_CSV,
+                            write_wf_tearsheet_returns_csv,
                         )
+
+                        train_strategy = train_result.oos_portfolio_returns
+                        if single_fold and tearsheets_dir is not None:
+                            write_wf_tearsheet_returns_csv(
+                                strategy_returns=train_strategy,
+                                baseline_returns=train_baseline,
+                                output_path=tearsheets_dir / WF_CANDIDATE_TRAIN_RETURNS_CSV,
+                            )
+                        elif not single_fold:
+                            generate_tearsheet(
+                                strategy_returns=train_strategy,
+                                baseline_returns=train_baseline,
+                                feature_name=f"Candidate strategy — fold {fold_id} train",
+                                output_file=str(train_file),
+                                mode="html",
+                                timeframe=tearsheet_timeframe,
+                                target_annual_volatility=tearsheet_vol_target,
+                            )
                     fold_baseline = calculate_baseline_returns(test_candles)
                     validation_file = (
                         fold_tearsheet_dir / "validation_ensemble_tearsheet.html"
                         if single_fold
                         else fold_tearsheet_dir / f"fold_{fold_id}_ensemble_tearsheet.html"
                     )
-                    generate_tearsheet(
-                        strategy_returns=result.oos_portfolio_returns,
-                        baseline_returns=fold_baseline,
-                        feature_name="Validation Ensemble" if single_fold else f"Fold {fold_id} Ensemble",
-                        output_file=str(validation_file),
-                        mode="html",
-                        timeframe=tearsheet_timeframe,
-                        target_annual_volatility=tearsheet_vol_target,
-                    )
-                    if train_result is not None:
+                    val_strategy = result.oos_portfolio_returns
+                    if single_fold and tearsheets_dir is not None:
+                        from utils.evaluation.walkforward.tearsheet_returns import (
+                            WF_CANDIDATE_VALIDATION_RETURNS_CSV,
+                            write_wf_tearsheet_returns_csv,
+                        )
+
+                        write_wf_tearsheet_returns_csv(
+                            strategy_returns=val_strategy,
+                            baseline_returns=fold_baseline,
+                            output_path=tearsheets_dir / WF_CANDIDATE_VALIDATION_RETURNS_CSV,
+                        )
+                    elif not single_fold:
+                        generate_tearsheet(
+                            strategy_returns=val_strategy,
+                            baseline_returns=fold_baseline,
+                            feature_name=f"Candidate strategy — fold {fold_id} validation",
+                            output_file=str(validation_file),
+                            mode="html",
+                            timeframe=tearsheet_timeframe,
+                            target_annual_volatility=tearsheet_vol_target,
+                        )
+                    if train_result is not None and not single_fold:
                         full_candles = pd.concat([train_candles, test_candles], axis=0)
                         combined_returns = pd.concat(
                             [train_result.oos_portfolio_returns, result.oos_portfolio_returns],
@@ -392,14 +428,13 @@ def run_portfolio_simulation(
                             combined_baseline.index, fill_value=0.0
                         )
                         combined_file = (
-                            fold_tearsheet_dir / "train_and_validation_ensemble_tearsheet.html"
-                            if single_fold
-                            else fold_tearsheet_dir / f"fold_{fold_id}_train_and_validation_ensemble_tearsheet.html"
+                            fold_tearsheet_dir
+                            / f"fold_{fold_id}_train_and_validation_ensemble_tearsheet.html"
                         )
                         generate_tearsheet(
                             strategy_returns=strategy_for_combined,
                             baseline_returns=combined_baseline,
-                            feature_name="Train + Validation Ensemble",
+                            feature_name=f"Candidate strategy — fold {fold_id} train+validation",
                             output_file=str(combined_file),
                             mode="html",
                             timeframe=tearsheet_timeframe,

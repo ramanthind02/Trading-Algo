@@ -1,11 +1,4 @@
-"""
-QuantStats Tearsheet Generation for Walk-Forward Analysis
-
-Simple wrapper to generate QuantStats tearsheets from walk-forward results.
-
-Author: Trading Research Team
-Date: 2025-10-24
-"""
+"""Tearsheet helpers plus QuantFoundry-core performance report adapters."""
 
 from __future__ import annotations
 
@@ -16,6 +9,12 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+from quantfoundry_core.metrics import (
+    AlignedMetricsReport,
+    ReportMode,
+    ReturnsCompounding,
+    compute_aligned_performance_metrics,
+)
 
 from utils.cache.runtime.cache_paths import win32_extended_path
 from utils.core.enums import TimeFrame
@@ -37,13 +36,95 @@ def _resample_to_daily_if_needed(returns: pd.Series, tf: TimeFrame) -> pd.Series
 
 
 def _normalize_returns_series(returns: pd.Series, timeframe: TimeFrame) -> pd.Series:
-    """Normalize a returns series for QuantStats consumption."""
+    """Normalize a returns series for reporting consumption."""
     normalized = returns.copy()
     if hasattr(normalized.index, "tz") and normalized.index.tz is not None:
         normalized.index = normalized.index.tz_localize(None)
     normalized = _resample_to_daily_if_needed(normalized, timeframe)
     normalized = normalized.dropna().sort_index()
     return normalized
+
+
+def _resolve_target_annual_volatility(target_annual_volatility: float | None) -> float | None:
+    if target_annual_volatility is None:
+        return None
+    try:
+        candidate = float(target_annual_volatility)
+    except (TypeError, ValueError):
+        return None
+    return candidate if candidate > 0.0 else None
+
+
+def _prepare_report_series(
+    strategy_returns: pd.Series,
+    baseline_returns: pd.Series | None,
+    *,
+    feature_name: str,
+    timeframe: TimeFrame,
+    target_annual_volatility: float | None,
+    benchmark_title: str = "Baseline (Always-In)",
+) -> tuple[pd.Series, pd.Series | None, float | None]:
+    if not isinstance(strategy_returns, pd.Series):
+        raise TypeError("strategy_returns must be a pandas Series of daily returns")
+    if not isinstance(strategy_returns.index, pd.DatetimeIndex):
+        raise TypeError("strategy_returns must have a DatetimeIndex")
+
+    normalized_strategy = _normalize_returns_series(strategy_returns, timeframe)
+    if normalized_strategy.empty:
+        warnings.warn(
+            f"Skipping tearsheet for '{feature_name}' because strategy_returns is empty."
+        )
+        return normalized_strategy, None, None
+
+    resolved_vol_target = _resolve_target_annual_volatility(target_annual_volatility)
+    if resolved_vol_target is not None:
+        normalized_strategy = vol_scale_returns_to_target_annualized_volatility(
+            normalized_strategy,
+            target_annual_volatility=resolved_vol_target,
+            bars_per_year=timeframe.bars_per_year,
+        )
+    normalized_strategy.name = feature_name
+
+    benchmark = None
+    if baseline_returns is not None:
+        if not isinstance(baseline_returns, pd.Series):
+            raise TypeError("baseline_returns must be a pandas Series of daily returns")
+        normalized_baseline = _normalize_returns_series(baseline_returns, timeframe)
+        if not normalized_baseline.empty:
+            benchmark = normalized_baseline.rename(benchmark_title)
+
+    return normalized_strategy, benchmark, resolved_vol_target
+
+
+def compute_performance_report(
+    strategy_returns: pd.Series,
+    baseline_returns: pd.Series | None = None,
+    *,
+    feature_name: str = "Strategy",
+    timeframe: TimeFrame = TimeFrame.D,
+    report_mode: ReportMode = ReportMode.FULL,
+    target_annual_volatility: float | None = None,
+) -> AlignedMetricsReport | None:
+    """Compute a QuantFoundry-core performance table for a strategy/baseline pair."""
+    normalized_strategy, benchmark, _resolved_vol_target = _prepare_report_series(
+        strategy_returns,
+        baseline_returns,
+        feature_name=feature_name,
+        timeframe=timeframe,
+        target_annual_volatility=target_annual_volatility,
+    )
+    if normalized_strategy.empty:
+        return None
+    return compute_aligned_performance_metrics(
+        normalized_strategy,
+        benchmark_returns=benchmark,
+        mode=report_mode,
+        compounding=ReturnsCompounding.SIMPLE,
+        periods_per_year=timeframe.bars_per_year,
+        match_dates=False,
+        strategy_title=feature_name,
+        benchmark_title="Baseline (Always-In)",
+    )
 
 
 def vol_scale_returns_to_target_annualized_volatility(
@@ -102,6 +183,7 @@ def generate_tearsheet(
     mode: str = "full",
     timeframe: TimeFrame = TimeFrame.D,
     target_annual_volatility: float | None = None,
+    benchmark_title: str = "Baseline (Always-In)",
 ):
     """
     Generate QuantStats tearsheet for walk-forward analysis results.
@@ -159,53 +241,34 @@ def generate_tearsheet(
     ...     mode='html'
     ... )
     """
+    normalized_strategy, benchmark, resolved_vol_target = _prepare_report_series(
+        strategy_returns,
+        baseline_returns,
+        feature_name=feature_name,
+        timeframe=timeframe,
+        target_annual_volatility=target_annual_volatility,
+        benchmark_title=benchmark_title,
+    )
+    if normalized_strategy.empty:
+        return
+
+    if mode == "metrics":
+        report = compute_performance_report(
+            strategy_returns=normalized_strategy,
+            baseline_returns=benchmark,
+            feature_name=feature_name,
+            timeframe=timeframe,
+            report_mode=ReportMode.FULL,
+        )
+        if report is not None:
+            print(report.to_dataframe())
+        return
+
     if not HAS_QUANTSTATS:
         raise ImportError(
             "QuantStats is required for tearsheet generation. "
             "Install with: pip install quantstats"
         )
-
-    # Validate inputs - must be daily returns series
-    if not isinstance(strategy_returns, pd.Series):
-        raise TypeError("strategy_returns must be a pandas Series of daily returns")
-    
-    if not isinstance(strategy_returns.index, pd.DatetimeIndex):
-        raise TypeError("strategy_returns must have a DatetimeIndex")
-    
-    strategy_returns = _normalize_returns_series(strategy_returns, timeframe)
-    if strategy_returns.empty:
-        warnings.warn(
-            f"Skipping tearsheet for '{feature_name}' because strategy_returns is empty."
-        )
-        return
-
-    resolved_vol_target: float | None = None
-    if target_annual_volatility is not None:
-        try:
-            _v = float(target_annual_volatility)
-        except (TypeError, ValueError):
-            _v = 0.0
-        resolved_vol_target = _v if _v > 0.0 else None
-
-    if resolved_vol_target is not None:
-        strategy_returns = vol_scale_returns_to_target_annualized_volatility(
-            strategy_returns,
-            target_annual_volatility=resolved_vol_target,
-            bars_per_year=timeframe.bars_per_year,
-        )
-
-    strategy_returns.name = feature_name
-
-    # Process baseline if provided
-    benchmark = None
-    if baseline_returns is not None:
-        if not isinstance(baseline_returns, pd.Series):
-            raise TypeError("baseline_returns must be a pandas Series of daily returns")
-        
-        baseline_returns = _normalize_returns_series(baseline_returns, timeframe)
-        if not baseline_returns.empty:
-            baseline_returns.name = "Baseline (Always-In)"
-            benchmark = baseline_returns
 
     # Generate tearsheet based on mode
     # IMPORTANT: Use match_dates=False to prevent timezone comparison errors
@@ -228,14 +291,23 @@ def generate_tearsheet(
                 win32_extended_path(resolved_out) if os.name == "nt" else path_str
             )
 
-        qs.reports.html(
-            strategy_returns,
-            benchmark=benchmark,
-            output=qs_output_path,
-            title=f"{feature_name} - Walk-Forward Analysis",
-            match_dates=False,  # Prevent timezone comparison issues
-            compounded=False    # Use non-compounded returns (Carver methodology)
-        )
+        try:
+            qs.reports.html(
+                normalized_strategy,
+                benchmark=benchmark,
+                output=qs_output_path,
+                title=f"{feature_name} - Walk-Forward Analysis",
+                match_dates=False,  # Prevent timezone comparison issues
+                compounded=False,  # Use non-compounded returns (Carver methodology)
+            )
+        except ValueError as exc:
+            if "linear regression" in str(exc).lower():
+                warnings.warn(
+                    f"Skipping HTML tearsheet for '{feature_name}': QuantStats cannot "
+                    f"regress on constant returns ({exc})"
+                )
+                return
+            raise
         print(f"\n[OK] HTML tearsheet saved to: {resolved_out}")
         print("   Note: Using non-compounded returns (Robert Carver methodology)")
         if resolved_vol_target is not None:
@@ -247,7 +319,7 @@ def generate_tearsheet(
     elif mode == 'full':
         # Display full tearsheet in notebook
         qs.reports.full(
-            strategy_returns,
+            normalized_strategy,
             benchmark=benchmark,
             match_dates=False,  # Prevent timezone comparison issues
             compounded=False    # Use non-compounded returns (Carver methodology)
@@ -256,18 +328,8 @@ def generate_tearsheet(
     elif mode == 'basic':
         # Display basic tearsheet in notebook
         qs.reports.basic(
-            strategy_returns,
+            normalized_strategy,
             benchmark=benchmark,
-            match_dates=False,  # Prevent timezone comparison issues
-            compounded=False    # Use non-compounded returns (Carver methodology)
-        )
-        
-    elif mode == 'metrics':
-        # Display metrics only
-        qs.reports.metrics(
-            strategy_returns,
-            benchmark=benchmark,
-            mode='full',
             match_dates=False,  # Prevent timezone comparison issues
             compounded=False    # Use non-compounded returns (Carver methodology)
         )
@@ -276,72 +338,3 @@ def generate_tearsheet(
             f"Unknown mode: {mode}. "
             f"Use 'html', 'full', 'basic', or 'metrics'"
         )
-
-
-def compute_baseline_results(
-    results_df: pd.DataFrame,
-    all_returns: pd.Series,
-    objective_metric: 'ObjectiveMetric'
-) -> pd.DataFrame:
-    """
-    Compute baseline "always-in" results for comparison.
-    
-    The baseline strategy predicts 1 for all rows (always taking the trade),
-    representing a simple buy-and-hold approach.
-    
-    Parameters
-    ----------
-    results_df : pd.DataFrame
-        Original strategy results with columns: 'step', 'test_start', 'test_end'
-    all_returns : pd.Series
-        All returns data (indexed by datetime)
-    objective_metric : ObjectiveMetric
-        Metric instance to compute (e.g., SortinoRatio, SharpeRatio)
-        
-    Returns
-    -------
-    pd.DataFrame
-        Baseline results with same structure as results_df
-        
-    Examples
-    --------
-    >>> from metrics.performance import SortinoRatio
-    >>> 
-    >>> baseline_df = compute_baseline_results(
-    ...     results_df=strategy_results,
-    ...     all_returns=target_data,
-    ...     objective_metric=SortinoRatio(annualization_factor=252)
-    ... )
-    """
-    baseline_results = []
-    
-    for _, row in results_df.iterrows():
-        # Get test period returns
-        test_start = row['test_start']
-        test_end = row['test_end']
-        
-        # Filter returns for this test period
-        test_returns = all_returns[(all_returns.index >= test_start) & 
-                                   (all_returns.index <= test_end)]
-        
-        # Baseline: all returns (always in the market)
-        if len(test_returns) > 0:
-            test_metric = objective_metric.compute(test_returns)
-            n_trades = len(test_returns)
-            mean_return = test_returns.mean()
-        else:
-            test_metric = 0.0
-            n_trades = 0
-            mean_return = 0.0
-        
-        baseline_results.append({
-            'step': row['step'],
-            'test_start': test_start,
-            'test_end': test_end,
-            'test_metric': test_metric,
-            'n_trades': n_trades,
-            'mean_return': mean_return,
-            'strategy': 'baseline'
-        })
-    
-    return pd.DataFrame(baseline_results)

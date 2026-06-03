@@ -1007,6 +1007,3 @@ class CentralCacheStore:
             if metadata_path.exists():
                 metadata_path.unlink()
         return removed
-
-
-CentralCache = CentralCacheStore

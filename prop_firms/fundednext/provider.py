@@ -49,11 +49,10 @@ def create_fundednext_simulator(
 
 def create_fundednext_portfolio_simulator(
     config_path: Path | None = None,
-) -> "FundedNextPortfolioSimulator":
-    """Factory for the FundedNext multi-account portfolio simulator."""
+) -> object:
+    """Factory for the FundedNext multi-account portfolio simulator (QF Core preset)."""
 
-    from prop_firms.fundednext.portfolio_simulator import FundedNextPortfolioSimulator
+    _ = config_path
+    from quantfoundry_core.prop_firm import create_simulator_for_firm
 
-    return FundedNextPortfolioSimulator(
-        account_definitions=load_fundednext_accounts(config_path=config_path)
-    )
+    return create_simulator_for_firm("fundednext")

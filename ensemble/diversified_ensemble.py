@@ -1208,15 +1208,14 @@ class DiversifiedEnsemble:
                     vol_arr = np.maximum(aligned_pred_vol.to_numpy(dtype=float), 1e-8)
 
                     # Apply volatility scaling per base model
-                    # Formula: F_i = (tau / (sigma * sqrt(h_i))) * X_i
-                    # Note: Instrument weights are applied at Portfolio layer, not here
-                    # Get exposure fraction for this model
-                    h_i = self.model_exposure_fractions_.get(model_name, 0.1)
-                    sqrt_h_i = np.sqrt(max(h_i, 1e-8))
-                    
-                    # Calculate volatility-adjusted forecast
-                    # X_i is the binary signal (pred.values)
-                    forecast_if_active = self.target_volatility_ / (vol_arr * sqrt_h_i)
+                    # Formula: F_i = (tau / sigma) * X_i
+                    # Direct Carver vol-targeting: when the signal fires, size to hit the
+                    # annualised vol target (tau) given current instrument vol (sigma).
+                    # The sqrt(h_i) amplification is NOT applied here: it assumed every
+                    # bin of a binning model fires independently h_i of the time, but for
+                    # a single rule-based binary signal the correct scaling is h_i = 1.
+                    # Instrument weights are applied at the Portfolio layer, not here.
+                    forecast_if_active = self.target_volatility_ / vol_arr
                     if is_buy_hold_model:
                         if self.unique_tickers_ is not None and len(self.unique_tickers_) > 1:
                             forecast_if_active = 1.0
@@ -1382,14 +1381,18 @@ class DiversifiedEnsemble:
         Each row contains the volatility-adjusted forecast for that model.
 
         The forecast is calculated as:
-            F_i = (tau / (sigma * sqrt(h_i))) * X_i
+            F_i = (tau / sigma) * X_i   [capped at 2.0]
 
         Where:
         - tau: Target annual portfolio volatility
         - sigma: Instrument's blended annualized volatility (70% EWMA-32 + 30% 10-year average)
-        - h_i: Exposure fraction (1/n_bins for the base model)
         - X_i: Binary signal (0 or 1)
-        
+
+        h_i is not applied here. The sqrt(h_i) term was designed for bin-based ensembles
+        where n independent bins each fire 1/n of the time; for a rule-based binary signal
+        (all-in or all-out) the correct scaling is h_i = 1, giving F = tau/sigma directly.
+        The cap at 2.0 limits leverage to 2x when sigma < tau/2.
+
         Note: Instrument weights are applied at Portfolio layer, not here.
 
         Parameters
@@ -1511,7 +1514,7 @@ class DiversifiedEnsemble:
         binary_df = pd.DataFrame(binary_signals, index=X_filtered.index)
 
         # Step 3: Calculate per-model forecasts (vectorized)
-        # Formula: F_i = (tau / (sigma * sqrt(h_i))) * X_i
+        # Formula: F_i = (tau / sigma) * X_i  [h_i = 1; see predict docstring]
         # Note: Instrument weights are applied at Portfolio layer, not here
         n_rows = len(X_filtered)
         model_names = self.feature_names_
@@ -1528,12 +1531,10 @@ class DiversifiedEnsemble:
                 vol_arr = vol_arr[:n_rows] if vol_arr.size >= n_rows else np.resize(vol_arr, n_rows)
         vol_arr = np.maximum(vol_arr, 1e-8)
 
-        sqrt_h = np.array(
-            [np.sqrt(max(self.model_exposure_fractions_.get(m, 0.1), 1e-8)) for m in model_names],
-            dtype=float,
-        )
+        # Direct Carver vol-targeting (h_i = 1): F = tau / sigma.
+        # See predict_with_candles for rationale on dropping sqrt(h_i).
         # (n_rows, n_models): forecast if signal=1, then cap at 2.0
-        forecast_if_active = self.target_volatility_ / (vol_arr[:, np.newaxis] * sqrt_h[np.newaxis, :])
+        forecast_if_active = self.target_volatility_ / vol_arr[:, np.newaxis]
         forecast_if_active = np.minimum(forecast_if_active, 2.0)
 
         signals = binary_df[model_names].astype(float).fillna(0).values

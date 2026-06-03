@@ -145,23 +145,33 @@ def compute_diagnostic_flags(
     return DiagnosticFlags(warnings=warnings, red_flags=red_flags, is_viable=len(red_flags) == 0)
 
 
+_PATH_COMPONENT_MAX_LEN = 255  # Linux NAME_MAX; safe default for single path segments
+
+
+def _eda_max_path_chars() -> int:
+    """Resolved-path budget for EDA artifact trees (``TRADING_ALGO_EDA_MAX_PATH`` override)."""
+    default = 230 if os.name == "nt" else 4096
+    return int(os.environ.get("TRADING_ALGO_EDA_MAX_PATH", str(default)))
+
+
 def _windows_eda_max_path_chars() -> int | None:
-    if os.name != "nt":
-        return None
-    return int(os.environ.get("TRADING_ALGO_EDA_MAX_PATH", "230"))
+    """Backward-compatible alias; always returns a budget (Linux included)."""
+    return _eda_max_path_chars()
 
 
 def _eda_report_leaf_dir(output_dir: Path, feature_name: str, param_hash: str) -> Path:
-    """``output_dir / <feature segment> / param_hash``; shortens *feature_name* on Windows if needed."""
+    """``output_dir / <feature segment> / param_hash``; shortens oversized *feature_name* segments."""
     leaf = output_dir / feature_name / param_hash
-    budget = _windows_eda_max_path_chars()
-    if budget is None or len(str(leaf.resolve())) <= budget:
+    budget = _eda_max_path_chars()
+    feature_segment_too_long = len(feature_name) > _PATH_COMPONENT_MAX_LEN
+    full_path_too_long = len(str(leaf.resolve())) > budget
+    if not feature_segment_too_long and not full_path_too_long:
         return leaf
 
     digest = hashlib.md5(feature_name.encode("utf-8")).hexdigest()[:12]
     short_seg = f"feat_{digest}"
     short_leaf = output_dir / short_seg / param_hash
-    if len(str(short_leaf.resolve())) <= budget:
+    if len(short_seg) <= _PATH_COMPONENT_MAX_LEN and len(str(short_leaf.resolve())) <= budget:
         return short_leaf
 
     return output_dir / digest[:8] / param_hash

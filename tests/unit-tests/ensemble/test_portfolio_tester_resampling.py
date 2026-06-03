@@ -7,6 +7,7 @@ import pandas as pd
 from ensemble.portfolio_impl.portfolio_tester import (
     aggregate_intraday_returns_to_daily,
     calculate_strategy_returns_from_positions,
+    filter_candles_to_position_tickers,
     resample_positions_to_daily,
 )
 
@@ -95,3 +96,39 @@ def test_calculate_strategy_returns_log_vs_simple_differs_on_synthetic_candles()
     assert abs(float(simple_ret.iloc[0]) - expected_simple) < 1e-12
     assert abs(float(log_ret.iloc[0]) - expected_log) < 1e-12
     assert abs(float(simple_ret.iloc[0]) - float(log_ret.iloc[0])) > 1e-6
+
+
+def test_filter_candles_to_position_tickers_limits_return_instrument() -> None:
+    """Strategy returns must use the position ticker's instrument move, not a peer."""
+    import math
+
+    dates = pd.to_datetime(["2024-01-01", "2024-01-02", "2024-01-03"])
+    positions = pd.DataFrame(
+        {
+            "ticker": ["GC", "GC"],
+            "datetime": dates[:2],
+            "position_fraction": [1.0, 1.0],
+        }
+    )
+    candles = pd.DataFrame(
+        {
+            "ticker": ["GC", "GC", "ES", "ES", "ES"],
+            "datetime": [
+                dates[0],
+                dates[1],
+                dates[0],
+                dates[1],
+                dates[2],
+            ],
+            "close": [100.0, 110.0, 200.0, 240.0, 240.0],
+        }
+    )
+    scoped = filter_candles_to_position_tickers(positions, candles)
+    returns = calculate_strategy_returns_from_positions(
+        positions,
+        scoped,
+        instrument_return_kind="simple",
+    )
+    expected = 0.1
+    assert len(returns) == 1
+    assert abs(float(returns.iloc[0]) - expected) < 1e-12

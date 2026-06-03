@@ -242,10 +242,14 @@ class DailyEWSDVolatilityService:
                 .set_index("datetime")
             )
 
+            required_dates = pd.DatetimeIndex(grp["date"].unique()).sort_values()
+            union_index = ticker_vol.index.union(required_dates).sort_values()
             aligned_values = (
                 ticker_vol["ewsd_annual_vol"]
-                .reindex(pd.DatetimeIndex(grp["date"]).unique())
+                .reindex(union_index)
                 .ffill()
+                .bfill()
+                .reindex(required_dates)
             )
 
             aligned = grp.copy()

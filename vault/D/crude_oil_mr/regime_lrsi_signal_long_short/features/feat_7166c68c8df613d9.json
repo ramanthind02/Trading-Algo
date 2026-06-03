@@ -1,0 +1,56 @@
+{
+  "feature_name": "regime_lrsi_signal_signal_D_exitBars_1_hlRangePeriod_64_hlSumPeriod_76_longThreshold_0.6767_mrAvgPeriod_29_mrPrankPeriod_56_regimeMaPeriod_78_shortThreshold_0.3233_stopLossTicks_0_strategyMode_long_short_tickSize_0.01",
+  "created_at": "2026-05-31T21:24:59.250883+00:00",
+  "updated_at": "2026-05-31T21:24:59.250883+00:00",
+  "bias_node_spec": {
+    "module_name": "regime_lrsi_signal",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "regime_ma_period": 78,
+      "hl_sum_period": 76,
+      "hl_range_period": 64,
+      "mr_avg_period": 29,
+      "mr_prank_period": 56,
+      "long_threshold": 0.6767,
+      "short_threshold": 0.3233,
+      "exit_bars": 1,
+      "stop_loss_ticks": 0,
+      "tick_size": 0.01,
+      "strategy_mode": "long_short"
+    }
+  },
+  "tickers": [
+    "CL"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_regime-lrsi-signal_d_exit-bars_1_hl-range-period_64_hl-sum-period_76_long-threshold_0-6767_mr-avg-period_29_mr-prank-period_56_regime-ma-period_78_short-threshold_0-3233_stop-loss-ticks_0_strategy-mode_long-short_tick-size_0-01",
+      "model_name": "regime_lrsi_signal_signal_D_exitBars_1_hlRangePeriod_64_hlSumPeriod_76_longThreshold_0.6767_mrAvgPeriod_29_mrPrankPeriod_56_regimeMaPeriod_78_shortThreshold_0.3233_stopLossTicks_0_strategyMode_long_short_tickSize_0.01::signed_signal_regime-lrsi-signal_d_exit-bars_1_hl-range-period_64_hl-sum-period_76_long-threshold_0-6767_mr-avg-period_29_mr-prank-period_56_regime-ma-period_78_short-threshold_0-3233_stop-loss-ticks_0_strategy-mode_long-short_tick-size_0-01",
+      "model_type": "signed_signal",
+      "feature_column": "regime_lrsi_signal_signal_D_exitBars_1_hlRangePeriod_64_hlSumPeriod_76_longThreshold_0.6767_mrAvgPeriod_29_mrPrankPeriod_56_regimeMaPeriod_78_shortThreshold_0.3233_stopLossTicks_0_strategyMode_long_short_tickSize_0.01",
+      "strategy": "long_short",
+      "bias_node_spec": {
+        "module_name": "regime_lrsi_signal",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "regime_ma_period": 78,
+          "hl_sum_period": 76,
+          "hl_range_period": 64,
+          "mr_avg_period": 29,
+          "mr_prank_period": 56,
+          "long_threshold": 0.6767,
+          "short_threshold": 0.3233,
+          "exit_bars": 1,
+          "stop_loss_ticks": 0,
+          "tick_size": 0.01,
+          "strategy_mode": "long_short"
+        }
+      }
+    }
+  ],
+  "weight_hierarchy_group": "crude_oil_mr"
+}

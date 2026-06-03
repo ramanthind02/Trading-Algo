@@ -3,10 +3,12 @@ T016: Early stopping orchestration for frozen signed signals.
 """
 from __future__ import annotations
 
+from multiprocessing import cpu_count
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from feature_selection.validation.config import PermutationTestConfig
@@ -27,6 +29,46 @@ from feature_selection.validation.reports import (
 )
 from feature_selection.validation.stability_analysis import _param_combo_name
 from utils.core.signal_alignment import align_signal_to_target
+from utils.evaluation.permutation_test.permutation_nulls import _joblib_tqdm
+
+
+def _derive_combo_seeds(base_seed: int | None, n: int) -> list[int | None]:
+    """Produce deterministic per-combo seeds via SeedSequence for reproducible parallel runs."""
+    if base_seed is None:
+        return [None] * n
+    children = np.random.SeedSequence(base_seed).spawn(n)
+    return [int(sq.generate_state(1)[0]) for sq in children]
+
+
+def _run_combo_vector_shuffle(
+    params: Dict,
+    candles_df: pd.DataFrame,
+    extractor_func: Callable[[pd.DataFrame, Dict], pd.Series],
+    target: pd.Series,
+    objective_func: Callable[[pd.Series], float],
+    nreps: int,
+    alpha: float,
+    random_seed: int | None,
+) -> Tuple[str, VectorShuffleReport]:
+    """Run vector shuffle for a single parameter combo — picklable for joblib."""
+    combo_name = _param_combo_name(params)
+    try:
+        fitted_feature, aligned_target = align_signal_to_target(
+            extractor_func(candles_df, params),
+            target,
+        )
+        report = run_vector_shuffle_test(
+            fitted_feature=fitted_feature,
+            target=aligned_target,
+            objective_func=objective_func,
+            nreps=nreps,
+            alpha=alpha,
+            random_seed=random_seed,
+            param_combo=combo_name,
+        )
+        return combo_name, report
+    except Exception:
+        return combo_name, _failed_vector_shuffle_report(combo_name, nreps, alpha)
 
 
 def _failed_vector_shuffle_report(combo_name: str, nreps: int, alpha: float) -> VectorShuffleReport:
@@ -116,28 +158,6 @@ def run_permutation_test_suite(
     def _signal_for_params(df: pd.DataFrame, params: Dict) -> pd.Series:
         return extractor_func(df, params)
 
-    def _stage1_report_for_params(params: Dict) -> Tuple[str, VectorShuffleReport]:
-        combo_name = _param_combo_name(params)
-        try:
-            fitted_feature, aligned_target = align_signal_to_target(
-                _signal_for_params(candles_df, params),
-                target,
-            )
-            report = run_vector_shuffle_test(
-                fitted_feature=fitted_feature,
-                target=aligned_target,
-                objective_func=objective_func,
-                nreps=config.nreps,
-                alpha=config.alpha,
-                random_seed=config.random_seed,
-                param_combo=combo_name,
-            )
-            return combo_name, report
-        except Exception:
-            return combo_name, _failed_vector_shuffle_report(
-                combo_name, config.nreps, config.alpha
-            )
-
     stage1_reports: Dict[str, VectorShuffleReport] = {}
     if config.run_stage1:
         print(f"\n{'='*60}")
@@ -166,9 +186,27 @@ def run_permutation_test_suite(
                 alpha=config.alpha,
                 random_seed=config.random_seed,
             )
+        elif config.n_jobs_combos > 1:
+            combo_seeds = _derive_combo_seeds(config.random_seed, len(param_grid))
+            n_actual = (
+                cpu_count() if config.n_jobs_combos == -1 else min(config.n_jobs_combos, cpu_count())
+            )
+            print(f"Vector shuffle: parallel ({n_actual} workers)")
+            with _joblib_tqdm(len(param_grid), desc="Vector shuffle", unit="combo"):
+                results = Parallel(n_jobs=n_actual, backend="loky")(
+                    delayed(_run_combo_vector_shuffle)(
+                        params, candles_df, extractor_func, target, objective_func,
+                        config.nreps, config.alpha, seed,
+                    )
+                    for params, seed in zip(param_grid, combo_seeds)
+                )
+            stage1_reports = dict(results)
         else:
             for params in tqdm(param_grid, desc="Vector shuffle", unit="combo"):
-                combo_name, report = _stage1_report_for_params(params)
+                combo_name, report = _run_combo_vector_shuffle(
+                    params, candles_df, extractor_func, target, objective_func,
+                    config.nreps, config.alpha, config.random_seed,
+                )
                 stage1_reports[combo_name] = report
         stage1_passers: Set[str] = {k for k, r in stage1_reports.items() if r.passed}
         print(f"Vector shuffle: {len(stage1_passers)}/{len(param_grid)} passed")

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import feature_extraction.feature_extractor as feature_extractor
-from feature_extraction.backtest import Backtest as LegacyBacktest
-from utils.cache.runtime.backtest import Backtest as CentralBacktest
 from utils.cache.runtime.cross_ticker_store import (
     CrossTickerDataStore as CentralCrossTickerDataStore,
 )
@@ -16,10 +14,6 @@ from utils.data.cross_ticker_store import (
     CrossTickerDataStore as LegacyCrossTickerDataStore,
     extract_cross_ticker_names as legacy_extract_cross_ticker_names,
 )
-
-
-def test_backtest_wrapper_reexports_canonical_cache_runtime() -> None:
-    assert LegacyBacktest is CentralBacktest
 
 
 def test_cross_ticker_wrapper_reexports_canonical_cache_store() -> None:

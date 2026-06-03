@@ -13,7 +13,12 @@ from ensemble.portfolio_impl.global_weight_layer_adapter import (
     build_global_model_name,
     build_global_stream_id,
 )
-from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
+from ensemble.vault.constants import (
+    ASSET_CLASS_ORDER,
+    STRATEGY_GROUP_ASSET_OVERRIDE,
+    TICKER_ASSET_CLASS,
+    VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES,
+)
 from ensemble.vault.discovery import iter_vault_feature_members
 from ensemble.vault.feature_files import load_validated_feature_config
 from utils.core.enums import TimeFrame
@@ -311,6 +316,195 @@ def collect_streams_by_group_for_ensemble_dirs(
     return {g: frozenset(buckets[g]) for g in buckets}
 
 
+def _ticker_from_stream_id(stream_id: str) -> str:
+    """First segment of ``ticker::timeframe::model_name``."""
+    parts = str(stream_id).strip().split("::", 2)
+    if len(parts) < 1 or not parts[0].strip():
+        raise ValueError(f"invalid stream_id: {stream_id!r}")
+    return parts[0].strip().upper()
+
+
+def _asset_class_for_stream(stream_id: str, strategy_group: str) -> str:
+    if strategy_group in STRATEGY_GROUP_ASSET_OVERRIDE:
+        return STRATEGY_GROUP_ASSET_OVERRIDE[strategy_group]
+    ticker = _ticker_from_stream_id(stream_id)
+    return TICKER_ASSET_CLASS.get(ticker, "diversified")
+
+
+def _rebuck_streams_by_asset_and_style(
+    streams_by_group: Mapping[str, Collection[str]],
+) -> dict[str, dict[str, frozenset[str]]]:
+    nested: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for strategy_group, stream_ids in streams_by_group.items():
+        for stream_id in stream_ids:
+            sid = str(stream_id).strip()
+            if not sid:
+                continue
+            asset = _asset_class_for_stream(sid, strategy_group)
+            nested[asset][strategy_group].add(sid)
+    return {
+        asset: {style: frozenset(sids) for style, sids in styles.items()}
+        for asset, styles in nested.items()
+    }
+
+
+def collect_streams_by_asset_and_style(
+    vault_root: str | Path,
+    *,
+    strict_group: bool = False,
+    portfolio_ticker_names: frozenset[str] | None = None,
+) -> dict[str, dict[str, frozenset[str]]]:
+    """
+    Return ``{ asset_class: { strategy_group: frozenset[stream_id] } }``.
+
+    Asset class is derived from the ticker component of each stream_id (no group overrides).
+    ``es_tlt``, ``seasonal``, and ``buy_hold`` use per-ticker asset classes (e.g. ES
+    rebalancing flow → ``equity_indices/es_tlt``; ES/NQ seasonal → ``equity_indices/seasonal``).
+    """
+    by_group = collect_streams_by_group_from_vault(
+        vault_root,
+        strict_group=strict_group,
+        portfolio_ticker_names=portfolio_ticker_names,
+    )
+    return _rebuck_streams_by_asset_and_style(by_group)
+
+
+def collect_streams_by_asset_and_style_for_ensemble_dirs(
+    repo_root: str | Path,
+    ensemble_dirs: Mapping[str, str],
+    *,
+    strict_group: bool = False,
+    portfolio_ticker_names: frozenset[str] | None = None,
+    exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None = None,
+) -> dict[str, dict[str, frozenset[str]]]:
+    """Like ``collect_streams_by_asset_and_style``, scoped to ``ensemble_dirs``."""
+    by_group = collect_streams_by_group_for_ensemble_dirs(
+        repo_root,
+        ensemble_dirs,
+        strict_group=strict_group,
+        portfolio_ticker_names=portfolio_ticker_names,
+        exclude_feature_stems_by_ensemble=exclude_feature_stems_by_ensemble,
+    )
+    return _rebuck_streams_by_asset_and_style(by_group)
+
+
+def build_asset_first_hierarchy_spec(
+    streams_by_asset_and_style: Mapping[str, Mapping[str, Collection[str]]],
+    *,
+    root_id: str = "root",
+    asset_order: Sequence[str] | None = None,
+    style_order: Sequence[str] | None = None,
+) -> dict[str, object]:
+    """
+    Build a 3-level ``hierarchy_equal`` spec: root → asset_class → strategy_group → leaves.
+
+    Empty asset classes and style groups are omitted.
+    """
+    known_assets = frozenset(ASSET_CLASS_ORDER)
+    extra_assets = sorted(
+        a for a in streams_by_asset_and_style.keys() if a not in known_assets
+    )
+    assets_seq = (
+        tuple(asset_order)
+        if asset_order is not None
+        else tuple(ASSET_CLASS_ORDER) + tuple(extra_assets)
+    )
+    styles_seq = (
+        tuple(style_order)
+        if style_order is not None
+        else tuple(sorted(VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES))
+    )
+
+    asset_children: List[dict[str, object]] = []
+    for asset in assets_seq:
+        style_map = streams_by_asset_and_style.get(asset)
+        if not style_map:
+            continue
+        style_children: List[dict[str, object]] = []
+        for style in styles_seq:
+            sids = sorted({str(s).strip() for s in style_map.get(style, ()) if str(s).strip()})
+            if not sids:
+                continue
+            style_children.append(
+                {
+                    "type": "group",
+                    "id": style,
+                    "children": [{"type": "leaf", "stream_id": sid} for sid in sids],
+                }
+            )
+        for style in sorted(style_map.keys()):
+            if style in styles_seq:
+                continue
+            sids = sorted({str(s).strip() for s in style_map[style] if str(s).strip()})
+            if not sids:
+                continue
+            style_children.append(
+                {
+                    "type": "group",
+                    "id": style,
+                    "children": [{"type": "leaf", "stream_id": sid} for sid in sids],
+                }
+            )
+        if style_children:
+            asset_children.append(
+                {"type": "group", "id": asset, "children": style_children}
+            )
+
+    if not asset_children:
+        raise ValueError("hierarchy would be empty: no streams in any asset/style bucket")
+    return {"type": "group", "id": root_id, "children": asset_children}
+
+
+def build_asset_first_hierarchy_spec_from_vault(
+    vault_root: str | Path,
+    *,
+    strict_group: bool = False,
+    root_id: str = "root",
+    asset_order: Sequence[str] | None = None,
+    style_order: Sequence[str] | None = None,
+    portfolio_ticker_names: frozenset[str] | None = None,
+) -> dict[str, object]:
+    """Collect from vault and return a 3-level asset-first ``hierarchy_equal`` spec."""
+    by_asset = collect_streams_by_asset_and_style(
+        vault_root,
+        strict_group=strict_group,
+        portfolio_ticker_names=portfolio_ticker_names,
+    )
+    return build_asset_first_hierarchy_spec(
+        by_asset,
+        root_id=root_id,
+        asset_order=asset_order,
+        style_order=style_order,
+    )
+
+
+def build_asset_first_hierarchy_spec_for_ensemble_dirs(
+    repo_root: str | Path,
+    ensemble_dirs: Mapping[str, str],
+    *,
+    strict_group: bool = False,
+    root_id: str = "root",
+    asset_order: Sequence[str] | None = None,
+    style_order: Sequence[str] | None = None,
+    portfolio_ticker_names: frozenset[str] | None = None,
+    exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None = None,
+) -> dict[str, object]:
+    """Collect from ``ensemble_dirs`` and return a 3-level asset-first spec."""
+    by_asset = collect_streams_by_asset_and_style_for_ensemble_dirs(
+        repo_root,
+        ensemble_dirs,
+        strict_group=strict_group,
+        portfolio_ticker_names=portfolio_ticker_names,
+        exclude_feature_stems_by_ensemble=exclude_feature_stems_by_ensemble,
+    )
+    return build_asset_first_hierarchy_spec(
+        by_asset,
+        root_id=root_id,
+        asset_order=asset_order,
+        style_order=style_order,
+    )
+
+
 def build_hierarchy_equal_spec(
     streams_by_group: Mapping[str, Collection[str]],
     *,
@@ -476,9 +670,14 @@ def global_stream_ids_for_vault_feature_member(
 
 
 __all__ = [
+    "build_asset_first_hierarchy_spec",
+    "build_asset_first_hierarchy_spec_for_ensemble_dirs",
+    "build_asset_first_hierarchy_spec_from_vault",
     "build_hierarchy_equal_spec",
     "build_hierarchy_spec_for_ensemble_dirs",
     "build_hierarchy_spec_from_vault",
+    "collect_streams_by_asset_and_style",
+    "collect_streams_by_asset_and_style_for_ensemble_dirs",
     "collect_streams_by_group_for_ensemble_dirs",
     "collect_streams_by_group_from_vault",
     "global_stream_ids_for_ensemble_leaf",

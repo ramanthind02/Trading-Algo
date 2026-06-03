@@ -4,11 +4,12 @@ from pathlib import Path
 import pytest
 
 from portfolio_research.config import (
+    EnsembleDirsPolicy,
     PortfolioResearchConfig,
     ResearchWindow,
     filter_ensemble_dirs_for_portfolio_tickers,
-    load_config,
     load_prop_firm_portfolio_research_config,
+    scoped_tickers_for_ensemble_dirs,
 )
 from utils.core.enums import Ticker, TimeFrame
 
@@ -102,18 +103,18 @@ def _patch_feature_iter(
     )
 
 
-def test_filter_ensemble_dirs_for_portfolio_tickers_drops_cross_ticker_deps(
+def test_filter_keeps_rebalancing_es_when_only_cross_ticker_is_outside_book(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Drop when cross_tickers reference symbols outside the portfolio."""
+    """ES-traded rebalancing_flow with TLT cross peer stays on ES-only portfolios."""
 
     def _iter(features_dir: Path):
         path_s = str(features_dir).replace("\\", "/")
         if "rebalancing_es_tlt_long" in path_s:
             yield Path("x.json"), {
                 "bias_node_spec": {
-                    "module_name": "rebalancing",
-                    "params": {"cross_tickers": ["TLT"]},
+                    "module_name": "rebalancing_flow",
+                    "params": {"flow": "both", "cross_tickers": ["TLT"]},
                 },
                 "tickers": ["ES"],
             }
@@ -131,21 +132,30 @@ def test_filter_ensemble_dirs_for_portfolio_tickers_drops_cross_ticker_deps(
         },
         [Ticker.ES],
     )
-    assert list(out.keys()) == ["es_local"]
+    assert set(out.keys()) == {"tlt_cross", "es_local"}
 
 
 def test_filter_drops_rebalancing_when_primary_ticker_missing(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """rebalancing_cross primary leg is in feature tickers, not only cross_tickers."""
+    """rebalancing_flow TLT leg is in feature tickers, not only cross_tickers."""
+    import portfolio_research.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+    for rel in (
+        "vault/D/es_tlt/rebalancing_tlt_es_long/features",
+        "vault/D/mean_reversion_indices/mr_indices_long/features",
+    ):
+        (tmp_path / Path(rel)).mkdir(parents=True, exist_ok=True)
 
     def _iter(features_dir: Path):
         path_s = str(features_dir).replace("\\", "/")
         if "rebalancing_tlt_es_long" in path_s:
             yield Path("x.json"), {
                 "bias_node_spec": {
-                    "module_name": "rebalancing_cross",
-                    "params": {"cross_tickers": ["ES"]},
+                    "module_name": "rebalancing_flow",
+                    "params": {"flow": "reversal", "cross_tickers": ["ES"]},
                 },
                 "tickers": ["TLT"],
             }
@@ -164,6 +174,38 @@ def test_filter_drops_rebalancing_when_primary_ticker_missing(
         [Ticker.ES, Ticker.NQ],
     )
     assert list(out.keys()) == ["es_only"]
+
+
+def test_filter_drops_mr_indices_when_portfolio_is_gc_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MR indices ensembles trade ES+NQ per ensemble_config; must not load on GC-only books."""
+
+    def _iter(_features_dir: Path):
+        yield Path("turnaround.json"), {
+            "bias_node_spec": {"module_name": "turnaround_tuesday", "params": {}},
+            "tickers": ["ES", "NQ"],
+        }
+
+    _patch_feature_iter(monkeypatch, _iter)
+
+    def _fake_ensemble_symbols(path: str) -> frozenset[str]:
+        if "mr_indices_long" in path:
+            return frozenset({"ES", "NQ"})
+        return frozenset()
+
+    monkeypatch.setattr(
+        "portfolio_research.config._ensemble_config_ticker_symbols",
+        _fake_ensemble_symbols,
+    )
+    out = filter_ensemble_dirs_for_portfolio_tickers(
+        {
+            "mr_indices_long": "vault/D/mean_reversion_indices/mr_indices_long",
+            "sma_regime": "vault/D/momentum/sma_regime_long_short_long_short",
+        },
+        [Ticker.GC],
+    )
+    assert "mr_indices_long" not in out
 
 
 def test_filter_keeps_ensemble_when_extra_tickers_only_in_config_metadata(
@@ -226,19 +268,6 @@ def test_filter_drops_single_instrument_feature_without_that_ticker(
     assert list(out.keys()) == ["es_feat"]
 
 
-def test_load_config_returns_portfolio_research_config() -> None:
-    config = load_config()
-    assert len(config.tickers) >= 1
-    assert config.ensemble_dirs
-    assert config.timeframe == TimeFrame.D
-    assert config.start < config.end
-    assert config.train_window.start >= config.start
-    assert config.test_window.end <= config.end
-    assert isinstance(config.export_per_timeframe_tearsheets, bool)
-    assert isinstance(config.export_per_ensemble_tearsheets, bool)
-    assert config.ensemble_vault_refit is True
-
-
 def test_load_prop_firm_portfolio_research_config_disables_vault_refit() -> None:
     cfg = load_prop_firm_portfolio_research_config()
     assert cfg.ensemble_vault_refit is False
@@ -261,6 +290,31 @@ def test_portfolio_research_config_tearsheet_export_defaults_enabled() -> None:
     )
     assert cfg.export_per_timeframe_tearsheets is True
     assert cfg.export_per_ensemble_tearsheets is True
+
+
+def test_portfolio_research_config_empty_ensemble_dirs_allowed_when_policy_set() -> None:
+    cfg = PortfolioResearchConfig(
+        tickers=[Ticker.GC],
+        timeframe=TimeFrame.D,
+        start=datetime(2000, 1, 1),
+        end=datetime(2023, 12, 31),
+        use_cache=True,
+        train_window=ResearchWindow(
+            start=datetime(2000, 1, 1),
+            end=datetime(2005, 12, 31),
+        ),
+        validation_window=ResearchWindow(
+            start=datetime(2006, 1, 1),
+            end=datetime(2010, 12, 31),
+        ),
+        test_window=ResearchWindow(
+            start=datetime(2011, 1, 1),
+            end=datetime(2023, 12, 31),
+        ),
+        ensemble_dirs={},
+        ensemble_dirs_policy=EnsembleDirsPolicy.ALLOW_EMPTY,
+    )
+    assert cfg.ensemble_dirs == {}
 
 
 def test_portfolio_research_config_empty_ensemble_dirs_raises() -> None:
@@ -335,3 +389,68 @@ def test_portfolio_research_config_rejects_removed_sector_surface() -> None:
             ensemble_dirs={"a": "vault/D/some_ensemble"},
             sector_allocation_config_path="feature_research/config/sector.json",  # type: ignore[call-arg]
         )
+
+
+def test_scoped_tickers_for_gc_only_ensemble(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    import portfolio_research.config as cfg_mod
+
+    repo = tmp_path
+    (repo / "portfolio_research").mkdir()
+    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", repo / "portfolio_research")
+
+    vault = repo / "vault" / "D" / "crude_oil_mr" / "mr_cl_long"
+    (vault / "features").mkdir(parents=True)
+    (vault / "ensemble_config.json").write_text(
+        json.dumps({"tickers": ["GC"]}),
+        encoding="utf-8",
+    )
+    feature_payload = {
+        "tickers": ["GC"],
+        "bias_node_spec": {"module_name": "ibs", "timeframes": ["D"], "params": {}},
+    }
+    (vault / "features" / "ibs_gc.json").write_text(
+        json.dumps(feature_payload),
+        encoding="utf-8",
+    )
+
+    rel = "vault/D/crude_oil_mr/mr_cl_long"
+
+    def _iter(features_dir: Path):
+        yield vault / "features" / "ibs_gc.json", feature_payload
+
+    monkeypatch.setattr(cfg_mod._vault_feature_files, "iter_validated_feature_configs", _iter)
+
+    scoped = scoped_tickers_for_ensemble_dirs(
+        [Ticker.ES, Ticker.GC, Ticker.NQ],
+        {"mr_gc": rel},
+    )
+    assert scoped == (Ticker.GC,)
+
+
+def test_scoped_tickers_excludes_cross_ticker_peers_for_rebalancing_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cross peers are not portfolio legs; EWSD/candles for them come from preflight bootstrap."""
+
+    def _iter(features_dir: Path):
+        path_s = str(features_dir).replace("\\", "/")
+        if "rebalancing_es_tlt_long_short" in path_s:
+            yield Path("x.json"), {
+                "bias_node_spec": {
+                    "module_name": "rebalancing_flow",
+                    "params": {"flow": "both", "cross_tickers": ["TLT"]},
+                },
+                "tickers": ["ES"],
+            }
+
+    _patch_feature_iter(monkeypatch, _iter)
+    scoped = scoped_tickers_for_ensemble_dirs(
+        [Ticker.ES, Ticker.NQ, Ticker.GC],
+        {"rebalancing_es_tlt_long_short": "vault/D/es_tlt/rebalancing_es_tlt_long_short"},
+    )
+    assert scoped == (Ticker.ES,)

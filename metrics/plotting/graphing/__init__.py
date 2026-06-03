@@ -1,11 +1,11 @@
-"""Graphing namespace for QuantStats tearsheet support."""
+"""Graphing namespace for tearsheets and performance-table helpers."""
 
 from metrics.plotting.graphing.quantstats_reports import (
-    compute_baseline_results,
+    compute_performance_report,
     generate_tearsheet,
 )
 
 __all__ = [
     "generate_tearsheet",
-    "compute_baseline_results",
+    "compute_performance_report",
 ]

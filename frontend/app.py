@@ -1,21 +1,50 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
-import pandas as pd
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
 from flask_cors import CORS
 
-ROOT_DIR = Path(__file__).resolve().parent.parent
-INTRADAY_DIR = ROOT_DIR / "data" / "intraday_adjusted"
-DAILY_DIR = ROOT_DIR / "data" / "ohlc_data"
-INTRADAY_RAW_DIR = ROOT_DIR / "data" / "intraday_original"
+from feature_research.config import load_config
+from feature_research.ui.job_manager import WorkspaceJobManager
+from feature_research.ui.planner import (
+    build_phase_plan,
+    build_ui_defaults,
+    build_ui_request,
+    defaults_to_dict,
+    plan_to_dict,
+    resolve_ui_config,
+)
+from feature_research.shared import FeatureResearchPhase
+from feature_research.ui.pivot_data import load_parameter_sensitivity_pivot_payload_for_phase
+from feature_research.ui.workspace import (
+    build_workspace_view,
+    load_artifact_preview,
+    resolve_workspace_artifact_path,
+)
+from feature_research.ui.vault_save import (
+    build_vault_commit_view,
+    execute_vault_save,
+    vault_save_execution_to_dict,
+)
+from portfolio_research.config import load_config as load_portfolio_config
+from portfolio_research.ui.job_manager import PortfolioWorkspaceJobManager
+from portfolio_research.ui.planner import (
+    build_phase_plan as build_portfolio_phase_plan,
+    build_ui_defaults as build_portfolio_ui_defaults,
+    build_ui_request as build_portfolio_ui_request,
+    defaults_to_dict as portfolio_defaults_to_dict,
+    plan_to_dict as portfolio_plan_to_dict,
+)
+from portfolio_research.ui.workspace import (
+    build_workspace_view as build_portfolio_workspace_view,
+    load_artifact_preview as load_portfolio_artifact_preview,
+    resolve_workspace_artifact_path as resolve_portfolio_artifact_path,
+)
 
-INTRADAY_TFS = [
-    "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "M9", "M10",
-    "M15", "M30", "H1", "H2", "H4",
-]
-DAILY_TFS = ["D", "W", "M"]
+JOB_MANAGER = WorkspaceJobManager()
+PORTFOLIO_JOB_MANAGER = PortfolioWorkspaceJobManager()
 
 app = Flask(__name__, static_folder=".")
 CORS(app)
@@ -23,7 +52,17 @@ CORS(app)
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "index.html")
+    return redirect("/feature-research", code=302)
+
+
+@app.route("/feature-research")
+def feature_research_ui():
+    return send_from_directory(".", "feature_research.html")
+
+
+@app.route("/portfolio-research")
+def portfolio_research_ui():
+    return send_from_directory(".", "portfolio_research.html")
 
 
 @app.route("/<path:filename>")
@@ -31,142 +70,284 @@ def static_files(filename: str):
     return send_from_directory(".", filename)
 
 
-@app.route("/tickers")
-def tickers():
-    ticker_set: set[str] = set()
-    for directory in (INTRADAY_DIR, DAILY_DIR):
-        if directory.exists():
-            ticker_set.update(path.name for path in directory.iterdir() if path.is_dir())
-    return jsonify(sorted(ticker_set))
-
-
-@app.route("/timeframes/<ticker>")
-def timeframes(ticker: str):
-    available: list[str] = []
-    for tf in INTRADAY_TFS:
-        path = INTRADAY_DIR / ticker / f"{tf}_{ticker}.parquet"
-        if path.exists():
-            available.append(tf)
-    for tf in DAILY_TFS:
-        path = DAILY_DIR / ticker / f"{tf}_{ticker}.parquet"
-        if path.exists():
-            available.append(tf)
-    return jsonify(available)
-
-
-MAX_CANDLES = 5000
-DEFAULT_CANDLES = 500
-
-
-def _resolve_parquet_path(ticker: str, tf: str) -> Path | None:
-    if tf in INTRADAY_TFS:
-        path = INTRADAY_DIR / ticker / f"{tf}_{ticker}.parquet"
-    elif tf in DAILY_TFS:
-        path = DAILY_DIR / ticker / f"{tf}_{ticker}.parquet"
-    else:
-        return None
-    return path if path.exists() else None
-
-
-@app.route("/candles/<ticker>/<tf>")
-def candles(ticker: str, tf: str):
-    path = _resolve_parquet_path(ticker, tf)
-    if path is None:
-        return jsonify({"error": "not found"}), 404
-
-    df = pd.read_parquet(path)
-
-    date_from = request.args.get("from")
-    date_to = request.args.get("to")
-
-    if date_from or date_to:
-        if date_from:
-            ts_from = int(pd.Timestamp(date_from).timestamp())
-            df = df[df["timestamp"] >= ts_from]
-        if date_to:
-            ts_to = int(pd.Timestamp(date_to + " 23:59:59").timestamp())
-            df = df[df["timestamp"] <= ts_to]
-
-        total_in_range = len(df)
-        capped = total_in_range > MAX_CANDLES
-        if capped:
-            df = df.tail(MAX_CANDLES)
-    else:
-        count = min(int(request.args.get("count", DEFAULT_CANDLES)), MAX_CANDLES)
-        before = request.args.get("before")
-        total_in_range = len(df)
-
-        if before:
-            df = df[df["timestamp"] < int(before)]
-
-        capped = False
-        df = df.tail(count)
-
-    records = [
+@app.route("/api/feature-research/defaults")
+def feature_research_defaults():
+    config = load_config()
+    defaults = build_ui_defaults(config)
+    initial_request = build_ui_request(
+        phase_name=defaults.default_phase.value,
+        tickers_text=",".join(ticker.name for ticker in defaults.default_tickers),
+        fallback_tickers=defaults.default_tickers,
+    )
+    plan = build_phase_plan(config, initial_request)
+    workspace = build_workspace_view(
+        config,
+        initial_request,
+        current_job=JOB_MANAGER.latest_job(),
+    )
+    return jsonify(
         {
-            "time": int(row["timestamp"]),
-            "open": float(row["open"]),
-            "high": float(row["high"]),
-            "low": float(row["low"]),
-            "close": float(row["close"]),
+            "defaults": defaults_to_dict(defaults),
+            "plan": plan_to_dict(plan),
+            "workspace": workspace,
+            "job": JOB_MANAGER.latest_job(),
         }
-        for row in df.to_dict("records")
-    ]
-
-    earliest_ts = records[0]["time"] if records else None
-    has_more = earliest_ts is not None and earliest_ts > _first_timestamp(path)
-
-    response: dict[str, object] = {
-        "candles": records,
-        "total_available": total_in_range,
-        "has_more": has_more,
-        "earliest_timestamp": earliest_ts,
-    }
-    if date_from or date_to:
-        response["capped"] = capped
-        if capped:
-            response["cap"] = MAX_CANDLES
-
-    return jsonify(response)
+    )
 
 
-@app.route("/candles/<ticker>/<tf>/raw_overlay")
-def candles_raw_overlay(ticker: str, tf: str):
-    """Return optional intraday raw overlay for visual QA."""
-    if tf not in INTRADAY_TFS:
-        return jsonify({"error": "Raw overlay is intraday-only"}), 400
-
-    path = INTRADAY_RAW_DIR / ticker / f"{tf}_{ticker}.parquet"
-    if not path.exists():
-        return jsonify({"error": "No raw overlay data for this ticker/timeframe"}), 404
-
-    df = pd.read_parquet(path)
-
-    date_from = request.args.get("from")
-    date_to = request.args.get("to")
-    if date_from:
-        ts_from = int(pd.Timestamp(date_from).timestamp())
-        df = df[df["timestamp"] >= ts_from]
-    if date_to:
-        ts_to = int(pd.Timestamp(date_to + " 23:59:59").timestamp())
-        df = df[df["timestamp"] <= ts_to]
-
-    count = min(int(request.args.get("count", MAX_CANDLES)), MAX_CANDLES)
-    before = request.args.get("before")
-    if before:
-        df = df[df["timestamp"] < int(before)]
-    df = df.tail(count)
-
-    records = [
-        {"time": int(row["timestamp"]), "value": float(row["close"])}
-        for row in df.to_dict("records")
-    ]
-    return jsonify({"candles": records})
+@app.route("/api/feature-research/plan", methods=["POST"])
+def feature_research_plan():
+    raw_payload = request.get_json(silent=True)
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    config = load_config()
+    try:
+        ui_request = _build_ui_request_from_payload(config, payload)
+        plan = build_phase_plan(config, ui_request)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    workspace = build_workspace_view(
+        config,
+        ui_request,
+        current_job=JOB_MANAGER.latest_job(),
+    )
+    return jsonify(
+        {
+            "plan": plan_to_dict(plan),
+            "workspace": workspace,
+            "job": JOB_MANAGER.latest_job(),
+        }
+    )
 
 
-def _first_timestamp(path: Path) -> int:
-    df_head = pd.read_parquet(path, columns=["timestamp"]).head(1)
-    return int(df_head.iloc[0]["timestamp"])
+@app.route("/api/feature-research/run", methods=["POST"])
+def feature_research_run():
+    raw_payload = request.get_json(silent=True)
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    config = load_config()
+    try:
+        ui_request = _build_ui_request_from_payload(config, payload)
+        job = JOB_MANAGER.start_job(config, ui_request)
+    except (RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"job": job})
+
+
+@app.route("/api/feature-research/jobs/latest")
+def feature_research_latest_job():
+    return jsonify({"job": JOB_MANAGER.latest_job()})
+
+
+@app.route("/api/feature-research/jobs/<job_id>")
+def feature_research_job(job_id: str):
+    job = JOB_MANAGER.job_snapshot(job_id)
+    if job is None:
+        return jsonify({"error": "Job not found."}), 404
+    return jsonify({"job": job})
+
+
+@app.route("/api/feature-research/pivot-data")
+def feature_research_pivot_data():
+    phase_name = request.args.get("phase", FeatureResearchPhase.EXPLORATION.value).strip()
+    try:
+        phase = FeatureResearchPhase(phase_name)
+    except ValueError:
+        return jsonify({"error": f"Unknown phase: {phase_name}"}), 400
+    config = load_config()
+    payload = load_parameter_sensitivity_pivot_payload_for_phase(config, phase)
+    if payload is None:
+        return jsonify(
+            {
+                "available": False,
+                "phase": phase.value,
+                "message": "Parameter sensitivity CSV exports are not available for this phase.",
+            }
+        )
+    return jsonify({"available": True, "phase": phase.value, **payload})
+
+
+@app.route("/api/feature-research/artifact-preview")
+def feature_research_artifact_preview():
+    relative_path = request.args.get("path", "").strip()
+    if not relative_path:
+        return jsonify({"error": "Artifact path is required."}), 400
+    try:
+        preview = load_artifact_preview(relative_path)
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(preview)
+
+
+@app.route("/api/feature-research/vault-save/preview", methods=["POST"])
+def feature_research_vault_save_preview():
+    raw_payload = request.get_json(silent=True)
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    config = load_config()
+    try:
+        ui_request = _build_ui_request_from_payload(config, payload)
+        commit_view = build_vault_commit_view(config, ui_request)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"vault_commit": commit_view})
+
+
+@app.route("/api/feature-research/vault-save", methods=["POST"])
+def feature_research_vault_save():
+    raw_payload = request.get_json(silent=True)
+    payload = raw_payload if isinstance(raw_payload, dict) else {}
+    config = load_config()
+    try:
+        ui_request = _build_ui_request_from_payload(config, payload)
+        configured, _selection = resolve_ui_config(config, ui_request)
+        result = execute_vault_save(configured, dry_run=False)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(
+        {
+            "saved": True,
+            "result": vault_save_execution_to_dict(result),
+        }
+    )
+
+
+@app.route("/api/feature-research/artifact-raw")
+def feature_research_artifact_raw():
+    relative_path = request.args.get("path", "").strip()
+    if not relative_path:
+        return jsonify({"error": "Artifact path is required."}), 400
+    try:
+        artifact_path = resolve_workspace_artifact_path(relative_path)
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 404
+    return send_file(artifact_path)
+
+
+def _payload_text(payload: Mapping[str, object], key: str) -> str | None:
+    value = payload.get(key)
+    return None if value is None else str(value)
+
+
+def _build_ui_request_from_payload(
+    config,
+    payload: Mapping[str, object],
+):
+    defaults = build_ui_defaults(config)
+    return build_ui_request(
+        phase_name=_payload_text(payload, "phase") or defaults.default_phase.value,
+        tickers_text=_payload_text(payload, "tickers"),
+        fallback_tickers=defaults.default_tickers,
+        portfolio_tickers_text=_payload_text(payload, "portfolio_tickers"),
+        train_start=_payload_text(payload, "train_start"),
+        train_end=_payload_text(payload, "train_end"),
+        val_start=_payload_text(payload, "val_start"),
+        val_end=_payload_text(payload, "val_end"),
+        test_start=_payload_text(payload, "test_start"),
+        test_end=_payload_text(payload, "test_end"),
+    )
+
+
+def _build_portfolio_ui_request_from_payload(payload: Mapping[str, object]):
+    config = load_portfolio_config()
+    defaults = build_portfolio_ui_defaults(config)
+    return build_portfolio_ui_request(
+        phase_name=_payload_text(payload, "phase") or defaults.default_phase.value,
+        tickers_text=_payload_text(payload, "tickers"),
+        fallback_tickers=defaults.default_tickers,
+        fit_mode_name=_payload_text(payload, "fit_mode"),
+    )
+
+
+@app.route("/api/portfolio-research/defaults")
+def portfolio_research_defaults():
+    config = load_portfolio_config()
+    defaults = build_portfolio_ui_defaults(config)
+    initial_request = build_portfolio_ui_request(
+        phase_name=defaults.default_phase.value,
+        tickers_text=",".join(ticker.name for ticker in defaults.default_tickers),
+        fallback_tickers=defaults.default_tickers,
+    )
+    plan = build_portfolio_phase_plan(config, initial_request)
+    workspace = build_portfolio_workspace_view(
+        config,
+        initial_request,
+        current_job=PORTFOLIO_JOB_MANAGER.latest_job(),
+    )
+    return jsonify(
+        {
+            "defaults": portfolio_defaults_to_dict(defaults),
+            "plan": portfolio_plan_to_dict(plan),
+            "workspace": workspace,
+            "job": PORTFOLIO_JOB_MANAGER.latest_job(),
+        }
+    )
+
+
+@app.route("/api/portfolio-research/plan", methods=["POST"])
+def portfolio_research_plan():
+    payload = request.get_json(silent=True) or {}
+    config = load_portfolio_config()
+    try:
+        ui_request = _build_portfolio_ui_request_from_payload(payload)
+        plan = build_portfolio_phase_plan(config, ui_request)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    workspace = build_portfolio_workspace_view(
+        config,
+        ui_request,
+        current_job=PORTFOLIO_JOB_MANAGER.latest_job(),
+    )
+    return jsonify(
+        {
+            "plan": portfolio_plan_to_dict(plan),
+            "workspace": workspace,
+            "job": PORTFOLIO_JOB_MANAGER.latest_job(),
+        }
+    )
+
+
+@app.route("/api/portfolio-research/run", methods=["POST"])
+def portfolio_research_run():
+    payload = request.get_json(silent=True) or {}
+    config = load_portfolio_config()
+    try:
+        ui_request = _build_portfolio_ui_request_from_payload(payload)
+        job = PORTFOLIO_JOB_MANAGER.start_job(config, ui_request)
+    except (RuntimeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"job": job})
+
+
+@app.route("/api/portfolio-research/jobs/<job_id>")
+def portfolio_research_job(job_id: str):
+    job = PORTFOLIO_JOB_MANAGER.job_snapshot(job_id)
+    if job is None:
+        return jsonify({"error": "Job not found."}), 404
+    return jsonify({"job": job})
+
+
+@app.route("/api/portfolio-research/artifact-preview")
+def portfolio_research_artifact_preview():
+    relative_path = request.args.get("path", "").strip()
+    if not relative_path:
+        return jsonify({"error": "Artifact path is required."}), 400
+    try:
+        preview = load_portfolio_artifact_preview(relative_path)
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(preview)
+
+
+@app.route("/api/portfolio-research/artifact-raw")
+def portfolio_research_artifact_raw():
+    relative_path = request.args.get("path", "").strip()
+    if not relative_path:
+        return jsonify({"error": "Artifact path is required."}), 400
+    try:
+        artifact_path = resolve_portfolio_artifact_path(relative_path)
+    except (FileNotFoundError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 404
+    return send_file(artifact_path)
 
 
 if __name__ == "__main__":

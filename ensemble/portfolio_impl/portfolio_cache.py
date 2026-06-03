@@ -97,6 +97,12 @@ class PortfolioCacheQuery:
     prediction_daily_max_bars: int = 0
     """If > 0, daily candle frames are trimmed to this many trailing distinct dates (monthly unchanged)."""
 
+    volatility_history_start: datetime | None = None
+    """Optional earlier start for EWSD reads so predict windows can forward-fill from fit history."""
+
+    def effective_volatility_start(self) -> datetime:
+        return self.volatility_history_start if self.volatility_history_start is not None else self.start
+
     def for_timeframe(self, timeframe: TimeFrame) -> "PortfolioCacheQuery":
         return PortfolioCacheQuery(
             tickers=self.tickers,
@@ -108,6 +114,7 @@ class PortfolioCacheQuery:
             grid=self.grid,
             daily_candle_overlay=self.daily_candle_overlay,
             prediction_daily_max_bars=self.prediction_daily_max_bars,
+            volatility_history_start=self.volatility_history_start,
         )
 
 
@@ -188,7 +195,7 @@ def _query_volatility_from_cache(query: PortfolioCacheQuery) -> pd.DataFrame:
             effective_start, effective_end = _clamp_range_to_coverage(
                 coverage_start=record.coverage.start,
                 coverage_end=record.coverage.end,
-                start=query.start,
+                start=query.effective_volatility_start(),
                 end=query.end,
                 module_name="ewsd",
                 ticker=ticker_enum,

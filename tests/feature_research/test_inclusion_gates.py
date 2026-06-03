@@ -25,7 +25,7 @@ from feature_research.inclusion_gates import (
     pearson_corr_candidate_vs_each_peer,
 )
 from portfolio_research.pipelines.portfolio_test import PhaseResult
-from portfolio_research.config import PortfolioResearchConfig, ResearchWindow
+from portfolio_research.config import EnsembleDirsPolicy, PortfolioResearchConfig, ResearchWindow
 from utils.cache.runtime.cache_paths import win32_extended_path
 from utils.core.enums import Ticker, TimeFrame
 
@@ -148,6 +148,9 @@ def test_materialize_inclusion_candidate_from_eval_bias_spec_writes_feature(
 ) -> None:
     import shutil
 
+    from ensemble.vault.hierarchy_spec import global_stream_ids_for_signed_signal_feature
+    from feature_research.config import TREND_FOLLOWING_UNIVERSE
+
     fr = load_config()
     train = ResearchWindow(start=datetime(2000, 1, 1), end=datetime(2005, 12, 31))
     validation = ResearchWindow(start=datetime(2006, 1, 1), end=datetime(2010, 12, 31))
@@ -169,7 +172,7 @@ def test_materialize_inclusion_candidate_from_eval_bias_spec_writes_feature(
         fr,
         pr,
         ephemeral_ensemble_name="test_inc",
-        weight_hierarchy_group="momentum",
+        weight_hierarchy_group="trend_following",
         temp_parent=tmp_path,
     )
     try:
@@ -179,7 +182,15 @@ def test_materialize_inclusion_candidate_from_eval_bias_spec_writes_feature(
         assert len(feats) == 1
         with open(win32_extended_path(feats[0]), "r", encoding="utf-8") as handle:
             payload = json.load(handle)
-        assert payload.get("weight_hierarchy_group") == "momentum"
+        assert payload.get("weight_hierarchy_group") == "trend_following"
+        assert frozenset(payload.get("tickers", [])) == frozenset(t.name for t in TREND_FOLLOWING_UNIVERSE)
+        stream_ids = global_stream_ids_for_signed_signal_feature(
+            payload,
+            trading_timeframe=TimeFrame.D,
+            ensemble_idx=0,
+            portfolio_ticker_names=frozenset(t.name for t in TREND_FOLLOWING_UNIVERSE),
+        )
+        assert len(stream_ids) == len(TREND_FOLLOWING_UNIVERSE)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -204,6 +215,133 @@ def test_inferred_inclusion_candidate_path_requires_existing_directory() -> None
         ),
     )
     assert inferred_inclusion_candidate_path(cfg2) == existing
+
+
+def test_config_with_ensemble_dirs_rebuilds_asset_first_hierarchy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import feature_research.inclusion_gates as inclusion_gates_mod
+    from ensemble.weight_hierarchy import parse_hierarchy_spec
+
+    monkeypatch.setattr(inclusion_gates_mod, "_REPO_ROOT", tmp_path)
+
+    vault = tmp_path / "vault"
+    ens = vault / "D" / "momentum" / "sma_regime"
+    (ens / "features").mkdir(parents=True)
+    (ens / "ensemble_config.json").write_text(
+        json.dumps(
+            {
+                "timeframe": "D",
+                "ensemble_name": "t",
+                "direction": "long",
+                "tickers": ["ES"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    payload = {
+        "feature_name": "f",
+        "weight_hierarchy_group": "momentum",
+        "bias_node_spec": {"module_name": "m", "timeframes": ["D"], "params": {}},
+        "tickers": ["ES", "GC"],
+        "base_models": [
+            {
+                "model_id": "rule_based_3",
+                "model_name": "f::rule_based_3",
+                "strategy": "long",
+                "model_type": "signed_signal",
+                "feature_column": "f",
+                "bias_node_spec": {"module_name": "m", "timeframes": ["D"], "params": {}},
+            }
+        ],
+    }
+    (ens / "features" / "f.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    train = ResearchWindow(start=datetime(2000, 1, 1), end=datetime(2005, 12, 31))
+    validation = ResearchWindow(start=datetime(2006, 1, 1), end=datetime(2010, 12, 31))
+    test = ResearchWindow(start=datetime(2011, 1, 1), end=datetime(2015, 12, 31))
+    base = PortfolioResearchConfig(
+        tickers=[Ticker.ES, Ticker.GC],
+        timeframe=TimeFrame.D,
+        start=datetime(2000, 1, 1),
+        end=datetime(2015, 12, 31),
+        use_cache=True,
+        train_window=train,
+        validation_window=validation,
+        test_window=test,
+        ensemble_dirs={"sma_regime": "vault/D/momentum/sma_regime"},
+        weight_layer_method="hierarchy_equal",
+        weight_layer_kwargs={"fdm_max": 2.0},
+    )
+    out = config_with_ensemble_dirs(base, {"sma_regime": "vault/D/momentum/sma_regime"})
+    spec = out.weight_layer_kwargs.get("hierarchy_spec")
+    assert isinstance(spec, dict)
+    root = parse_hierarchy_spec(spec)
+    assert root.group_id == "root"
+    asset_ids = {child.group_id for child in root.children}
+    assert asset_ids == {"equity_indices"}
+
+
+def test_config_with_ensemble_dirs_scopes_tickers_to_active_ensemble(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+
+    import feature_research.inclusion_gates as inclusion_gates_mod
+    import portfolio_research.config as cfg_mod
+
+    repo = tmp_path
+    monkeypatch.setattr(inclusion_gates_mod, "_REPO_ROOT", repo)
+    (repo / "portfolio_research").mkdir()
+    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", repo / "portfolio_research")
+
+    vault = repo / "vault" / "D" / "crude_oil_mr" / "mr_cl_long"
+    (vault / "features").mkdir(parents=True)
+    (vault / "ensemble_config.json").write_text(
+        json.dumps({"tickers": ["GC"]}),
+        encoding="utf-8",
+    )
+    feature_payload = {
+        "tickers": ["GC"],
+        "weight_hierarchy_group": "crude_oil_mr",
+        "bias_node_spec": {"module_name": "ibs", "timeframes": ["D"], "params": {}},
+    }
+    (vault / "features" / "ibs_gc.json").write_text(
+        json.dumps(feature_payload),
+        encoding="utf-8",
+    )
+    rel = "vault/D/crude_oil_mr/mr_cl_long"
+
+    def _iter(features_dir: Path):
+        if features_dir.name == "features":
+            yield vault / "features" / "ibs_gc.json", feature_payload
+
+    monkeypatch.setattr(cfg_mod._vault_feature_files, "iter_validated_feature_configs", _iter)
+
+    train = ResearchWindow(start=datetime(2000, 1, 1), end=datetime(2005, 12, 31))
+    validation = ResearchWindow(start=datetime(2006, 1, 1), end=datetime(2010, 12, 31))
+    test = ResearchWindow(start=datetime(2011, 1, 1), end=datetime(2015, 12, 31))
+    base = PortfolioResearchConfig(
+        tickers=[Ticker.ES, Ticker.GC, Ticker.NQ],
+        timeframe=TimeFrame.D,
+        start=datetime(2000, 1, 1),
+        end=datetime(2015, 12, 31),
+        use_cache=True,
+        train_window=train,
+        validation_window=validation,
+        test_window=test,
+        ensemble_dirs={},
+        ensemble_dirs_policy=EnsembleDirsPolicy.ALLOW_EMPTY,
+        baseline_mode="buy_hold",
+        benchmark_ticker=Ticker.ES,
+        weight_layer_method="equal_signal",
+        weight_layer_kwargs={"fdm_max": 2.0},
+    )
+    out = config_with_ensemble_dirs(base, {"mr_gc": rel})
+    assert out.tickers == (Ticker.GC,)
+    assert out.benchmark_ticker == Ticker.GC
 
 
 def test_config_with_ensemble_dirs_merges_and_preserves_equal_signal() -> None:

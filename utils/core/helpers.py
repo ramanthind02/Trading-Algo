@@ -35,11 +35,6 @@ def _load_data_cache_key(
     )
 
 
-def clear_load_data_cache() -> None:
-    """Drop cached OHLC frames returned by :func:`load_data` (for tests or long runs)."""
-    _LOAD_DATA_CACHE.clear()
-
-
 def is_dst(dt: datetime) -> bool:
     """Check if datetime is in daylight saving time."""
     from datetime import timedelta
@@ -89,29 +84,6 @@ def convert_ny_time_to_ftmo_time(dt_ny: datetime) -> int:
     hours_offset = 3 if is_dst(dt_ny) else 2
     dt_ny = dt_ny + timedelta(hours=hours_offset)
     return int(dt_ny.timestamp())
-
-
-def get_next_ftmo_midnight_time() -> tuple:
-    """
-    Get today's and tomorrow's midnight timestamps in FTMO time.
-    
-    Returns
-    -------
-    tuple
-        (today_midnight_timestamp, tomorrow_midnight_timestamp)
-    """
-    from zoneinfo import ZoneInfo
-    from datetime import timedelta
-    
-    cet_now = datetime.now(ZoneInfo('Europe/Berlin'))
-    today_midnight = cet_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    today_midnight = today_midnight.replace(tzinfo=ZoneInfo('UTC'))
-    tomorrow_midnight = today_midnight + timedelta(days=1)
-    
-    return (
-        int(today_midnight.timestamp()),
-        int(tomorrow_midnight.timestamp())
-    )
 
 
 def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1990, 1, 1), end: datetime = datetime(2025, 12, 30)) -> pd.DataFrame:
@@ -237,38 +209,6 @@ def load_data_multi_ticker(
     combined_df = combined_df.sort_values('datetime').reset_index(drop=True)
     
     return combined_df
-    
-
-def load_numpy_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1990, 1, 1, 0, 0, 0), end: datetime = datetime.now()) -> np.ndarray:
-    # Load DataFrame
-    df = load_data(ticker, timeframe, start, end)
-
-    try:
-        # Convert 'datetime' column to Unix timestamps (in seconds)
-        df['datetime'] = (df['datetime'] - pd.Timestamp('1970-01-01')) // pd.Timedelta('1s')
-
-        # Pre-allocate numpy array
-        data = np.zeros(len(df), dtype=[
-            ('open', np.float32),
-            ('close', np.float32),
-            ('high', np.float32),
-            ('low', np.float32),
-            ('datetime', np.uint32)
-        ])
-
-        # Copy values
-        data['open'] = df['open']
-        data['close'] = df['close']
-        data['high'] = df['high']
-        data['low'] = df['low']
-        data['datetime'] = df['datetime']
-
-        return data
-    
-    finally:
-        # Explicitly delete DataFrame and force garbage collection
-        del df
-        gc.collect()
 
 
 def _normalize_module_base_name(module_name: str) -> str:
@@ -656,6 +596,9 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
     known_modules = [
         'envelope_reversion_signal',
         'casey_percent_c_signal',
+        'donchian_breakout_signal',
+        'rebalancing_flow',
+        'percent_b_signal',
         'cumulative_rsi_signal',
         'zscore_rsi_signal',
         'cumulative_rsi',
@@ -734,205 +677,3 @@ def parse_feature_column_name(name: str) -> Dict[str, Any]:
         'params': params,
         'filters': filter_parts,
     }
-def align_candles_with_features(
-    candles_df: pd.DataFrame,
-    features_df: pd.DataFrame,
-    datetime_col: str = 'datetime'
-) -> pd.DataFrame:
-    """
-    Align candles DataFrame with features DataFrame by datetime.
-    
-    This is a standardized method for ensuring candles and features have
-    matching datetime values for proper alignment in BaseModel.fit().
-    
-    Parameters
-    ----------
-    candles_df : pd.DataFrame
-        Candles DataFrame. Can have datetime as index or column.
-        If column, must have 'datetime' column.
-    features_df : pd.DataFrame
-        Features DataFrame with datetime index (timezone-aware UTC)
-    datetime_col : str, default='datetime'
-        Name of datetime column if not using index
-        
-    Returns
-    -------
-    pd.DataFrame
-        Aligned candles DataFrame with:
-        - datetime as column (for BaseModel.fit compatibility)
-        - Columns: datetime, open, high, low, close, volume, ticker, timeframe
-        - Only rows that match features_df.index
-    """
-    # Make a copy to avoid modifying original
-    aligned = candles_df.copy()
-    
-    # If datetime is a column, temporarily set it as index for alignment
-    datetime_is_column = datetime_col in aligned.columns
-    if datetime_is_column:
-        aligned.set_index(datetime_col, inplace=True)
-    
-    # Ensure index is datetime type
-    if not isinstance(aligned.index, pd.DatetimeIndex):
-        aligned.index = pd.to_datetime(aligned.index)
-    
-    # Ensure timezone-aware (UTC) to match features
-    if aligned.index.tz is None:
-        aligned.index = aligned.index.tz_localize('UTC')
-    else:
-        aligned.index = aligned.index.tz_convert('UTC')
-    
-    # Align with features index (inner join - only matching datetimes)
-    aligned = aligned.reindex(features_df.index)
-    
-    # Drop rows with NaN in required columns
-    aligned = aligned.dropna(subset=[col for col in ['open', 'high', 'low', 'close'] if col in aligned.columns], how='all')
-    
-    # Reset index to get datetime as column (BaseModel.fit expects datetime column)
-    aligned = aligned.reset_index()
-    if 'index' in aligned.columns:
-        aligned.rename(columns={'index': datetime_col}, inplace=True)
-    
-    # Ensure required columns exist
-    required_cols = ['open', 'high', 'low', 'close', 'volume', 'ticker', 'timeframe']
-    for col in required_cols:
-        if col not in aligned.columns:
-            if col == 'volume':
-                aligned[col] = 0.0
-            elif col in ['ticker', 'timeframe']:
-                # These should be set by caller, but provide defaults
-                pass
-    
-    return aligned
-
-
-def get_ticker_list() -> List[Ticker]:
-    return [
-        Ticker.ES,   # CONTINUOUS E-MINI S&P 500 CONTRACT
-        Ticker.NQ,   # CONTINUOUS E-MINI NASDAQ 100 CONTRACT
-        Ticker.YM,   # CONTINUOUS E-MINI DOW JONES $5 CONTRACT
-        Ticker.RTY,  # CONTINUOUS E-MINI RUSSELL 2000 CONTRACT
-
-        # Energy
-        Ticker.CL,   # CONTINUOUS CRUDE OIL CONTRACT
-        Ticker.NG,   # CONTINUOUS NATURAL GAS CONTRACT
-        Ticker.HO,   # CONTINUOUS NEW YORK HARBOR ULSD CONTRACT
-
-        # Metals
-        Ticker.GC,   # CONTINUOUS GOLD CONTRACT
-        Ticker.HG,   # CONTINUOUS COPPER CONTRACT
-        Ticker.SI,   # CONTINUOUS SILVER CONTRACT
-        Ticker.PL,   # CONTINUOUS PLATINUM CONTRACT
-
-        # Currencies (FX)
-        Ticker.EU,   # CONTINUOUS EURO FX CONTRACT
-        Ticker.JY,   # CONTINUOUS JAPANESE YEN CONTRACT
-        Ticker.BP,   # CONTINUOUS BRITISH POUND CONTRACT
-        Ticker.CD,   # CONTINUOUS CANADIAN DOLLAR CONTRACT
-        Ticker.SF,   # CONTINUOUS SWISS FRANC CONTRACT
-
-        # Agricultural (Food Grains)
-        Ticker.C,    # CONTINUOUS CORN CONTRACT
-        Ticker.S,    # CONTINUOUS SOYBEANS CONTRACT
-        Ticker.W,    # CONTINUOUS WHEAT CONTRACT
-
-        Ticker.GF,   # CONTINUOUS FEEDER CATTLE CONTRACT
-
-        # Fixed Income
-        Ticker.TY,   # CONTINUOUS 10 YR US TREASURY NOTE CONTRACT
-        Ticker.FV,   # CONTINUOUS 5 YR US TREASURY NOTE CONTRACT
-        Ticker.US,   # CONTINUOUS 30 YR US TREASURY BOND CONTRACT
-        Ticker.TU,   # CONTINUOUS 2 YR US TREASURY NOTE CONTRACT
-    ]
-
-
-def spearman_rho(var1: pd.Series, var2: pd.Series) -> float:
-    """
-    Compute Spearman Rho correlation coefficient between two pandas Series.
-    
-    This implementation follows the classical algorithm with tie correction,
-    providing accurate correlation values even when ties are present in the data.
-    The algorithm:
-    1. Ranks both variables independently
-    2. Computes tie corrections for each variable
-    3. Calculates correlation using the corrected rank differences
-    
-    Args:
-        var1: First pandas Series
-        var2: Second pandas Series
-        
-    Returns:
-        float: Spearman Rho correlation coefficient in range [-1, 1]
-        
-    Raises:
-        ValueError: If series have different lengths or contain all NaN values
-        
-    Example:
-        >>> s1 = pd.Series([1, 2, 3, 4, 5])
-        >>> s2 = pd.Series([5, 6, 7, 8, 7])
-        >>> rho = spearman_rho(s1, s2)
-    """
-    # Remove NaN values and align the series
-    x_vals = var1.values.copy()
-    y_vals = var2.values.copy()
-    n = len(x_vals)
-    
-    if n < 2:
-        raise ValueError("Need at least 2 valid data points to compute correlation")
-    
-    # Helper function to compute ranks with tie correction
-    def rank_with_tie_correction(arr):
-        """
-        Rank array and compute tie correction factor.
-        Returns ranks and tie correction sum.
-        """
-        # Sort indices to get ordering
-        sorted_indices = np.argsort(arr)
-        sorted_arr = arr[sorted_indices]
-        
-        # Initialize ranks array
-        ranks = np.empty(n, dtype=np.float64)
-        tie_correction = 0.0
-        
-        j = 0
-        while j < n:
-            val = sorted_arr[j]
-            # Find all ties
-            k = j + 1
-            while k < n and sorted_arr[k] == val:
-                k += 1
-            
-            # Number of tied values
-            ntied = k - j
-            
-            # Tie correction: sum of (ties^3 - ties)
-            tie_correction += ntied * ntied * ntied - ntied
-            
-            # Average rank for tied values (1-indexed, so +1)
-            rank = 0.5 * (j + k + 1.0)
-            
-            # Assign average rank to all tied positions
-            for idx in range(j, k):
-                ranks[sorted_indices[idx]] = rank
-            
-            j = k
-        
-        return ranks, tie_correction
-    
-    # Compute ranks and tie corrections for both variables
-    x_ranks, x_tie_correc = rank_with_tie_correction(x_vals)
-    y_ranks, y_tie_correc = rank_with_tie_correction(y_vals)
-    
-    # Final computations
-    dn = float(n)
-    ssx = (dn * dn * dn - dn - x_tie_correc) / 12.0
-    ssy = (dn * dn * dn - dn - y_tie_correc) / 12.0
-    
-    # Compute squared rank differences
-    rank_diff = x_ranks - y_ranks
-    rankerr = np.sum(rank_diff * rank_diff)
-    
-    # Compute Spearman Rho with tie correction
-    denominator = np.sqrt(ssx * ssy + 1.0e-20)  # Small epsilon to avoid division by zero
-    rho = 0.5 * (ssx + ssy - rankerr) / denominator
-    
-    return rho

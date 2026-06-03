@@ -230,7 +230,9 @@ class DonchianChannelLongOnly(BiasNode):
         self.params = {
             "entry_lookback": entry_lookback,
             "exit_lookback": exit_lookback,
-            "sma_period": raw_sma_period,
+            # Only include sma_period when it is an active integer filter —
+            # lookback_contributions requires int-like values and must not see None.
+            **({"sma_period": raw_sma_period} if isinstance(raw_sma_period, int) else {}),
             **(
                 {"channel_lookback": int(channel_lookback)}
                 if channel_lookback is not None

@@ -10,7 +10,7 @@ Usage
     python portfolio_research/run_portfolio_test.py --prop-firm
 
 Artifacts are written to config.output_root, including per-phase and combined
-``weight_layer_weights*.csv`` files (long format for Power BI; stream/model ids
+``weight_layer_weights*.csv`` files (long-format visualization CSVs; stream/model ids
 are not hardcoded). Optional HTML tearsheets: set
 ``export_per_timeframe_tearsheets`` / ``export_per_ensemble_tearsheets`` in
 ``portfolio_research.config.load_config()`` to False to skip slower detail reports

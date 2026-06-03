@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Callable
 
 import pandas as pd
 
-from feature_research.core_helpers import (
+from feature_research._internal.core_helpers import (
     combo_key,
     normalize_datetime_index,
     normalize_series_datetime_index,

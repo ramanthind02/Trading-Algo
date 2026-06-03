@@ -3,8 +3,11 @@ from __future__ import annotations
 import pandas as pd
 from pathlib import Path
 import pytest
+from quantfoundry_core.metrics import MetricName, compute_scalar_metric
 
-from utils.evaluation.walkforward.metrics import resolve_objective_metric
+from feature_selection.validation.objective_metrics import (
+    resolve_objective_metric_name as resolve_objective_metric,
+)
 
 
 def test_resolve_mean_return_metric() -> None:
@@ -17,7 +20,8 @@ def test_resolve_mean_return_metric() -> None:
 def test_resolve_sharpe_metric() -> None:
     metric = resolve_objective_metric("sharpe")
     returns = pd.Series([0.02, -0.01, 0.015, -0.005])
-    expected = float(returns.mean() / returns.std(ddof=0))
+    indexed = returns.set_axis(pd.date_range("2024-01-01", periods=len(returns), freq="D"))
+    expected = compute_scalar_metric(indexed, MetricName.SHARPE, periods_per_year=1)
 
     assert metric(returns) == pytest.approx(expected)
 
@@ -25,8 +29,8 @@ def test_resolve_sharpe_metric() -> None:
 def test_resolve_sortino_metric() -> None:
     metric = resolve_objective_metric("sortino")
     returns = pd.Series([0.03, -0.01, 0.02, -0.02])
-    downside = returns[returns < 0]
-    expected = float(returns.mean() / downside.std(ddof=0))
+    indexed = returns.set_axis(pd.date_range("2024-01-01", periods=len(returns), freq="D"))
+    expected = compute_scalar_metric(indexed, MetricName.SORTINO, periods_per_year=1)
 
     assert metric(returns) == pytest.approx(expected)
 

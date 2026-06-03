@@ -12,7 +12,7 @@ import pandas as pd
 from ensemble.vault.discovery import iter_vault_feature_members
 from ensemble.vault.feature_files import extract_feature_name
 from feature_extraction.feature_extractor import extract_features_for_bias_node
-from feature_research.core_helpers import combo_key, normalize_timeframe_from_bias_spec
+from feature_research._internal.core_helpers import combo_key, normalize_timeframe_from_bias_spec
 from feature_research.in_sample.data_loader import param_combo_label, populate_cache_if_needed
 from feature_research.research_table_exports import _normalize_ts, _slice_combo_panel
 from utils.core.enums import Ticker, TimeFrame

@@ -74,6 +74,19 @@ These parameters cannot be edited once the strategy is deployed. If a researcher
 
 ---
 
+## 3.5 Portfolio research holdout (retrospective)
+
+When the same four-test suite runs in **portfolio research holdout** (`portfolio_research/holdout/strategy_monitoring.py`), windows differ from a naive “full holdout block” comparison:
+
+- **Reference μ:** validation period only (default 2018–2022) — uncontaminated OOS drift.
+- **Reference σ:** train + validation pooled for precision; if period volatilities differ by more than 30%, σ is weighted 70% toward validation (configurable).
+- **Evaluation:** trailing 12 months ending at the holdout end date, re-evaluated at each month-end for `monitoring_history.csv`.
+- **Aggregation:** Green / Yellow / Red from how many of the four tests fail (0–1 / 2 / 3–4); advisory weights 1.0 / 0.5 / 0.0. Researcher overrides are optional and display-only in Phase 1.
+
+See `portfolio_holdout.md` §2.0 for artifact paths and UI rollup cards.
+
+---
+
 ## 4. Performance-Based Monitors
 
 These tests operate on the live return stream and test whether it is consistent with the IS distribution. They are lagging by construction — they require accumulated return history before producing meaningful signals.
@@ -86,11 +99,11 @@ At each bar $t$ in the live period:
 
 $$z_t = \frac{r_t - \mu_\text{IS}}{\sigma_\text{IS}}, \quad S_t = \sum_{i=1}^{t} z_i$$
 
-$$C = \frac{\max_t |S_t|}{\sqrt{T_\text{live}}}$$
+$$C = \frac{\max(0, -\min_t S_t)}{\sqrt{T_\text{live}}}$$
 
-A structural break is flagged when $C > 1.36$ (5% level). The CUSUM series is reset after each flagged break — detection of one structural change should not permanently elevate the statistic.
+A break is flagged when $\min_t S_t < -1.36\sqrt{T_\text{live}}$ (5% lower envelope only). Positive CUSUM excursions above the upper envelope do **not** fail monitoring. The CUSUM series is reset after each flagged break — detection of one structural change should not permanently elevate the statistic.
 
-CUSUM detects *cumulative* departure from the IS distribution. It is sensitive to persistent one-directional drift — a strategy earning consistently below its IS mean will accumulate a large negative CUSUM even if no single period is unusual. This makes it well-suited for detecting gradual edge decay as well as abrupt breaks.
+CUSUM detects *cumulative underperformance* vs the IS mean. It is sensitive to persistent negative drift — a strategy earning consistently below its IS mean will accumulate a large negative CUSUM even if no single period is unusual. This makes it well-suited for detecting gradual edge decay as well as abrupt breaks.
 
 ### 4.2 Rolling Sharpe Ratio
 
@@ -151,7 +164,7 @@ def sprt_boundaries(alpha: float, beta: float) -> tuple[float, float]:
     return A, B
 ```
 
-**Implementation note:** σ²_IS should be the IS return variance, not the NW-adjusted long-run variance. The NW adjustment affects the standard error of the mean estimator; the SPRT likelihood function uses the per-observation variance. For strategies with significant return autocorrelation, the SPRT will have lower effective power than the i.i.d. calculation suggests — this is expected and honest.
+**Implementation note:** σ²_IS should be the IS return variance, not a long-run variance estimate used for serial-dependence adjustments. The SPRT likelihood function uses the per-observation variance. For strategies with significant return autocorrelation, the SPRT will have lower effective power than the i.i.d. calculation suggests — this is expected and honest.
 
 **Why SPRT over repeated t-tests:** A t-test applied monthly over 24 months has an effective false positive rate far above the nominal 5% due to multiple comparisons. The SPRT controls error rates over the entire monitoring horizon, not just at each test application.
 

@@ -1,8 +1,10 @@
 """Unified in-sample research entry point for the signed-signal trading pipeline.
 
-This single script runs the in-sample research pipeline:
-  1. EDA (exploratory data analysis for all param combos)
-  2. Optional in-sample permutation (vector shuffle only)
+This single script runs the exploration phase in canonical order:
+  1. EDA (parameter sweep for all param combos)
+  2. In-sample robustness (when ``config.robustness.enabled``)
+  3. Vector-shuffle permutation (when ``config.permutation.enabled`` and
+     ``config.permutation.run_vector_shuffle``)
 Validation is a separate phase; run ``feature_research/validation/run_validation.py`` for that.
 
 Usage
@@ -10,11 +12,11 @@ Usage
     Linux/macOS (after ``activate``):
 
         source /path/to/Trading-Algo/venv/bin/activate
-        python -m feature_research.in_sample.run_is
+        python -m feature_research exploration
 
     Windows PowerShell from repo root (no PATH activation required)::
 
-        ./.venv/Scripts/python.exe -m feature_research.in_sample.run_is
+        ./.venv/Scripts/python.exe -m feature_research exploration
 
     Or from the repo root: ``python feature_research/in_sample/run_is.py``
     (the script prepends the repo root to ``sys.path`` when run by path).
@@ -26,11 +28,9 @@ To customize tickers, dates, bias specs, or phase presets, edit
 Continuous-node binning / EDA research is configured separately in
 ``feature_research/binning/config.py``.
 
-To enable permutation: set ``permutation.enabled=True`` in ``feature_research/config.py``.
-Signals are materialized once per combo, then Stage 1 runs ``run_vector_shuffle_test``:
-each null replicate **permutes the feature vector** on the timeline (fixed target), one
-combo at a time. (Passing pre-aligned batches to the orchestrator would select a different
-null that permutes the target instead—avoided here.)
+Automatic robustness checks are driven by ``config.robustness``. Vector-shuffle
+permutation is driven by ``config.permutation`` (see
+``docs/library/Feature_selection/permutation_testing.md``).
 
 Optional: for faster bias-node computation (ATR, EMA, RSI, etc.), build the Cython
 extensions: ``python utils/compute/cython/setup_cython.py build_ext --inplace``.
@@ -39,87 +39,67 @@ Nodes that use ``utils.compute.fast_nodes`` then use the compiled path when avai
 Output
 ------
 All reports and artifacts are written to the configured ``reports_dir`` from the
-in-sample config. EDA analysis and permutation loads use ``ResearchConfig.training_window_bounds``
+in-sample config. EDA analysis and robustness loads use ``ResearchConfig.training_window_bounds``
 (OOS or validation train slice when set, else global ``start``/``end``); bias/EWSD cache population
-uses the full ``start``/``end`` span so later phases need not rebuild artifacts. Param-sensitivity and permutation Power BI tables live under
-``feature_research/in_sample/results/powerbi/`` (CSV tables: pooled param sensitivity, **per-ticker** param sensitivity, ``param_combo_long``, ``equity_curve.csv``; path is fixed for Power BI imports). In Power BI, set the primary key on ``param_sensitivity_by_ticker`` to ``param_sensitivity_by_ticker_key`` only—``param_combo_label`` repeats per ticker and must not be a key. When
-permutation is enabled, ``permutation_summary.csv`` and ``permutation_summary.md``
-are also written at the reports root.
+uses the full common OHLC history in ``data/ohlc_data`` (not the analysis window) so indicator
+warmup happens once at data inception and later phases need not rebuild artifacts.
+Param-sensitivity and visualization CSVs live under
+``feature_research/in_sample/results/visualization/`` (CSV tables: pooled param sensitivity,
+**per-ticker** param sensitivity, ``param_combo_long``, ``equity_curve.csv`` with per-ticker rows
+plus one ``ALL`` combined row per param combo). When
+robustness is enabled, ``robustness_summary.csv``, ``robustness_summary.md``,
+``robustness_combinations.csv``, and ``robustness_report.json`` are also written at the
+reports root. When permutation is enabled, ``permutation_summary.csv``, ``permutation_summary.md``,
+and ``visualization/permutation_vector_shuffle.csv`` are written as documented in
+``docs/library/Feature_selection/permutation_testing.md``.
 """
-import sys
 from pathlib import Path
 
-
-def _prepend_repo_root_to_syspath() -> None:
-    """Allow ``python path/to/run_is.py`` without PYTHONPATH (stdlib only)."""
-    start = Path(__file__).resolve()
-    for parent in (start.parent, *start.parents):
-        if (parent / "pyproject.toml").exists() or (parent / ".git").exists():
-            root = str(parent)
-            if root not in sys.path:
-                sys.path.insert(0, root)
-            return
-    raise RuntimeError(
-        "Could not locate repository root (no pyproject.toml or .git above this file)."
-    )
-
-
-_prepend_repo_root_to_syspath()
-
-from feature_research.bootstrap import ensure_repo_root_on_syspath
+from utils.repo_bootstrap import ensure_repo_root_on_syspath
 
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
 from feature_research.config import load_config
-from feature_research.research_table_exports import canonical_in_sample_power_bi_dir
-from feature_research.pipeline import (
-    run_eda_pipeline,
-    run_permutation_pipeline,
-    write_permutation_summary,
-)
+from feature_research.exploration import execute_exploration_phase, exploration_permutation_enabled
+from feature_research.research_table_exports import canonical_in_sample_visualization_dir
 
 
 def main() -> None:
     config = load_config()
 
-    print(f"\nPermutation enabled: {config.permutation.enabled}")
+    print(f"\nRobustness enabled: {config.robustness.enabled}")
+    print(f"Full-grid permutation: {config.robustness.run_full_grid_permutation}")
+    print(f"Vector-shuffle permutation: {exploration_permutation_enabled(config)}")
     print(f"Reports dir: {config.reports_dir.resolve()}")
 
-    # Run EDA for all param combos
     print(f"\n{'*'*70}")
-    print(f"PHASE 1: In-Sample EDA ({config.feature_type.name})")
+    print(f"EXPLORATION ({config.feature_type.name})")
     print(f"{'*'*70}")
-    eda_results = run_eda_pipeline(config, config.reports_dir)
 
-    # Run optional in-sample permutation (vector shuffle only)
-    if config.permutation.enabled:
-        print(f"\n{'*'*70}")
-        print(
-            "PHASE 2: In-Sample Permutation — vector shuffle (same expanded grid as EDA)"
+    result = execute_exploration_phase(config, config.reports_dir)
+
+    print(f"\nExploration complete. {len(result.eda_results)} EDA combo(s).")
+    print(f"Artifacts in {config.reports_dir.resolve()}")
+    if result.pass1_binning is not None:
+        decile_chart = (
+            canonical_in_sample_visualization_dir() / "matplotlib" / "atr_pct_decile_chart.png"
         )
-        print(f"{'*'*70}")
-        try:
-            permutation_suite, perm_param_grid = run_permutation_pipeline(
-                config, config.reports_dir
-            )
-            csv_path, md_path = write_permutation_summary(
-                permutation_suite,
-                config.reports_dir,
-                objective_metric=config.permutation.objective_metric,
-                param_grid=perm_param_grid,
-            )
-            print(f"\nPermutation summary written:")
-            print(f"  CSV: {csv_path.resolve()}")
-            print(f"  MD:  {md_path.resolve()}")
-            print(f"  Power BI folder: {canonical_in_sample_power_bi_dir().resolve()}")
-        except Exception as e:
-            print(f"\nPermutation pipeline failed: {e}")
-            raise
-
-    msg = f"\nIn-sample research complete. {len(eda_results)} EDA combos. Artifacts in {config.reports_dir}"
-    if config.permutation.enabled:
-        msg += " Permutation summary CSV/MD in reports_dir."
-    print(msg)
+        print(f"  Pass 1 ATR% decile chart: {decile_chart.resolve()}")
+    if result.robustness_artifacts is not None:
+        print(f"  Robustness CSV:  {result.robustness_artifacts['summary_csv'].resolve()}")
+        print(f"  Robustness MD:   {result.robustness_artifacts['markdown'].resolve()}")
+        print(f"  Robustness JSON: {result.robustness_artifacts['json'].resolve()}")
+    if result.permutation_summary_csv is not None:
+        print(f"  Permutation CSV: {result.permutation_summary_csv.resolve()}")
+        print(f"  Permutation MD:  {result.permutation_summary_md.resolve()}")
+    print(
+        f"  Visualization CSV folder: {canonical_in_sample_visualization_dir().resolve()}"
+    )
+    if result.matplotlib_plots:
+        print(
+            f"  Matplotlib PNGs ({len(result.matplotlib_plots)}): "
+            f"{result.matplotlib_plots[0].parent.resolve()}"
+        )
 
 
 if __name__ == "__main__":

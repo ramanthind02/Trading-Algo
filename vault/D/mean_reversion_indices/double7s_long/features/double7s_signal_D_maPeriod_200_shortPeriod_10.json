@@ -1,0 +1,38 @@
+{
+  "feature_name": "double7s_signal_D_maPeriod_200_shortPeriod_10",
+  "created_at": "2026-05-31T20:37:08.102397+00:00",
+  "updated_at": "2026-05-31T20:37:08.102397+00:00",
+  "bias_node_spec": {
+    "module_name": "double7s",
+    "timeframes": [
+      "D"
+    ],
+    "params": {
+      "short_period": 10,
+      "ma_period": 200
+    }
+  },
+  "tickers": [
+    "ES",
+    "NQ"
+  ],
+  "base_models": [
+    {
+      "model_id": "signed_signal_double7s_d_ma-period_200_short-period_10",
+      "model_name": "double7s_signal_D_maPeriod_200_shortPeriod_10::signed_signal_double7s_d_ma-period_200_short-period_10",
+      "model_type": "signed_signal",
+      "feature_column": "double7s_signal_D_maPeriod_200_shortPeriod_10",
+      "strategy": "long",
+      "bias_node_spec": {
+        "module_name": "double7s",
+        "timeframes": [
+          "D"
+        ],
+        "params": {
+          "short_period": 10,
+          "ma_period": 200
+        }
+      }
+    }
+  ]
+}

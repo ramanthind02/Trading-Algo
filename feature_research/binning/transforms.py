@@ -40,7 +40,7 @@ def dedupe_combo_param_pairs(
 
 
 def flatten_params_for_combo_long_table(params: Mapping[str, Any]) -> dict[str, Any]:
-    """Flatten nested composite specs to scalar keys for Power BI ``param_combo_long``.
+    """Flatten nested composite specs to scalar keys for visualization ``param_combo_long``.
 
     Matches the flat ``self.params`` layout from :class:`~nodes.composite.filter_gate.FilterGateNode`
     and     :class:`~nodes.composite.filter_and_signal.FilterAndSignalNode` (``f_*`` / ``s_*``) and
@@ -81,6 +81,44 @@ def flatten_params_for_combo_long_table(params: Mapping[str, Any]) -> dict[str, 
         out2.update({f"b_{k}": v for k, v in pb.items()})
         return out2
     return dict(p)
+
+
+def inflate_params_from_combo_long_table(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Restore nested composite specs from flat keys produced by ``flatten_params_for_combo_long_table``."""
+    if not params:
+        return {}
+    p = dict(params)
+    if isinstance(p.get("signal_params"), dict) or isinstance(p.get("filter_params"), dict):
+        return p
+    if "filter_module" in p and "signal_module" in p:
+        filter_params = {key[2:]: value for key, value in p.items() if key.startswith("f_")}
+        signal_params = {key[2:]: value for key, value in p.items() if key.startswith("s_")}
+        if filter_params or signal_params:
+            passthrough = {
+                key: value
+                for key, value in p.items()
+                if not (key.startswith("f_") or key.startswith("s_"))
+            }
+            return {
+                **passthrough,
+                "filter_params": filter_params,
+                "signal_params": signal_params,
+            }
+    if "moduleA" in p and "moduleB" in p:
+        params_a = {key[2:]: value for key, value in p.items() if key.startswith("a_")}
+        params_b = {key[2:]: value for key, value in p.items() if key.startswith("b_")}
+        if params_a or params_b:
+            passthrough = {
+                key: value
+                for key, value in p.items()
+                if not (key.startswith("a_") or key.startswith("b_"))
+            }
+            return {
+                **passthrough,
+                "paramsA": params_a,
+                "paramsB": params_b,
+            }
+    return p
 
 
 def build_param_combo_long_table(
@@ -248,10 +286,19 @@ def assign_quantile_bins(
 def _metric_row_for_targets(target: pd.Series, timeframe: TimeFrame) -> dict[str, float | int]:
     s = pd.to_numeric(target, errors="coerce").dropna()
     n_obs = int(len(s))
-    if n_obs < 2:
+    if n_obs == 0:
         return {
             "n_obs": n_obs,
             "mean_return": float("nan"),
+            "sortino": float("nan"),
+            "sharpe": float("nan"),
+            "t_stat": float("nan"),
+        }
+    if n_obs == 1:
+        single = float(s.iloc[0])
+        return {
+            "n_obs": n_obs,
+            "mean_return": single,
             "sortino": float("nan"),
             "sharpe": float("nan"),
             "t_stat": float("nan"),
@@ -270,18 +317,26 @@ def summarize_bins_by_metrics(
     *,
     timeframe: TimeFrame,
     group_keys: tuple[str, ...] = ("param_combo_label", "ticker", "bin_index"),
+    return_col: str = "target",
+    active_signal_only: bool = False,
 ) -> pd.DataFrame:
     """One row per group with mean_return, sortino, sharpe, t_stat."""
     present = [k for k in group_keys if k in panel.columns]
     if "bin_index" not in present:
         raise ValueError("panel must contain bin_index")
+    if return_col not in panel.columns:
+        raise ValueError(f"panel must contain return column {return_col!r}")
 
     sliced = panel.dropna(subset=["bin_index"])
     records: list[dict[str, object]] = []
     for gkey, sub in sliced.groupby(list(present), observed=True):
         keys_tuple = gkey if isinstance(gkey, tuple) else (gkey,)
         key_map = dict(zip(present, keys_tuple))
-        row = {**key_map, **_metric_row_for_targets(sub["target"], timeframe)}
+        metric_slice = sub
+        if active_signal_only and "strategy_signal" in metric_slice.columns:
+            active = pd.to_numeric(metric_slice["strategy_signal"], errors="coerce").fillna(0.0) != 0.0
+            metric_slice = metric_slice.loc[active]
+        row = {**key_map, **_metric_row_for_targets(metric_slice[return_col], timeframe)}
         records.append(row)
     return pd.DataFrame.from_records(records) if records else pd.DataFrame(columns=list(present) + [
         "n_obs",
@@ -355,7 +410,7 @@ def map_bin_selection_to_position(
     long_bins: frozenset[int],
     short_bins: frozenset[int],
 ) -> int:
-    """Pseudo signal: +1 long bin, -1 short, 0 neutral. For Power BI export column."""
+    """Pseudo signal: +1 long bin, -1 short, 0 neutral. For visualization export column."""
     if pd.isna(bin_index):
         return 0
     try:

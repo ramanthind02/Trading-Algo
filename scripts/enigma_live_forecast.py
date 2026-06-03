@@ -9,16 +9,16 @@ to ETF positions with optional Telegram notification.
 
 Usage:
     # Paper trading (default)
-    python scripts/tws_live_forecast.py
+    python scripts/enigma_live_forecast.py
 
     # Live trading
-    python scripts/tws_live_forecast.py --port 7496
+    python scripts/enigma_live_forecast.py --port 7496
 
     # With capital override
-    python scripts/tws_live_forecast.py --capital 5000
+    python scripts/enigma_live_forecast.py --capital 5000
 
     # Dry run (no Telegram)
-    python scripts/tws_live_forecast.py --dry-run
+    python scripts/enigma_live_forecast.py --dry-run
 """
 
 import sys

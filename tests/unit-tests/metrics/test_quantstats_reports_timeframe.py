@@ -9,6 +9,7 @@ import pytest
 from metrics.plotting.graphing import quantstats_reports
 from metrics.plotting.graphing.quantstats_reports import (
     _resample_to_daily_if_needed,
+    compute_performance_report,
     generate_tearsheet,
     vol_scale_returns_to_target_annualized_volatility,
 )
@@ -110,3 +111,21 @@ def test_generate_tearsheet_applies_target_annual_volatility(
     out = captured[0]
     realized = float(out.dropna().std(ddof=1)) * math.sqrt(252.0)
     assert abs(realized - 0.10) < 0.03
+
+
+def test_compute_performance_report_uses_quantfoundry_core_contract() -> None:
+    idx = pd.date_range("2024-01-01", periods=8, freq="D")
+    strategy = pd.Series([0.01, -0.005, 0.008, -0.002, 0.004, 0.003, -0.001, 0.002], index=idx)
+    benchmark = pd.Series([0.006, -0.004, 0.005, -0.001, 0.002, 0.001, -0.002, 0.001], index=idx)
+
+    report = compute_performance_report(
+        strategy_returns=strategy,
+        baseline_returns=benchmark,
+        feature_name="Example",
+        timeframe=TimeFrame.D,
+    )
+
+    assert report is not None
+    assert report.mode.value == "full"
+    assert report.column_order == ("Baseline (Always-In)", "Example")
+    assert report.to_json_dict()["periods_per_year"] == TimeFrame.D.bars_per_year

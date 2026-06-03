@@ -66,6 +66,46 @@ def test_align_daily_volatility_to_intraday_candles_ffills_per_ticker() -> None:
     assert aligned["ewsd_annual_vol"].tolist() == [0.20, 0.20, 0.30]
 
 
+def test_align_daily_volatility_ffills_month_end_calendar_dates() -> None:
+    """Month-end candle dates not in the daily vol index still receive last trading-day vol."""
+    service = DailyEWSDVolatilityService()
+    daily_volatility = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(["2024-03-28", "2024-04-01"]),
+            "ticker": ["ES", "ES"],
+            "ewsd_annual_vol": [0.18, 0.19],
+        }
+    )
+    monthly_candle = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(["2024-03-31"]),
+            "ticker": ["ES"],
+        }
+    )
+    aligned = service.align_daily_volatility_to_candles(daily_volatility, monthly_candle)
+    assert aligned["ewsd_annual_vol"].tolist() == [pytest.approx(0.18)]
+
+
+def test_align_daily_volatility_backfills_before_first_vol_observation() -> None:
+    """Dates before the first EWSD row use the earliest available vol (rolled-fit windows)."""
+    service = DailyEWSDVolatilityService()
+    daily_volatility = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(["2005-01-03", "2005-01-04"]),
+            "ticker": ["GC", "GC"],
+            "ewsd_annual_vol": [0.22, 0.23],
+        }
+    )
+    candles = pd.DataFrame(
+        {
+            "datetime": pd.to_datetime(["2004-12-31", "2005-01-03"]),
+            "ticker": ["GC", "GC"],
+        }
+    )
+    aligned = service.align_daily_volatility_to_candles(daily_volatility, candles)
+    assert aligned["ewsd_annual_vol"].tolist() == [pytest.approx(0.22), pytest.approx(0.22)]
+
+
 def test_align_daily_volatility_raises_for_unresolved_gaps() -> None:
     service = DailyEWSDVolatilityService()
     daily_volatility = pd.DataFrame(

@@ -4,6 +4,8 @@
 
 This document describes the ordered sequence of steps from project creation to live deployment. It is the practical companion to the detailed specifications in the other docs — it tells you what to do and in what order, with links to where each step is specified.
 
+For local `Trading-Algo` documentation, treat the robustness documents under `docs/SaaS/robustness_tests/` as the canonical reference for the strategy-research workflow. The local `feature_research/` package is migrating toward the same three-phase model: `exploration -> validation -> portfolio_addition`.
+
 ---
 
 ## 2. Phase 1 — Project Setup
@@ -57,7 +59,7 @@ Transaction cost specification: `transaction_costs.md`
 In the Parameter Sweep tool:
 - Configure the parameter grid
 - Submit the sweep — all combinations run in parallel on the IS (Train) zone
-- Results display automatically: NW-adjusted t-stats, DSR, rolling IS stability, N_eff, Sharpe CI
+- Results display automatically: the configured selection metric, DSR, rolling IS stability, N_eff, and Sharpe CI
 - Inspect the heatmap to understand the parameter surface topology
 
 IS robustness tests: `robustness_tests/in_sample.md`
@@ -75,13 +77,13 @@ The median is the more realistic expectation of live performance. A large peak-m
 
 Parameter sensitivity: `robustness_tests/parameter_sensitivity.md`
 
-**Gate:** Median metric must be ≥ metric_floor (default: NW t-stat 2.0). A combination that fails even the median check is too fragile to proceed.
+**Gate:** Median metric must be ≥ `metric_floor` for the configured selection metric. A combination that fails even the median check is too fragile to proceed.
 
 ### Step 7: Select parameters
 
 Choose one parameter combination:
 - **Manual selection**: click a combination in the Parameter Sweep table
-- **Best by metric**: the platform auto-selects the NW t-stat rank 1 result
+- **Best by metric**: the platform auto-selects the rank 1 result for the configured selection metric
 
 The selection is recorded as immutable metadata on the strategy. It does not change after this point.
 

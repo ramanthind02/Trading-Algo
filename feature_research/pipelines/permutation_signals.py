@@ -18,7 +18,7 @@ from feature_research.binning.transforms import (
     merge_feature_target_panel,
     quantile_bin_sets_for_strategy,
 )
-from feature_research.core_helpers import combo_key, normalize_series_datetime_index
+from feature_research._internal.core_helpers import combo_key, normalize_series_datetime_index
 from feature_research.in_sample.data_loader import param_combo_label
 from utils.evaluation.walkforward.research_data import (
     FrozenSignalResearchData,

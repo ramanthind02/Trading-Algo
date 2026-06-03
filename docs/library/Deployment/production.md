@@ -6,38 +6,9 @@
 
 ---
 
-## TestForecastServer
+## Manual forecast test
 
-`TestForecastServer` extends `ForecastServer` with manual test methods.
-
-```python
-from deployment.test_forecast_server import TestForecastServer
-from utils.core.enums import TimeFrame
-
-server = TestForecastServer()
-server.load_historical_data()
-
-# Test all timeframes
-results = server.run_test_forecast()
-
-# Test a single timeframe
-results = server.run_test_forecast(timeframe=TimeFrame.D)
-
-server.stop()
-```
-
-### Output Format
-
-```python
-{
-    'timestamp': '2024-01-15T14:30:00-05:00',
-    'forecasts': {
-        'D': {'count': 4, 'tickers': ['EU', 'BP', 'ES', 'NQ'], 'predictions': [...]},
-        'W': {'count': 4, 'tickers': ['EU', 'BP', 'ES', 'NQ'], 'predictions': [...]}
-    },
-    'errors': []
-}
-```
+Use `scripts/run_manual_forecast.py` (wraps `deployment.forecast_server.ForecastServer`) before deployment. Unit coverage lives under `tests/unit-tests/deployment/`.
 
 ---
 

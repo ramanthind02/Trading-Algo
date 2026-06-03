@@ -1087,7 +1087,7 @@ class CacheManager:
     def _require_exact_window_for_dependencies(
         self,
         depends_on: Sequence[tuple[Ticker, TimeFrame]],
-        start_date: datetime,
+        start_date: Optional[datetime],
         end_date: datetime,
     ) -> tuple[datetime, datetime]:
         """Intersect ``[start_date, end_date]`` with candle coverage for each dependency.
@@ -1096,16 +1096,26 @@ class CacheManager:
         within a small tolerance, which failed when OHLC history starts later for one ticker
         (e.g. RTY from 2005 while config asks from 2000). We now clip to the **overlap** of
         all dependency coverages so bias artifacts can build on available data.
+
+        ``start_date=None`` means "use the earliest available candle coverage" so that
+        every artifact is always built with its full warmup history.
         """
         from .central_cache_errors import ArtifactMissingError, CacheCoverageError
 
         store = self._central_cache_store()
         if not depends_on:
+            if start_date is None:
+                raise ArtifactMissingError(
+                    module_name="candles",
+                    ticker=None,
+                    timeframe=None,
+                    reason="start_date=None requires at least one dependency to determine coverage start",
+                )
             return start_date, end_date
 
-        requested_start = pd.Timestamp(start_date)
         requested_end = pd.Timestamp(end_date)
-        effective_start = requested_start
+        # None → use candle coverage start (determined below by clamping)
+        effective_start = pd.Timestamp(start_date) if start_date is not None else None
         effective_end = requested_end
 
         for dep_ticker, dep_tf in depends_on:
@@ -1119,8 +1129,16 @@ class CacheManager:
                 )
             cov_s = pd.Timestamp(record.coverage.start)
             cov_e = pd.Timestamp(record.coverage.end)
-            effective_start = max(effective_start, cov_s)
+            effective_start = cov_s if effective_start is None else max(effective_start, cov_s)
             effective_end = min(effective_end, cov_e)
+
+        if effective_start is None:
+            raise ArtifactMissingError(
+                module_name="candles",
+                ticker=depends_on[0][0],
+                timeframe=depends_on[0][1],
+                reason="Could not determine effective start: no candle coverage found for any dependency",
+            )
 
         if effective_start > effective_end:
             first_ticker, first_tf = depends_on[0]
@@ -1290,7 +1308,7 @@ class CacheManager:
         self,
         bias_node_specs: Sequence[Dict[str, Any]],
         tickers: Sequence[Ticker],
-        start_date: datetime,
+        start_date: Optional[datetime],
         end_date: datetime,
         refresh_mode: str = "missing_stale_only",
         include_daily_ewsd: bool = True,
@@ -1299,6 +1317,11 @@ class CacheManager:
         max_workers: int = 4,
     ) -> Dict[str, Any]:
         """Ensure central-cache coverage for explicit bias-node specs and tickers.
+
+        ``start_date=None`` means "full available history" — the cache will be
+        built from the earliest available candle date for each dependency ticker.
+        This guarantees every indicator has its complete warmup window and the
+        cache is always the source of truth for predictions.
 
         Parameters
         ----------
@@ -1375,26 +1398,34 @@ class CacheManager:
 
         if include_daily_ewsd:
             for ticker in requested_tickers:
-                artifact_tasks[("ewsd", ticker.name, TimeFrame.D.name, "long_run_window=2520")] = {
-                    "module_name": "ewsd",
-                    "params": {"long_run_window": 2520},
-                    "ticker": ticker,
-                    "tf": TimeFrame.D,
-                    "depends_on": ((ticker, TimeFrame.D),),
-                    "cold_rebuild_candle_count": self._cold_rebuild_candle_count_for_spec(
+                for tf in sorted(source_timeframes, key=lambda item: item.name):
+                    long_run_window = 10 * tf.bars_per_year
+                    task_key = (
                         "ewsd",
-                        {"long_run_window": 2520},
-                        ticker,
-                        TimeFrame.D,
-                    ),
-                    "descriptor": self._artifact_descriptor(
-                        "ewsd",
-                        {"long_run_window": 2520},
-                        ticker,
-                        TimeFrame.D,
-                        scope=resolved_scope,
-                    ),
-                }
+                        ticker.name,
+                        tf.name,
+                        f"long_run_window={long_run_window}",
+                    )
+                    artifact_tasks[task_key] = {
+                        "module_name": "ewsd",
+                        "params": {"long_run_window": long_run_window},
+                        "ticker": ticker,
+                        "tf": tf,
+                        "depends_on": ((ticker, tf),),
+                        "cold_rebuild_candle_count": self._cold_rebuild_candle_count_for_spec(
+                            "ewsd",
+                            {"long_run_window": long_run_window},
+                            ticker,
+                            tf,
+                        ),
+                        "descriptor": self._artifact_descriptor(
+                            "ewsd",
+                            {"long_run_window": long_run_window},
+                            ticker,
+                            tf,
+                            scope=resolved_scope,
+                        ),
+                    }
 
         source_tickers = sorted(
             set(requested_tickers).union(dependency_tickers),
@@ -1671,7 +1702,7 @@ class CacheManager:
     def ensure_vault_cache_coverage(
         self,
         vault_ensemble_dirs: Sequence[str],
-        start_date: datetime,
+        start_date: Optional[datetime],
         end_date: datetime,
         refresh_mode: str = "missing_stale_only",
     ) -> Dict[str, Any]:

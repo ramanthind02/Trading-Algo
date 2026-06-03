@@ -320,6 +320,53 @@ stats = compute_portfolio_statistics([result])
 
 ---
 
+## Portfolio research integration
+
+Prop-firm portfolio simulation is integrated into the portfolio test pipeline (no separate
+``run_portfolio_prop_firm.py`` workflow). After train / validation / test phases complete,
+``run_portfolio_test_pipeline`` calls ``portfolio_research.prop_firm_reports`` when
+``PortfolioResearchConfig.prop_firm_report.enabled`` is true (default in ``load_config()``).
+
+- **Engine:** ``quantfoundry_core.prop_firm`` (``create_simulator_for_firm``, default preset
+  ``fundednext``).
+- **Bridge:** ``portfolio_research.prop_firm_bridge`` converts each ``PhaseResult`` to daily
+  simple returns and aligns them with the return engine.
+- **Reports:** ``prop_firms.reporting.generate_portfolio_report`` writes Markdown, HTML, and
+  optional CSVs under ``{output_root}/{phase}/prop_firm/fundednext/``.
+
+Run:
+
+```bash
+python -m portfolio_research.run_portfolio_test
+```
+
+Or the UI full pipeline (portfolio test stage includes prop-firm reports automatically).
+
+Configure purchase caps, vol multipliers, return-engine scaling, and rolling analysis via
+``PropFirmReportConfig`` on ``portfolio_research.config.load_config()``:
+
+- ``funded_account_cap`` (default ``10**9`` via ``UNLIMITED_FUNDED_ACCOUNT_CAP``): unlimited
+  concurrent funded accounts in QF Core. Set to ``None`` to defer to the FundedNext preset
+  limit (typically 6); set an explicit integer (e.g. ``2``) to override.
+- ``rolling_enabled`` (default ``True``): run ``simulate_rolling`` with ``rolling_window_months``
+  (default ``12``). Skipped with a log line when the phase has fewer than 12 calendar months.
+- Each ``simulate()`` result includes ``monthly_breakdown`` (QF Core); reports prefer this over
+  re-aggregating the daily timeline.
+
+**Artifacts per phase** (under ``{phase}/prop_firm/fundednext/``):
+
+| File | Source |
+|------|--------|
+| ``{stem}_{phase}.html`` / ``.md`` | Full-window simulation + optional rolling EV section |
+| ``{stem}_{phase}_monthly_breakdown.csv`` | ``result.monthly_breakdown`` |
+| ``{stem}_{phase}_rolling_pooled_monthly_stats.csv`` | Pooled month-offset stats across rolling windows |
+| ``{stem}_{phase}_rolling_batch_statistics.json`` | Cross-window EV (``batch_statistics.to_record()``) |
+
+**Rolling interpretation:** ``month_offset`` 1–2 are ramp-up (challenge costs dominate);
+offsets 6–11 in the HTML/Markdown steady-state table approximate post-ramp monthly EV.
+
+---
+
 ## Extending To New Firms
 
 To add another provider:
