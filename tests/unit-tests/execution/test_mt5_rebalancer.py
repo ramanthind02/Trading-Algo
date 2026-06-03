@@ -123,17 +123,6 @@ def test_sizing_zero_target_returns_zero_not_none() -> None:
     assert out == 0.0
 
 
-def test_sizing_force_min_lot_if_signal_overrides_skip() -> None:
-    """``force_min_lot_if_signal=True`` floors-up tiny computed volumes."""
-    out = compute_target_signed_lots(
-        position_fraction=+0.001,           # 0.0001 lots raw on a 100k account
-        price=18000.0,
-        symbol=_sym(),
-        sizing=SizingConfig(sizing_basis_usd=100_000.0, force_min_lot_if_signal=True),
-    )
-    assert out == pytest.approx(0.01)
-
-
 def test_sizing_lot_ceiling_clamp() -> None:
     """``lot_size_ceiling`` caps the rounded volume."""
     out = compute_target_signed_lots(
@@ -158,7 +147,6 @@ def test_no_op_when_both_flat() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert len(actions) == 1
     assert actions[0].kind is RebalanceActionKind.NO_OP
@@ -172,7 +160,6 @@ def test_open_from_flat_emits_single_open() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert len(actions) == 1
     a = actions[0]
@@ -189,7 +176,6 @@ def test_short_from_flat_uses_sell_side() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert actions[0].side is OrderSide.SELL
     assert actions[0].volume == pytest.approx(0.25)
@@ -207,7 +193,6 @@ def test_go_flat_emits_close_for_every_our_ticket() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert all(a.kind is RebalanceActionKind.CLOSE_TICKET for a in actions)
     assert {a.ticket for a in actions} == {1, 2}
@@ -231,7 +216,6 @@ def test_direction_flip_closes_all_then_opens_new() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     closes = [a for a in actions if a.kind is RebalanceActionKind.CLOSE_TICKET]
     opens = [a for a in actions if a.kind is RebalanceActionKind.OPEN_NEW]
@@ -252,7 +236,6 @@ def test_same_direction_increase_emits_single_open_for_delta() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert len(actions) == 1
     a = actions[0]
@@ -281,7 +264,6 @@ def test_same_direction_decrease_emits_close_not_opposite_open_regression() -> N
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert all(a.kind is RebalanceActionKind.CLOSE_TICKET for a in actions), (
         "REGRESSION: same-direction decrease must NOT emit OPEN_NEW on the "
@@ -311,7 +293,6 @@ def test_partial_close_walks_tickets_oldest_first() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     # First two tickets fully closed; ticket #3 untouched.
     closed_tickets = [a.ticket for a in actions]
@@ -333,7 +314,6 @@ def test_partial_close_handles_last_ticket_partial() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     # Should be a single partial close of 0.05 on ticket #1.
     assert len(actions) == 1
@@ -350,7 +330,6 @@ def test_dead_band_skip_when_delta_too_small() -> None:
         symbol=_sym(),
         tick=_tick(bid=18000.0, ask=18001.0),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
         # delta_notional ≈ 0.01 * 18000 * 1 = $180; dead-band $500 skips.
         min_rebalance_notional_usd=500.0,
     )
@@ -359,7 +338,10 @@ def test_dead_band_skip_when_delta_too_small() -> None:
     assert "dead-band" in actions[0].reason
 
 
-def test_unmanaged_position_aborts_when_gate_on() -> None:
+def test_unmanaged_position_is_ignored_by_magic_filter() -> None:
+    """After stripping abort_if_unmanaged_position, the rebalancer simply
+    filters by magic and never reasons about non-magic positions. A position
+    held under a different magic on the same symbol is invisible to us."""
     positions = [
         _pos(1, "US100.cash", OrderSide.BUY, 0.10, magic=12345),  # someone else's
     ]
@@ -370,26 +352,8 @@ def test_unmanaged_position_aborts_when_gate_on() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
-    assert len(actions) == 1
-    assert actions[0].kind is RebalanceActionKind.ABORT_UNMANAGED
-    assert "12345" not in actions[0].reason   # we report tickets not magic
-    assert "1" in actions[0].reason            # ticket #1 mentioned
-
-
-def test_unmanaged_position_proceeds_when_gate_off() -> None:
-    positions = [_pos(99, "US100.cash", OrderSide.BUY, 0.10, magic=12345)]
-    actions = plan_symbol_actions(
-        symbol_name="US100.cash",
-        target_signed_lots=+0.50,
-        all_positions=positions,
-        symbol=_sym(),
-        tick=_tick(),
-        magic_number=90420,
-        abort_if_unmanaged_position=False,
-    )
-    # Unmanaged ticket #99 ignored; rebalancer opens 0.50 fresh.
+    # We see "flat" (no positions with our magic) → open the full 0.50.
     assert len(actions) == 1
     assert actions[0].kind is RebalanceActionKind.OPEN_NEW
     assert actions[0].volume == pytest.approx(0.50)
@@ -406,7 +370,6 @@ def test_target_none_emits_no_op_does_not_close_existing() -> None:
         symbol=_sym(),
         tick=_tick(),
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert len(actions) == 1
     assert actions[0].kind is RebalanceActionKind.NO_OP
@@ -424,7 +387,6 @@ def test_plan_account_actions_handles_missing_symbol_info_gracefully() -> None:
         symbol_infos={},                  # broker did not return info
         ticks={},
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     assert out["US100.cash"][0].kind is RebalanceActionKind.NO_OP
     assert "missing" in out["US100.cash"][0].reason.lower()
@@ -447,7 +409,6 @@ def test_plan_account_actions_composes_multiple_symbols_independently() -> None:
             "US500.cash": _tick(symbol="US500.cash", bid=5000.0, ask=5001.0),
         },
         magic_number=90420,
-        abort_if_unmanaged_position=True,
     )
     us100_actions = out["US100.cash"]
     us500_actions = out["US500.cash"]

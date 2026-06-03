@@ -294,13 +294,9 @@ def _make_config(
         "mt5": {
             "sizing_basis": "equity",
             "lot_size_ceiling": 100.0,
-            "force_min_lot_if_signal": False,
             "min_rebalance_lots": 0.0,
             "min_rebalance_notional_usd": 0.0,
-            "max_spread_points": 0,
-            "max_tick_staleness_seconds": 0,
             "max_margin_usage_pct": 0.95,
-            "abort_if_unmanaged_position": True,
             "default_magic_number": 90420,
         },
         "execution": {
@@ -308,7 +304,6 @@ def _make_config(
             "default_on_timeout": default_on_timeout,
             "authorized_telegram_user_ids": [42],
             "allow_any_approver": True,
-            "require_live_flag_for_real_money": True,
             "audit_dir": str(audit_dir) if audit_dir else "logs/cfd_prop_audit",
         },
         "accounts": accounts,
@@ -543,7 +538,10 @@ def test_dry_run_execute_skips_approval_and_orders(monkeypatch, capsys):
     assert "SKIPPING approval" in out
 
 
-def test_no_approve_flag_and_no_live_flag_refuses_to_execute(monkeypatch, capsys, tmp_path):
+def test_no_approve_flag_auto_approves_and_executes(monkeypatch, capsys, tmp_path):
+    """After stripping require_live_flag_for_real_money, --execute without
+    --approve-via-telegram simply auto-approves all preflight-ok accounts
+    (user explicitly opted out of Telegram approval)."""
     _install_fake_executor(monkeypatch)
     spec = _setup_account(login=66666, symbols=("US500.cash",))
     monkeypatch.setenv("MT5_FTMO_A_USERNAME", "66666")
@@ -562,9 +560,10 @@ def test_no_approve_flag_and_no_live_flag_refuses_to_execute(monkeypatch, capsys
         config=config,
         forecasts_df=_forecasts_df([{"ticker": "ES", "position_fraction": 0.10}]),
     )
-    out = capsys.readouterr().out
-    assert "refusing to execute" in out.lower()
-    assert spec.place_calls == []
+    # Should have auto-approved and placed an OPEN_NEW market order.
+    assert len(spec.place_calls) == 1
+    assert spec.place_calls[0]["symbol"] == "US500.cash"
+    assert spec.place_calls[0]["side"] is OrderSide.BUY
 
 
 def test_partial_close_with_existing_positions(monkeypatch, capsys, tmp_path):

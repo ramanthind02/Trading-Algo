@@ -103,6 +103,12 @@ def test_cfd_prop_config_skeleton_loads_and_declares_supported_tickers() -> None
         assert "mt5_symbol" in cfg["instruments"][tkr], f"missing mt5_symbol for {tkr}"
     # CFD-specific block exists with safe defaults.
     assert cfg["mt5"]["sizing_basis"] in ("equity", "balance")
-    assert cfg["mt5"]["abort_if_unmanaged_position"] is True
+    # Stripped gates must no longer be in config (rebalancer always magic-filters).
+    assert "abort_if_unmanaged_position" not in cfg["mt5"]
+    assert "max_spread_points" not in cfg["execution"]
+    assert "force_min_lot_if_signal" not in cfg["mt5"]
+    assert "require_live_flag_for_real_money" not in cfg["execution"]
+    # Default daily-loss limit matches FTMO DLL (5%).
+    assert cfg["execution"]["max_daily_loss_pct"] == 0.05
     # Default-on-timeout is "cancel" in v1 (safest); user can flip to "approve".
     assert cfg["execution"]["default_on_timeout"] == "cancel"

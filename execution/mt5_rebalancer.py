@@ -18,8 +18,11 @@ Key invariants
   target side (avoids partial residual hedge tickets).
 - Dead-band: if the |delta notional| is below the per-account threshold,
   return ``NO_OP`` (no daily spread bleed on cosmetic forecast wiggles).
-- Lots are floored at ``volume_min`` (no trade if rounded below) unless
-  the account opts into ``force_min_lot_if_signal``.
+- Lots below ``volume_min`` are skipped (no force-min-lot — we just
+  no-op on signals too small to size).
+- Positions opened by other strategies / manual trades on the SAME
+  symbol (different magic_number) are simply ignored — we only manage
+  our own tickets, filtered by ``magic_number``.
 """
 
 from __future__ import annotations
@@ -52,7 +55,6 @@ class SizingConfig:
 
     sizing_basis_usd: float
     lot_size_ceiling: float = 100.0
-    force_min_lot_if_signal: bool = False
     min_rebalance_lots: float = 0.0
     min_rebalance_notional_usd: float = 0.0
 
@@ -93,8 +95,7 @@ def compute_target_signed_lots(
     -------
     Optional[float]
         ``None`` if the trade should be skipped (e.g. rounded volume is
-        below ``volume_min`` and the caller did not opt into
-        ``force_min_lot_if_signal``). Otherwise a signed lot count
+        below ``volume_min``). Otherwise a signed lot count
         (positive = long, negative = short, may be 0.0 to indicate
         "go flat").
     """
@@ -116,10 +117,7 @@ def compute_target_signed_lots(
     rounded = _quantize(abs_lots, symbol.volume_step)
 
     if rounded < symbol.volume_min - _TOL:
-        if sizing.force_min_lot_if_signal:
-            rounded = symbol.volume_min
-        else:
-            return None
+        return None
 
     if rounded > symbol.volume_max:
         rounded = symbol.volume_max
@@ -145,12 +143,6 @@ def _our_positions(
     all_positions: Sequence[MT5Position], symbol: str, magic: int
 ) -> List[MT5Position]:
     return [p for p in all_positions if p.symbol == symbol and p.magic == magic]
-
-
-def _unmanaged_positions(
-    all_positions: Sequence[MT5Position], symbol: str, magic: int
-) -> List[MT5Position]:
-    return [p for p in all_positions if p.symbol == symbol and p.magic != magic]
 
 
 def _build_partial_close_actions(
@@ -200,27 +192,18 @@ def plan_symbol_actions(
     symbol: MT5SymbolInfo,
     tick: MT5Tick,
     magic_number: int,
-    abort_if_unmanaged_position: bool,
     min_rebalance_lots: float = 0.0,
     min_rebalance_notional_usd: float = 0.0,
 ) -> List[RebalanceAction]:
     """Compute the rebalance actions for a single symbol on one account.
 
     See module docstring + ``plan.md §7.1`` for the decision rules.
-    """
-    unmanaged = _unmanaged_positions(all_positions, symbol_name, magic_number)
-    if unmanaged and abort_if_unmanaged_position:
-        return [
-            RebalanceAction(
-                kind=RebalanceActionKind.ABORT_UNMANAGED,
-                symbol=symbol_name,
-                reason=(
-                    f"{len(unmanaged)} non-magic ticket(s) on {symbol_name} "
-                    f"(tickets={[p.ticket for p in unmanaged]}); refusing to trade."
-                ),
-            )
-        ]
 
+    Positions opened by other strategies / manual trades (different
+    ``magic_number``) are simply ignored — we only manage our own
+    tickets. The caller is responsible for any cross-strategy
+    coordination if needed.
+    """
     if target_signed_lots is None:
         # Skipped by sizer (e.g. rounded below volume_min). Treat as "no
         # opinion": don't open AND don't close anything we already have.
@@ -371,7 +354,6 @@ def plan_account_actions(
     symbol_infos: Dict[str, MT5SymbolInfo],
     ticks: Dict[str, MT5Tick],
     magic_number: int,
-    abort_if_unmanaged_position: bool,
     min_rebalance_lots: float = 0.0,
     min_rebalance_notional_usd: float = 0.0,
 ) -> Dict[str, List[RebalanceAction]]:
@@ -400,7 +382,6 @@ def plan_account_actions(
             symbol=sym,
             tick=tick,
             magic_number=magic_number,
-            abort_if_unmanaged_position=abort_if_unmanaged_position,
             min_rebalance_lots=min_rebalance_lots,
             min_rebalance_notional_usd=min_rebalance_notional_usd,
         )
