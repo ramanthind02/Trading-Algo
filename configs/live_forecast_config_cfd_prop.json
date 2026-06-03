@@ -82,8 +82,8 @@
     "post_order_retry_attempts": 1,
     "require_live_flag_for_real_money": true,
 
-    "_comment_safety": "Optional preflight gates. max_spread_points caps acceptable spread; max_margin_usage_pct prevents margin-call risk; max_daily_loss_pct enforces prop-firm DLL.",
-    "max_spread_points": 50,
+    "_comment_safety": "Optional preflight gates. max_spread_points caps acceptable spread (set to 0 to DISABLE — FTMO's US100.cash structurally quotes wide spreads even during RTH so we keep this off for now; re-enable if we see slippage hurting fills); max_margin_usage_pct prevents margin-call risk (keep on); max_daily_loss_pct enforces prop-firm DLL (null = off; enable per-account or globally before going live on funded accounts).",
+    "max_spread_points": 0,
     "max_margin_usage_pct": 0.95,
     "max_daily_loss_pct": null,
 
