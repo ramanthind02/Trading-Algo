@@ -39,11 +39,25 @@ Get-TimeZone
 Set-TimeZone -Id "Eastern Standard Time"
 ```
 
-Windows handles DST automatically — `"Eastern Standard Time"` is the ID for `America/New_York` (EST ↔ EDT) regardless of the misleading name.
+Windows handles DST automatically — `"Eastern Standard Time"` is the ID for `America/New_York` (EST ↔ EDT) regardless of the misleading name. **`Set-TimeZone` is machine-wide and persistent — it changes the VPS clock for every process until you change it back.** If you don't want that, skip this step and use the converted local times in §1a instead.
 
-If you can't change the VPS timezone, adjust `-DailyRunTime` / `-WeekendCloseTime` on the install script accordingly. Examples for the defaults:
-- UTC: pass `-DailyRunTime "22:05" -WeekendCloseTime "21:45"` in winter, `"21:05"/"20:45"` in summer (manual DST 😞)
-- Pacific: pass `-DailyRunTime "14:05" -WeekendCloseTime "13:45"`
+### 1a. (Alternative) Keep machine timezone and convert trigger times
+
+Task Scheduler interprets the trigger time as the **machine's local time**. If the VPS is on Pacific (or anything other than Eastern), convert the ET defaults to local before installing:
+
+| Machine TZ      | `-DailyRunTime`           | `-WeekendCloseTime`        | Notes |
+|-----------------|---------------------------|----------------------------|-------|
+| Eastern (default) | `18:10`                 | `16:30`                    | No conversion needed |
+| Pacific (PT)    | `15:10`                   | `13:30`                    | PT = ET - 3h year-round (both follow US DST in lockstep) |
+| Central (CT)    | `17:10`                   | `15:30`                    | CT = ET - 1h year-round |
+| Mountain (MT)   | `16:10`                   | `14:30`                    | MT = ET - 2h year-round |
+| UTC             | `23:10` winter / `22:10` summer | `21:30` winter / `20:30` summer | Manual DST switch twice a year 😞 |
+
+Example for a Pacific-time VPS (your case if `Get-TimeZone` shows `Pacific Standard Time`):
+
+```powershell
+.\scripts\scheduler\install_cfd_prop_tasks.ps1 -DailyRunTime "15:10" -WeekendCloseTime "13:30"
+```
 
 ### 1b. (Optional but recommended) Verify FTMO broker time alignment
 
