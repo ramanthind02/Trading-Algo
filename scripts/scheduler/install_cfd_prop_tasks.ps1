@@ -40,14 +40,19 @@
       - Skip if already running (no overlap)
 
     Time zone:
-      Task Scheduler triggers fire in LOCAL machine time. For ET
-      timing you want the FTMO VPS clock set to America/New_York.
-      Check with:
-          Get-TimeZone
-      Set it (admin shell) with:
-          Set-TimeZone -Id "Eastern Standard Time"
-      (Windows handles DST automatically; "Eastern Standard Time" IS
-      the Windows ID for America/New_York, despite the name.)
+      Task Scheduler triggers fire in LOCAL machine time. The defaults
+      18:10 / 16:30 assume the VPS is on Eastern. If your VPS is on
+      another timezone you can either:
+        (a) change the machine timezone to Eastern with
+              Set-TimeZone -Id "Eastern Standard Time"
+            (WARNING: this is machine-wide and persistent; affects
+            every other process on the VPS), OR
+        (b) leave the machine timezone alone and pass the converted
+            local-time equivalents — e.g. on a Pacific VPS:
+              -DailyRunTime "15:10" -WeekendCloseTime "13:30"
+            (PT = ET - 3h year-round; both follow US DST in lockstep
+            so no manual adjustment is ever needed.) See scheduler
+            README §1a for a per-zone conversion table.
 
     Verify the FTMO broker session windows still match these defaults
     by re-running:
@@ -166,11 +171,20 @@ Register-Cfd `
     -Time $WeekendCloseTime
 
 Write-Host ""
-Write-Host "Done. Verify with:"
-Write-Host "    Get-ScheduledTask -TaskName 'EnigmaCfdProp-*' | Format-Table TaskName, State"
+Write-Host "Done. Verify state + next run time:"
+Write-Host "    Get-ScheduledTask -TaskName 'EnigmaCfdProp-*' | Get-ScheduledTaskInfo | Format-Table TaskName, NextRunTime, LastRunTime, LastTaskResult"
+Write-Host "(NextRunTime is on the *Info* object, not the bare ScheduledTask object — Get-ScheduledTask alone shows it as blank.)"
 Write-Host ""
-Write-Host "Test a manual run (no waiting for trigger):"
+Write-Host "Test both wrappers manually (smoke test — won't wait for trigger):"
 Write-Host "    Start-ScheduledTask -TaskName 'EnigmaCfdProp-DailyRebalance'"
+Write-Host "    Start-ScheduledTask -TaskName 'EnigmaCfdProp-WeekendClose'"
+Write-Host "Each will run the wrapper end-to-end (incl. Telegram approval poll). The weekend-close wrapper is a no-op when no positions are open."
 Write-Host ""
-Write-Host "Check tz is set to America/New_York:"
-Write-Host "    Get-TimeZone   # expect 'Eastern Standard Time'"
+Write-Host "Trigger time interpretation:"
+Write-Host "    Task Scheduler fires triggers in the machine's LOCAL time."
+Write-Host "    The default 18:10 / 16:30 assume the machine is on Eastern."
+Write-Host "    If your machine is on another tz, you should have passed converted"
+Write-Host "    times via -DailyRunTime / -WeekendCloseTime (see scheduler README §1a)."
+Write-Host "    Check current machine tz with:"
+Write-Host "        Get-TimeZone"
+Write-Host ""
