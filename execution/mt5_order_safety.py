@@ -9,8 +9,7 @@ and refuses to execute an account whose preflight is not clean unless
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional
 
 from execution.mt5_models import (
     MT5AccountInfo,
@@ -80,43 +79,6 @@ def check_action_compatible_with_trade_mode(
     return None
 
 
-def check_spread(
-    symbol_info: MT5SymbolInfo, *, max_spread_points: int
-) -> Optional[str]:
-    """Refuse if the broker spread blew out beyond an absolute points cap."""
-    if max_spread_points <= 0:
-        return None
-    if symbol_info.spread > max_spread_points:
-        return (
-            f"{symbol_info.name}: spread={symbol_info.spread} pts > "
-            f"max_spread_points={max_spread_points}"
-        )
-    return None
-
-
-def check_tick_freshness(
-    tick: MT5Tick,
-    *,
-    now_utc: datetime,
-    max_staleness_seconds: int,
-) -> Optional[str]:
-    """Refuse if the latest tick is older than ``max_staleness_seconds``.
-
-    Common cause: a closed market on a weekend / holiday, or a server
-    feeding stale ticks. ``now_utc`` is injected so the gate is pure
-    (testable without ``datetime.now`` mocking).
-    """
-    if max_staleness_seconds <= 0:
-        return None
-    age_seconds = (now_utc - tick.time_utc).total_seconds()
-    if age_seconds > max_staleness_seconds:
-        return (
-            f"{tick.symbol}: last tick is {age_seconds:.0f}s old "
-            f"(> {max_staleness_seconds}s); market likely closed"
-        )
-    return None
-
-
 def check_margin_budget(
     *,
     requested_margin_usd: float,
@@ -169,9 +131,6 @@ def run_preflight(
     symbol_infos: Dict[str, MT5SymbolInfo],
     ticks: Dict[str, MT5Tick],
     requested_margin_usd: float,
-    now_utc: datetime,
-    max_spread_points: int = 0,
-    max_tick_staleness_seconds: int = 0,
     max_margin_usage_pct: float = 0.95,
     sod_balance_usd: Optional[float] = None,
     max_daily_loss_pct: Optional[float] = None,
@@ -215,16 +174,6 @@ def run_preflight(
         ):
             continue
         if (msg := check_symbol_tradeable(sym)) is not None:
-            failures.append(msg)
-        if (msg := check_spread(sym, max_spread_points=max_spread_points)) is not None:
-            failures.append(msg)
-        if (
-            msg := check_tick_freshness(
-                tick,
-                now_utc=now_utc,
-                max_staleness_seconds=max_tick_staleness_seconds,
-            )
-        ) is not None:
             failures.append(msg)
         for action in actions:
             msg = check_action_compatible_with_trade_mode(action, sym)

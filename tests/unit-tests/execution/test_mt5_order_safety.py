@@ -7,7 +7,7 @@ reason).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
@@ -25,9 +25,7 @@ from execution.mt5_order_safety import (
     check_action_compatible_with_trade_mode,
     check_daily_loss_floor,
     check_margin_budget,
-    check_spread,
     check_symbol_tradeable,
-    check_tick_freshness,
     check_trade_allowed,
     run_preflight,
 )
@@ -131,28 +129,10 @@ def test_action_compatible_close_allowed_in_close_only() -> None:
     assert check_action_compatible_with_trade_mode(open_a, sym) is not None
 
 
-def test_spread_gate_under_cap_passes() -> None:
-    assert check_spread(_sym(spread=10), max_spread_points=100) is None
-
-
-def test_spread_gate_over_cap_fails() -> None:
-    msg = check_spread(_sym(spread=250), max_spread_points=100)
-    assert msg is not None
-    assert "250" in msg
-
-
-def test_spread_gate_disabled_when_max_is_zero() -> None:
-    assert check_spread(_sym(spread=99999), max_spread_points=0) is None
-
-
-def test_tick_freshness_fresh_passes() -> None:
-    assert check_tick_freshness(_tick(t=T0), now_utc=T0 + timedelta(seconds=5), max_staleness_seconds=60) is None
-
-
-def test_tick_freshness_stale_fails() -> None:
-    msg = check_tick_freshness(_tick(t=T0), now_utc=T0 + timedelta(seconds=600), max_staleness_seconds=60)
-    assert msg is not None
-    assert "600s old" in msg
+def test_spread_is_no_longer_gated() -> None:
+    """We removed the spread gate entirely; verify the symbol w/ huge spread
+    still passes the remaining symbol checks (visible + tradeable)."""
+    assert check_symbol_tradeable(_sym(spread=99_999)) is None
 
 
 def test_margin_budget_within_cap_passes() -> None:
@@ -213,9 +193,6 @@ def test_run_preflight_clean_pass() -> None:
         symbol_infos={"US100.cash": _sym()},
         ticks={"US100.cash": _tick()},
         requested_margin_usd=1_000.0,
-        now_utc=T0 + timedelta(seconds=5),
-        max_spread_points=100,
-        max_tick_staleness_seconds=60,
         max_margin_usage_pct=0.95,
     )
     assert failures == []
@@ -234,21 +211,17 @@ def test_run_preflight_collects_multiple_failures() -> None:
         symbol_infos={"US100.cash": _sym(trade_mode=TradeMode.LONG_ONLY, spread=500, visible=True)},
         ticks={"US100.cash": _tick(t=T0)},
         requested_margin_usd=1_000.0,
-        now_utc=T0 + timedelta(seconds=600),
-        max_spread_points=100,
-        max_tick_staleness_seconds=60,
     )
     # Should have collected: login mismatch (short-circuits server) +
-    # trade_allowed + spread over cap + stale tick + LONG_ONLY blocks
-    # SELL open = at least 5
-    assert len(failures) >= 5
+    # trade_allowed + LONG_ONLY blocks SELL open = at least 3
+    assert len(failures) >= 3
     # And the LONG_ONLY action incompatibility must be captured.
     assert any("LONG_ONLY" in f for f in failures)
 
 
 def test_run_preflight_skips_symbol_gates_for_no_op_only_actions() -> None:
-    """If a symbol has only NO_OP actions, spread / freshness / mode are
-    irrelevant — gate must not flag them."""
+    """If a symbol has only NO_OP actions, trade-mode is irrelevant — gate
+    must not flag it."""
     failures = run_preflight(
         account_info=_acct(),
         expected_login=12345678,
@@ -258,12 +231,9 @@ def test_run_preflight_skips_symbol_gates_for_no_op_only_actions() -> None:
                 RebalanceAction(kind=RebalanceActionKind.NO_OP, symbol="US100.cash", reason="within dead-band"),
             ]
         },
-        # Stale tick + huge spread; would fail if gates ran:
+        # Huge spread; previously would fail spread gate (now removed).
         symbol_infos={"US100.cash": _sym(spread=99999)},
         ticks={"US100.cash": _tick(t=T0)},
         requested_margin_usd=0.0,
-        now_utc=T0 + timedelta(seconds=99999),
-        max_spread_points=100,
-        max_tick_staleness_seconds=60,
     )
     assert failures == []

@@ -90,13 +90,9 @@ class AccountConfig:
     symbol_map: Dict[str, str]                # ticker -> MT5 symbol
     sizing_basis: str                          # "equity" | "balance"
     lot_size_ceiling: float
-    force_min_lot_if_signal: bool
     min_rebalance_lots: float
     min_rebalance_notional_usd: float
-    max_spread_points: int
-    max_tick_staleness_seconds: int
     max_margin_usage_pct: float
-    abort_if_unmanaged_position: bool
     max_daily_loss_pct: Optional[float]
     sod_balance_env_var: Optional[str]
 
@@ -120,7 +116,8 @@ def _account_from_config(
     - ``terminal_path``         : optional path to ``terminal64.exe``
     - ``symbol_overrides``      : optional ``{ticker: {mt5_symbol: "..."}}`` patching
                                   the top-level ``instruments`` map for this account
-    - ``max_daily_loss_pct``    : optional per-account override
+    - ``max_daily_loss_pct``    : optional per-account override; defaults to the
+                                  global ``execution.max_daily_loss_pct`` (5% by default)
     - ``sod_balance_env_var``   : optional env var holding start-of-day balance
     """
     label = str(account_cfg["label"])
@@ -173,20 +170,16 @@ def _account_from_config(
         symbol_map=symbol_map,
         sizing_basis=str(gm("sizing_basis", "equity")),
         lot_size_ceiling=float(gm("lot_size_ceiling", 100.0)),
-        force_min_lot_if_signal=bool(gm("force_min_lot_if_signal", False)),
         min_rebalance_lots=float(ge("min_rebalance_lots", 0.0)),
         min_rebalance_notional_usd=float(ge("min_rebalance_notional_usd", 0.0)),
-        max_spread_points=int(ge("max_spread_points", 0)),
-        max_tick_staleness_seconds=int(ge("max_tick_staleness_seconds", 0)),
         max_margin_usage_pct=float(ge("max_margin_usage_pct", 0.95)),
-        abort_if_unmanaged_position=bool(gm("abort_if_unmanaged_position", True)),
         max_daily_loss_pct=(
             float(account_cfg["max_daily_loss_pct"])
             if account_cfg.get("max_daily_loss_pct") is not None
             else (
                 float(execution_cfg["max_daily_loss_pct"])
                 if execution_cfg.get("max_daily_loss_pct") is not None
-                else None
+                else 0.05  # default 5% (FTMO DLL); matches docs
             )
         ),
         sod_balance_env_var=account_cfg.get("sod_balance_env_var"),
@@ -289,7 +282,6 @@ def _build_account_plan(
             sizing = SizingConfig(
                 sizing_basis_usd=account_info.sizing_basis_value(account.sizing_basis),
                 lot_size_ceiling=account.lot_size_ceiling,
-                force_min_lot_if_signal=account.force_min_lot_if_signal,
                 min_rebalance_lots=account.min_rebalance_lots,
                 min_rebalance_notional_usd=account.min_rebalance_notional_usd,
             )
@@ -315,7 +307,6 @@ def _build_account_plan(
                 symbol_infos=symbol_infos,
                 ticks=ticks,
                 magic_number=account.magic_number,
-                abort_if_unmanaged_position=account.abort_if_unmanaged_position,
                 min_rebalance_lots=account.min_rebalance_lots,
                 min_rebalance_notional_usd=account.min_rebalance_notional_usd,
             )
@@ -355,9 +346,6 @@ def _build_account_plan(
                 symbol_infos=symbol_infos,
                 ticks=ticks,
                 requested_margin_usd=requested_margin_usd,
-                now_utc=datetime.now(timezone.utc),
-                max_spread_points=account.max_spread_points,
-                max_tick_staleness_seconds=account.max_tick_staleness_seconds,
                 max_margin_usage_pct=account.max_margin_usage_pct,
                 sod_balance_usd=sod_balance_usd,
                 max_daily_loss_pct=account.max_daily_loss_pct,
@@ -737,7 +725,6 @@ def run_cfd_prop_execution(
     # Phase 1 stub flags re-used. Phase 3 honours them properly.
     dry_run_execute = bool(getattr(args, "dry_run_execute", False))
     require_approval = bool(getattr(args, "approve_via_telegram", True))
-    require_live_flag = bool(getattr(args, "live", False))
     is_dry_run = bool(getattr(args, "dry_run", False))
 
     if require_approval and not is_dry_run:
@@ -813,18 +800,9 @@ def run_cfd_prop_execution(
             default_on_timeout=default_on_timeout,
         )
     else:
-        # No-approval mode is dangerous; require --live to arm it AND
-        # the config must explicitly disable the live-flag requirement.
-        require_live_flag_for_real_money = bool(
-            execution_cfg.get("require_live_flag_for_real_money", True)
-        )
-        if require_live_flag_for_real_money and not require_live_flag:
-            print(
-                "\n14. ⚠ --approve-via-telegram not set and --live not set; refusing to execute. "
-                "Either approve via telegram or pass --live (and config.execution."
-                "require_live_flag_for_real_money is True)."
-            )
-            return
+        # No-approval mode: --execute without --approve-via-telegram → auto-approve
+        # all preflight-ok accounts. The user explicitly opted out of Telegram
+        # by not passing --approve-via-telegram; trust their intent.
         outcome = BatchApprovalOutcome(
             global_decision=ApprovalDecision.APPROVED,
             per_account={label: ApprovalDecision.APPROVED for label in eligible_labels},

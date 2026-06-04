@@ -212,11 +212,14 @@ class TestFetchMt5DailyCandles:
         for ts in df["datetime"]:
             assert ts.hour == 0 and ts.minute == 0 and ts.second == 0
 
-    def test_strips_zero_volume_bars(self, install_fake_mt5):
+    def test_keeps_zero_volume_bars(self, install_fake_mt5):
+        """We no longer drop zero-volume (holiday) bars — the bias pipeline
+        handles them downstream."""
         rates = _make_rates(n=5, include_zero_vol_at=2)
         fake = install_fake_mt5(FakeMT5Module(rates_by_symbol={"US500.cash": rates}))
         df = fetch_mod.fetch_mt5_daily_candles(fake, "ES", "US500.cash", lookback_days=5)
-        assert len(df) == 4  # 5 - 1 zero-volume
+        assert len(df) == 5  # all 5 kept (including the zero-volume bar)
+        assert (df["volume"] == 0).any()
 
     def test_strips_today_partial_bar(self, install_fake_mt5):
         """Critical rubber-duck fix: never let the forming current-day D1 bar
