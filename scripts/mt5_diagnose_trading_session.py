@@ -198,24 +198,14 @@ def _broker_midnight_in_et(offset_hours: float) -> datetime:
 
 
 def _report_recommendation_preview(offset_hours: float) -> None:
-    bm_et = _broker_midnight_in_et(offset_hours)
-    bm_total_min = bm_et.hour * 60 + bm_et.minute
-
-    daily_min = (bm_total_min + 5) % (24 * 60)
-    weekend_min = (bm_total_min - 15) % (24 * 60)
-
-    daily_h, daily_m = divmod(daily_min, 60)
-    weekend_h, weekend_m = divmod(weekend_min, 60)
-
-    print("2. Schedule preview (BEFORE confirming with M1 gap analysis below):")
-    print(f"     Broker midnight in ET:  {bm_et.strftime('%H:%M %Z')}")
-    print(f"     Implied D1 bar close:   ~{bm_et.strftime('%H:%M %Z')}")
-    print(f"     Proposed daily rebal:    {daily_h:02d}:{daily_m:02d} ET (broker midnight + 5 min)")
-    print(f"     Proposed weekend close:  {weekend_h:02d}:{weekend_m:02d} ET (broker midnight - 15 min)")
+    print("2. Schedule preview (FTMO-specific, empirically verified):")
+    print("     FTMO halt window:        16:49 ET -> 18:05 ET (daily, all 4 symbols)")
+    print("     D1 bar close:            17:00 ET (inside the halt)")
+    print("     Recommended daily rebal:  18:10 ET (5 min after halt ends)")
+    print("     Recommended weekend close: 16:30 ET (19 min before halt starts)")
     print()
-    print("   ⚠ Confirm against §5 (M1 gap analysis) for each symbol — if the")
-    print("     daily no-trade window is longer than 5 min, the rebalance must")
-    print("     land AFTER the gap ends, not just after broker midnight.")
+    print("   ⚠ Confirm halt window against §6 (M1 gap analysis) per symbol")
+    print("     — if any symbol's no-trade window differs, adjust schedule.")
 
 
 def _report_symbol_info(mt5, sym: str) -> None:

@@ -7,22 +7,32 @@
     Creates two scheduled tasks:
 
       1. EnigmaCfdProp-DailyRebalance
-           Trigger: Sun-Thu at $DailyRunTime (default 17:05 local time)
+           Trigger: Sun-Thu at $DailyRunTime (default 18:10 local time)
            Action:  scripts\scheduler\run_cfd_daily_rebalance.ps1
 
+         FTMO halts trading on US500.cash / US100.cash / XAUUSD /
+         XAGUSD from 16:49 ET to 18:05 ET every weekday for the daily
+         server reset (verified empirically — see
+         scripts/mt5_diagnose_trading_session.py). The D1 bar closes
+         at 17:00 ET DURING the halt, so by 18:10 ET (5 min after the
+         halt ends):
+            - the just-closed D1 bar IS the freshest input
+            - the market is actively trading and orders fill
+         Running earlier than 18:05 ET (e.g. 17:05 ET) lands inside
+         the halt -> orders reject.
          Sunday is included so we re-enter positions for Monday's
-         session right after FX/metals/indices reopen (~17:00-18:00 ET
-         Sun). The 17:05 timing means the just-closed FTMO MT5 D1 bar
-         (closes ~17:00 ET) is the freshest input to the forecast —
-         today's full US session is captured, not stripped.
+         session right after the weekly halt ends (~17:00-18:05 ET Sun).
 
       2. EnigmaCfdProp-WeekendClose
-           Trigger: Fri at $WeekendCloseTime (default 16:45 local time)
+           Trigger: Fri at $WeekendCloseTime (default 16:30 local time)
            Action:  scripts\scheduler\run_cfd_weekend_close.ps1
 
-         16:45 leaves 15 minutes for script + Telegram approval to
-         complete before the 17:00 ET swap charge, so closes dodge
-         the weekend triple-swap on any positions being flattened.
+         The Friday halt at 16:49 ET ushers in the weekend; the next
+         trading window is Sun ~18:05 ET. Closing at 16:30 ET leaves
+         a 19-min buffer for Telegram approval (5 min) + execution
+         before the halt locks the book, AND closes happen before the
+         Fri-night rollover so indices (rollover3days = Fri) dodge
+         the weekend triple-swap.
 
     Both tasks are configured to:
       - Run whether the user is logged on or not (if you pass -Credential)
@@ -39,20 +49,21 @@
       (Windows handles DST automatically; "Eastern Standard Time" IS
       the Windows ID for America/New_York, despite the name.)
 
-    Verify the FTMO broker server time aligns with our 17:00 ET D1
-    bar-close assumption by running once on the VPS:
-        python scripts\mt5_check_server_time.py
+    Verify the FTMO broker session windows still match these defaults
+    by re-running:
+        python scripts\mt5_diagnose_trading_session.py
+    after DST transitions or any FTMO server config change.
 
     Idempotency: if either task already exists, it is unregistered and
     recreated. Safe to re-run after script changes.
 
 .PARAMETER DailyRunTime
     Time-of-day to trigger the daily rebalance (24h "HH:mm").
-    Default "17:05".
+    Default "18:10".
 
 .PARAMETER WeekendCloseTime
     Time-of-day to trigger the weekend close (24h "HH:mm").
-    Default "16:45".
+    Default "16:30".
 
 .PARAMETER RepoRoot
     Path to the Trading-Algo repo. Default: two parents up from this script.
@@ -66,13 +77,13 @@
 
 .EXAMPLE
     .\install_cfd_prop_tasks.ps1
-    .\install_cfd_prop_tasks.ps1 -DailyRunTime "17:05" -WeekendCloseTime "16:45"
+    .\install_cfd_prop_tasks.ps1 -DailyRunTime "18:10" -WeekendCloseTime "16:30"
     .\install_cfd_prop_tasks.ps1 -Credential (Get-Credential)
 #>
 
 param(
-    [string]$DailyRunTime = '17:05',
-    [string]$WeekendCloseTime = '16:45',
+    [string]$DailyRunTime = '18:10',
+    [string]$WeekendCloseTime = '16:30',
     [string]$RepoRoot,
     [string]$User = "$env:USERDOMAIN\$env:USERNAME",
     [System.Management.Automation.PSCredential]$Credential

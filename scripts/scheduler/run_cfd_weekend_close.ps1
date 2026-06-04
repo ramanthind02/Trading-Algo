@@ -6,13 +6,19 @@
     Runs scripts/enigma_cfd_prop_weekend_close.py with the configured
     Python interpreter, logs all stdout/stderr to a date-stamped file,
     and on non-zero exit code posts a Telegram alert via the CFD prop
-    bot. Intended to be triggered by Task Scheduler at 16:45 ET, FRIDAY
-    only. 16:45 leaves 15 minutes for script + Telegram approval to
-    finish before the 17:00 ET swap charge, so closes dodge the
-    weekend triple-swap on any positions flattened.
+    bot. Intended to be triggered by Task Scheduler at 16:30 ET, FRIDAY
+    only.
+
+    FTMO halts the index/metal CFDs at 16:49 ET on Friday and they
+    don't reopen until Sunday ~18:05 ET. 16:30 ET leaves a 19-min
+    buffer for the 5-min Telegram approval poll + order execution
+    before the halt locks the book. Closes also happen before the
+    Fri-night rollover so indices (rollover3days = Fri) dodge the
+    weekend triple-swap.
 
     Do NOT also schedule the daily rebalance on Friday — they would
-    race for the same MT5 sessions.
+    race for the same MT5 sessions, and the daily run at 18:10 ET
+    would land after the weekend halt has already started.
 
 .PARAMETER RepoRoot
     Path to the Trading-Algo repository root. Defaults to two parents

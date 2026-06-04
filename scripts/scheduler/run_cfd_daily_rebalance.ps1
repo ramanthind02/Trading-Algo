@@ -8,14 +8,19 @@
     non-zero exit code posts a Telegram alert (using the CFD prop bot)
     so the operator is notified out-of-band.
 
-    Intended to be triggered by Task Scheduler at 17:05 ET, Sun-Thu.
-    The 17:05 timing means FTMO MT5's D1 bar (closes ~17:00 ET) has
-    just settled, so today's full US session is captured rather than
-    stripped as a partial bar. Sunday is included so we re-enter
-    positions for Monday's session as soon as markets reopen.
+    Intended to be triggered by Task Scheduler at 18:10 ET, Sun-Thu.
+    FTMO halts US500.cash/US100.cash/XAUUSD/XAGUSD from 16:49 ET to
+    18:05 ET daily; the D1 bar closes at 17:00 ET inside that halt.
+    18:10 ET = 5 min after the halt ends, so we get both the freshly
+    closed D1 bar AND an active market that can fill orders.
+
+    Sunday is included so we re-enter positions for Monday's session
+    right after the weekly halt ends ~Sun 18:05 ET.
 
     On Fridays use run_cfd_weekend_close.ps1 instead (don't also run
-    this on Fri — they would race for the same MT5 sessions).
+    this on Fri — they would race for the same MT5 sessions, and the
+    daily rebalance at 18:10 ET would land after the weekend halt has
+    already started).
 
 .PARAMETER RepoRoot
     Path to the Trading-Algo repository root. Defaults to two parents up

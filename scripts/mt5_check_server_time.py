@@ -91,8 +91,10 @@ def main() -> int:
 
         if offset_hours in (2.0, 3.0):
             print("OK: broker offset matches FTMO EET (+2 winter) / EEST (+3 summer).")
-            print("    Recommended daily rebalance:  17:05 ET  (5 min after bar close)")
-            print("    Recommended weekend close:    16:45 ET  (15 min before bar close)")
+            print("    Recommended daily rebalance:  18:10 ET  (5 min after halt ends @ 18:05 ET)")
+            print("    Recommended weekend close:    16:30 ET  (19 min before halt starts @ 16:49 ET)")
+            print("    For full empirical verification of the halt window, run:")
+            print("        python scripts/mt5_diagnose_trading_session.py")
         else:
             print("WARNING: broker offset does NOT match the assumed FTMO +2/+3.")
             shift = offset_hours - 3.0

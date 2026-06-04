@@ -6,16 +6,15 @@ Operator runbook for automating the CFD prop daily rebalance + weekly weekend cl
 
 | Task | Days | Time (local) | What it does |
 |---|---|---|---|
-| `EnigmaCfdProp-DailyRebalance` | Sun-Thu | 17:05 | `scripts/enigma_cfd_prop_forecast.py --execute --approve-via-telegram` |
-| `EnigmaCfdProp-WeekendClose` | Fri | 16:45 | `scripts/enigma_cfd_prop_weekend_close.py --execute --approve-via-telegram` |
+| `EnigmaCfdProp-DailyRebalance` | Sun-Thu | 18:10 | `scripts/enigma_cfd_prop_forecast.py --execute --approve-via-telegram` |
+| `EnigmaCfdProp-WeekendClose` | Fri | 16:30 | `scripts/enigma_cfd_prop_weekend_close.py --execute --approve-via-telegram` |
 
-### Why these times
+### Why these times — empirically verified
 
-The FTMO MT5 D1 candle closes at ~17:00 ET year-round (FTMO server is GMT+2 EET winter / GMT+3 EEST summer, DST-synced with the US). Our forecast strips today's in-progress D1 bar to avoid feeding the model partial data, so:
+FTMO halts US500.cash / US100.cash / XAUUSD / XAGUSD from **16:49 ET to 18:05 ET every weekday** for the daily server reset (verified empirically via `scripts/mt5_diagnose_trading_session.py` — 76-min window, identical across all four symbols). The D1 bar closes at **17:00 ET INSIDE the halt**. Our forecast script strips today's in-progress D1 bar to avoid feeding the model partial data, so:
 
-- **17:05 ET daily** means the bar that JUST closed at 17:00 ET is now complete — today's full US session is captured rather than discarded. Running earlier (e.g. 15:30 ET) would force the model to use yesterday's bar and miss ~22 hours of fresh data.
-- **Sunday is included** so we re-enter positions for Monday's session as soon as markets reopen (~17-18 ET Sun). Without a Sun run, Friday's close → Monday 17:05 rebalance would leave the book flat through the Mon US session.
-- **16:45 ET Friday close** leaves 15 min for script + Telegram approval to finish before the 17:00 ET swap charge. Closes flatten the book and dodge the weekend triple-swap on any positions flattened.
+- **18:10 ET daily** = 5 min after the halt ends. The D1 bar closed cleanly at 17:00 ET (during the halt), so by 18:10 ET it IS the freshest input AND the market is actively trading and will fill orders. Running earlier (e.g. 17:05 ET) would land INSIDE the halt and orders would reject. Sunday is included so we re-enter positions for Monday's session right after the weekly halt ends ~Sun 18:05 ET.
+- **16:30 ET Friday close** leaves a 19-min buffer for the 5-min Telegram approval poll + execution before the 16:49 ET halt locks the book. Closes also happen before the Fri-night rollover so indices (`swap_rollover3days = Fri`) dodge the weekend triple-swap.
 
 Both:
 - Wait for Telegram batch approval (5-min timeout, default = cancel)
@@ -24,7 +23,7 @@ Both:
 
 There is no built-in US-holiday skip. The Telegram approval IS the safety net — if a holiday or other off-day looks wrong, click `Cancel All`. Manual one-off positions on holidays (e.g. closing early for Christmas Eve) can be done from the FTMO terminal directly.
 
-**Do NOT also schedule the daily rebalance on Friday** — the weekend-close task replaces it for that day. Running both would race the same MT5 sessions.
+**Do NOT also schedule the daily rebalance on Friday** — the weekend-close task replaces it for that day. Running both would race the same MT5 sessions, and the daily run at 18:10 ET would land after the weekend halt has already started.
 
 ## One-time setup
 
@@ -48,13 +47,19 @@ If you can't change the VPS timezone, adjust `-DailyRunTime` / `-WeekendCloseTim
 
 ### 1b. (Optional but recommended) Verify FTMO broker time alignment
 
-The 17:05 / 16:45 ET defaults assume FTMO server time is GMT+2/+3. Confirm on the actual VPS:
+The 18:10 / 16:30 ET defaults assume FTMO server time is GMT+2/+3 AND that FTMO maintains the 16:49-18:05 ET daily halt window. Confirm on the actual VPS:
+
+```powershell
+.\cpython_env\Scripts\python.exe scripts\mt5_diagnose_trading_session.py
+```
+
+This empirically reports the broker offset, D1 bar boundaries, AND the no-trade window (start time and duration) for all four symbols. If anything disagrees with the defaults, adjust the install-script params accordingly.
+
+A quicker server-time-only check (no symbol fetches) is also available:
 
 ```powershell
 .\cpython_env\Scripts\python.exe scripts\mt5_check_server_time.py
 ```
-
-This prints the inferred broker offset and recommended schedule. If it disagrees with the defaults, adjust the install-script params accordingly.
 
 ### 2. Set environment variables (persistent, not session)
 
@@ -85,10 +90,10 @@ cd C:\Users\adabla\Trading\Trading-Algo
 .\scripts\scheduler\install_cfd_prop_tasks.ps1
 ```
 
-To override the schedule (e.g. broker offset differs from FTMO):
+To override the schedule (e.g. broker offset differs from FTMO, or daily halt window shifts):
 
 ```powershell
-.\scripts\scheduler\install_cfd_prop_tasks.ps1 -DailyRunTime "17:05" -WeekendCloseTime "16:45"
+.\scripts\scheduler\install_cfd_prop_tasks.ps1 -DailyRunTime "18:10" -WeekendCloseTime "16:30"
 ```
 
 To have the tasks run when nobody is logged in (recommended for a VPS):
