@@ -8,8 +8,14 @@
     non-zero exit code posts a Telegram alert (using the CFD prop bot)
     so the operator is notified out-of-band.
 
-    Intended to be triggered by Task Scheduler at 15:30 ET, Mon-Thu.
-    On Fridays use run_cfd_weekend_close.ps1 instead.
+    Intended to be triggered by Task Scheduler at 17:05 ET, Sun-Thu.
+    The 17:05 timing means FTMO MT5's D1 bar (closes ~17:00 ET) has
+    just settled, so today's full US session is captured rather than
+    stripped as a partial bar. Sunday is included so we re-enter
+    positions for Monday's session as soon as markets reopen.
+
+    On Fridays use run_cfd_weekend_close.ps1 instead (don't also run
+    this on Fri — they would race for the same MT5 sessions).
 
 .PARAMETER RepoRoot
     Path to the Trading-Algo repository root. Defaults to two parents up

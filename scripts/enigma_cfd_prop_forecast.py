@@ -41,17 +41,6 @@ from scripts.enigma_live_forecast import main as _run_forecast
 
 
 def main() -> None:
-    if "--ignore-market-calendar" in sys.argv:
-        sys.argv.remove("--ignore-market-calendar")
-    elif "--execute" in sys.argv:
-        from execution.us_market_session import decide_session
-
-        decision = decide_session()
-        if decision.skip:
-            print(f"[market-calendar] Skipping CFD prop daily rebalance: {decision.reason}.")
-            print("Re-run with --ignore-market-calendar to override.")
-            return
-
     sys.argv.insert(1, "--profile")
     sys.argv.insert(2, "cfd_prop")
     _run_forecast()

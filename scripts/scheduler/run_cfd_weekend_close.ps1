@@ -6,9 +6,13 @@
     Runs scripts/enigma_cfd_prop_weekend_close.py with the configured
     Python interpreter, logs all stdout/stderr to a date-stamped file,
     and on non-zero exit code posts a Telegram alert via the CFD prop
-    bot. Intended to be triggered by Task Scheduler at 15:30 ET, FRIDAY
-    only. Do NOT also schedule the daily rebalance on Friday — they
-    would race for the same MT5 sessions.
+    bot. Intended to be triggered by Task Scheduler at 16:45 ET, FRIDAY
+    only. 16:45 leaves 15 minutes for script + Telegram approval to
+    finish before the 17:00 ET swap charge, so closes dodge the
+    weekend triple-swap on any positions flattened.
+
+    Do NOT also schedule the daily rebalance on Friday — they would
+    race for the same MT5 sessions.
 
 .PARAMETER RepoRoot
     Path to the Trading-Algo repository root. Defaults to two parents

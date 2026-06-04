@@ -1,18 +1,28 @@
 <#
 .SYNOPSIS
     Idempotently registers Windows Task Scheduler tasks for CFD prop
-    daily rebalance (Mon-Thu) and weekend close (Fri).
+    daily rebalance (Sun-Thu) and weekend close (Fri).
 
 .DESCRIPTION
     Creates two scheduled tasks:
 
       1. EnigmaCfdProp-DailyRebalance
-           Trigger: Mon-Thu at $RunTime (default 15:30 local time)
+           Trigger: Sun-Thu at $DailyRunTime (default 17:05 local time)
            Action:  scripts\scheduler\run_cfd_daily_rebalance.ps1
 
+         Sunday is included so we re-enter positions for Monday's
+         session right after FX/metals/indices reopen (~17:00-18:00 ET
+         Sun). The 17:05 timing means the just-closed FTMO MT5 D1 bar
+         (closes ~17:00 ET) is the freshest input to the forecast —
+         today's full US session is captured, not stripped.
+
       2. EnigmaCfdProp-WeekendClose
-           Trigger: Fri at $RunTime (default 15:30 local time)
+           Trigger: Fri at $WeekendCloseTime (default 16:45 local time)
            Action:  scripts\scheduler\run_cfd_weekend_close.ps1
+
+         16:45 leaves 15 minutes for script + Telegram approval to
+         complete before the 17:00 ET swap charge, so closes dodge
+         the weekend triple-swap on any positions being flattened.
 
     Both tasks are configured to:
       - Run whether the user is logged on or not (if you pass -Credential)
@@ -20,19 +30,29 @@
       - Skip if already running (no overlap)
 
     Time zone:
-      Task Scheduler triggers fire in LOCAL machine time. For 15:30 ET
-      you want the FTMO VPS clock set to America/New_York. Check with:
+      Task Scheduler triggers fire in LOCAL machine time. For ET
+      timing you want the FTMO VPS clock set to America/New_York.
+      Check with:
           Get-TimeZone
       Set it (admin shell) with:
           Set-TimeZone -Id "Eastern Standard Time"
       (Windows handles DST automatically; "Eastern Standard Time" IS
       the Windows ID for America/New_York, despite the name.)
 
+    Verify the FTMO broker server time aligns with our 17:00 ET D1
+    bar-close assumption by running once on the VPS:
+        python scripts\mt5_check_server_time.py
+
     Idempotency: if either task already exists, it is unregistered and
     recreated. Safe to re-run after script changes.
 
-.PARAMETER RunTime
-    Time-of-day to trigger (24h "HH:mm"). Default "15:30".
+.PARAMETER DailyRunTime
+    Time-of-day to trigger the daily rebalance (24h "HH:mm").
+    Default "17:05".
+
+.PARAMETER WeekendCloseTime
+    Time-of-day to trigger the weekend close (24h "HH:mm").
+    Default "16:45".
 
 .PARAMETER RepoRoot
     Path to the Trading-Algo repo. Default: two parents up from this script.
@@ -46,12 +66,13 @@
 
 .EXAMPLE
     .\install_cfd_prop_tasks.ps1
-    .\install_cfd_prop_tasks.ps1 -RunTime "15:30"
+    .\install_cfd_prop_tasks.ps1 -DailyRunTime "17:05" -WeekendCloseTime "16:45"
     .\install_cfd_prop_tasks.ps1 -Credential (Get-Credential)
 #>
 
 param(
-    [string]$RunTime = '15:30',
+    [string]$DailyRunTime = '17:05',
+    [string]$WeekendCloseTime = '16:45',
     [string]$RepoRoot,
     [string]$User = "$env:USERDOMAIN\$env:USERNAME",
     [System.Management.Automation.PSCredential]$Credential
@@ -124,14 +145,14 @@ function Register-Cfd {
 Register-Cfd `
     -TaskName 'EnigmaCfdProp-DailyRebalance' `
     -WrapperPath $dailyWrapper `
-    -DaysOfWeek @('Monday','Tuesday','Wednesday','Thursday') `
-    -Time $RunTime
+    -DaysOfWeek @('Sunday','Monday','Tuesday','Wednesday','Thursday') `
+    -Time $DailyRunTime
 
 Register-Cfd `
     -TaskName 'EnigmaCfdProp-WeekendClose' `
     -WrapperPath $weekendWrapper `
     -DaysOfWeek @('Friday') `
-    -Time $RunTime
+    -Time $WeekendCloseTime
 
 Write-Host ""
 Write-Host "Done. Verify with:"

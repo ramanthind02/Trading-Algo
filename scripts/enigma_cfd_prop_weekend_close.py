@@ -119,14 +119,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         help="Skip Telegram approval and auto-execute (use with caution).",
     )
     p.set_defaults(approve_via_telegram=True)
-    p.add_argument(
-        "--ignore-market-calendar",
-        action="store_true",
-        help=(
-            "Bypass the US market open-day check (debug / out-of-band runs). "
-            "Default: skip when NYSE is closed or on early-close days."
-        ),
-    )
     return p.parse_args(argv)
 
 
@@ -140,15 +132,6 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(2)
     with open(cfg_path) as f:
         config = json.load(f)
-
-    if not args.ignore_market_calendar and args.execute:
-        from execution.us_market_session import decide_session
-
-        decision = decide_session()
-        if decision.skip:
-            print(f"[market-calendar] Skipping weekend-close: {decision.reason}.")
-            print("Re-run with --ignore-market-calendar to override.")
-            sys.exit(0)
 
     print("=" * 60)
     print("Enigma CFD Prop -- WEEKEND CLOSE")
