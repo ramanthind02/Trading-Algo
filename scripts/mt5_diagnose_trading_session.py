@@ -119,13 +119,25 @@ def main() -> int:
                 print()
                 continue
 
-            _report_symbol_info(mt5, sym)
+            try:
+                _report_symbol_info(mt5, sym)
+            except Exception as e:
+                print(f"  symbol_info section failed: {type(e).__name__}: {e}")
             print()
-            _report_sessions(mt5, sym, offset_hours)
+            try:
+                _report_sessions(mt5, sym, offset_hours)
+            except Exception as e:
+                print(f"  sessions section failed: {type(e).__name__}: {e}")
             print()
-            _report_d1_bars(mt5, sym, offset_hours)
+            try:
+                _report_d1_bars(mt5, sym, offset_hours)
+            except Exception as e:
+                print(f"  D1 bars section failed: {type(e).__name__}: {e}")
             print()
-            _report_m1_gaps(mt5, sym, offset_hours)
+            try:
+                _report_m1_gaps(mt5, sym, offset_hours)
+            except Exception as e:
+                print(f"  M1 gap section failed: {type(e).__name__}: {e}")
             print()
 
         print("=" * 72)
@@ -211,43 +223,53 @@ def _report_symbol_info(mt5, sym: str) -> None:
     if info is None:
         print(f"  symbol_info({sym}) returned None")
         return
-    trade_mode = TRADE_MODE_LABELS.get(int(info.trade_mode), str(info.trade_mode))
-    swap_mode = SWAP_MODE_LABELS.get(int(info.swap_mode), str(info.swap_mode))
+    trade_mode = TRADE_MODE_LABELS.get(int(getattr(info, "trade_mode", -1)), str(getattr(info, "trade_mode", "?")))
+    swap_mode = SWAP_MODE_LABELS.get(int(getattr(info, "swap_mode", -1)), str(getattr(info, "swap_mode", "?")))
     print("3. Symbol info:")
     print(f"     trade_mode:   {trade_mode}  (FULL = can buy & sell now)")
-    print(f"     spread (pts): {info.spread}")
-    print(f"     digits:       {info.digits}")
-    print(f"     point:        {info.point}")
+    print(f"     spread (pts): {getattr(info, 'spread', '?')}")
+    print(f"     digits:       {getattr(info, 'digits', '?')}")
+    print(f"     point:        {getattr(info, 'point', '?')}")
     print(f"     swap_mode:    {swap_mode}")
-    print(f"     swap_long:    {info.swap_long}")
-    print(f"     swap_short:   {info.swap_short}")
-    print(f"     swap_rollover3days: day-of-week index {info.swap_rollover3days} "
-          f"({DAY_NAMES[(int(info.swap_rollover3days) + 1) % 7]} broker-tz, "
-          "triple-swap day)")
-    print(f"     volume_min:   {info.volume_min}")
-    print(f"     volume_step:  {info.volume_step}")
+    print(f"     swap_long:    {getattr(info, 'swap_long', '?')}")
+    print(f"     swap_short:   {getattr(info, 'swap_short', '?')}")
+    rollover = getattr(info, "swap_rollover3days", None)
+    if rollover is not None:
+        try:
+            idx = int(rollover)
+            print(f"     swap_rollover3days: {DAY_NAMES[idx % 7]} (broker-tz, triple-swap day)")
+        except Exception:
+            print(f"     swap_rollover3days: {rollover}")
+    else:
+        print("     swap_rollover3days: <not exposed by this MT5 build>")
+    print(f"     volume_min:   {getattr(info, 'volume_min', '?')}")
+    print(f"     volume_step:  {getattr(info, 'volume_step', '?')}")
 
 
 def _report_sessions(mt5, sym: str, offset_hours: float) -> None:
+    quotes_fn = getattr(mt5, "symbol_info_sessions_quotes", None)
+    trade_fn = getattr(mt5, "symbol_info_sessions_trade", None)
+    if quotes_fn is None and trade_fn is None:
+        print("4. Broker-reported sessions: API not available in this MT5 Python build")
+        print("   (symbol_info_sessions_quotes/_trade missing — skipped; rely on M1")
+        print("   gap analysis below for empirical session windows).")
+        return
     print("4. Broker-reported QUOTE & TRADE sessions per day of week:")
     print(f"   (server-tz times converted to ET assuming current broker offset "
           f"{offset_hours:+.2f}h; DST transitions may shift ET by 1h)")
     print()
     print(f"   {'Day':<5} {'Quote sessions (broker tz | ET)':<58} {'Trade sessions (broker tz | ET)'}")
     for dow in range(7):
-        quote_sessions = _collect_sessions(mt5, sym, dow, kind="quotes")
-        trade_sessions = _collect_sessions(mt5, sym, dow, kind="trade")
+        quote_sessions = _collect_sessions(quotes_fn, sym, dow) if quotes_fn else []
+        trade_sessions = _collect_sessions(trade_fn, sym, dow) if trade_fn else []
         q_str = _format_sessions(quote_sessions, offset_hours) if quote_sessions else "closed"
         t_str = _format_sessions(trade_sessions, offset_hours) if trade_sessions else "closed"
         print(f"   {DAY_NAMES[dow]:<5} {q_str:<58} {t_str}")
 
 
-def _collect_sessions(mt5, sym: str, dow: int, kind: str) -> list[tuple[int, int]]:
-    fn = (
-        mt5.symbol_info_sessions_quotes
-        if kind == "quotes"
-        else mt5.symbol_info_sessions_trade
-    )
+def _collect_sessions(fn, sym: str, dow: int) -> list[tuple[int, int]]:
+    if fn is None:
+        return []
     sessions: list[tuple[int, int]] = []
     for idx in range(6):
         try:
@@ -256,7 +278,6 @@ def _collect_sessions(mt5, sym: str, dow: int, kind: str) -> list[tuple[int, int
             break
         if result is None:
             break
-        # Result is a namedtuple-like; access by index defensively.
         try:
             from_s = int(result[0])
             to_s = int(result[1])
