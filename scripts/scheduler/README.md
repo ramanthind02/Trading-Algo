@@ -61,6 +61,25 @@ A quicker server-time-only check (no symbol fetches) is also available:
 .\cpython_env\Scripts\python.exe scripts\mt5_check_server_time.py
 ```
 
+### 1c. Using a different prop firm
+
+The schedule defaults (18:10 / 16:30 ET) are **empirically verified for FTMO**. Other prop firms (IC Markets, Pepperstone, BlackBull, MyForexFunds, …) frequently use different server timezones AND different daily halt windows. Both diagnostic scripts above are broker-agnostic — they attach to whichever MT5 terminal is currently logged in:
+
+```powershell
+# Default symbol list is FTMO-style (US500.cash, US100.cash, XAUUSD, XAGUSD)
+# Many brokers use different names — pass --symbols to override:
+.\cpython_env\Scripts\python.exe scripts\mt5_diagnose_trading_session.py --symbols "SPX500,NAS100,XAUUSD,XAGUSD"
+
+# Or drive the symbol list from your live-forecast config (reads instruments.*.mt5_symbol):
+.\cpython_env\Scripts\python.exe scripts\mt5_diagnose_trading_session.py --config configs\live_forecast_config_cfd_prop.json
+```
+
+The script's `AGGREGATED SCHEDULE RECOMMENDATION` section at the end derives the per-broker rebalance + weekend-close times from the worst-case observed halt window across all symbols. Copy the printed `install_cfd_prop_tasks.ps1` invocation to apply the broker-specific schedule.
+
+### Multi-terminal support (FTMO + another firm on the same machine)
+
+The integration supports multiple MT5 terminals on one machine. Each account entry in `configs/live_forecast_config_cfd_prop.json` carries its own `terminal_path`; the orchestrator opens, executes, and closes each MT5 session sequentially per account inside `MT5TradeExecutor.connect_and_verify`. There is no need to run multiple wrappers — one `EnigmaCfdProp-DailyRebalance` task drives all enabled accounts regardless of which broker terminal each one belongs to.
+
 ### 2. Set environment variables (persistent, not session)
 
 Task Scheduler runs in a fresh shell — env vars from your interactive session are invisible to it. Use **user-level** env vars:
