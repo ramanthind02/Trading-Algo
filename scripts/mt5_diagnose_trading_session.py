@@ -33,6 +33,12 @@ Symbol list (in priority order):
                              XAUUSD, XAGUSD) — adjust per broker
                              (e.g. IC Markets uses SPX500, NAS100, XAUUSD)
 
+Speed:
+  --quick                    only run §1 + §2 (server clock + offset +
+                             broker-midnight-in-ET). Useful as a fast
+                             sanity ping after a DST flip. Omit for the
+                             full per-symbol session/halt diagnostic.
+
 The script attaches to whichever MT5 terminal is currently logged in
 (open the broker's terminal manually, log in, then run). To diagnose
 multiple brokers, open each terminal in turn and re-run.
@@ -124,6 +130,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
             "takes priority if both are passed)."
         ),
     )
+    p.add_argument(
+        "--quick",
+        action="store_true",
+        help=(
+            "Run only the fast server-time / offset / broker-midnight check "
+            "(skips per-symbol info, sessions, D1 bars, M1 gap analysis, and "
+            "the aggregated recommendation). Use for a sanity ping after DST "
+            "flips; use the full run when you need the actual schedule."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -170,8 +186,9 @@ def main(argv: list[str] | None = None) -> int:
         server = getattr(account_info, "server", "?") if account_info else "?"
         broker = getattr(account_info, "company", "?") if account_info else "?"
 
+        mode_label = "quick server-time check" if args.quick else "full diagnostic"
         print("=" * 72)
-        print("MT5 trading-session diagnostic")
+        print(f"MT5 trading-session — {mode_label}")
         print(f"Real local time:  {datetime.now()}")
         print(f"Real UTC:         {datetime.now(tz=timezone.utc).replace(microsecond=0)}")
         print(f"Terminal path:    {terminal_path}")
@@ -185,6 +202,15 @@ def main(argv: list[str] | None = None) -> int:
 
         _report_recommendation_preview(offset_hours)
         print()
+
+        if args.quick:
+            print("=" * 72)
+            print("Quick check complete. For the full per-symbol halt window /")
+            print("D1 bar / swap analysis + aggregated schedule recommendation,")
+            print("re-run without --quick:")
+            print("    python scripts/mt5_diagnose_trading_session.py")
+            print("=" * 72)
+            return 0
 
         # Track per-symbol observed reset window so we can give an
         # aggregated recommendation at the end (broker-agnostic).

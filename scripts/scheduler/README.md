@@ -55,10 +55,10 @@ The 18:10 / 16:30 ET defaults assume FTMO server time is GMT+2/+3 AND that FTMO 
 
 This empirically reports the broker offset, D1 bar boundaries, AND the no-trade window (start time and duration) for all four symbols. If anything disagrees with the defaults, adjust the install-script params accordingly.
 
-A quicker server-time-only check (no symbol fetches) is also available:
+A quicker server-time-only check (skips per-symbol info, sessions, D1 bars, M1 gap analysis — just confirms broker offset and broker-midnight in ET) is the same script with `--quick`:
 
 ```powershell
-.\cpython_env\Scripts\python.exe scripts\mt5_check_server_time.py
+.\cpython_env\Scripts\python.exe scripts\mt5_diagnose_trading_session.py --quick
 ```
 
 ### 1c. Using a different prop firm
