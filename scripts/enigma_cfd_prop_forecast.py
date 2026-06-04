@@ -41,8 +41,6 @@ from scripts.enigma_live_forecast import main as _run_forecast
 
 
 def main() -> None:
-    # Inject the profile flag so argparse in _run_forecast picks it up
-    # without us needing to duplicate argument handling here.
     sys.argv.insert(1, "--profile")
     sys.argv.insert(2, "cfd_prop")
     _run_forecast()
