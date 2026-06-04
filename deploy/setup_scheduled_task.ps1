@@ -72,6 +72,14 @@ Register-ForecastTask `
     -LocalFireTime $propAt `
     -Description '3:00 PM PT daily; futures signal post-CME-settlement.'
 
+# MT5 data scrape: 5:00 PM PT = 8:00 PM ET (after US equity close + data settle).
+$mt5ScrapeAt = [DateTime]::Today.AddHours(17)
+Register-ForecastTask `
+    -TaskName 'MT5DataScrape' `
+    -BatPath  (Join-Path $RepoRoot 'deploy\run_mt5_scrape.bat') `
+    -LocalFireTime $mt5ScrapeAt `
+    -Description '5:00 PM PT daily; incremental MT5 M1 bar scrape for all symbols.'
+
 Write-Host "`nVerify next-run times:"
 Get-ScheduledTask -TaskPath '\TradingAlgo\' |
     ForEach-Object {

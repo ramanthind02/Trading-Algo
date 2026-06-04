@@ -5,11 +5,11 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
-from data_cleaning.back_adjustment.back_adjuster import (
+from data_platform.providers.norgate.backadjust.back_adjuster import (
     apply_back_adjustment,
     validate_adjusted_data,
 )
-from data_cleaning.back_adjustment.gap_calculator import AdjustmentFactor
+from data_platform.providers.norgate.backadjust.gap_calculator import AdjustmentFactor
 
 
 def _make_ohlc(n: int = 100, base: float = 4000.0) -> pd.DataFrame:

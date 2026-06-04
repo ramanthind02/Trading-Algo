@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from utils.calendar.nyse_holidays import build_holiday_events, closure_to_d0
+from data_platform.events.nyse_holidays import build_holiday_events, closure_to_d0
 
 
 def test_thanksgiving_2024_d0_is_prior_session() -> None:

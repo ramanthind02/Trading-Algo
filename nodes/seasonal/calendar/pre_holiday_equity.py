@@ -15,8 +15,8 @@ from nodes.seasonal.calendar._event_signal import (
     holiday_d0_dates,
     load_bundle,
 )
-from utils.calendar.calendar_loader import HolidayAssetBucket
-from utils.calendar.trading_day_index import TradingDayIndex, load_es_trading_sessions
+from data_platform.events.calendar_loader import HolidayAssetBucket
+from data_platform.events.trading_day_index import TradingDayIndex, load_es_trading_sessions
 from utils.core.enums import Ticker, TimeFrame
 from utils.core.models import Candle
 

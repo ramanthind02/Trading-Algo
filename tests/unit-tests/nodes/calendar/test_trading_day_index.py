@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from utils.calendar.trading_day_index import TradingDayIndex
+from data_platform.events.trading_day_index import TradingDayIndex
 
 
 def _november_2024_sessions() -> tuple[date, ...]:

@@ -7,7 +7,7 @@ import numpy as np
 from pathlib import Path
 
 from utils.core.enums import Ticker
-from data_cleaning.back_adjustment.orchestrator import (
+from data_platform.providers.norgate.backadjust.orchestrator import (
     AdjustmentMetadata,
     process_ticker,
     build_arg_parser,

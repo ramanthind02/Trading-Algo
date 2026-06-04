@@ -16,7 +16,7 @@ from scripts._bootstrap import ensure_project_root_on_path
 
 ensure_project_root_on_path()
 
-from utils.calendar.fed_fomc import (  # noqa: E402
+from data_platform.events.fed_fomc import (  # noqa: E402
     FomcScrapeResult,
     dates_to_iso_strings,
     merge_fomc_dates,
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/calendar/fomc_decision_dates.json"),
+        default=Path("data/events/calendar/fomc_decision_dates.json"),
     )
     parser.add_argument(
         "--strict",

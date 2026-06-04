@@ -43,24 +43,26 @@ faithfulness, i.e. the proportional/cash convention, not additive.
 ## What the repo does today (confirmed)
 
 1. **Data source = additive back-adjusted.**
-   - [`scripts/fetch_norgate_data.py`](../../../scripts/fetch_norgate_data.py) maps
-     `"ES": "&ES_CCB"`. The Norgate `_CCB` suffix = *Continuous Contract, Back-adjusted*
+   - [`data_platform/providers/norgate/_constants.py`](../../../data_platform/providers/norgate/_constants.py)
+     maps `"ES": "&ES_CCB"`. The `_CCB` suffix = *Continuous Contract, Back-adjusted*
      (additive). Fetched with `padding_setting = PaddingType.NONE`.
-   - [`scripts/migrate_norgate_to_ohlc.py`](../../../scripts/migrate_norgate_to_ohlc.py)
-     builds `data/ohlc_data/{TICKER}` from `data/norgate/continuous_futures/adjusted/`.
-   - [`data_cleaning/back_adjustment/gap_calculator.py`](../../../data_cleaning/back_adjustment/gap_calculator.py)
+   - [`data_platform/providers/norgate/migrate.py`](../../../data_platform/providers/norgate/migrate.py)
+     builds `data/ohlc_data/{TICKER}` from `data/norgate/working/continuous/adjusted/`.
+   - [`data_platform/providers/norgate/backadjust/gap_calculator.py`](../../../data_platform/providers/norgate/backadjust/gap_calculator.py)
      is also additive (`cumulative_adjustment = sum of gap_points`).
-   - The *unadjusted* series (`&ES`, derived in `TICKER_TO_NORGATE_RAW`) is fetched to
-     `data/norgate/continuous_futures/unadjusted/` but is **not** migrated into
-     `ohlc_data`, and those raw folders are typically purged after migration.
+   - The *unadjusted* series is fetched to `data/norgate/working/continuous/unadjusted/` and
+     migrated to `data/ohlc_data/{TICKER}/D_{TICKER}_unadj.parquet` for use as the σ
+     denominator (see fix below).
    - **`TLT` is ETF-like**: it starts 2002-07 (TLT ETF inception) and its returns match the
      TLT ETF (corr 0.9995, identical vol) — i.e. it is *not* additively distorted. So the
      repo currently mixes a distorted equity leg with a faithful bond leg.
 
-2. **`σ` for sizing is a raw % of the back-adjusted close.**
-   [`nodes/volatility/ewsd/ewsd.py:137`](../../../nodes/volatility/ewsd/ewsd.py)
+2. **`σ` fix implemented** — Carver form in
+   [`nodes/volatility/ewsd/ewsd.py`](../../../nodes/volatility/ewsd/ewsd.py):
    ```python
-   daily_return = (candle.close - self.prev_close) / self.prev_close   # % of back-adjusted close
+   price_diff = candle.close - self.prev_close          # ΔP from back-adjusted (correct $)
+   ref_close  = unadj_close[candle.date]                # P_unadj (correct % denominator)
+   daily_return = price_diff / ref_close                # true % return
    ```
    EWSD blends 70% EWMA-32 + 30% expanding 10-yr stdev, ×16 annualized. This feeds
    `forecast = min(τ/σ, 2.0) · signal` in
@@ -188,21 +190,19 @@ vol target is honest.
 **Constraints / why not fixed yet:**
 - The unadjusted/ratio series are not in `ohlc_data` and the raw `data/norgate/.../unadjusted/`
   folders are purged post-migration. Re-fetching requires the **Windows Norgate host** (see
-  [[norgate]] and [[NORGATE_MIGRATION]]).
+  [[norgate]] and [[multi_source_update_architecture]]).
 - `norgatedata` continuous-contract symbols expose back-adjusted (`_CCB`) and unadjusted
   (`&ES`); confirm the ratio-adjusted symbol/option before wiring it.
 
 ## Remediation checklist
 
-- [ ] Decide convention per instrument: keep additive for point/dollar logic; add a
+- [x] Decide convention per instrument: keep additive for point/dollar logic; add a
       percentage-faithful series for `σ` + % signals.
-- [ ] Re-run `fetch_norgate_data.py` on the Norgate host to repopulate the **unadjusted**
-      (and/or ratio-adjusted) series.
-- [ ] Extend `migrate_norgate_to_ohlc.py` to write the faithful series (e.g.
-      `D_{TICKER}_unadj.parquet`) into `ohlc_data`.
-- [ ] Add a Carver percentage-vol mode to `nodes/volatility/ewsd/ewsd.py`:
-      `σ% = stdev(price_diff) / reference_price`, with `reference_price` injectable from the
-      unadjusted/current series (default = current behavior for backward compatibility).
+- [x] Fetch unadjusted continuous series and migrate to `D_{TICKER}_unadj.parquet`
+      (`data_platform/providers/norgate/migrate.py` writes this automatically).
+- [x] Carver percentage-vol mode in `nodes/volatility/ewsd/ewsd.py`:
+      `r = ΔP_adj / P_unadj[t]`. Active when `D_{TICKER}_unadj.parquet` exists;
+      falls back to previous behaviour otherwise.
 - [ ] Route the relative-strength / cross-asset percentage comparisons (e.g.
       `nodes/pairs/rebalancing_flow.py`) to the faithful series.
 - [ ] Re-validate: realized vol of a vol-targeted book ≈ target; backtest vol ≈ live vol;
@@ -279,8 +279,9 @@ print('(iii)live-like:', run(sig_es,  sig_eq_adj,  spy))   # size distorted sigm
 Expected: `k≈0.69`; (i) ≈10.7%/0.71, (ii) ≈11.6%/0.77, (iii) ≈14.9%/0.80.
 
 ## Related
+- [[futures_backtesting_data_guide]] — practical guide: which series to use for which
+  computation, decision table, checklist for new strategies.
 - [[norgate]] — Norgate provider, symbols, Windows-only extraction.
-- [[NORGATE_MIGRATION]] — canonical candle rebuild flow.
-- [[canonical_data_architecture]] — repository data layering.
+- [[multi_source_update_architecture]] — repository data layering.
 - Carver vol-target / forecast scaling: `ensemble/diversified_ensemble.py`,
   `nodes/volatility/ewsd/ewsd.py`.

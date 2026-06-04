@@ -17,11 +17,16 @@ Author: Trading Research Team
 Date: 2025-10-23
 """
 
+from __future__ import annotations
+
+from pathlib import Path
+
 from nodes import BiasNode
 from utils.core.models import Candle
 from utils.core.enums import Bias, Ticker, TimeFrame
 from typing import ClassVar, List, Optional
 import numpy as np
+import pandas as pd
 from collections import deque
 
 try:
@@ -29,6 +34,31 @@ try:
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
     compute_stddev_sample_fast = None  # type: ignore[assignment]
+
+
+def _load_unadj_close_series(ticker: Ticker) -> pd.Series | None:
+    """Load the unadjusted continuous close series for a ticker.
+
+    Returns a Series indexed by normalized date (tz-naive), or None if the
+    file does not exist (non-futures instruments, or pre-migration state).
+    """
+    from utils.cache.runtime.cache_paths import project_root as _project_root
+    project_root = _project_root()
+    path = project_root / "data" / "ohlc_data" / ticker.name / f"D_{ticker.name}_unadj.parquet"
+    if not path.exists():
+        return None
+    df = pd.read_parquet(path, engine="fastparquet")
+    # Handle both legacy schema (datetime column) and new schema (date index).
+    if "datetime" in df.columns:
+        idx = pd.to_datetime(df["datetime"]).dt.normalize()
+    elif "date" in df.columns:
+        idx = pd.to_datetime(df["date"]).dt.normalize()
+    else:
+        idx = pd.to_datetime(df.index).normalize()
+        df = df.reset_index(drop=True)
+    df.index = idx
+    close = df["close"].astype("float64")
+    return close.sort_index()
 
 
 class EWSDNode(BiasNode):
@@ -92,16 +122,24 @@ class EWSDNode(BiasNode):
         self.blend_short_weight = blend_short_weight
         self.blend_long_weight = blend_long_weight
         self.params = {"long_run_window": long_run_window}
-        
+
         # State variables
         self.prev_close: Optional[float] = None
         self.prev_variance_sq: Optional[float] = None
         self.returns_history = deque(maxlen=long_run_window)
-        
+
         # Initial estimates (only used before any meaningful return history)
         self.sigma_long: float = 0.01  # 1% daily prior, replaced as soon as returns arrive
         self.initial_variance_sq: float = self.sigma_long ** 2
-        
+
+        # Unadjusted close series for percentage-faithful return computation.
+        # Additive back-adjustment inflates the historical price level so
+        # r = ΔP / P_adj underestimates true % returns by k = P_true/P_adj.
+        # When available, we use P_unadj as the denominator so the return
+        # history fed into σ reflects real percentage moves.
+        # Falls back to back-adjusted close (current behaviour) when absent.
+        self._unadj_close: Optional[pd.Series] = _load_unadj_close_series(ticker) if tf == TimeFrame.D else None
+
         # Define output columns
         self.columns = ['ewsd_daily_pct', 'ewsd_annual_pct']
     
@@ -133,8 +171,16 @@ class EWSDNode(BiasNode):
             ewsd_daily_pct = self.sigma_long
             self.prev_close = candle.close
         else:
-            # 1. Calculate daily return (percentage)
-            daily_return = (candle.close - self.prev_close) / self.prev_close
+            # 1. Calculate daily return (percentage).
+            # Use unadjusted close as denominator when available so the return
+            # reflects true % moves rather than the inflated back-adjusted level.
+            price_diff = candle.close - self.prev_close
+            if self._unadj_close is not None:
+                date_key = pd.Timestamp(candle.datetime).normalize()
+                ref_close = float(self._unadj_close.get(date_key, self.prev_close))
+            else:
+                ref_close = self.prev_close
+            daily_return = price_diff / ref_close if ref_close != 0.0 else 0.0
             
             # Store return for long-run calculation
             self.returns_history.append(daily_return)
