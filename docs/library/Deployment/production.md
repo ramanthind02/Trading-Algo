@@ -1,5 +1,7 @@
 # Production Testing
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 > [!summary] Purpose
 > Verify the `ForecastServer` works correctly before deployment, without waiting for the live schedule (daily 00:00 EST / weekly Sunday 18:00 EST).
 > Bias nodes need historical candle buffers — `TestForecastServer` handles this explicitly.
@@ -74,3 +76,5 @@ This path is inference only. It does not refit models and it does not create new
 - [[portfolio]] — ensemble and position logic called by ForecastServer
 - [[vault]] — how models are loaded at startup
 - [[Deployment/live_cache_refresh]] — manifest contract and automatic refresh behavior after LIVE candle writes
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

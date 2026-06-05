@@ -134,3 +134,5 @@ If the source idea began as a continuous node, the graduation target should stil
 - [[Feature_selection/permutation_testing]]
 - [[Feature_selection/parameter_sensitivity]]
 - [[Vault/user_guide]]
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

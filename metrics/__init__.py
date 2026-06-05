@@ -9,13 +9,12 @@ prop-firm simulation and drawdown utilities.
 
 from feature_selection.validation.objective_metrics import metric_sharpe, metric_sortino
 
-from metrics.equity import cumulative_returns, equity_curve, equity_peak
+from metrics.equity import cumulative_returns, equity_peak
 from metrics.risk import drawdown_series, max_drawdown
 
 __all__ = [
     "cumulative_returns",
     "drawdown_series",
-    "equity_curve",
     "equity_peak",
     "max_drawdown",
     "metric_sharpe",

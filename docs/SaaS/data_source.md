@@ -1,5 +1,7 @@
 # Data Sourcing
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-2 data layer). See docs/refactor/nautilus/.
+
 This SaaS platform uses the exact same canonical market-data architecture as the core Trading-Algo repository.
 
 ## Core problem
@@ -143,3 +145,5 @@ Every IB daily append must:
 This rule is encoded in `prepare_ib_rows_for_central_cache_append` and wrapped by
 the `SourcePriorityReconciler`, which flips Norgate→IB via the `norgate_active`
 config flag with no code change.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

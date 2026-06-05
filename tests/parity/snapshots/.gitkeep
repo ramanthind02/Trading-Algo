@@ -1,0 +1,9 @@
+# Golden parity snapshots live here (committed artifacts).
+#
+# Files are written by the regen path:
+#   feature_research/oos_si_sma_regime__*.parquet|json
+#   portfolio_research/portfolio_test_default__test__*.parquet|json
+#
+# This file keeps the directory tracked while no snapshots exist yet (the
+# pipelines could not be executed in the build environment — see README.md).
+# Do NOT hand-edit snapshot files; regenerate them via the documented command.

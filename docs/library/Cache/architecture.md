@@ -16,23 +16,38 @@ It does **not** replace the repository source dataset in `data/ohlc_data`. That 
 
 ## Canonical Ownership
 
-All cache-owned logic should live under `utils/cache/runtime/` (implementation) with thin `utils/cache/*.py` re-exports so `from utils.cache.<module> import …` stays stable. Older module paths may remain as compatibility shims, but they should not become a second implementation site.
+All cache-owned logic lives under `utils/cache/runtime/` (implementation). The package's
+public surface is re-exported from `utils/cache/__init__.py`, so prefer
+`from utils.cache import …` for public symbols and `utils.cache.runtime.<module>` when you
+need a module-internal helper directly.
 
 | Area | Canonical location | Responsibility |
 |---|---|---|
-| Cache facade | `utils/cache/runtime/central_cache.py` | Public read/write/query service |
+| Cache facade | `utils/cache/runtime/central_cache.py` | Public read/write/query service (`CentralCacheStore`) |
 | Request and metadata models | `utils/cache/runtime/central_cache_models.py` | Descriptors, scopes, lookup modes, coverage records |
 | Error contracts | `utils/cache/runtime/central_cache_errors.py` | Typed miss, coverage, lifecycle, and revision errors |
-| Cross-ticker adapter | `utils/cache/runtime/cross_ticker_store.py` | Cache-backed candle lookups for bias nodes and helpers |
+| Cross-ticker adapter | `utils/cache/runtime/cross_ticker_store.py` | Cache-backed candle lookups for bias nodes and helpers (`CrossTickerDataStore`) |
 | Feature helpers | `utils/cache/runtime/feature_pipeline_support.py` | Shared cache helpers extracted from feature extraction |
-| Cache orchestration | `utils/cache/runtime/cache_manager.py` and `utils/cache/runtime/bootstrap_source_candles.py` | Explicit bootstrap plus vault artifact preflight |
+| Per-node bias cache | `utils/cache/runtime/bias_node_cache.py` | `BiasNodeCache` parquet read/write for a single bias-node series |
+| Cache orchestration | `utils/cache/runtime/cache_manager.py` and `utils/cache/runtime/bootstrap_source_candles.py` | `CacheManager`, explicit bootstrap, and vault artifact preflight |
+| Portfolio materialization | `utils/cache/runtime/portfolio_materialization.py` | Portfolio/base-model prediction parquet writes and cleanup |
 | Live refresh orchestration | `utils/cache/runtime/live_cache_refresh.py` | Async LIVE candle-write fanout into bias refresh and portfolio/base-model materialization |
 | Public exports | `utils/cache/__init__.py` | Stable import surface |
-| Import shims | `utils/cache/<module>.py` (thin) | Re-export matching `utils.cache.<module>` for callers |
+
+> [!note] Import-path reality
+> `utils/cache/` contains **only** `__init__.py` and the `runtime/` subpackage today — there
+> are no top-level `utils/cache/<module>.py` shim files. A compatibility wrapper for the
+> cross-ticker store does exist, but at `utils/data/cross_ticker_store.py`, which re-exports
+> the canonical `utils.cache.runtime.cross_ticker_store` symbols.
 
 ## Code vs on-disk cache
 
-The `utils/cache/` tree is **only** Python: `runtime/` holds the real modules; top-level `*.py` files are one-line shims. **Do not** write parquet, bias-node module folders, or other cache data here—those belong under **`.cache/trading_algo/central_cache/`** (see Storage Boundary below). That keeps source separate from mutable runtime state under **`.cache/trading_algo/central_cache/`**; that path may be committed when the team wants a shared cache snapshot (it is not git-ignored by default).
+The `utils/cache/` tree is **only** Python: `runtime/` holds the real modules and
+`__init__.py` is the public re-export surface. **Do not** write parquet, bias-node module
+folders, or other cache data here—those belong under **`.cache/trading_algo/central_cache/`**
+(see Storage Boundary below). That keeps source separate from mutable runtime state under
+**`.cache/trading_algo/central_cache/`**; that path may be committed when the team wants a
+shared cache snapshot (it is not git-ignored by default).
 
 ## Storage Boundary
 
@@ -155,33 +170,33 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 
 ### Cross-ticker nodes
 
-- `utils/cache/cross_ticker_store.py` is the canonical adapter
+- `utils/cache/runtime/cross_ticker_store.py` is the canonical adapter (`CrossTickerDataStore`); `utils/data/cross_ticker_store.py` is a compatibility re-export
 - same-timeframe lookups should use exact timestamps
 - causal cross-timeframe reads should use as-of semantics
 
 ### Feature extraction
 
-- `feature_extraction/feature_extractor.py` remains the entrypoint
-- cache-specific helper logic lives in `utils/cache/feature_pipeline_support.py`
+- `feature_extraction/feature_extractor.py` remains the entrypoint (`extract_features_for_bias_node`)
+- cache-specific helper logic lives in `utils/cache/runtime/feature_pipeline_support.py` (the feature extractor binds its `_build_bias_node_descriptor` / `_preload_cross_ticker_data` to those helpers)
 - cache reads should not silently downgrade into an uncached recomputation path
-- **`feature_research`:** `populate_cache_if_needed` always runs before cache-backed extraction; `ResearchConfig` has no opt-out flags for central-cache usage
+- **`feature_research`:** `populate_cache_if_needed` (`feature_research/in_sample/data_loader.py`) always runs before cache-backed extraction; `ResearchConfig` has no opt-out flags for central-cache usage
 
 ### Portfolio APIs
 
 - `ensemble/portfolio.py` exposes `PortfolioCacheQuery`
 - `TFPortfolio` and `GlobalPortfolio` support `fit_from_cache(...)` and `predict_from_cache(...)`
 - `discover_ensemble_dirs_in_vault(...)` and `build_global_portfolio_from_ensemble_dirs(...)` assemble a `GlobalPortfolio` from working-vault ensemble paths
-- `materialize_global_portfolio_predictions(...)` writes portfolio and base-model parquet outputs under `.cache/trading_algo/central_cache/materialized/<scope>/`
+- `materialize_global_portfolio_predictions(...)` writes portfolio and base-model parquet outputs under `.cache/trading_algo/central_cache/materialized/<scope>/` (base-model files are named by a SHA-256 identity hash; see [[Vault/portfolio_snapshots_and_predictions]])
 - `prune_inactive_base_model_materializations(...)` scans the current working vault and removes stale base-model parquet files only
 - volatility lineage is resolved from cached EWSD artifacts rather than caller-supplied `daily_volatility_df`
-- `portfolio_research/run_portfolio_test.py` now bootstraps its exact candle dependencies from `data/ohlc_data`, then performs vault schema migration and cache preflight before loading ensembles
+- `portfolio_research/run_portfolio_test.py` bootstraps its exact candle dependencies from `data/ohlc_data`, then performs vault schema migration and cache preflight before loading ensembles
 
 ### Vault cache preflight
 
-- `utils.cache.cache_manager.CacheManager.bootstrap_source_candles(...)` is the canonical bootstrap entrypoint
-- `utils.cache.ingest_source_candles.ingest_source_candles(...)` remains only as a deprecated compatibility alias
-- `utils.cache.cache_manager.CacheManager.ensure_vault_cache_coverage(...)` is the canonical refresh entrypoint
-- `ensemble.vault_manager.ensure_vault_cache_coverage(...)` is a thin wrapper for ensemble-oriented callers
+- `CacheManager.bootstrap_source_candles(...)` (in `utils/cache/runtime/cache_manager.py`) is the canonical bootstrap entrypoint; `bootstrap_source_candles(...)` exported from `utils.cache` is a thin module-level wrapper around it
+- there is **no** `ingest_source_candles` symbol in the current code
+- `CacheManager.ensure_vault_cache_coverage(...)` is the canonical refresh entrypoint; internally it delegates to `CacheManager.ensure_bias_cache_coverage(...)`
+- `ensemble.vault_manager.ensure_vault_cache_coverage(...)` is a thin wrapper for ensemble-oriented callers (`ensemble/vault_manager.py` is itself a `__getattr__` shim over `ensemble.vault.manager`)
 - the refresh flow reads current vault feature files (`<vault_root>/<TF>/<group>/<ensemble>/features/*.json` when nested, or legacy `<vault_root>/<TF>/<ensemble>/features/*.json`) instead of older control-file assumptions
 - refresh assumes the required candle coverage already exists in the central cache; it does not auto-ingest from `data/ohlc_data`
 - the portfolio research runner is one explicit caller that performs bootstrap first, then invokes the refresh flow
@@ -208,11 +223,11 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 
 ## Maintenance Rules
 
-- New cache-related runtime logic belongs under `utils/cache/runtime/` (add or extend a shim at `utils/cache/<module>.py` if a new submodule needs a stable `utils.cache.<module>` import path).
-- Legacy module paths should stay thin and compatibility-focused.
+- New cache-related runtime logic belongs under `utils/cache/runtime/`; expose new public symbols by adding them to `utils/cache/__init__.py`.
+- Any compatibility re-exports should stay thin and compatibility-focused.
 - Do not write runtime cache files into `data/`.
 - Prefer `ArtifactDescriptor` plus typed requests/errors over ad hoc path conventions.
-- Keep cache docs updated in `docs/library/Cache/` and `docs/api/cache/`.
+- Keep cache docs updated in `docs/library/Cache/`.
 - Keep repository source bootstrap and vault cache preflight separate: source candles live under `data/ohlc_data`, runtime writes live under `.cache/trading_algo/central_cache`.
 - Portfolio cleanup only removes inactive base-model materializations; historical portfolio parquet files are retained.
 
@@ -226,3 +241,5 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 - [[multi_timeframe]] — forecast alignment across timeframes
 - [[live_multi_timeframe]] — live orchestration with cache-native queries
 - [[pipeline]] — feature extraction and research workflow context
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

@@ -1,5 +1,7 @@
 # Live Cache Refresh
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 > [!summary]
 > When `ArtifactScope.LIVE` candles are written into the central cache, the runtime can automatically refresh stale live bias artifacts and rematerialize live base-model and portfolio predictions. Base-model **vault** JSON is not refit here; the portfolio step rebuilds a `GlobalPortfolio` from the working vault and runs `fit_from_cache` / `predict_from_cache` on the configured replay window (no separate frozen snapshot tree).
 
@@ -172,3 +174,5 @@ You can also pass `dirty_keys=[("ES", "D")]` when testing a narrower replay scop
 - Do not confuse base-model materialization parquet files with fitted base-model state.
 - Do not assume every candle write triggers a full refresh. Only dirty keys tracked by the manifest participate.
 - Do not delete historical portfolio parquet files during cleanup. Cleanup only targets stale base-model materializations.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

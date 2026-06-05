@@ -1,5 +1,13 @@
 # QuantFoundry — Product Vision
 
+> **Status: aspirational product vision.** This page describes the intended
+> QuantFoundry SaaS product and its differentiators. None of these surfaces are
+> built in the current repo — `Trading-Algo` today is a local research workbench
+> with a Flask research UI (see `ui_ux.md`). Performance claims (vectorized
+> sweeps, 10k-iteration permutation tests, streaming equity curves) are targets,
+> not measured current behaviour. The brand/design-system docs referenced below
+> are planned and not yet present in `docs/`.
+
 ## Core Differentiators
 
 ### 1. Performance
@@ -18,7 +26,7 @@ Most algo platforms are built by engineers for engineers. QuantFoundry is built 
 - **Zone timeline bar** — always visible, always shows what data you're touching.
 - **Keyboard-first** — run, save, compare, switch zones without touching the mouse.
 - **Run comparison built-in** — click any two past runs to overlay them. No separate mode.
-- **Foundry aesthetic** — dark Ink shell, Paper type, Ember accents; **Space Grotesk** + **JetBrains Mono**; mark is `[Quant|Foundry]` with ember brackets and cursor. See `docs/SaaS/UI-UX/brand.md` and `design_system.md`.
+- **Foundry aesthetic** — dark Ink shell, Paper type, Ember accents; **Space Grotesk** + **JetBrains Mono**; mark is `[Quant|Foundry]` with ember brackets and cursor. (Dedicated brand / design-system docs are planned but not yet present in `docs/`.)
 
 ### 3. Fast Lifecycle
 Sign up to live signal generation in an afternoon.
@@ -35,3 +43,5 @@ Sign up to live signal generation in an afternoon.
 | UI/UX | Functional, ugly | Beautiful, shallow | Beautiful, deep |
 | Time to deploy | Days | N/A | Hours |
 | Researcher-focused | No | No | Yes |
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

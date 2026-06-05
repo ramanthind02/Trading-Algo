@@ -88,3 +88,5 @@ Today the codebase already exposes the preferred stage names, even though some c
 - [[Feature_selection/portfolio_addition]]
 - [[Feature_selection/Features/base_feature]]
 - [[Vault/user_guide]]
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

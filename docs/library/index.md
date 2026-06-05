@@ -6,11 +6,6 @@
 
 Production uses native signed-signal bias nodes that emit `-1/0/+1`. Continuous nodes are for research unless they are later reimplemented as native discrete nodes.
 
-## Core docs
-
-- [[workflow]] - Daily research loop and agent presets
-- [[cursor_sub_bridge]] - Use ChatGPT Pro / Claude Max in Cursor via Sub Bridge
-
 ## Cache
 
 - [[Cache/architecture]] - Central-cache design and lifecycle
@@ -66,16 +61,17 @@ Default prop tree: `vault/<D|W|M>/<group>/<ensemble>/` (manual weight-hierarchy 
 
 ## Research reading order
 
-1. [[workflow]]
-2. [[bias_nodes/index]] -> [[bias_nodes/creating_nodes]]
-3. [[Feature_selection/pipeline]]
-4. [[SaaS/robustness_tests/index]]
-5. [[Feature_selection/exploration]]
-6. [[Feature_selection/validation]]
-7. [[Vault/user_guide]]
+1. [[bias_nodes/index]] -> [[bias_nodes/creating_nodes]]
+2. [[Feature_selection/pipeline]]
+3. [[SaaS/robustness_tests/index]]
+4. [[Feature_selection/exploration]]
+5. [[Feature_selection/validation]]
+6. [[Vault/user_guide]]
 
 ## Naming convention
 
 `{module}_{feature}_{timeframe}_{param}_{value}`
 
 Example: `rsi_signal_D_lookback_14`
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

@@ -2,7 +2,9 @@
 
 ## 1. Purpose
 
-This document specifies the parameter selection methods supported in QuantFoundry. The scope is deliberately narrow for the MVP: two methods, both simple and interpretable. Ensemble-based selection (Carver's portfolio optimisation approach) is a known extension and is deferred to a later milestone.
+This document specifies the parameter selection methods. The scope is deliberately narrow: two methods, both simple and interpretable. Ensemble-based selection (Carver's portfolio optimisation approach) is a known extension and is deferred to a later milestone.
+
+**Implementation anchor (current code):** in `feature_research`, the "best by metric" path selects the top combination by the configured **selection metric** — the objective spec resolved in `feature_research/pipelines/robustness.py` (`_selection_metric_name`), drawn from `feature_selection/validation/objective_metrics.py` builtins (`sharpe`, `sortino`, `calmar`, `t_stat`, `profit_factor`, `mean_return`). The chosen combination plus a `selection_method` string are persisted as vault loader metadata (`ensemble/vault/manager.py::_build_vault_loader_metadata`). The dataclass in §5 is an illustrative spec contract, not a verbatim repo type.
 
 Related documents:
 - `docs/SaaS/robustness_tests/in_sample.md` — search-bias tests; run before selecting
@@ -62,3 +64,5 @@ class ParameterSelection:
 ```
 
 This is required to reproduce the selection decision at any future point and to audit it against later validation and portfolio-addition results.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

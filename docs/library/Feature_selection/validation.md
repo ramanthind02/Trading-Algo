@@ -75,7 +75,7 @@ Additional knobs (manual `dataclasses.replace`):
 
 - `portfolio_addition_gate.emit_tearsheets=False` — keep gate metrics, skip QuantStats HTML.
 - `portfolio_addition_gate.n_jobs` — parallel portfolio phase backtests (defaults to `ResearchConfig.n_jobs`).
-- `cache_population_mode=CachePopulationMode.ANALYSIS_PLUS_LOOKBACK` — narrower bias-cache warmup (opt-in; see `feature_research/in_sample/data_loader.py`).
+- `cache_population_mode=CachePopulationMode.ANALYSIS_PLUS_LOOKBACK` — narrower bias-cache warmup (opt-in; enum defined in `feature_research/config.py`, default `FULL_HISTORY`; consumed by `populate_cache_if_needed` in `feature_research/in_sample/data_loader.py`).
 - Run `validation_permutation` only after core validation passes.
 
 ## Local artifact surface
@@ -120,3 +120,5 @@ The next stage after validation is [[Feature_selection/portfolio_addition]], not
 - [[Feature_selection/parameter_sensitivity]]
 - [[Feature_selection/portfolio_addition]]
 - [[SaaS/robustness_tests/validation]]
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

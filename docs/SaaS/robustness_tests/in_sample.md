@@ -8,8 +8,10 @@ This document specifies the in-sample robustness test suite for QuantFoundry. Th
 
 The tests sit at the end of the exploration phase, after a user has run a parameter sweep and identified the leading combinations. They do not validate the strategy on the later validation slice — that is the validation phase's job. They validate the integrity of the in-sample selection itself.
 
+**Implementation anchor (current code):** the IS robustness primitives are provided by `quantfoundry_core.robustness` — `deflated_sharpe_ratio` / `DSRResult`, `compute_n_effective` / `NEffectiveResult`, `sharpe_confidence_interval` / `SharpeCI`, `rolling_is_performance` / `RollingISResult`, `run_grid_permutation_test` / `run_individual_combination_permutation_test` / `PermutationTestResult`. The repo orchestrates them in `feature_research/pipelines/robustness.py` (which assembles an `InSampleRobustnessReport`) and runs them inside `feature_research/exploration/orchestrate.py::execute_exploration_phase`. The signal-timing **vector shuffle** is local: `feature_selection/validation/permutation_tests.py::run_vector_shuffle_test`. The pseudocode blocks below are illustrative of the contract, not verbatim source.
+
 Related documents:
-- `docs/SaaS/robustness_tests/` — index of all robustness test categories
+- `docs/SaaS/robustness_tests/index.md` — index of all robustness test categories
 - `docs/SaaS/data_flow.md` — zone lifecycle; IS tests run inside the IS zone
 - `docs/SaaS/zone_manager.md` — UTC slicing contract and zone boundaries
 - `docs/SaaS/metrics_library.md` — canonical metric conventions used in test outputs
@@ -522,25 +524,41 @@ On any individual parameter combination's result row, a secondary action opens a
 
 ### 7.2 Outputs
 
+The local report class is `InSampleRobustnessReport` (in `feature_research/pipelines/robustness.py`). Its current shape (abridged):
+
 ```python
 @dataclass(frozen=True)
-class ISRobustnessReport:
-    n_combinations: int 
-    avg_pairwise_corr: float
-    n_eff: float
+class InSampleRobustnessReport:
+    feature_name: str
+    feature_type: str
+    selection_metric: str
+    periods_per_year: int
+    n_combinations: int
+    n_effective: NEffectiveResult         # §3.4 — N_eff and avg pairwise corr
+    nw: NeweyWestResult                   # §4.4 — Newey–West HAC t-stat
 
-    # always computed — runs synchronously after backtest
+    # always computed — runs synchronously after the sweep
     sharpe_ci: SharpeCI                   # §3.5 — 95% CI on IS Sharpe
     dsr: DSRResult                        # §3.3 — deflated Sharpe probability
     rolling_is: RollingISResult           # §3.6 — rolling Sharpe and CUSUM break test
+    stability_chart: RollingISResult
 
-    # on demand — requires a worker job
+    # on demand — heavier path
     full_grid_permutation: PermutationTestResult | None
     individual_permutation: PermutationTestResult | None
 
-    best_combination: ParamResult
-    interpretation: str                   # sentence-level summary for UI display
+    best_combination: PermutationCombination
+    best_param_combo: str
+    best_param_combo_label: str
+    best_selection_score: float
+    raw_sharpe_annualized: float
+    nw_adjusted_sharpe_annualized: float
+    skewness: float
+    excess_kurtosis: float
+    # … plus interpretation/diagnostic fields; persisted via to_json_dict()
 ```
+
+(The result types `NEffectiveResult`, `NeweyWestResult`, `SharpeCI`, `DSRResult`, `RollingISResult`, `PermutationTestResult`, `PermutationCombination` come from `quantfoundry_core.robustness`.)
 
 ### 7.3 Worker Behavior
 
@@ -558,10 +576,12 @@ class ISRobustnessReport:
 
 ## 8. Implementation Notes
 
-**Vectorized null distribution:** All $M$ permutations are generated as a single $(M, T)$ matrix. Metrics are applied across the batch dimension simultaneously. No Python-level loops, no per-iteration overhead. Matches the pattern already in use in `feature_selection/validation/permutation_tests.py`.
+**Vectorized null distribution:** All $M$ permutations are generated as a single $(M, T)$ matrix. Metrics are applied across the batch dimension simultaneously. No Python-level loops, no per-iteration overhead. This matches the batched pattern in `feature_selection/validation/permutation_tests.py` (e.g. `run_vector_shuffle_target_perm_batch`); the grid/individual permutation nulls run through `quantfoundry_core.robustness.run_grid_permutation_test` / `run_individual_combination_permutation_test`.
 
 **Return shuffling vs block bootstrap:** Simple shuffling (iid permutation) is the default. It assumes the null hypothesis is that return order carries no information. For strategies where preserving local dependence structure matters, block bootstrap may be more appropriate — but this is a later extension, not MVP scope.
 
 **N_eff sensitivity:** The DSR result is sensitive to the N_eff estimate. Report the raw N, average correlation, and N_eff separately so the researcher can audit the calculation. For strategies where the researcher believes their grid is effectively independent (e.g. a calendar mask swept over 12 months), they should be able to override N_eff to N.
 
 **Relationship to downstream permutation tests:** The in-sample tests described here focus on selection bias within the IS zone. Later validation or portfolio-addition permutation checks answer a different question — whether downstream performance is temporally structured. Both suites are needed; they are not substitutes.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

@@ -1,5 +1,7 @@
 # Prop vs Personal Forecast Workflows
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 Two scripts run daily, both on top of the same pipeline
 (`scripts/enigma_live_forecast.py`). They differ in vault, instrument type,
 timing, and Telegram channel. Pick the workflow you care about below.
@@ -226,3 +228,5 @@ This fits once like ``enigma_prop_forecast``, runs ``predict_from_cache`` on the
 | Schedule time                              | `deploy/setup_scheduled_task.bat` → `/st HH:MM`                  |
 | Live daily lookback for fit/predict        | `configs/live_forecast_config_*.json` → `data.prediction_daily_max_bars` (default **500**; `0` = unlimited) |
 | Telegram bot / channel                     | `deployment/telegram_notifier.py` → `_PROP_*` / `_PERSONAL_*`    |
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

@@ -1,5 +1,7 @@
 # Portfolio Deployment
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 ## 1. Purpose
 
 This document covers the steps required to move a portfolio from research into live operation: the pre-deployment checklist, final fit configuration, portfolio snapshot schema, and the manual refit and strategy removal workflows used during live operation.
@@ -219,3 +221,5 @@ The following features are explicitly deferred to keep the MVP scope manageable:
 **Automated sanity checks.** Pre-commit validation: null values in signal history, missing data for any strategy, correlation matrix not positive semi-definite, IDM outside plausible bounds. If a check fails, the refit is rejected and the previous snapshot remains live.
 
 **Walk-forward strategy refitting.** Strategies that evolve over time (fitted on a rolling window, or ensemble over multiple parameter variants) require a separate per-strategy refit cadence decoupled from the portfolio-level refit. The portfolio treats each strategy as a black box producing signals; strategy refits run independently and do not trigger portfolio refits.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

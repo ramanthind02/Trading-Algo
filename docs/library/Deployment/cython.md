@@ -1,5 +1,7 @@
 # Cython & Portfolio Backtest
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 > [!summary] Overview
 > Cython extensions accelerate inner math kernels for feature extraction and base-model fitting.
 > The portfolio backtest API uses `Portfolio` + `PortfolioTester`: fit → predict → strategy returns.
@@ -31,7 +33,7 @@ Compiles two modules:
 
 ```python
 from ensemble.portfolio import Portfolio
-from ensemble.portfolio_tester import PortfolioTester
+from ensemble.portfolio_impl.portfolio_tester import PortfolioTester
 from utils.core.enums import TimeFrame
 
 portfolio = Portfolio(
@@ -126,3 +128,5 @@ Until then, Cython's contribution is within run-to-run noise.
 ## See Also
 
 - [[portfolio]] — Portfolio and PortfolioTester architecture
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

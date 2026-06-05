@@ -1,5 +1,7 @@
 ## How the Live Trading Script Works
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
   The pipeline is driven by `scripts/enigma_live_forecast.py`. It supports two
   profiles, each with a thin wrapper entrypoint:
 
@@ -237,3 +239,5 @@ Notes for Linux:
 - `1-5` means Monday through Friday only (skip weekends)
 - TWS/IB Gateway must be running -- you can use `tmux` or `screen` to keep it alive, or run IB Gateway in headless mode
 - The shared venv is at `/home/raman/repos/Trading-Algo/venv/` per CLAUDE.md
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

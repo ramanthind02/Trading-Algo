@@ -121,3 +121,5 @@ This is the local Mode 1 test. SaaS §3.2 individual **return-shuffle** applies 
 - [[Feature_selection/parameter_sensitivity]]
 - [[SaaS/robustness_tests/in_sample]]
 - [[SaaS/robustness_tests/index]]
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

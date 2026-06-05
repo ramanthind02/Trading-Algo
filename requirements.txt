@@ -2,6 +2,9 @@
 # Generated from: pipdeptree -o freeze over the runtime/test roots listed below (no chromadb/langchain/torch stack).
 # To refresh after changing direct dependencies: activate venv, install pipdeptree, rerun the same -p list and merge/sort.
 #
+# Local editable dependency (sibling repo; adjust path if your checkout layout differs):
+-e ../Quant-Foundry/QuantFoundry-Core
+#
 # Note: MetaTrader5 is pinned below with a `sys_platform == "win32"` marker so
 # it auto-installs on Windows (required by execution/mt5_trade_executor.py and
 # deployment/mt5_data_connector.py) and is silently skipped on macOS / Linux.

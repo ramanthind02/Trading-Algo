@@ -225,11 +225,23 @@ class CacheManager:
         # Load candles
         df = pd.read_parquet(candle_path)
 
-        # Ensure datetime column is datetime type
+        # Ensure datetime column is datetime type. Accept both the legacy
+        # (``datetime`` column) and current (``date``-named index/column, written
+        # by data_platform.providers.norgate.migrate) parquet schemas, mirroring
+        # data_platform.loaders._normalize_loaded_frame.
         if 'datetime' in df.columns:
             df['datetime'] = pd.to_datetime(df['datetime'])
-        elif df.index.name == 'datetime' or isinstance(df.index, pd.DatetimeIndex):
+        elif 'date' in df.columns:
+            df = df.rename(columns={'date': 'datetime'})
+            df['datetime'] = pd.to_datetime(df['datetime'])
+        elif df.index.name in ('datetime', 'date') or isinstance(df.index, pd.DatetimeIndex):
             df = df.reset_index()
+            col = (
+                'datetime' if 'datetime' in df.columns
+                else 'date' if 'date' in df.columns
+                else df.columns[0]
+            )
+            df = df.rename(columns={col: 'datetime'})
             df['datetime'] = pd.to_datetime(df['datetime'])
 
         # Add ticker and timeframe columns if missing

@@ -24,7 +24,7 @@ Bias nodes now expose a machine-readable warmup contract through the base `BiasN
 **Goals**
 
 - Callers can ask a node (or its class) for **all bar-count windows** that affect output: constructor params that are lookbacks **and** any **hardcoded** buffer lengths.
-- Values feed **`max_lookback`** aggregation across ensembles and timeframes (see [[multi_timeframe]] — *Lookback & Stateful Bias Nodes*).
+- Values feed **`max_lookback`** aggregation across ensembles and timeframes (see [[Ensemble/multi_timeframe]] — *Lookback & Stateful Bias Nodes*).
 
 **Authoring rules**
 
@@ -128,7 +128,7 @@ class MyNode(BiasNode):
 > Use Cython helpers for numeric hot-paths called every bar (rolling stats, EMA, ATR, RSI).
 > Do **not** import from `cython_nodes` directly — always use `utils.compute.fast_nodes` or `utils.compute.fast_stats`, which auto-fallback to pure Python.
 
-Key helpers (`utils/fast_nodes.py`): `compute_atr_fast`, `compute_ema_fast`, `compute_rsi_initial_fast`, `update_rsi_fast`, `compute_high_low_channel_fast`, `compute_momentum_fast`, `compute_roc_fast`
+Key helpers (`utils/compute/fast_nodes.py`): `compute_atr_fast`, `compute_ema_fast`, `compute_rsi_initial_fast`, `update_rsi_fast`, `compute_high_low_channel_fast`, `compute_momentum_fast`, `compute_roc_fast`
 
 Build: `python utils/compute/cython/setup_cython.py build_ext --inplace`
 
@@ -140,7 +140,7 @@ The primary streaming API is still **`add_candle(candle)`** for one `(ticker, ti
 
 ### Multi-ticker nodes (supported today)
 
-Use [utils/cache/cross_ticker_store.py](../../../utils/cache/cross_ticker_store.py) — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**. The older `utils/data/cross_ticker_store.py` path remains only as a compatibility shim.
+Use [utils/cache/runtime/cross_ticker_store.py](../../../utils/cache/runtime/cross_ticker_store.py) — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**. The older `utils/data/cross_ticker_store.py` path remains only as a compatibility shim.
 
 #### Params contract (required)
 
@@ -153,7 +153,7 @@ Use [utils/cache/cross_ticker_store.py](../../../utils/cache/cross_ticker_store.
 2. In `_compute_candle`, fetch the secondary ticker candle by **exact** datetime alignment:
 
 ```python
-from utils.cache.cross_ticker_store import CrossTickerDataStore
+from utils.cache.runtime.cross_ticker_store import CrossTickerDataStore
 
 self._store = CrossTickerDataStore.get_instance()
 other = self._store.get_candle(Ticker.NQ, candle.tf, candle.datetime)
@@ -183,13 +183,12 @@ bias_spec = {
 
 ```bash
 python -m pytest tests/nodes/test_cross_ticker.py -q
-python -m pytest tests/unit-tests/validators/permutation/test_data_loader_candle_override_unit.py -q
 ```
 
 ### Multi-timeframe nodes (future extension)
 
 > [!warning] Not implemented yet
-> This section describes the **intended** pattern so new work stays aligned with [[multi_timeframe]] and [[live_multi_timeframe]].
+> This section describes the **intended** pattern so new work stays aligned with [[Ensemble/multi_timeframe]] and [[Deployment/live_multi_timeframe]].
 
 **Problem** — The inbound stream is still one `(ticker, tf)`. Bars on **weekly** or **monthly** series do not share the same `datetime` index as **daily** (or intraday) bars, so **exact** `get_candle(ticker, tf_other, candle.datetime)` is wrong: there is often no row at that timestamp.
 
@@ -198,7 +197,7 @@ python -m pytest tests/unit-tests/validators/permutation/test_data_loader_candle
 - A **side-channel store** (same *idea* as `CrossTickerDataStore`) holding `dict[Ticker, dict[TimeFrame, DataFrame]]` OHLCV, with a lookup that returns the **last completed bar as-of** the current simulation time — **as-of (backward) search** only, so the feature is **causal** (no lookahead).
 - **Planned params contract** — mirror cross-ticker: e.g. `params["cross_timeframes"]` as `list[str]` of `TimeFrame` enum names (`"W"`, `"M"`, …) so grids, specs, and cache keys can declare dependencies. **Exact key name may change** when implemented.
 
-**Orchestrator responsibility** — Before running extraction for the primary TF, load or `set_data` every required `(ticker, tf)` series over a range that covers the as-of window. **Live**: fetch each TF on its own schedule and refresh the store before the forecast run (see [[live_multi_timeframe]]).
+**Orchestrator responsibility** — Before running extraction for the primary TF, load or `set_data` every required `(ticker, tf)` series over a range that covers the as-of window. **Live**: fetch each TF on its own schedule and refresh the store before the forecast run (see [[Deployment/live_multi_timeframe]]).
 
 ```mermaid
 flowchart LR
@@ -250,6 +249,8 @@ Full reference: [[bias_nodes/composed_nodes]].
 - [[Feature_selection/pipeline]] — exploration, validation, and portfolio-addition flow after the feature is discrete
 - [[Feature_selection/exploration]] — exploration-stage EDA detail
 - [[Ensemble/base_model]] — historical ensemble “member” wording (schema may still say base model; conceptually frozen discrete bindings)
-- [[multi_timeframe]] — portfolio orchestration and lookback across timeframes
-- [[live_multi_timeframe]] — live fetch schedule and rebalance loop
+- [[Ensemble/multi_timeframe]] — portfolio orchestration and lookback across timeframes
+- [[Deployment/live_multi_timeframe]] — live fetch schedule and rebalance loop
 - [[Cache/architecture]] — central candle/bias cache design and datetime-driven portfolio API
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

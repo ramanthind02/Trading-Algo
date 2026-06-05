@@ -1,5 +1,7 @@
 # Additive Back-Adjustment Distorts Percentage Returns & Vol Sizing
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-2 data layer). See docs/refactor/nautilus/.
+
 > [!warning] Known issue — not yet fixed
 > `data/ohlc_data` futures series are **additively** back-adjusted continuous contracts
 > (Norgate `&XX_CCB`). Additive adjustment preserves *point* moves but inflates the
@@ -285,3 +287,5 @@ Expected: `k≈0.69`; (i) ≈10.7%/0.71, (ii) ≈11.6%/0.77, (iii) ≈14.9%/0.80
 - [[multi_source_update_architecture]] — repository data layering.
 - Carver vol-target / forecast scaling: `ensemble/diversified_ensemble.py`,
   `nodes/volatility/ewsd/ewsd.py`.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

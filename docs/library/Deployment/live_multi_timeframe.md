@@ -1,5 +1,7 @@
 # Live Trading — Multi-Timeframe Operation
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 > **Scope:** Practical guide for running `GlobalPortfolio` in live/paper trading across multiple timeframes, including the candle fetch schedule, lookback strategy, and rebalance loop.
 
 ---
@@ -153,3 +155,5 @@ The prediction logic is **identical** in both paths. The only difference is how 
 ---
 
 **See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[Cache/architecture]], [[Cache/user_guide]], [[Deployment/live_cache_refresh]]
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

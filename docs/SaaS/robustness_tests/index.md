@@ -1,14 +1,14 @@
 # Robustness Tests — Index
 
-This document is the entry point for the QuantFoundry robustness test suite. It shows which tests apply at each research stage, what question each answers, and what happens on a pass or fail.
+This document is the entry point for the robustness test suite. It shows which tests apply at each research stage, what question each answers, and what happens on a pass or fail.
 
-For local `Trading-Algo` work, treat this index as the canonical workflow for `feature_research/` as well. The local package is converging on the same three top-level phases:
+The statistical primitives (DSR, $N_\text{eff}$, Sharpe CI, rolling-IS/CUSUM, perturbation neighbours, the portfolio-addition gate, validation report, and holdout report) are implemented in the external **`quantfoundry_core`** package (`quantfoundry_core.robustness` and `quantfoundry_core.portfolio_gate`). The repo's `feature_research/` and `portfolio_research/` packages orchestrate them through these three top-level phases:
 
-- `exploration`
-- `validation`
-- `portfolio_addition`
+- `exploration` — `feature_research/exploration/orchestrate.py::execute_exploration_phase`
+- `validation` — `feature_research/validation/robustness_runner.py`
+- `portfolio_addition` — `feature_research/portfolio_addition/gate_runner.py`
 
-Older local names such as `in_sample` and `oos` are compatibility aliases, not the preferred mental model.
+Older local names such as `in_sample` and `oos` survive as compatibility aliases (commands, artifact folders), not the preferred mental model.
 
 ---
 
@@ -24,7 +24,7 @@ Strategy evaluation (validation phase)
   └── Validation robustness tests         → validation.md
 
 Portfolio admission (portfolio_addition phase)
-  └── Portfolio correlation check         → UI-UX/research_workspace/portfolio_correlation.md  (advisory)
+  └── Pairwise redundancy check           → portfolio_addition.md §3  (advisory)
   └── Portfolio addition gate             → portfolio_addition.md  (primary gate)
 
 Portfolio construction (pre-holdout)
@@ -140,9 +140,11 @@ This is not a test — it is a decision. The selected combination is locked as s
 **When:** After the portfolio is fully composed and weight layer config is locked — opened once.
 **Data used:** Project test zone (project-level holdout, fixed at project creation).
 
+In `portfolio_research/holdout/`, strategy-level monitoring runs the **four** validation-suite tests on a trailing evaluation window — Sharpe comparison, CUSUM, rolling Sharpe z-score, and equity curve bands — and rolls the fail count into a Green/Yellow/Red traffic light (advisory only; the pipeline does not auto-cull in Phase 1). The drawdown cone is a portfolio-level calibration tool (§2.3 of `portfolio_holdout.md`).
+
 | Test | Question | Alert threshold | Permitted action |
 |---|---|---|---|
-| Strategy-level monitoring (CUSUM, rolling Sharpe, drawdown cone) | Did any strategy die during the holdout? | Pre-specified monitoring thresholds | Cull flagged strategies |
+| Strategy-level monitoring (Sharpe comparison, CUSUM, rolling Sharpe z-score, equity bands) | Did any strategy die during the holdout? | Pre-specified monitoring thresholds → traffic light | Cull / reduce-weight flagged strategies (researcher decision) |
 | Portfolio CUSUM | Did the portfolio as a whole experience a structural break? | C > 1.36 | No action — diagnostic only |
 | Portfolio rolling Sharpe | How did the combined Sharpe evolve? | N/A | No action |
 | Portfolio drawdown cone | Was holdout drawdown within IS-predicted range? | N/A | No action |
@@ -155,7 +157,7 @@ This is not a test — it is a decision. The selected combination is locked as s
 
 ---
 
-## 7. Live Monitoring
+## 8. Live Monitoring
 
 **Document:** `monitoring.md`
 **When:** Post-deployment, continuously.
@@ -173,7 +175,7 @@ This is not a test — it is a decision. The selected combination is locked as s
 
 ---
 
-## 8. Decision Summary
+## 9. Decision Summary
 
 ```
 Vector shuffle pass (Mode 1)
@@ -185,9 +187,9 @@ Vector shuffle pass (Mode 1)
           → Select parameters
               → Run validation
                   → CUSUM clear, degradation ratio ≥ 0.10, ρ ≥ 0.20
-                      → Check portfolio correlation (advisory)
+                      → Check pairwise redundancy (advisory, §3 of portfolio_addition.md)
                       → Run portfolio addition gate
-                          → ΔSR ≥ 0.02 on IS + val data
+                          → ΔSR ≥ 0.02 on IS + val data (plus risk-impact legs)
                               → Commit to portfolio
                                   → Register monitoring config (before holdout)
                                   → Select weight layer (before holdout)
@@ -197,3 +199,5 @@ Vector shuffle pass (Mode 1)
 
 Diagnostics throughout: full-grid null percentile, Sharpe CI (flag discord with DSR)
 ```
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

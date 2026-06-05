@@ -43,35 +43,6 @@ def cumulative_returns(
     
     # Compute cumulative product: (1 + r1) * (1 + r2) * ...
     cumulative = (1 + returns).cumprod() * initial_value
-    
+
     return cumulative
-
-
-def equity_curve(
-    returns: pd.Series,
-    initial_equity: float = 1.0
-) -> pd.Series:
-    """
-    Compute equity curve from returns.
-    
-    Alias for cumulative_returns() for clarity when working with equity values.
-    
-    Parameters
-    ----------
-    returns : pd.Series
-        Series of returns (decimal form)
-    initial_equity : float, default=1.0
-        Initial equity value
-        
-    Returns
-    -------
-    pd.Series
-        Equity curve with same index as input
-        
-    Examples
-    --------
-    >>> returns = pd.Series([0.01, -0.02, 0.03])
-    >>> equity = equity_curve(returns, initial_equity=100.0)
-    """
-    return cumulative_returns(returns, initial_value=initial_equity)
 

@@ -8,6 +8,8 @@ This document specifies the robustness test suite for the strategy-level validat
 
 The validation zone is OOS with respect to the strategy's training window, but it sits inside the pre-test research period. It is the researcher's only iterative feedback signal before portfolio admission and before opening the project test zone. In local `Trading-Algo` docs and code, this is the `validation` phase in the canonical `exploration -> validation -> portfolio_addition` flow.
 
+**Implementation anchor (current code):** the validation report type is `quantfoundry_core.robustness.validation.ValidationRobustnessReport`. The repo orchestrates and persists it via `feature_research/validation/robustness_runner.py` (`run_validation_robustness_pipeline`, `run_and_write_validation_robustness`) and renders it via `feature_research/visualization/validation_reports.py`. The same report drives portfolio-research holdout monitoring (`portfolio_research/holdout/`). Field names below reflect the current `ValidationRobustnessReport`; the pseudocode blocks are illustrative of the contract, not verbatim source.
+
 **What validation can tell you:**
 - Whether IS performance degrades gracefully or catastrophically on OOS data
 - Whether the signal's statistical properties have changed (strategy death detection)
@@ -53,6 +55,8 @@ The five tests cover four independent failure modes:
 ### 3.1 Sharpe Degradation — IS vs Validation
 
 **What it answers:** Has performance degraded from IS to validation, and is the degradation larger than sampling variation alone can explain?
+
+> In the current report this leg is carried on the `sharpe_comparison` field (type `SharpeComparisonResult`); the prose below uses "degradation" for the concept it measures.
 
 **Outputs:**
 
@@ -419,18 +423,20 @@ Scatter plot: IS metric (x-axis) vs val metric (y-axis), one dot per combination
 |---|---|---|---|
 | `is_returns` | `np.ndarray` | IS zone | Per-bar returns from the IS period |
 | `val_returns` | `np.ndarray` | Validation zone | Per-bar returns from the validation period |
-| `is_test_results` | `ISRobustnessReport` | IS test suite | Includes Sharpe CI, DSR, rolling stability, and SR point estimate |
+| `is_test_results` | `InSampleRobustnessReport` | IS test suite | Includes Sharpe CI, DSR, rolling stability, and SR point estimate |
 | `is_param_results` | `list[ParamResult]` | IS sweep | Metric and return series per combination |
 | `chosen_combination` | `dict[str, Any]` | Researcher selection | The IS-selected combination |
 | `metric_floor` | `float` | User config | Default 2.0 (t-stat units) |
 
 ### 6.2 Outputs
 
+The current `ValidationRobustnessReport` (from `quantfoundry_core.robustness.validation`) exposes these fields (consumed by `robustness_runner.py` and `validation_reports.py`):
+
 ```python
 @dataclass(frozen=True)
 class ValidationRobustnessReport:
-    # §3.1 — Sharpe degradation
-    sharpe_degradation: SharpeDegradationResult
+    # §3.1 — Sharpe degradation (IS vs validation)
+    sharpe_comparison: SharpeComparisonResult   # field is `sharpe_comparison`, .passed gates
 
     # §3.2 / §3.5 — CUSUM and rolling z-score plot
     cusum: CUSUMResult                          # includes z_series and cusum_series for plot
@@ -449,8 +455,12 @@ class ValidationRobustnessReport:
     interpretation: str                         # sentence-level summary for UI
 ```
 
+Holdout monitoring (`portfolio_research/holdout/monitoring_policy.py`) counts failures across exactly four legs — `sharpe_comparison.passed`, `cusum.passed`, `rolling_sharpe_zscore.passed`, `equity_curve_bands.passed` — to derive its Green/Yellow/Red traffic light.
+
 ### 6.3 Worker Behaviour
 
-All validation tests run synchronously on the API server after the validation backtest job completes — no separate job dispatch. The only non-trivial compute is the full grid re-evaluation for rank correlation (K combinations on T_val bars, already fast from the IS sweep infrastructure). Equity curve bands and CUSUM are both O(T_val) with no iteration.
+All validation tests run synchronously after the validation backtest job completes — no separate job dispatch. The only non-trivial compute is the full grid re-evaluation for rank correlation (K combinations on T_val bars, already fast from the IS sweep infrastructure). Equity curve bands and CUSUM are both O(T_val) with no iteration. In the repo this is `feature_research/validation/robustness_runner.py::run_validation_robustness_pipeline`.
 
 Plot data is stored as a structured artifact alongside the validation result and returned to the frontend on demand.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

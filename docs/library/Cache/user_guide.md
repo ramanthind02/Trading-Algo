@@ -55,7 +55,7 @@ Notes:
 
 ### IBKR `CONTFUT` vs Norgate `&*_CCB` (live append)
 
-Repository dailies in `data/ohlc_data/` are built from **Norgate continuous back-adjusted** futures symbols (e.g. `&ES_CCB`); see [[Data/NORGATE_MIGRATION]] and [[Data/norgate]]. The TWS live path fetches **Interactive Brokers continuous futures** (`secType=CONTFUT` in `scripts/enigma_live_forecast.py`), which use **IB’s own roll and adjustment rules** — they will not match Norgate levels bar-for-bar on the same calendar date.
+Repository dailies in `data/ohlc_data/` are built from **Norgate continuous back-adjusted** futures symbols (e.g. `&ES_CCB`); see [[Data/norgate]]. The TWS live path fetches **Interactive Brokers continuous futures** (`secType=CONTFUT` in `scripts/enigma_live_forecast.py`), which use **IB’s own roll and adjustment rules** — they will not match Norgate levels bar-for-bar on the same calendar date.
 
 When `upsert_tws_candles` writes IB dailies into `CentralCacheStore`:
 
@@ -68,7 +68,7 @@ When `upsert_tws_candles` writes IB dailies into `CentralCacheStore`:
 
 Use the bootstrap helper when you want a one-time write from `data/ohlc_data` into the runtime cache.
 
-`CacheManager.bootstrap_source_candles` (and the module wrapper) show a **tqdm** bar over each `(ticker, timeframe)` series. `ensure_bias_cache_coverage` shows a **Bias / EWSD artifacts** bar over refresh tasks.
+`CacheManager.bootstrap_source_candles` (and the module wrapper) show a **tqdm** bar (`Bootstrap OHLC → cache`) over each `(ticker, timeframe)` series. `ensure_bias_cache_coverage` shows a `Bias / EWSD cache (check)` bar over the coverage scan and a `Bias / EWSD artifacts (rebuild)` bar over the artifacts it actually rebuilds.
 
 ```python
 summary = bootstrap_source_candles(
@@ -80,13 +80,14 @@ summary = bootstrap_source_candles(
 )
 ```
 
-CLI equivalent:
+CLI equivalent (the runnable module is under `runtime/`; there is no top-level `utils/cache/bootstrap_source_candles.py`):
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES NQ --timeframes D W --start 2020-01-01 --end 2024-12-31
+python -m utils.cache.runtime.bootstrap_source_candles --tickers ES NQ --timeframes D W --start 2020-01-01 --end 2024-12-31
 ```
 
-`ingest_source_candles(...)` still exists as a deprecated compatibility alias, but new code should call `bootstrap_source_candles(...)`.
+`bootstrap_source_candles(...)` is the only bootstrap entrypoint; there is no
+`ingest_source_candles(...)` symbol in the current code.
 
 ### Automatic live refresh from candle writes
 
@@ -445,7 +446,7 @@ Why this order matters:
 Use this when live candles simply gained new rows or a bar was corrected.
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES TLT --timeframes D M
+python -m utils.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M
 python portfolio_research/run_portfolio_test.py
 ```
 
@@ -461,7 +462,7 @@ Notes:
 Use this when you replaced or corrected the source OHLC files and want to refresh the runtime candle cache from the repository dataset.
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES TLT --timeframes D M --reset-existing
+python -m utils.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M --reset-existing
 python portfolio_research/run_portfolio_test.py
 ```
 
@@ -502,7 +503,7 @@ This is the right tool when:
 Use this when the runtime cache is empty.
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES TLT --timeframes D W M
+python -m utils.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D W M
 python portfolio_research/run_portfolio_test.py
 ```
 
@@ -594,3 +595,5 @@ The live loop is “new OHLC → consistent derived features → next forecast,�
 - [[portfolio]] — portfolio layer behavior
 - [[pipeline]] — feature extraction workflow
 - [[live_multi_timeframe]] — live orchestration flow
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

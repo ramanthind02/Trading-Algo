@@ -31,28 +31,40 @@ flowchart TD
     provider --> summary[SimulationSummary]
 ```
 
-Current provider support:
+Current provider support (each provider has a `provider.py` with `create_<firm>_simulator` /
+`create_<firm>_portfolio_simulator` factories, a `rules.py` rule engine subclassing
+`BasePropFirmEngine`, and a `config.json`):
 
 - `prop_firms/lucid/` implements LucidFlex evaluation and funded-account behavior.
 - `prop_firms/apex/` implements Apex Trader Funding 50K Tradovate EOD evaluation and PA behavior.
-- `prop_firms/lucid/portfolio_simulator.py` implements the first multi-account EV simulator for Lucid 25K accounts.
-- `prop_firms/apex/portfolio_simulator.py` implements the Apex 50K multi-account EV simulator.
+- `prop_firms/fundednext/` implements FundedNext (default preset used by the portfolio-test integration below).
+- `prop_firms/mffu/` implements My Funded Futures (MFFU) rules.
+- `prop_firms/topstep/` implements Topstep rules.
+- `prop_firms/tradeday/` implements TradeDay rules.
+
+Single-account simulation (`rules.py`) is available for **all six** providers. Multi-account
+EV simulation (`portfolio_simulator.py`) is currently available for **Lucid**, **Apex**, and
+**FundedNext**:
+
+- `prop_firms/lucid/portfolio_simulator.py` — multi-account EV simulator for Lucid 25K accounts.
+- `prop_firms/apex/portfolio_simulator.py` — Apex 50K multi-account EV simulator.
+- `prop_firms/fundednext/portfolio_simulator.py` — FundedNext multi-account EV simulator.
 
 Core package split:
 
 - `prop_firms/base/models.py`: immutable configs, requests, timeline rows, events, summaries
-- `prop_firms/base/simulator.py`: shared daily simulation shell
-- `prop_firms/base/portfolio_models.py`: multi-account purchase-policy, payout-policy, timeline, and EV summary contracts
+- `prop_firms/base/enums.py`: shared enums (phases, statuses, event/breach reasons, payout/consistency rules)
+- `prop_firms/base/simulator.py`: shared daily simulation shell (`BasePropFirmEngine`)
+- `prop_firms/base/portfolio_models.py`: multi-account purchase-policy, payout-policy, timeline, EV summary, and `PortfolioSimulationConfig` contracts
 - `prop_firms/base/return_engine.py`: synthetic Sharpe-path generation, external return replay, and volatility rescaling
 - `prop_firms/base/statistics.py`: EV-style aggregate statistics across one or more runs
 - `prop_firms/base/exposure.py`: optional contract and leverage checks
+- `prop_firms/base/cfd_ladder_payout.py`: CFD-style ladder payout helpers
 - `prop_firms/base/config_loader.py`: JSON loader for provider account definitions
-- `prop_firms/lucid/rules.py`: Lucid evaluation, funded, payout, and scaling logic
-- `prop_firms/lucid/portfolio_simulator.py`: daily event-driven account-book simulator for many Lucid accounts
-- `prop_firms/lucid/config.json`: user-editable Lucid account definitions and fees
-- `prop_firms/apex/rules.py`: Apex EOD evaluation, funded, DLL, payout, and scaling logic
-- `prop_firms/apex/portfolio_simulator.py`: daily event-driven account-book simulator for many Apex 50K accounts
-- `prop_firms/apex/config.json`: user-editable Apex 50K account definition and fees
+- `prop_firms/<firm>/rules.py`: provider evaluation, funded, drawdown, payout, and scaling logic (one per provider)
+- `prop_firms/<firm>/provider.py`: provider factory functions and account loaders
+- `prop_firms/<firm>/config.json`: user-editable provider account definitions and fees
+- `prop_firms/lucid/portfolio_simulator.py` / `prop_firms/apex/portfolio_simulator.py` / `prop_firms/fundednext/portfolio_simulator.py`: daily event-driven account-book simulators
 
 ---
 
@@ -114,6 +126,8 @@ Provider-specific portfolio support:
 
 - Lucid portfolio research remains available for `25000`
 - Apex portfolio research is available for `50000`
+- FundedNext portfolio research is available and is the default preset for the
+  `portfolio_research` test-pipeline integration (see *Portfolio research integration* below)
 
 Current portfolio assumptions:
 
@@ -125,17 +139,17 @@ Current portfolio assumptions:
 - close funded accounts after 6 payouts by default
 - treat challenge fees, activation fees, and reset fees as personal cashflow rather than account-equity deductions
 
-Main portfolio APIs:
+Main portfolio APIs (re-exported from `prop_firms`):
 
 - `PurchasePolicyConfig`
 - `PortfolioPayoutPolicyConfig`
 - `ReturnEngineConfig`
-- `LucidPortfolioSimulator`
+- `build_return_series`
+- `LucidPortfolioSimulator`, `ApexPortfolioSimulator`, `FundedNextPortfolioSimulator`
+- `create_lucid_portfolio_simulator`, `create_apex_portfolio_simulator`, `create_fundednext_portfolio_simulator`
 - `compute_portfolio_statistics`
-- `ApexPortfolioReportConfig`
-- `LucidPortfolioReportConfig`
-- `run_apex_portfolio_report`
-- `run_lucid_portfolio_report`
+- `ApexPortfolioReportConfig`, `LucidPortfolioReportConfig`, `FundedNextPortfolioReportConfig`
+- `run_apex_portfolio_report`, `run_lucid_portfolio_report`, `run_fundednext_portfolio_report`
 - `generate_portfolio_report`
 
 ---
@@ -171,10 +185,12 @@ The preferred entrypoint now lives inside `prop_firms/` rather than `scripts/`.
 
 Files:
 
-- `prop_firms/report_config.py`: editable configs for the Lucid and Apex portfolio runs
-- `prop_firms/reporting.py`: Markdown/CSV artifact generation
+- `prop_firms/report_config.py`: editable configs for the Lucid, Apex, and FundedNext portfolio runs (`load_report_config`, `load_apex_report_config`, `load_fundednext_report_config`, `load_hyperopt_config`)
+- `prop_firms/reporting.py`: Markdown/CSV/HTML artifact generation
 - `prop_firms/run_apex_portfolio_report.py`: run the Apex simulation and write the report pack
-- `prop_firms/run_lucid_portfolio_report.py`: run the simulation and write the report pack
+- `prop_firms/run_lucid_portfolio_report.py`: run the Lucid simulation and write the report pack
+- `prop_firms/run_fundednext_portfolio_report.py`: run the FundedNext simulation and write the report pack
+- `prop_firms/run_lucid_hyperopt.py`: Lucid hyperparameter optimization runner (hyperopt remains Lucid-only)
 
 The runner writes:
 
@@ -377,3 +393,5 @@ To add another provider:
 4. Add focused unit tests for the provider’s breach logic, pass transitions, and payout behavior.
 
 This keeps new firms isolated from each other while preserving one common simulation API.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

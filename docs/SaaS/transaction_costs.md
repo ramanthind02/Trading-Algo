@@ -1,11 +1,22 @@
 # Transaction Costs
 
+> **Status: forward-looking spec — NOT yet implemented.** Transaction costs are
+> currently **not modelled** anywhere in the `Trading-Algo` vectorized return
+> path. The portfolio simulation `portfolio_research/futures_sim.py`
+> (`run_futures_sim`) computes instrument returns and positions but applies **no
+> commission, slippage, or spread deduction**; the only "cost" it reports is the
+> integer-rounding tracking error vs a fractional-contract baseline. The
+> `SlippageConfig`, `CommissionConfig`, `InstrumentCostConfig`, and `CostReport`
+> dataclasses below do **not** exist in the codebase. This document is the
+> intended design for cost modelling; until it lands, treat all current backtest
+> Sharpe/return figures as **gross** (pre-cost).
+
 ## 1. Purpose
 
-This document specifies how transaction costs are modelled in QuantFoundry backtests. Accurate cost modelling is essential for realistic IS and OOS performance estimates — an uncostted backtest systematically overstates live performance, particularly for strategies with high turnover.
+This document specifies how transaction costs are intended to be modelled in QuantFoundry backtests. Accurate cost modelling is essential for realistic IS and OOS performance estimates — an uncostted backtest systematically overstates live performance, particularly for strategies with high turnover.
 
 Related documents:
-- `docs/SaaS/position_sizing.md` — contract quantities that determine cost magnitude
+- `docs/SaaS/position_sizing.md` — contract quantities that determine cost magnitude (and the account-sim spec these costs would feed)
 - `docs/SaaS/metrics_library.md` — gross vs net return conventions
 
 ---
@@ -23,7 +34,7 @@ On a $500,000 account running 1 ES contract, that is 5 × $31 = $155/year — ne
 
 But for a strategy with 50 round-trips per year and a smaller account ($100,000) running the same contract: 50 × $31 = $1,550/year = 1.55% annual drag. At an uncostted Sharpe of 0.8, that drag is material.
 
-The rule: **always run robustness tests on net returns**. Gross returns are available for comparison and to separate strategy quality from cost structure, but the Sharpe and t-stat that feed IS tests, DSR, validation, and holdout are net.
+The intended rule: **always run robustness tests on net returns**. Gross returns are available for comparison and to separate strategy quality from cost structure, but the Sharpe and t-stat that feed IS tests, DSR, validation, and holdout should be net once cost modelling lands. (Until then, those statistics are computed on gross returns — see the status banner above.)
 
 ---
 
@@ -172,3 +183,5 @@ A strategy where cost drag exceeds 25% of the net Sharpe is warned in the IS rob
 **Roll costs:** Continuous futures contracts require periodic rolling from the expiring front month to the next. The roll cost depends on the carry structure (backwardation/contango) and spread at the roll date. Roll cost tracking is deferred; researchers should be aware that backtests using continuous backadjusted data absorb roll costs implicitly in the price series.
 
 **Financing costs:** For leveraged positions exceeding 1.0× capital, financing costs apply. For futures which are inherently leveraged instruments, the carry is embedded in the futures basis rather than an explicit financing charge. Not modelled separately in MVP.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

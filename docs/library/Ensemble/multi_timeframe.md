@@ -1,21 +1,20 @@
 # Multi-Timeframe Portfolio Orchestration
 
-> **Scope:** How `GlobalPortfolio` combines signals from multiple timeframes (D, W, M, and intraday) for both backtesting and live trading.
+> **Scope:** How `GlobalPortfolio` combines signals across the supported timeframes (Daily, Weekly, Monthly) for both backtesting and live trading. The global combine runs on a **daily grid**; sub-daily rebalancing is not implemented.
 
 ---
 
 ## Core Principle
 
-Each timeframe is processed **independently and sequentially**, then merged on a common rebalance grid. There is no interleaving of timeframes in a single loop.
+Each timeframe is processed **independently and sequentially**, then merged on a common daily grid. There is no interleaving of timeframes in a single loop.
 
 ```
-Monthly candles  → TFPortfolio(M).predict → monthly forecast series ──┐
-Weekly candles   → TFPortfolio(W).predict → weekly forecast series  ──┤ forward-fill → rebalance grid → weighted sum → position
-Daily candles    → TFPortfolio(D).predict → daily forecast series   ──┤
-Hourly candles   → TFPortfolio(H1).predict → hourly forecast series ──┘
+Monthly candles  → TFPortfolio(M) → monthly forecast series ──┐
+Weekly candles   → TFPortfolio(W) → weekly forecast series  ──┤ forward-fill → daily grid → weighted sum (+FDM) → position
+Daily candles    → TFPortfolio(D) → daily forecast series   ──┘
 ```
 
-Higher-TF forecasts are **constant** between their candle closes. Forward-filling naturally carries the last known forecast until new data arrives.
+Higher-TF forecasts are **constant** between their candle closes. Forward-filling naturally carries the last known forecast until new data arrives. `TFPortfolio.__init__` auto-loads vault ensembles from `vault/{D,W,M}` when no explicit ensembles are passed.
 
 ---
 
@@ -23,10 +22,20 @@ Higher-TF forecasts are **constant** between their candle closes. Forward-fillin
 
 ### Fit (training)
 
-During fit, all forecast streams are resampled to a **daily grid** to ensure equal scaling across timeframes. Intraday signals lose some granularity, but this guarantees the `WeightLayer` sees comparable signal distributions.
+During fit, all forecast streams are resampled to a **daily grid** to ensure equal scaling across timeframes. Higher-TF signals are forward-filled, which guarantees the `WeightLayer` sees comparable signal distributions.
 
 ```python
+from ensemble import GlobalPortfolio, TFPortfolio, WeightLayer
 from ensemble.portfolio import PortfolioCacheQuery
+from utils.enums import TimeFrame
+
+global_p = GlobalPortfolio(
+    tf_portfolios=[
+        TFPortfolio(trading_timeframe=TimeFrame.D),
+        TFPortfolio(trading_timeframe=TimeFrame.W),
+    ],
+    weight_layer=WeightLayer(weight_method="equal_signal", fdm_max=2.0),
+)
 
 query = PortfolioCacheQuery(
     tickers=("ES", "NQ"),
@@ -34,18 +43,23 @@ query = PortfolioCacheQuery(
     end=train_end,
     timeframes=(TimeFrame.D, TimeFrame.W),
 )
-GlobalPortfolio.fit_from_cache(
-    query=query,
-    instrument_returns=returns_df,
-)
+global_p.fit_from_cache(query, instrument_returns=returns_df)
 ```
 
-Internally:
-1. Fit each `TFPortfolio` on its native-frequency candles.
-2. Collect per-TF base-model forecast vectors.
-3. Align all vectors to a shared daily grid via forward-fill (`_align_forecast_vectors_to_daily_grid`).
-4. Normalize by downside-vol, encode into a synthetic `__GLOBAL__` ticker, fit `WeightLayer`.
-5. Compute global IDM from instrument return correlations.
+`fit_from_cache` is an instance method: it loads candles + EWSD volatility from the central
+cache and delegates to `fit(candles_per_tf, instrument_returns, daily_volatility_df)`.
+
+Internally `GlobalPortfolio.fit` (in [`ensemble/portfolio_impl/global_portfolio_impl.py`](../../../ensemble/portfolio_impl/global_portfolio_impl.py)):
+1. Fit each `TFPortfolio` on its native-frequency candles (`fit_from_candles`).
+2. Collect per-TF forecast streams (`collect_tf_forecast_streams`).
+3. Build a shared daily grid (`build_daily_grid`) and align every stream onto it via
+   forward-fill (`align_forecast_vectors_to_daily_grid`, defined in
+   `ensemble/portfolio_impl/portfolio_global_streams.py`).
+4. Normalize by downside-vol (`normalize_global_signals_by_downside_vol`), encode into the
+   synthetic `__GLOBAL__` ticker (`encode_forecast_vectors_for_global_weight_layer`), and fit
+   the `WeightLayer`.
+5. Compute global IDM from instrument return correlations (`calculate_idm_from_returns`,
+   `IDM = min(√(1/(mean_corr + 0.01)), idm_max)`).
 
 ### Predict (inference)
 
@@ -77,26 +91,30 @@ Each `TFPortfolio` receives its **full** candle history, processes it vectorized
 
 ## Rebalance Frequency
 
-The portfolio rebalances at the **lowest available timeframe**. If hourly signals exist, rebalance hourly. If the lowest TF is daily, rebalance daily.
+The global combine rebalances on the **daily grid** (the finest supported timeframe).
 
 Between candle closes for a given TF, that TF's forecast is constant (carried forward). This means:
 
 - Monthly TFPortfolio produces one new forecast per month.
 - Weekly TFPortfolio produces one new forecast per week.
 - Daily TFPortfolio produces one new forecast per day.
-- On each rebalance tick, the latest forecast from each TF is combined.
+- On each daily tick, the latest forecast from each TF is combined.
 
 ---
 
 ## Alignment Grid
 
-`_align_forecast_vectors_to_daily_grid` currently projects everything onto a daily grid. To support intraday rebalancing, this generalizes to an arbitrary-frequency grid:
+`align_forecast_vectors_to_daily_grid` (in `ensemble/portfolio_impl/portfolio_global_streams.py`)
+projects every per-TF stream onto a shared **daily** grid built by `build_daily_grid`:
 
-1. Build the rebalance grid at the target frequency (daily, hourly, etc.).
-2. For each `(ticker, model, timeframe)` stream: reindex to the grid, forward-fill, fill remaining NaN with 0.
-3. Combine via fitted `WeightLayer` weights.
+1. Build the daily grid from the union of stream dates (and an optional reference index — the
+   global-returns index at fit time, or the daily-candle reference grid at predict time).
+2. For each stream: reindex to the grid, forward-fill, fill remaining NaN with 0.
+3. Combine via fitted `WeightLayer` weights after encoding into the synthetic `__GLOBAL__` ticker.
 
-Higher-TF forecasts simply repeat (via forward-fill) across the finer grid until a new candle closes.
+Higher-TF forecasts simply repeat (via forward-fill) across the daily grid until a new candle
+closes. (Finer-than-daily rebalancing is not implemented today — the global combine operates on
+a daily grid.)
 
 ---
 
@@ -131,20 +149,23 @@ This approach is:
 | Monthly   | ~24 bars (2 years)  | ~30 bars                    |
 | Weekly    | ~52 bars (1 year)   | ~63 bars                    |
 | Daily     | ~252 bars (1 year)  | ~303 bars                   |
-| Hourly    | ~252 × 6.5 ≈ 1638  | ~1966 bars                  |
 
-The current default is `max_lookback + ceil(max_lookback * 0.2)`.
+These are illustrative magnitudes; the actual values come from each node's
+`max_lookback()` / `cold_rebuild_candle_count()`. A common warmup heuristic is
+`max_lookback + ceil(max_lookback * 0.2)`.
 
 ---
 
 ## Key Invariants
 
 1. **No timeframe interleaving** — each TF is processed as a complete, independent series.
-2. **Forward-fill bridges TFs** — higher-TF forecasts are carried forward on the rebalance grid.
-3. **Fit on daily, predict on any grid** — weights are learned on a daily grid; at predict time the grid can be finer.
+2. **Forward-fill bridges TFs** — higher-TF forecasts are carried forward on the daily grid.
+3. **Fit and predict on a daily grid** — weights are learned on a daily grid, and the global combine runs on a daily grid at predict time.
 4. **Stateless predict** — size the warmup window from `max_lookback()` / `cold_rebuild_candle_count()`; no serialized bias node state.
 5. **Forecast scores are additive** — the weighted sum across TFs (with FDM) produces the combined forecast.
 
 ---
 
-**See also:** [[portfolio]], [[weight_layer]], [[live_multi_timeframe]], [[Cache/architecture]]
+**See also:** [Portfolio pipeline](portfolio.md), [Weight layer](weight_layer.md), [Live multi-timeframe](../Deployment/live_multi_timeframe.md), [Cache architecture](../Cache/architecture.md)
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

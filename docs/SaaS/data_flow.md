@@ -1,5 +1,7 @@
 # Data Flow & Research Architecture
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-2 data layer). See docs/refactor/nautilus/.
+
 ## 1. Overview
 
 The platform organises research and deployment into four sequential phases: **Strategy Research**, **Portfolio Construction**, **Portfolio Evaluation**, and **Deployment**. The zone model underpinning this flow uses two distinct tiers — a single project-level test zone fixed at project creation, and researcher-defined strategy-level zones within the pre-test window.
@@ -261,3 +263,5 @@ The Jupyter environment provides full SDK access for custom analysis.
 | Walk-forward auto-reoptimisation with approval gate | | ✅ |
 | Purge gap at split boundaries | | ✅ |
 | Jupyter SDK with zone-aware data access | | ✅ |
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

@@ -131,6 +131,75 @@ Non-daily forecasts are forward-filled to a daily grid before `WeightLayer` runs
 
 Ensembles are configured/persisted via JSON control files containing metadata, base model configs, fitted state, and ensemble weights. The `is_fit` flag tracks whether the ensemble has been trained.
 
+## NautilusTrader Reference
+
+Local docs mirror at `docs/nautilustrader/` — fetched from the GitHub source repo (raw Markdown, not the rendered site). Refresh with:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\scrape_nautilus_docs.py --force
+```
+
+Key pages for the architecture refactor (read these before writing Nautilus wrappers):
+
+| File | What it covers |
+|---|---|
+| `concepts/architecture.md` | NautilusKernel, MessageBus, threading model, environment contexts |
+| `concepts/strategies.md` | Strategy ABC, lifecycle hooks, signal generation |
+| `concepts/actors.md` | Actor pattern (base of Strategy), subscriptions, handlers |
+| `concepts/data.md` | Data pipeline, subscriptions, bar/quote/trade types |
+| `concepts/execution.md` | Order lifecycle, execution engine, routing |
+| `concepts/orders/index.md` | Order types overview |
+| `concepts/cache.md` | In-memory cache API (instruments, orders, positions) |
+| `concepts/message_bus.md` | Pub/Sub, Req/Rep, custom topics |
+| `concepts/backtesting.md` | BacktestEngine vs BacktestNode, data loading |
+| `concepts/live.md` | TradingNode, live adapter lifecycle |
+| `concepts/configuration.md` | Config system, environment variables |
+| `concepts/continuous_futures.md` | Continuous contract roll logic |
+| `concepts/portfolio.md` | Portfolio component, P&L tracking |
+| `concepts/positions.md` | Position model, netting vs hedging |
+| `integrations/ib.md` | Interactive Brokers adapter (our current live broker) |
+| `getting_started/installation.md` | Install + quickstart |
+
+## CodeGraph — use this first for all code exploration
+
+This repo is indexed by **CodeGraph** (MCP server: `codegraph`). It provides a pre-built
+knowledge graph of every symbol, call edge, and file — queries are sub-millisecond and
+return verbatim source, so one `codegraph_explore` call replaces dozens of Grep/Glob/Read
+round-trips.
+
+**Rules:**
+
+1. **Always call `codegraph_explore` first** for any question about how code works, where
+   something is defined, what calls what, or what a symbol does. Do NOT start with Grep,
+   Glob, or Read for exploration tasks.
+
+2. **`codegraph_explore` returns verbatim source** — treat each file block it returns as
+   an already-performed Read. Do NOT re-read those files with the Read tool.
+
+3. **Only fall back to Grep/Read** for a specific line range that codegraph didn't surface,
+   or to confirm a detail not covered by the response.
+
+4. **Use `codegraph_search`** when you know a symbol name but not its file — it returns
+   locations instantly without reading any code.
+
+5. **Use `codegraph_callers` / `codegraph_callees` / `codegraph_impact`** before editing
+   anything — know the blast radius first.
+
+**Tool selection cheat-sheet:**
+
+| Intent | Tool |
+|--------|------|
+| How does X work / what is X / where is X | `codegraph_explore` (PRIMARY) |
+| Find a symbol by name (location only) | `codegraph_search` |
+| What calls this function? | `codegraph_callers` |
+| What does this function call? | `codegraph_callees` |
+| What would break if I change X? | `codegraph_impact` |
+| Single specific line range not in explore result | `Read` (fallback only) |
+| Grep for a pattern codegraph can't match | `Grep` (fallback only) |
+
+**Current index stats** (2026-06-04): 818 files · 12,117 nodes · 25,510 edges · Python 813 files.
+The file watcher auto-syncs on save; no manual reindex needed.
+
 ## Coding Conventions
 
 Defined in `.cursor/rules/` (001-004):

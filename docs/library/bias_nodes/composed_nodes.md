@@ -175,3 +175,5 @@ Warmup and column naming follow the same pattern as `FilterGateNode` (`f_` / `s_
 - [[bias_nodes/index]] — bias-node doc hub
 - [[Feature_selection/pipeline]] — EDA, permutation, walkforward after the feature column exists
 - [[Cache/user_guide]] — `use_cache` behaviour and cache scopes
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

@@ -70,3 +70,5 @@ The workspace dashboard (shared with feature research via `frontend/static/resea
 | Raw data | CSV/JSON exports not shown as primary panels |
 
 Use phase tabs and section navigation to preview tearsheets (embed), summary JSON panels, and tables without hunting filenames in a flat list.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
