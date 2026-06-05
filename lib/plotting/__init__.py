@@ -6,7 +6,7 @@ other plotting helpers are being retired from the public barrel exports so
 callers import the concrete modules directly when needed.
 """
 
-from metrics.plotting.graphing.quantstats_reports import (
+from lib.plotting.graphing.quantstats_reports import (
     compute_performance_report,
     generate_tearsheet,
 )

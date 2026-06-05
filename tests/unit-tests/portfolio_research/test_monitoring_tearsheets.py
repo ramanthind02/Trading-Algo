@@ -98,7 +98,7 @@ def test_write_strategy_monitoring_tearsheet_writes_html(tmp_path: Path, monkeyp
         output.write_text("<html>tearsheet</html>", encoding="utf-8")
 
     monkeypatch.setattr(
-        "metrics.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(

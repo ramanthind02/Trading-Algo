@@ -36,7 +36,7 @@ from ensemble.vault_manager import (
     load_ensemble_from_vault,
 )
 from ensemble.weight_layer import WeightLayer
-from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from lib.plotting.graphing.quantstats_reports import generate_tearsheet
 from research.portfolio.config import rebuild_weight_layer_kwargs
 from research.portfolio.futures_sim import run_futures_sim
 from research.portfolio.weight_layer_export import (

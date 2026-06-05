@@ -10,7 +10,7 @@ Date: 2025-01-XX
 
 import pandas as pd
 from typing import Union
-from metrics.equity import cumulative_returns, equity_peak
+from lib.metrics.equity import cumulative_returns, equity_peak
 
 
 def drawdown_series(

@@ -177,7 +177,7 @@ def _emit_discrete_tearsheet(
 ) -> None:
     """Generate a QuantStats tearsheet from discrete daily % returns."""
     try:
-        from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+        from lib.plotting.graphing.quantstats_reports import generate_tearsheet
     except ImportError:
         return
 

@@ -38,7 +38,7 @@ pipeline's own cache preflight (first run is slower while caches build).
 
 Computed from the relevant returns series via the **project metrics layer**
 (`feature_selection.validation.objective_metrics` → `quantfoundry_core.metrics`,
-and `metrics.risk.drawdown`) — not a re-implementation — at 252 trading-day
+and `lib.metrics.drawdown`) — not a re-implementation — at 252 trading-day
 annualization:
 
 `sharpe`, `sortino`, `max_drawdown`, `calmar`, `total_return`, plus

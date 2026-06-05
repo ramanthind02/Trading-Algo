@@ -2,7 +2,7 @@
 
 The comparison surface is the project's own metrics layer
 (``feature_selection.validation.objective_metrics`` → ``quantfoundry_core.metrics``)
-plus ``metrics.risk.drawdown``. We compute the *headline* scalars the spec calls
+plus ``lib.metrics.drawdown``. We compute the *headline* scalars the spec calls
 for (Sharpe, Sortino, max drawdown, Calmar, total return) from a daily returns
 series, using the project functions so the snapshot reflects production math, not
 a re-implementation.
@@ -20,7 +20,7 @@ from features.validation.objective_metrics import (
     metric_sharpe,
     metric_sortino,
 )
-from metrics.risk.drawdown import max_drawdown
+from lib.metrics.drawdown import max_drawdown
 
 # Daily research series → annualised ratios use the trading-day convention.
 ANNUALIZATION_FACTOR = 252.0

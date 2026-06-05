@@ -33,7 +33,7 @@ from lib.core.enums import TimeFrame, Ticker
 from lib.core import helpers
 from ensemble.portfolio import Portfolio
 from ensemble.diversified_ensemble import DiversifiedEnsemble
-from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from lib.plotting.graphing.quantstats_reports import generate_tearsheet
 from ensemble.portfolio_impl.portfolio_tester import (
     PortfolioTester,
     calculate_log_returns_from_candles,

@@ -88,7 +88,7 @@ def write_strategy_monitoring_tearsheet(
     if returns.shape[0] < 2:
         return None
 
-    from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+    from lib.plotting.graphing.quantstats_reports import generate_tearsheet
 
     baseline = _load_benchmark_returns_for_index(config, returns.index)
     safe_name = _sanitize_tearsheet_name(strategy_name)

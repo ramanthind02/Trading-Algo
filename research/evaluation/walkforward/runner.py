@@ -211,7 +211,7 @@ def run_portfolio_simulation(
     if tearsheets_dir is not None:
         try:
             from ensemble.portfolio_impl.portfolio_tester import calculate_baseline_returns
-            from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+            from lib.plotting.graphing.quantstats_reports import generate_tearsheet
             _tearsheet_available = True
         except ImportError as e:
             warnings.warn(

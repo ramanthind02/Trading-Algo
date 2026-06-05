@@ -29,7 +29,7 @@ from features.validation.objective_metrics import (
     metric_sharpe,
     metric_sortino,
 )
-from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from lib.plotting.graphing.quantstats_reports import generate_tearsheet
 from research.portfolio.config import (
     PortfolioResearchConfig,
     scoped_tickers_for_ensemble_dirs,

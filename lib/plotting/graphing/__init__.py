@@ -1,6 +1,6 @@
 """Graphing namespace for tearsheets and performance-table helpers."""
 
-from metrics.plotting.graphing.quantstats_reports import (
+from lib.plotting.graphing.quantstats_reports import (
     compute_performance_report,
     generate_tearsheet,
 )
