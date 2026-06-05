@@ -12,7 +12,7 @@ from enum import Enum, auto
 import json
 import logging
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Literal, Mapping
 
 import pandas as pd
 
@@ -351,6 +351,10 @@ class PortfolioResearchConfig:
     strict_cache_preflight: bool = False
     exclude_feature_stems_by_ensemble: Mapping[str, frozenset[str]] | None = None
     ensemble_vault_refit: bool = True
+    # P&L lane selector (WP-3). "vectorized" (default) preserves today's frozen
+    # baseline path; "nautilus" routes positions into the realistic BacktestEngine
+    # lane (WP-3 Unit 2, not yet implemented).
+    pnl_engine: Literal["vectorized", "nautilus"] = "vectorized"
     futures_sim: FuturesSimConfig = field(default_factory=FuturesSimConfig)
     prop_firm_report: PropFirmReportConfig = field(default_factory=PropFirmReportConfig)
     portfolio_fit_mode: PortfolioFitMode = PortfolioFitMode.ROLLING_HOLDOUT

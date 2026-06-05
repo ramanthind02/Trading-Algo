@@ -38,6 +38,7 @@ from ensemble.vault_manager import (
 from ensemble.weight_layer import WeightLayer
 from lib.plotting.graphing.quantstats_reports import generate_tearsheet
 from research.portfolio.config import rebuild_weight_layer_kwargs
+from research.portfolio.pnl import make_pnl_engine
 from research.portfolio.futures_sim import run_futures_sim
 from research.portfolio.weight_layer_export import (
     weight_layer_diagnostics_to_dataframe,
@@ -791,7 +792,8 @@ def _evaluate_phase(
             output_dir=phase_out,
         )
 
-    combined_strategy_returns = calculate_strategy_returns_from_positions(
+    engine = make_pnl_engine(getattr(config, "pnl_engine", "vectorized"))
+    combined_strategy_returns = engine.returns_from_positions(
         combined_positions,
         filter_candles_to_position_tickers(combined_positions, daily_test_candles),
     )
