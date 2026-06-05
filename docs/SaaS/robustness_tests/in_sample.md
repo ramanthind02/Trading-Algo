@@ -8,7 +8,7 @@ This document specifies the in-sample robustness test suite for QuantFoundry. Th
 
 The tests sit at the end of the exploration phase, after a user has run a parameter sweep and identified the leading combinations. They do not validate the strategy on the later validation slice — that is the validation phase's job. They validate the integrity of the in-sample selection itself.
 
-**Implementation anchor (current code):** the IS robustness primitives are provided by `quantfoundry_core.robustness` — `deflated_sharpe_ratio` / `DSRResult`, `compute_n_effective` / `NEffectiveResult`, `sharpe_confidence_interval` / `SharpeCI`, `rolling_is_performance` / `RollingISResult`, `run_grid_permutation_test` / `run_individual_combination_permutation_test` / `PermutationTestResult`. The repo orchestrates them in `feature_research/pipelines/robustness.py` (which assembles an `InSampleRobustnessReport`) and runs them inside `feature_research/exploration/orchestrate.py::execute_exploration_phase`. The signal-timing **vector shuffle** is local: `feature_selection/validation/permutation_tests.py::run_vector_shuffle_test`. The pseudocode blocks below are illustrative of the contract, not verbatim source.
+**Implementation anchor (current code):** the IS robustness primitives are provided by `quantfoundry_core.robustness` — `deflated_sharpe_ratio` / `DSRResult`, `compute_n_effective` / `NEffectiveResult`, `sharpe_confidence_interval` / `SharpeCI`, `rolling_is_performance` / `RollingISResult`, `run_grid_permutation_test` / `run_individual_combination_permutation_test` / `PermutationTestResult`. The repo orchestrates them in `research/feature/pipelines/robustness.py` (which assembles an `InSampleRobustnessReport`) and runs them inside `research/feature/exploration/orchestrate.py::execute_exploration_phase`. The signal-timing **vector shuffle** is local: `features/validation/permutation_tests.py::run_vector_shuffle_test`. The pseudocode blocks below are illustrative of the contract, not verbatim source.
 
 Related documents:
 - `docs/SaaS/robustness_tests/index.md` — index of all robustness test categories
@@ -524,7 +524,7 @@ On any individual parameter combination's result row, a secondary action opens a
 
 ### 7.2 Outputs
 
-The local report class is `InSampleRobustnessReport` (in `feature_research/pipelines/robustness.py`). Its current shape (abridged):
+The local report class is `InSampleRobustnessReport` (in `research/feature/pipelines/robustness.py`). Its current shape (abridged):
 
 ```python
 @dataclass(frozen=True)
@@ -576,7 +576,7 @@ class InSampleRobustnessReport:
 
 ## 8. Implementation Notes
 
-**Vectorized null distribution:** All $M$ permutations are generated as a single $(M, T)$ matrix. Metrics are applied across the batch dimension simultaneously. No Python-level loops, no per-iteration overhead. This matches the batched pattern in `feature_selection/validation/permutation_tests.py` (e.g. `run_vector_shuffle_target_perm_batch`); the grid/individual permutation nulls run through `quantfoundry_core.robustness.run_grid_permutation_test` / `run_individual_combination_permutation_test`.
+**Vectorized null distribution:** All $M$ permutations are generated as a single $(M, T)$ matrix. Metrics are applied across the batch dimension simultaneously. No Python-level loops, no per-iteration overhead. This matches the batched pattern in `features/validation/permutation_tests.py` (e.g. `run_vector_shuffle_target_perm_batch`); the grid/individual permutation nulls run through `quantfoundry_core.robustness.run_grid_permutation_test` / `run_individual_combination_permutation_test`.
 
 **Return shuffling vs block bootstrap:** Simple shuffling (iid permutation) is the default. It assumes the null hypothesis is that return order carries no information. For strategies where preserving local dependence structure matters, block bootstrap may be more appropriate — but this is a later extension, not MVP scope.
 
@@ -584,4 +584,4 @@ class InSampleRobustnessReport:
 
 **Relationship to downstream permutation tests:** The in-sample tests described here focus on selection bias within the IS zone. Later validation or portfolio-addition permutation checks answer a different question — whether downstream performance is temporally structured. Both suites are needed; they are not substitutes.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

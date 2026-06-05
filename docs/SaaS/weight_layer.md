@@ -91,7 +91,7 @@ Method selection uses walk-forward cross-validation across the IS window:
 This selection happens once before any portfolio holdout results are viewed. Changing the weight method after opening the holdout is contamination under the doctrine in `zone_manager.md` §8.
 
 > **Current implementation.** Walk-forward method selection exists in
-> `portfolio_research/weight_layer_cv.py` (`run_weight_layer_cv`,
+> `research/portfolio/weight_layer_cv.py` (`run_weight_layer_cv`,
 > `build_cv_arms`, `evaluate_arm_on_fold`). It produces a per-arm CV leaderboard
 > over the IS window; there is no timestamp-enforced "locking" against a holdout
 > view — that locking/contamination tracking is SaaS design, not yet enforced in
@@ -113,7 +113,7 @@ The valid weighting methods are defined by `_WEIGHT_METHODS` in `ensemble/weight
 
 The two defaults differ by surface:
 - `WeightLayer(...)` factory / `WeightLayerConfig`: `equal_signal`.
-- The prop portfolio research config (`portfolio_research/config.py`): `hierarchy_equal` with `sr_adjustment=True` (see `weight_layer_spec.md` §SR adjustment).
+- The prop portfolio research config (`research/portfolio/config.py`): `hierarchy_equal` with `sr_adjustment=True` (see `weight_layer_spec.md` §SR adjustment).
 
 > **Removed (do not configure).** The legacy HRP and Sortino methods —
 > `hrp_cluster_equal`, `hrp_classic`, `optimize_sortino_capped` — were removed.
@@ -215,4 +215,4 @@ dict + fitted weights/FDM/cluster state) and restored with
 
 **Not an optimisation target for the holdout.** Walk-forward CV (§3.1) runs entirely on IS data. The holdout result is not used to tune, validate, or select weight methods. If the holdout reveals poor portfolio Sharpe, the weight method is not adjusted — it is evaluated by `robustness_tests/portfolio_holdout.md` as diagnostic information for future research.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

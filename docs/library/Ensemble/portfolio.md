@@ -225,7 +225,7 @@ This section describes the local portfolio-fit workflow for deciding whether to 
 > [!note]
 > Some local code, config, and CLI names still use the older term `inclusion`. Treat that as migration-era compatibility terminology for the **portfolio addition** phase.
 
-The local workflow reuses the same **train / validation / test** windows as `portfolio_research.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
+The local workflow reuses the same **train / validation / test** windows as `research.portfolio.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
 
 **Principle:** The target workflow is `exploration -> validation -> portfolio_addition`. For local compatibility tooling, the portfolio-addition checks still appear under `inclusion`-named config and CLI surfaces.
 
@@ -241,19 +241,19 @@ The local workflow reuses the same **train / validation / test** windows as `por
 
 ### Configuration
 
-- **`PortfolioInclusionConfig`** in `feature_research/config.py`: compatibility-era config for the portfolio-addition gate. It holds thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), and optional default candidate path/key.
+- **`PortfolioInclusionConfig`** in `research/feature/config.py`: compatibility-era config for the portfolio-addition gate. It holds thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), and optional default candidate path/key.
 - **`ResearchConfig.portfolio_inclusion`**: current compatibility container for those defaults while the package migrates toward explicit `portfolio_addition` naming.
-- **Baseline portfolio** (tickers, train/validation/test windows, `ensemble_dirs`, weight layer, etc.) still comes from **`portfolio_research.config.load_config()`** — the CLI loads both configs.
+- **Baseline portfolio** (tickers, train/validation/test windows, `ensemble_dirs`, weight layer, etc.) still comes from **`research.portfolio.config.load_config()`** — the CLI loads both configs.
 
 ### CLI
 
 From the repo root (venv Python), pass a **repo-relative** path to the candidate ensemble directory (same style as `ensemble_dirs` values):
 
 ```powershell
-.\.venv\Scripts\python.exe -m feature_research.run_inclusion_gates
+.\.venv\Scripts\python.exe -m research.feature.run_inclusion_gates
 ```
 
-With ``portfolio_inclusion.candidate_repo_relative_path`` set in ``feature_research.config.load_config()``, no CLI arguments are required. Optional overrides: ``--candidate-path``, ``--candidate-key``, ``--emit-tearsheets`` / ``--no-emit-tearsheets``, ``--no-preflight``.
+With ``portfolio_inclusion.candidate_repo_relative_path`` set in ``research.feature.config.load_config()``, no CLI arguments are required. Optional overrides: ``--candidate-path``, ``--candidate-key``, ``--emit-tearsheets`` / ``--no-emit-tearsheets``, ``--no-preflight``.
 
 The command name is expected to change as the migration finishes; until then, interpret it as the local entrypoint for the portfolio-addition phase.
 
@@ -263,8 +263,8 @@ Under `output_root` / `portfolio_inclusion.output_subdir`: `inclusion_<candidate
 
 ### Code entrypoints
 
-- `feature_research/inclusion_gates.py` — compatibility implementation of the portfolio-addition decision (`run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …)
-- `feature_research/run_inclusion_gates.py` — compatibility CLI
+- `research/feature/inclusion_gates.py` — compatibility implementation of the portfolio-addition decision (`run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …)
+- `research/feature/run_inclusion_gates.py` — compatibility CLI
 
 **See also:** [Cache user guide](../Cache/user_guide.md) (portfolio workflow and preflight), [Vault user guide](../Vault/user_guide.md) (ensemble layout).
 
@@ -272,9 +272,9 @@ Under `output_root` / `portfolio_inclusion.output_subdir`: `inclusion_<candidate
 
 ---
 
-## Futures Contract Simulation (`portfolio_research.futures_sim`)
+## Futures Contract Simulation (`research.portfolio.futures_sim`)
 
-An optional parallel simulation path that converts `position_fraction` signals to **integer futures contracts** and produces tearsheets and diagnostics alongside the standard log-return tearsheets.  Activated by setting `futures_sim.enabled = True` in `portfolio_research.config.load_config()`.
+An optional parallel simulation path that converts `position_fraction` signals to **integer futures contracts** and produces tearsheets and diagnostics alongside the standard log-return tearsheets.  Activated by setting `futures_sim.enabled = True` in `research.portfolio.config.load_config()`.
 
 ### Purpose
 
@@ -289,7 +289,7 @@ The standard research pipeline works in fractional-return space (`position_fract
 All parameters live in `PortfolioResearchConfig.futures_sim` (`FuturesSimConfig`):
 
 ```python
-from portfolio_research.config import (
+from research.portfolio.config import (
     FuturesSimConfig, FuturesInstrumentSpec, LeverageMode
 )
 
@@ -363,9 +363,9 @@ All written to `output_root / {phase} / futures_sim /`:
 
 ### Code entrypoints
 
-- `portfolio_research/futures_sim.py` — `run_futures_sim()` (main function), `_simulate_ticker_bars()`, `_emit_discrete_tearsheet()`, `_emit_tracking_error_summary()`
-- `portfolio_research/config.py` — `FuturesSimConfig`, `FuturesInstrumentSpec`, `LeverageMode`
-- `portfolio_research/pipelines/portfolio_test.py` — hook in `_evaluate_phase()` after `combined_positions` is clipped, before standard return calculation
+- `research/portfolio/futures_sim.py` — `run_futures_sim()` (main function), `_simulate_ticker_bars()`, `_emit_discrete_tearsheet()`, `_emit_tracking_error_summary()`
+- `research/portfolio/config.py` — `FuturesSimConfig`, `FuturesInstrumentSpec`, `LeverageMode`
+- `research/portfolio/pipelines/portfolio_test.py` — hook in `_evaluate_phase()` after `combined_positions` is clipped, before standard return calculation
 
 ---
 
@@ -380,4 +380,4 @@ All written to `output_root / {phase} / futures_sim /`:
 
 **See also:** [weight layer](weight_layer.md), [base model](base_model.md), [vault](../Vault/vault.md), [Cache architecture](../Cache/architecture.md), [Cache user guide](../Cache/user_guide.md) (portfolio workflow; portfolio-addition summary cross-linked there)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

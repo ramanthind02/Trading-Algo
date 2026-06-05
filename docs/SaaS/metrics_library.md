@@ -4,7 +4,7 @@
 
 This document defines how performance and risk metrics (e.g. Sharpe, Sortino, drawdown statistics) are computed and exposed across research jobs, portfolios, and product API surfaces.
 
-The authoritative implementation is the **external package `quantfoundry_core`** (installed dependency, imported as `quantfoundry_core.metrics` / `quantfoundry_core.robustness`). The repo-local `metrics/` package is a **thin compatibility shell** — it re-exports the scalar Sharpe/Sortino helpers from `feature_selection.validation.objective_metrics` (which are themselves backed by `quantfoundry_core.metrics`) plus a few local equity/risk helpers. See §7–§8.
+The authoritative implementation is the **external package `quantfoundry_core`** (installed dependency, imported as `quantfoundry_core.metrics` / `quantfoundry_core.robustness`). Scalar Sharpe/Sortino helpers live in `features.validation.objective_metrics` (themselves backed by `quantfoundry_core.metrics`); a few local equity/risk helpers live in `lib.metrics`. The former top-level `metrics/` compatibility shell has been **deleted**. See §7–§8.
 
 Scope:
 
@@ -132,9 +132,9 @@ The metrics **row vocabulary** from QuantStats `reports.metrics(..., display=Fal
 
 **In-repo consumers (verified):**
 
-- `metrics/plotting/graphing/quantstats_reports.py` imports `AlignedMetricsReport`, `ReportMode`, `ReturnsCompounding`, `compute_aligned_performance_metrics` directly from `quantfoundry_core.metrics`.
-- `feature_research/research_table_exports.py` imports `ReturnsValidationError`, `compute_rolling_sharpe`.
-- `feature_selection/validation/objective_metrics.py` imports `compute_scalar_metric`, `MetricName`, `ReturnsCompounding`, `ReturnsValidationError` and wraps them as the `metric_sharpe`/`metric_sortino`/`metric_calmar`/… scalar helpers (with local edge-case fallbacks).
+- `lib/plotting/graphing/quantstats_reports.py` imports `AlignedMetricsReport`, `ReportMode`, `ReturnsCompounding`, `compute_aligned_performance_metrics` directly from `quantfoundry_core.metrics`.
+- `research/feature/research_table_exports.py` imports `ReturnsValidationError`, `compute_rolling_sharpe`.
+- `features/validation/objective_metrics.py` imports `compute_scalar_metric`, `MetricName`, `ReturnsCompounding`, `ReturnsValidationError` and wraps them as the `metric_sharpe`/`metric_sortino`/`metric_calmar`/… scalar helpers (with local edge-case fallbacks).
 
 **Catalog**
 
@@ -142,14 +142,16 @@ Static tuples **`BASIC_ROWS_STRATEGY_ONLY`** plus **`EXTRA_FULL_ROWS`** (both ex
 
 ---
 
-## 8. Repo-local `metrics/` compatibility shell
+## 8. Local `lib.metrics` helpers
 
-The repo-local `metrics/` package is **not** an independent source of truth for performance formulas. `metrics/__init__.py` re-exports only:
+There is **no** repo-local barrel that re-exports performance formulas — the old top-level `metrics/` package (including its `metrics/__init__.py` shell and `metrics/performance/` scalar-class wrappers `SharpeRatio`/`SortinoRatio`) has been **deleted**. Performance scalars come from `features.validation.objective_metrics` (`metric_sharpe`, `metric_sortino`, …, backed by `quantfoundry_core.metrics`).
 
-- `metric_sharpe`, `metric_sortino` from `feature_selection.validation.objective_metrics` (themselves backed by `quantfoundry_core.metrics`), and
-- local equity/risk helpers: `cumulative_returns`, `equity_curve`, `equity_peak` (from `metrics/equity/`) and `drawdown_series`, `max_drawdown` (from `metrics/risk/`).
+The only local helpers are the small risk/equity utilities re-exported by `lib/metrics/__init__.py`:
 
-The former `metrics/performance/` scalar-class wrappers (`SharpeRatio`, `SortinoRatio`) have been removed — the directory now contains no source modules, and those formulas are superseded by `quantfoundry_core.metrics` reached through `objective_metrics.py`. Plotting/tearsheet code under `metrics/plotting/graphing/` consumes `quantfoundry_core.metrics` directly.
+- `cumulative_returns`, `equity_peak` (from `lib/metrics/equity.py`), and
+- `drawdown_series`, `max_drawdown` (from `lib/metrics/drawdown.py`).
+
+(The former `equity_curve` alias was dropped.) Plotting/tearsheet code under `lib/plotting/graphing/` consumes `quantfoundry_core.metrics` directly.
 
 Layering for any pure-NumPy/pandas worker variant must still preserve **`AlignedMetricsReport`** keys:
 
@@ -172,4 +174,4 @@ normalized returns + periods_per_year
 
 When those are fixed, add a subsection here and mirror field lists in `technical_design.md` if exposed on HTTP APIs.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

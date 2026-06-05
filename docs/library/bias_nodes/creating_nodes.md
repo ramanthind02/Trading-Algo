@@ -91,8 +91,8 @@ Example: `rsi_signal_D_lookback_14`
 from typing import List
 import numpy as np
 from nodes import BiasNode
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 
 class MyNode(BiasNode):
     lookback_param_names = frozenset({"lookback"})
@@ -126,11 +126,11 @@ class MyNode(BiasNode):
 
 > [!tip] When to use Cython
 > Use Cython helpers for numeric hot-paths called every bar (rolling stats, EMA, ATR, RSI).
-> Do **not** import from `cython_nodes` directly — always use `utils.compute.fast_nodes` or `utils.compute.fast_stats`, which auto-fallback to pure Python.
+> Do **not** import from `cython_nodes` directly — always use `lib.compute.fast_nodes` or `lib.compute.fast_stats`, which auto-fallback to pure Python.
 
-Key helpers (`utils/compute/fast_nodes.py`): `compute_atr_fast`, `compute_ema_fast`, `compute_rsi_initial_fast`, `update_rsi_fast`, `compute_high_low_channel_fast`, `compute_momentum_fast`, `compute_roc_fast`
+Key helpers (`lib/compute/fast_nodes.py`): `compute_atr_fast`, `compute_ema_fast`, `compute_rsi_initial_fast`, `update_rsi_fast`, `compute_high_low_channel_fast`, `compute_momentum_fast`, `compute_roc_fast`
 
-Build: `python utils/compute/cython/setup_cython.py build_ext --inplace`
+Build: `python lib/compute/cython/setup_cython.py build_ext --inplace`
 
 The node API (`_compute_candle`) is unchanged — only the inner math moves into a helper.
 
@@ -140,7 +140,7 @@ The primary streaming API is still **`add_candle(candle)`** for one `(ticker, ti
 
 ### Multi-ticker nodes (supported today)
 
-Use [utils/cache/runtime/cross_ticker_store.py](../../../utils/cache/runtime/cross_ticker_store.py) — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**. The older `utils/data/cross_ticker_store.py` path remains only as a compatibility shim.
+Use [lib/cache/runtime/cross_ticker_store.py](../../../lib/cache/runtime/cross_ticker_store.py) — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**. The older `utils/data/cross_ticker_store.py` path remains only as a compatibility shim.
 
 #### Params contract (required)
 
@@ -153,7 +153,7 @@ Use [utils/cache/runtime/cross_ticker_store.py](../../../utils/cache/runtime/cro
 2. In `_compute_candle`, fetch the secondary ticker candle by **exact** datetime alignment:
 
 ```python
-from utils.cache.runtime.cross_ticker_store import CrossTickerDataStore
+from lib.cache.runtime.cross_ticker_store import CrossTickerDataStore
 
 self._store = CrossTickerDataStore.get_instance()
 other = self._store.get_candle(Ticker.NQ, candle.tf, candle.datetime)
@@ -225,7 +225,7 @@ Rather than building a new indicator from scratch, you can **wrap existing bias 
 
 It is fully compatible with the standard `bias_spec` / `extract_features_for_bias_node` / vault paths — no infrastructure changes needed.
 
-For feature research, edit **`load_config()`** in `feature_research.config` where all continuous and signed-signal specs are assembled. Use **`build_filter_gate_bias_spec`** only in tests or helpers when you need the composite dict shape without duplicating keys.
+For feature research, edit **`load_config()`** in `research.feature.config` where all continuous and signed-signal specs are assembled. Use **`build_filter_gate_bias_spec`** only in tests or helpers when you need the composite dict shape without duplicating keys.
 
 Full reference: [[bias_nodes/composed_nodes]].
 
@@ -253,4 +253,4 @@ Full reference: [[bias_nodes/composed_nodes]].
 - [[Deployment/live_multi_timeframe]] — live fetch schedule and rebalance loop
 - [[Cache/architecture]] — central candle/bias cache design and datetime-driven portfolio API
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

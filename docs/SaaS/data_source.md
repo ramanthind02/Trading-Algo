@@ -122,7 +122,7 @@ SaaS mirrors this repository's `data_platform` stack:
 - **Source adapters**: `data_platform/providers/{norgate,ib,mt5,yahoo}/`.
 - **Source-priority reconciliation**: `data_platform/core/{source_priority,reconciler,provenance}.py`
   + `configs/source_priority.yaml` (see [[multi_source_update_architecture]]).
-- **IB splice primitive** (runtime/engine layer): `utils/cache/runtime/ib_candle_ratio_align.py`.
+- **IB splice primitive** (runtime/engine layer): `lib/cache/runtime/ib_candle_ratio_align.py`.
 - **Live upsert path**: `scripts/enigma_live_forecast.py` (`upsert_tws_candles`).
 
 ## Future state: NautilusTrader
@@ -146,4 +146,4 @@ This rule is encoded in `prepare_ib_rows_for_central_cache_append` and wrapped b
 the `SourcePriorityReconciler`, which flips Norgate→IB via the `norgate_active`
 config flag with no code change.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

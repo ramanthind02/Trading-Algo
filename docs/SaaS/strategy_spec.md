@@ -6,10 +6,10 @@
 > below are the planned QuantFoundry SaaS strategy interface. They are **not**
 > implemented in `Trading-Algo` today. The repo's current alpha-generation unit
 > is the `BiasNode` class hierarchy under `nodes/` (50+ technical indicators,
-> each emitting a feature column), consumed by `feature_selection/base_models/`
+> each emitting a feature column), consumed by `features/models/`
 > and the ensemble stack — not a user-supplied `compute()` function. The caching
 > that exists today is the bias-node cache (`cache/`,
-> `utils/cache/runtime/bias_node_cache.py`, `utils/cache_manager.py`), which is
+> `lib/cache/runtime/bias_node_cache.py`, `lib/cache/runtime/cache_manager.py`), which is
 > unrelated to the strategy/research cache tiers in §6. Treat this whole document
 > as the target contract for the hosted product.
 
@@ -419,4 +419,4 @@ The cache key for strategies with dependencies will include a `dependency_versio
 
 This feature is deferred because it requires the dependency graph infrastructure and changes to both the registration pipeline and the sandbox build process. These are non-trivial additions that would block MVP delivery.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

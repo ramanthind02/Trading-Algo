@@ -6,7 +6,7 @@ This document specifies the live monitoring suite for deployed strategies and po
 
 > **Is this strategy still generating the edge I researched, or has it stopped working?**
 
-**Implementation status (current code):** the only part of this suite implemented in the repo today is the **retrospective holdout monitoring** in §3.5, backed by `portfolio_research/holdout/strategy_monitoring.py` and `portfolio_research/holdout/monitoring_policy.py`. It re-runs the four `ValidationRobustnessReport` legs (Sharpe comparison, CUSUM, rolling Sharpe z-score, equity curve bands) on a trailing window and produces an advisory traffic light — it does not auto-cull. The continuously-running live monitors below (SPRT, drawdown probability cone, signal-level monitors, automatic sizing schedule) are **product design specifications**, not yet wired into a live deployment loop. Treat sections 4–10 as the target design.
+**Implementation status (current code):** the only part of this suite implemented in the repo today is the **retrospective holdout monitoring** in §3.5, backed by `research/portfolio/holdout/strategy_monitoring.py` and `research/portfolio/holdout/monitoring_policy.py`. It re-runs the four `ValidationRobustnessReport` legs (Sharpe comparison, CUSUM, rolling Sharpe z-score, equity curve bands) on a trailing window and produces an advisory traffic light — it does not auto-cull. The continuously-running live monitors below (SPRT, drawdown probability cone, signal-level monitors, automatic sizing schedule) are **product design specifications**, not yet wired into a live deployment loop. Treat sections 4–10 as the target design.
 
 Related documents:
 - `docs/SaaS/robustness_tests/in_sample.md` — IS test suite
@@ -79,7 +79,7 @@ These parameters cannot be edited once the strategy is deployed. If a researcher
 
 ## 3.5 Portfolio research holdout (retrospective)
 
-When the validation four-test suite runs in **portfolio research holdout** (`portfolio_research/holdout/strategy_monitoring.py`, policy in `portfolio_research/holdout/monitoring_policy.py`), the four tests are **Sharpe comparison, CUSUM, rolling Sharpe z-score, and equity curve bands** (the `ValidationRobustnessReport` legs), and the windows differ from a naive “full holdout block” comparison:
+When the validation four-test suite runs in **portfolio research holdout** (`research/portfolio/holdout/strategy_monitoring.py`, policy in `research/portfolio/holdout/monitoring_policy.py`), the four tests are **Sharpe comparison, CUSUM, rolling Sharpe z-score, and equity curve bands** (the `ValidationRobustnessReport` legs), and the windows differ from a naive “full holdout block” comparison:
 
 - **Reference μ:** validation period only (default `validation_window`, ~2018–2022) — uncontaminated OOS drift; not rolled forward.
 - **Reference σ:** train + validation pooled for precision; if period volatilities differ by more than the regime-shift threshold (default 30%, `reference_vol_regime_shift_threshold`), σ is weighted toward validation (default 70%, `reference_vol_recent_weight_on_shift`).
@@ -374,4 +374,4 @@ class MonitoringSnapshot:
 
 All monitors update daily after the trading session closes. The SPRT and CUSUM are incremental — they carry state from the previous bar and update in O(1) per bar. The drawdown cone is computed once at deployment and looked up by current drawdown level. Signal monitors require a rolling window; all are sub-second on typical strategy histories. (This per-bar live loop is the design target; the implemented retrospective equivalent runs the four validation legs at each month-end — see §3.5 and `portfolio_holdout.md` §2.0.)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

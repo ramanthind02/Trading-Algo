@@ -2,7 +2,7 @@
 
 > **Status: forward-looking spec — NOT yet implemented.** Transaction costs are
 > currently **not modelled** anywhere in the `Trading-Algo` vectorized return
-> path. The portfolio simulation `portfolio_research/futures_sim.py`
+> path. The portfolio simulation `research/portfolio/futures_sim.py`
 > (`run_futures_sim`) computes instrument returns and positions but applies **no
 > commission, slippage, or spread deduction**; the only "cost" it reports is the
 > integer-rounding tracking error vs a fractional-contract baseline. The
@@ -184,4 +184,4 @@ A strategy where cost drag exceeds 25% of the net Sharpe is warned in the IS rob
 
 **Financing costs:** For leveraged positions exceeding 1.0× capital, financing costs apply. For futures which are inherently leveraged instruments, the carry is embedded in the futures basis rather than an explicit financing charge. Not modelled separately in MVP.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

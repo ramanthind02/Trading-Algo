@@ -12,7 +12,7 @@
 
 This document describes the ordered sequence of steps from project creation to live deployment in the planned product. It is the practical companion to the detailed specifications in the other docs — it tells you what to do and in what order, with links to where each step is specified.
 
-For local `Trading-Algo` work, treat the robustness documents under `docs/SaaS/robustness_tests/` as the reference for the strategy-research methodology, and §8 below as the map to the actual `feature_research/` and `portfolio_research/` entrypoints. The local `feature_research/` package follows a three-phase model (`in_sample` / `oos` / `validation`) feeding a vault, which `portfolio_research/` then assembles and tests.
+For local `Trading-Algo` work, treat the robustness documents under `docs/SaaS/robustness_tests/` as the reference for the strategy-research methodology, and §8 below as the map to the actual `research/feature/` and `research/portfolio/` entrypoints. The local `research/feature/` package follows a three-phase model (`in_sample` / `oos` / `validation`) feeding a vault, which `research/portfolio/` then assembles and tests.
 
 ---
 
@@ -27,7 +27,7 @@ On project creation:
 - **This boundary is locked once the first strategy training job is submitted**
 
 Zone model specification: `zone_manager.md`  
-UI: a dedicated research-workspace UI spec is planned but not yet present in `docs/`. The current local UI is the Flask app at `frontend/app.py` backed by `feature_research/ui` and `portfolio_research/ui` — see `ui_ux.md`.
+UI: a dedicated research-workspace UI spec is planned but not yet present in `docs/`. The current local UI is the Flask app at `frontend/app.py` backed by `research/feature/ui` and `research/portfolio/ui` — see `ui_ux.md`.
 
 ### Step 2: Configure strategy-level zones
 
@@ -124,7 +124,7 @@ Before running the portfolio addition gate:
 
 This is an advisory tool, not a gate. Its purpose is to give the researcher early signal before the more formal portfolio addition gate runs.
 
-Feature/vault correlation (current local tool): `portfolio_research/run_feature_vault_correlation.py` emits a feature-vs-vault correlation CSV (see the repo `CLAUDE.md` Commands section).
+Feature/vault correlation (current local tool): `research/portfolio/run_feature_vault_correlation.py` emits a feature-vs-vault correlation CSV (see the repo `CLAUDE.md` Commands section).
 
 ### Step 10: Portfolio addition gate
 
@@ -276,20 +276,20 @@ shared-venv interpreter (see `CLAUDE.md`).
 
 | Phase | Module / script | Notes |
 |---|---|---|
-| In-sample feature research | `python -m feature_research.in_sample.run_is` | IS phase over the feature universe. |
-| OOS feature research | `feature_research/oos/run_oos.py`, `feature_research/oos/run_oos_permutation.py` | OOS + permutation testing. |
-| Validation | `feature_research/validation/run_validation.py`, `run_validation_permutation.py` | Validation phase. |
-| Inclusion / portfolio-addition gates | `feature_research/run_inclusion_gates.py` (`feature_research/inclusion_gates.py`) | Gate logic before vault commit. |
-| Binning phase | `feature_research/binning/run_phase.py` | Base-model binning. |
-| Portfolio test | `python -m portfolio_research.run_portfolio_test` | Assembles the vault portfolio and runs `portfolio_research/futures_sim.py`. |
-| Prop-firm portfolio | `portfolio_research/run_portfolio_prop_firm.py` | Prop-firm-mode portfolio run. |
-| Weight-layer CV | `portfolio_research/weight_layer_cv.py` (`run_weight_layer_cv`) | IS walk-forward method leaderboard. |
-| Feature/vault correlation | `python -m portfolio_research.run_feature_vault_correlation` | Correlation CSV. |
-| Local UI | `frontend/app.py` (Flask) + `feature_research/ui`, `portfolio_research/ui` | Phase planning, job management, artifact previews, vault commit. |
+| In-sample feature research | `python -m research.feature.in_sample.run_is` | IS phase over the feature universe. |
+| OOS feature research | `research/feature/oos/run_oos.py`, `research/feature/oos/run_oos_permutation.py` | OOS + permutation testing. |
+| Validation | `research/feature/validation/run_validation.py`, `run_validation_permutation.py` | Validation phase. |
+| Inclusion / portfolio-addition gates | `research/feature/run_inclusion_gates.py` (`research/feature/inclusion_gates.py`) | Gate logic before vault commit. |
+| Binning phase | `research/feature/binning/run_phase.py` | Base-model binning. |
+| Portfolio test | `python -m research.portfolio.run_portfolio_test` | Assembles the vault portfolio and runs `research/portfolio/futures_sim.py`. |
+| Prop-firm portfolio | `research/portfolio/run_portfolio_prop_firm.py` | Prop-firm-mode portfolio run. |
+| Weight-layer CV | `research/portfolio/weight_layer_cv.py` (`run_weight_layer_cv`) | IS walk-forward method leaderboard. |
+| Feature/vault correlation | `python -m research.portfolio.run_feature_vault_correlation` | Correlation CSV. |
+| Local UI | `frontend/app.py` (Flask) + `research/feature/ui`, `research/portfolio/ui` | Phase planning, job management, artifact previews, vault commit. |
 
 Validated features are written to the vault (`vault/` prop tree, `vault_personal/`
 for personal; see `docs/library/Vault/vault.md`) under
-`<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble>/`. `portfolio_research/`
+`<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble>/`. `research/portfolio/`
 reads that vault to build the `GlobalPortfolio` and its weight layer.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

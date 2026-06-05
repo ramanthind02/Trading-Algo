@@ -26,7 +26,7 @@ What it does **not** do:
 
 ## Manifest contract
 
-`vault_root` is a string passed to `utils.vault_paths.resolve_vault_root` (repo-relative dirnames such as `vault` or `vault_personal`, or absolute paths). `active_ensemble_dirs` entries must be repo-relative and use the matching top-level folder.
+`vault_root` is a string passed to `lib.core.vault_paths.resolve_vault_root` (repo-relative dirnames such as `vault` or `vault_personal`, or absolute paths). `active_ensemble_dirs` entries must be repo-relative and use the matching top-level folder.
 
 Path:
 
@@ -158,7 +158,7 @@ The status file records:
 Use the explicit runtime helper when you want to force one refresh cycle:
 
 ```python
-from utils.cache import run_live_cache_refresh_now
+from lib.cache import run_live_cache_refresh_now
 
 summary = run_live_cache_refresh_now(
     manifest_path="deployment/config/live_cache_refresh.json",
@@ -175,4 +175,4 @@ You can also pass `dirty_keys=[("ES", "D")]` when testing a narrower replay scop
 - Do not assume every candle write triggers a full refresh. Only dirty keys tracked by the manifest participate.
 - Do not delete historical portfolio parquet files during cleanup. Cleanup only targets stale base-model materializations.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

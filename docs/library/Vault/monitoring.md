@@ -130,7 +130,7 @@ Raises `FileNotFoundError` if no monitoring file exists.
 ## Producing the signal / target series
 
 Because there is no automatic hook, you build the inputs yourself. A `BaseModel`
-(`feature_selection/base_models/feature_base_model.py`) is a node-backed adapter whose
+(`features/models/feature_base_model.py`) is a node-backed adapter whose
 `predict(candles_df, strategy=...)` returns the signed-signal series; pair that with the
 aligned bar returns you trained/evaluated against:
 
@@ -225,4 +225,4 @@ Alert tiers:
 - [[Ensemble/base_model]] — `BaseModel` (signed-signal node adapter)
 - [[Vault/portfolio_snapshots_and_predictions]] — `world`-tagged portfolio prediction store
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

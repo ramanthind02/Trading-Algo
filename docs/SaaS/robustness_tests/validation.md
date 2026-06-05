@@ -8,7 +8,7 @@ This document specifies the robustness test suite for the strategy-level validat
 
 The validation zone is OOS with respect to the strategy's training window, but it sits inside the pre-test research period. It is the researcher's only iterative feedback signal before portfolio admission and before opening the project test zone. In local `Trading-Algo` docs and code, this is the `validation` phase in the canonical `exploration -> validation -> portfolio_addition` flow.
 
-**Implementation anchor (current code):** the validation report type is `quantfoundry_core.robustness.validation.ValidationRobustnessReport`. The repo orchestrates and persists it via `feature_research/validation/robustness_runner.py` (`run_validation_robustness_pipeline`, `run_and_write_validation_robustness`) and renders it via `feature_research/visualization/validation_reports.py`. The same report drives portfolio-research holdout monitoring (`portfolio_research/holdout/`). Field names below reflect the current `ValidationRobustnessReport`; the pseudocode blocks are illustrative of the contract, not verbatim source.
+**Implementation anchor (current code):** the validation report type is `quantfoundry_core.robustness.validation.ValidationRobustnessReport`. The repo orchestrates and persists it via `research/feature/validation/robustness_runner.py` (`run_validation_robustness_pipeline`, `run_and_write_validation_robustness`) and renders it via `research/feature/visualization/validation_reports.py`. The same report drives portfolio-research holdout monitoring (`research/portfolio/holdout/`). Field names below reflect the current `ValidationRobustnessReport`; the pseudocode blocks are illustrative of the contract, not verbatim source.
 
 **What validation can tell you:**
 - Whether IS performance degrades gracefully or catastrophically on OOS data
@@ -455,12 +455,12 @@ class ValidationRobustnessReport:
     interpretation: str                         # sentence-level summary for UI
 ```
 
-Holdout monitoring (`portfolio_research/holdout/monitoring_policy.py`) counts failures across exactly four legs — `sharpe_comparison.passed`, `cusum.passed`, `rolling_sharpe_zscore.passed`, `equity_curve_bands.passed` — to derive its Green/Yellow/Red traffic light.
+Holdout monitoring (`research/portfolio/holdout/monitoring_policy.py`) counts failures across exactly four legs — `sharpe_comparison.passed`, `cusum.passed`, `rolling_sharpe_zscore.passed`, `equity_curve_bands.passed` — to derive its Green/Yellow/Red traffic light.
 
 ### 6.3 Worker Behaviour
 
-All validation tests run synchronously after the validation backtest job completes — no separate job dispatch. The only non-trivial compute is the full grid re-evaluation for rank correlation (K combinations on T_val bars, already fast from the IS sweep infrastructure). Equity curve bands and CUSUM are both O(T_val) with no iteration. In the repo this is `feature_research/validation/robustness_runner.py::run_validation_robustness_pipeline`.
+All validation tests run synchronously after the validation backtest job completes — no separate job dispatch. The only non-trivial compute is the full grid re-evaluation for rank correlation (K combinations on T_val bars, already fast from the IS sweep infrastructure). Equity curve bands and CUSUM are both O(T_val) with no iteration. In the repo this is `research/feature/validation/robustness_runner.py::run_validation_robustness_pipeline`.
 
 Plot data is stored as a structured artifact alongside the validation result and returned to the frontend on demand.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

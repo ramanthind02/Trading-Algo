@@ -55,7 +55,7 @@ bias_spec = {
 }
 ```
 
-Pass this `bias_spec` anywhere you would pass a normal single-node spec — `feature_research`, `extract_features_for_bias_node`, vault control files. No other config changes are needed.
+Pass this `bias_spec` anywhere you would pass a normal single-node spec — `research.feature`, `extract_features_for_bias_node`, vault control files. No other config changes are needed.
 
 ### Params and column naming
 
@@ -116,9 +116,9 @@ Child params are merged into the wrapper's `params` with `f_` / `s_` prefixes (f
 
 `front_bad = max(filter_child.front_bad, signal_child.front_bad)`.
 
-### Research configuration (`feature_research.config`)
+### Research configuration (`research.feature.config`)
 
-Continuous research/eval **`bias_spec`** dicts and **`InSampleDefaultsCatalog`** / **`EvaluationDefaultsCatalog`** are constructed **only in `load_config()`** in `feature_research/config.py` (single place to read and edit).
+Continuous research/eval **`bias_spec`** dicts and **`InSampleDefaultsCatalog`** / **`EvaluationDefaultsCatalog`** are constructed **only in `load_config()`** in `research/feature/config.py` (single place to read and edit).
 
 **`build_filter_gate_bias_spec`** is optional for tests or scripts that need the composite dict shape without hand-copying keys.
 
@@ -176,4 +176,4 @@ Warmup and column naming follow the same pattern as `FilterGateNode` (`f_` / `s_
 - [[Feature_selection/pipeline]] — EDA, permutation, walkforward after the feature column exists
 - [[Cache/user_guide]] — `use_cache` behaviour and cache scopes
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

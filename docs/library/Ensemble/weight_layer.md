@@ -118,7 +118,7 @@ WeightLayer(weight_method="hierarchy_equal", hierarchy_spec=spec, fdm_max=2.0)
 ```
 
 Feature-research portfolio admission rebuilds this spec whenever `ensemble_dirs` changes
-(`feature_research.inclusion_gates.config_with_ensemble_dirs`).
+(`research.feature.inclusion_gates.config_with_ensemble_dirs`).
 
 ### SR adjustment on `hierarchy_equal`
 
@@ -215,4 +215,4 @@ plus a top-level `summary` (mean/min/max FDM, model and cluster counts) and the 
 
 **See also:** [Portfolio pipeline](portfolio.md), [Multi-timeframe](multi_timeframe.md), [Base model](base_model.md)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

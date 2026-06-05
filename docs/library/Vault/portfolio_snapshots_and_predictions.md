@@ -10,14 +10,14 @@
 
 ## Where the entrypoints live
 
-Both functions are implemented in `utils/cache/runtime/portfolio_materialization.py` and re-exported from `ensemble/portfolio.py` (thin delegating wrappers also exist in `ensemble/portfolio_impl/global_portfolio_impl.py`):
+Both functions are implemented in `lib/cache/runtime/portfolio_materialization.py` and re-exported from `ensemble/portfolio.py` (thin delegating wrappers also exist in `ensemble/portfolio_impl/global_portfolio_impl.py`):
 
 ```python
 from ensemble.portfolio import (
     materialize_global_portfolio_predictions,
     prune_inactive_base_model_materializations,
 )
-# equivalently: from utils.cache import (...)
+# equivalently: from lib.cache import (...)
 ```
 
 ## Materialized predictions
@@ -114,4 +114,4 @@ This is why automatic live refresh can prune stale working-vault base-model parq
 
 Do not conflate `period` and `world` in application code.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

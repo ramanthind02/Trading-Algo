@@ -136,10 +136,10 @@ WeightLayerConfig(
 )
 ```
 
-The prop portfolio research config (`portfolio_research/config.py`) enables the
+The prop portfolio research config (`research/portfolio/config.py`) enables the
 SR tilt by default through `weight_layer_kwargs`; portfolio research rebuilds the
 `hierarchy_spec` from `ensemble_dirs`
-(`portfolio_research.config.rebuild_weight_layer_kwargs`,
+(`research.portfolio.config.rebuild_weight_layer_kwargs`,
 `describe_weight_layer_policy`).
 
 ## 5. Builder API (`ensemble/vault/hierarchy_spec.py`)
@@ -214,4 +214,4 @@ layer config change subject to the holdout-contamination doctrine in
 - `tests/unit-tests/ensemble/test_sr_adjustment.py` — SR tilt over the hierarchy.
 - `tests/integration/ensemble/test_asset_first_hierarchy_portfolio.py` — `GlobalPortfolio` fit with an asset-first spec + round-trip serialization.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

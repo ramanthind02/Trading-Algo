@@ -2,11 +2,11 @@
 
 This document is the entry point for the robustness test suite. It shows which tests apply at each research stage, what question each answers, and what happens on a pass or fail.
 
-The statistical primitives (DSR, $N_\text{eff}$, Sharpe CI, rolling-IS/CUSUM, perturbation neighbours, the portfolio-addition gate, validation report, and holdout report) are implemented in the external **`quantfoundry_core`** package (`quantfoundry_core.robustness` and `quantfoundry_core.portfolio_gate`). The repo's `feature_research/` and `portfolio_research/` packages orchestrate them through these three top-level phases:
+The statistical primitives (DSR, $N_\text{eff}$, Sharpe CI, rolling-IS/CUSUM, perturbation neighbours, the portfolio-addition gate, validation report, and holdout report) are implemented in the external **`quantfoundry_core`** package (`quantfoundry_core.robustness` and `quantfoundry_core.portfolio_gate`). The repo's `research/feature/` and `research/portfolio/` packages orchestrate them through these three top-level phases:
 
-- `exploration` — `feature_research/exploration/orchestrate.py::execute_exploration_phase`
-- `validation` — `feature_research/validation/robustness_runner.py`
-- `portfolio_addition` — `feature_research/portfolio_addition/gate_runner.py`
+- `exploration` — `research/feature/exploration/orchestrate.py::execute_exploration_phase`
+- `validation` — `research/feature/validation/robustness_runner.py`
+- `portfolio_addition` — `research/feature/portfolio_addition/gate_runner.py`
 
 Older local names such as `in_sample` and `oos` survive as compatibility aliases (commands, artifact folders), not the preferred mental model.
 
@@ -140,7 +140,7 @@ This is not a test — it is a decision. The selected combination is locked as s
 **When:** After the portfolio is fully composed and weight layer config is locked — opened once.
 **Data used:** Project test zone (project-level holdout, fixed at project creation).
 
-In `portfolio_research/holdout/`, strategy-level monitoring runs the **four** validation-suite tests on a trailing evaluation window — Sharpe comparison, CUSUM, rolling Sharpe z-score, and equity curve bands — and rolls the fail count into a Green/Yellow/Red traffic light (advisory only; the pipeline does not auto-cull in Phase 1). The drawdown cone is a portfolio-level calibration tool (§2.3 of `portfolio_holdout.md`).
+In `research/portfolio/holdout/`, strategy-level monitoring runs the **four** validation-suite tests on a trailing evaluation window — Sharpe comparison, CUSUM, rolling Sharpe z-score, and equity curve bands — and rolls the fail count into a Green/Yellow/Red traffic light (advisory only; the pipeline does not auto-cull in Phase 1). The drawdown cone is a portfolio-level calibration tool (§2.3 of `portfolio_holdout.md`).
 
 | Test | Question | Alert threshold | Permitted action |
 |---|---|---|---|
@@ -200,4 +200,4 @@ Vector shuffle pass (Mode 1)
 Diagnostics throughout: full-grid null percentile, Sharpe CI (flag discord with DSR)
 ```
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

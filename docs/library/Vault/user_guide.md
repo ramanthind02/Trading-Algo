@@ -27,7 +27,7 @@ initialize_vault("vault")  # or None for prop default; use vault_personal / reso
 
 ```python
 from ensemble.vault_manager import create_ensemble_directory
-from utils.core.enums import Direction, TimeFrame
+from lib.core.enums import Direction, TimeFrame
 
 # Nested under a manual weight-hierarchy group (recommended for new ensembles)
 ensemble_dir = create_ensemble_directory(
@@ -70,7 +70,7 @@ and materialize its outputs into the central cache under a `portfolio_id` you ch
 
 ```python
 from ensemble.portfolio import PortfolioWorld, materialize_global_portfolio_predictions
-from utils.cache import ArtifactScope
+from lib.cache import ArtifactScope
 
 materialize_global_portfolio_predictions(
     portfolio=global_portfolio,
@@ -85,7 +85,7 @@ See [[Vault/portfolio_snapshot_usage]] for the full workflow.
 
 ## Research workflow
 
-1. Research the idea in `feature_research` using the canonical three-phase model: `exploration -> validation -> portfolio_addition`.
+1. Research the idea in `research.feature` using the canonical three-phase model: `exploration -> validation -> portfolio_addition`.
 2. Treat `docs/SaaS/robustness_tests/` as the workflow source of truth; local module names are still migrating toward that structure.
 3. If the idea is continuous, convert it into a native signed-signal node before production.
 4. Save the signed-signal feature to the vault only after it has survived the individual research phases.
@@ -100,4 +100,4 @@ See [[Vault/portfolio_snapshot_usage]] for the full workflow.
 - [[Vault/portfolio_snapshot_usage]]
 - [[Deployment/live_cache_refresh]]
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

@@ -19,8 +19,8 @@ Production uses native signed-signal bias nodes that emit `-1/0/+1`. Continuous 
 
 ## Feature selection
 
-- [[Feature_selection/pipeline]] - Current `feature_research` phase model (`exploration -> validation -> portfolio_addition`)
-- [[SaaS/robustness_tests/index]] - Canonical robustness workflow that the local `feature_research` docs now mirror
+- [[Feature_selection/pipeline]] - Current `research.feature` phase model (`exploration -> validation -> portfolio_addition`)
+- [[SaaS/robustness_tests/index]] - Canonical robustness workflow that the local `research.feature` docs now mirror
 - [[Feature_selection/Features/base_feature]] - Base feature contract
 - [[Feature_selection/Features/feature_model]] - Feature model overview
 - [[Feature_selection/Features/rule_based]] - Native discrete feature notes
@@ -74,4 +74,4 @@ Default prop tree: `vault/<D|W|M>/<group>/<ensemble>/` (manual weight-hierarchy 
 
 Example: `rsi_signal_D_lookback_14`
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

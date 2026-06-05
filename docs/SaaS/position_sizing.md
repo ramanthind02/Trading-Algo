@@ -8,7 +8,7 @@ This document describes how the platform converts a strategy's raw forecast sign
 today and the formulas below match the code. §9 ("Account Simulation Model") is a
 **forward-looking spec** — the `AccountState`, `MarginSpec`, margin-call, and
 `AccountSimReport` machinery is design intent and is **not yet built**; the
-current backtest/return path is the vectorized `portfolio_research/futures_sim.py`
+current backtest/return path is the vectorized `research/portfolio/futures_sim.py`
 simulation, which does not model margin, cash, or risk-free accrual (and does not
 model transaction costs — see `transaction_costs.md`).
 
@@ -121,7 +121,7 @@ $$\text{contracts} = \text{round}\!\left(\frac{\text{target\_dollars}}{\text{con
 
 **Rounding methods:** `ROUND` (standard, default), `FLOOR` (conservative — never over-allocate), `CEILING` (aggressive). For a small account where one contract is a significant fraction of capital, rounding error can be large — this is a minimum account size consideration, not a platform bug.
 
-**Granularity consideration:** Micro futures contracts (e.g. MES = $5/point vs ES = $50/point) reduce the minimum position increment tenfold. For accounts below ~$50,000 trading standard ES, micro contracts significantly reduce rounding error. The canonical micro/mini dollar-per-point table lives in `utils/futures_micro_specs.py` (`canonical_listed_micro_futures()`); `micro_contract_fractional_and_whole(...)` is the shared sizing helper used by `portfolio_research/futures_sim.py` and the live prop forecast path, and `PositionSizer.from_listed_micro(...)` exposes it for live sizing.
+**Granularity consideration:** Micro futures contracts (e.g. MES = $5/point vs ES = $50/point) reduce the minimum position increment tenfold. For accounts below ~$50,000 trading standard ES, micro contracts significantly reduce rounding error. The canonical micro/mini dollar-per-point table lives in `utils/futures_micro_specs.py` (`canonical_listed_micro_futures()`); `micro_contract_fractional_and_whole(...)` is the shared sizing helper used by `research/portfolio/futures_sim.py` and the live prop forecast path, and `PositionSizer.from_listed_micro(...)` exposes it for live sizing.
 
 ---
 
@@ -179,7 +179,7 @@ All of these are stored in the `PortfolioSnapshot` at deployment time. The live 
 > `MarginSpec`, `AccountSimConfig`, `AccountSimReport`) do **not** exist in the
 > current codebase, and the present return path does not simulate margin, cash,
 > risk-free accrual, or margin calls. Today, returns are produced by the
-> vectorized `portfolio_research/futures_sim.py` (`run_futures_sim`), which sizes
+> vectorized `research/portfolio/futures_sim.py` (`run_futures_sim`), which sizes
 > positions and computes instrument returns but applies no account-level margin
 > or cash mechanics and no transaction costs. Treat everything below as intended
 > future behaviour.
@@ -305,4 +305,4 @@ class AccountSimReport:
     annualised_return: float
 ```
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

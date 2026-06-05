@@ -14,9 +14,9 @@ The repo supports **two default vault roots** (same on-disk layout under each):
 
 - Any API that takes an explicit `vault_root` path still wins over profile defaults.
 - Repo-relative paths (for example in `PortfolioResearchConfig.ensemble_dirs`, `VaultSaveConfig.existing_ensemble_dir`, and hierarchy helpers) must use the correct **top-level folder** (`vault/...` vs `vault_personal/...`).
-- Feature research: set `VaultSaveConfig.vault_profile` to `"personal"` when `vault_root` is omitted, or run `python -m feature_research.save_feature_to_vault --vault-profile personal`.
+- Feature research: set `VaultSaveConfig.vault_profile` to `"personal"` when `vault_root` is omitted, or run `python -m research.feature.save_feature_to_vault --vault-profile personal`.
 - Portfolio discovery scans each existing root returned by `default_vault_discovery_dirnames()` (prop and personal defaults). If the same ensemble **leaf** name exists in both trees, the first root in that discovery order keeps the entry.
-- Feature-research portfolio admission (`PortfolioSourceConfig`) discovers from **one** vault via `vault_profile` (`prop` → `vault/`, `personal` → `vault_personal/`) or an explicit `vault_root`. `portfolio_research.config.load_config()` defaults to the prop vault only.
+- Feature-research portfolio admission (`PortfolioSourceConfig`) discovers from **one** vault via `vault_profile` (`prop` → `vault/`, `personal` → `vault_personal/`) or an explicit `vault_root`. `research.portfolio.config.load_config()` defaults to the prop vault only.
 
 ## What lives here
 
@@ -69,4 +69,4 @@ Model IDs are generated from the signed-signal bias-node spec so semantic duplic
 - [[Ensemble/weight_layer]]
 - [[Cache/architecture]]
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

@@ -10,7 +10,7 @@ This document specifies the robustness tests for the project-level holdout set (
 
 The portfolio holdout cannot be used to improve portfolio performance. Observing that correlations were higher than expected, or that one strategy dominated returns, does not justify reweighting, removing, or adding strategies beyond what the monitoring tests trigger. Those observations are inputs to future portfolio construction decisions on new research — not adjustments to the current portfolio. The contamination rules from `zone_manager.md` §8 apply in full.
 
-**Implementation anchor (current code):** the holdout report type is `quantfoundry_core.robustness.portfolio_holdout.PortfolioHoldoutReport` (rendered by `portfolio_research/visualization/portfolio_holdout_reports.py`). The implemented retrospective monitoring (§2.0) lives in `portfolio_research/holdout/` (`pipeline.py::run_portfolio_holdout_pipeline`, `strategy_monitoring.py`, `monitoring_policy.py`, `portfolio_holdout_runner.py`). The portfolio-level correlation/IDM/concentration tests in §3–§6 below and their inline pseudocode are spec contracts; the live per-bar `MonitoringSnapshot` loop they reference is the design target from `monitoring.md` (not yet a live deployment loop).
+**Implementation anchor (current code):** the holdout report type is `quantfoundry_core.robustness.portfolio_holdout.PortfolioHoldoutReport` (rendered by `research/portfolio/visualization/portfolio_holdout_reports.py`). The implemented retrospective monitoring (§2.0) lives in `research/portfolio/holdout/` (`pipeline.py::run_portfolio_holdout_pipeline`, `strategy_monitoring.py`, `monitoring_policy.py`, `portfolio_holdout_runner.py`). The portfolio-level correlation/IDM/concentration tests in §3–§6 below and their inline pseudocode are spec contracts; the live per-bar `MonitoringSnapshot` loop they reference is the design target from `monitoring.md` (not yet a live deployment loop).
 
 Related documents:
 - `docs/SaaS/robustness_tests/monitoring.md` — individual strategy monitoring tests applied here retrospectively
@@ -23,7 +23,7 @@ Related documents:
 
 ### 2.0 Implemented windows and traffic light (portfolio research)
 
-In `portfolio_research`, strategy and portfolio monitoring use **two distinct windows**:
+In `research.portfolio`, strategy and portfolio monitoring use **two distinct windows**:
 
 | Window | Span | Role |
 |--------|------|------|
@@ -43,7 +43,7 @@ The full holdout block (e.g. 2023–2026) is still used to **generate** returns;
 
 Monitoring is **advisory** in Phase 1: optional `monitoring_weight_overrides` in config override advisory weights for display only; the pipeline does not auto-cull strategies.
 
-**Artifacts** (under `<output_root>/holdout/`, paths from `portfolio_research/shared/visualization_paths.py`):
+**Artifacts** (under `<output_root>/holdout/`, paths from `research/portfolio/shared/visualization_paths.py`):
 
 - `monitoring_rollup.csv` (+ `monitoring_rollup.json`) — current status per strategy plus prior two month-end traffic lights
 - `strategies/<name>/holdout_robustness_report.json` — current evaluation + `monitoring` block
@@ -51,7 +51,7 @@ Monitoring is **advisory** in Phase 1: optional `monitoring_weight_overrides` in
 - `strategies/<name>/matplotlib/` — plots for the **current** trailing window only
 - `strategies/<name>/<strategy>_full_period_tearsheet.html` — QuantStats tearsheet over **train + validation + full holdout** (DD and metrics for the entire timeline)
 
-The individual strategy monitoring tests (Sharpe comparison, CUSUM, rolling Sharpe z-score, equity curve bands) run per-strategy on the **trailing evaluation window** as specified above (`portfolio_research/holdout/strategy_monitoring.py::run_strategy_holdout_monitoring`). Researchers use the traffic light and history to decide whether to reduce or zero weight — not an automated kill switch.
+The individual strategy monitoring tests (Sharpe comparison, CUSUM, rolling Sharpe z-score, equity curve bands) run per-strategy on the **trailing evaluation window** as specified above (`research/portfolio/holdout/strategy_monitoring.py::run_strategy_holdout_monitoring`). Researchers use the traffic light and history to decide whether to reduce or zero weight — not an automated kill switch.
 
 Beyond individual strategy monitoring, the same tests are applied to the **combined portfolio return stream**. This catches a specific failure mode that per-strategy monitoring cannot: multiple strategies each underperforming by a small, individually-insignificant amount, which collectively represents a portfolio-level structural break.
 
@@ -432,4 +432,4 @@ class PortfolioHoldoutReport:
 
 In the implemented retrospective pipeline (`run_portfolio_holdout_pipeline`), holdout tests run as a batch over the holdout window. The portfolio-level `PortfolioHoldoutReport` (§9.2) and per-strategy traffic-light monitoring (§2.0) are written as portfolio artifacts under `<output_root>/holdout/`. The per-bar `MonitoringSnapshot` aggregation described above is the design target for a continuous live loop; the current pipeline re-evaluates the four validation legs at each calendar month-end instead.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

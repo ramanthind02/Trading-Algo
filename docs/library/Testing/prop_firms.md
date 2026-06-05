@@ -127,7 +127,7 @@ Provider-specific portfolio support:
 - Lucid portfolio research remains available for `25000`
 - Apex portfolio research is available for `50000`
 - FundedNext portfolio research is available and is the default preset for the
-  `portfolio_research` test-pipeline integration (see *Portfolio research integration* below)
+  `research.portfolio` test-pipeline integration (see *Portfolio research integration* below)
 
 Current portfolio assumptions:
 
@@ -340,12 +340,12 @@ stats = compute_portfolio_statistics([result])
 
 Prop-firm portfolio simulation is integrated into the portfolio test pipeline (no separate
 ``run_portfolio_prop_firm.py`` workflow). After train / validation / test phases complete,
-``run_portfolio_test_pipeline`` calls ``portfolio_research.prop_firm_reports`` when
+``run_portfolio_test_pipeline`` calls ``research.portfolio.prop_firm_reports`` when
 ``PortfolioResearchConfig.prop_firm_report.enabled`` is true (default in ``load_config()``).
 
 - **Engine:** ``quantfoundry_core.prop_firm`` (``create_simulator_for_firm``, default preset
   ``fundednext``).
-- **Bridge:** ``portfolio_research.prop_firm_bridge`` converts each ``PhaseResult`` to daily
+- **Bridge:** ``research.portfolio.prop_firm_bridge`` converts each ``PhaseResult`` to daily
   simple returns and aligns them with the return engine.
 - **Reports:** ``prop_firms.reporting.generate_portfolio_report`` writes Markdown, HTML, and
   optional CSVs under ``{output_root}/{phase}/prop_firm/fundednext/``.
@@ -353,13 +353,13 @@ Prop-firm portfolio simulation is integrated into the portfolio test pipeline (n
 Run:
 
 ```bash
-python -m portfolio_research.run_portfolio_test
+python -m research.portfolio.run_portfolio_test
 ```
 
 Or the UI full pipeline (portfolio test stage includes prop-firm reports automatically).
 
 Configure purchase caps, vol multipliers, return-engine scaling, and rolling analysis via
-``PropFirmReportConfig`` on ``portfolio_research.config.load_config()``:
+``PropFirmReportConfig`` on ``research.portfolio.config.load_config()``:
 
 - ``funded_account_cap`` (default ``10**9`` via ``UNLIMITED_FUNDED_ACCOUNT_CAP``): unlimited
   concurrent funded accounts in QF Core. Set to ``None`` to defer to the FundedNext preset
@@ -394,4 +394,4 @@ To add another provider:
 
 This keeps new firms isolated from each other while preserving one common simulation API.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

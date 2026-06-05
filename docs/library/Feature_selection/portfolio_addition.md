@@ -32,13 +32,13 @@ When validation runs with the portfolio addition gate enabled, sleeve-scoped Qua
 Preferred command:
 
 ```bash
-python -m feature_research portfolio_addition
+python -m research.feature portfolio_addition
 ```
 
 Compatibility alias still present:
 
 ```bash
-python -m feature_research oos
+python -m research.feature oos
 ```
 
 Use the first name in docs and discussion. Keep the second only as a migration note.
@@ -92,4 +92,4 @@ Those downstream workflows live in:
 - [[Feature_selection/validation]]
 - [[SaaS/robustness_tests/portfolio_addition]]
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

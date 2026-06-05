@@ -6,7 +6,7 @@ Trading-Algo uses a canonical candle stack:
    - `data/norgate/continuous_futures/adjusted/`
    - `data/norgate/continuous_futures/unadjusted/`
 2. **Normalization (canonical schema)**
-   - `scripts/migrate_norgate_to_ohlc.py` builds `data/ohlc_data/{TICKER}/D|W|M_*.parquet`
+   - `data_platform/providers/norgate/migrate.py` builds `data/ohlc_data/{TICKER}/D|W|M_*.parquet`
 3. **Runtime canonical cache**
    - `.cache/trading_algo/central_cache/` (queried by live/research pipeline)
 
@@ -23,7 +23,7 @@ The runtime/live layer should never read vendor-specific raw formats directly.
 From repo root:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\rebuild_norgate_canonical_store.py
+.\.venv\Scripts\python.exe -m data_platform.providers.norgate.rebuild
 ```
 
 This will:
@@ -36,9 +36,9 @@ This will:
 ### Manual steps
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\fetch_norgate_data.py
-.\.venv\Scripts\python.exe scripts\migrate_norgate_to_ohlc.py
-.\.venv\Scripts\python.exe -m utils.cache.runtime.bootstrap_source_candles --reset-existing
+.\.venv\Scripts\python.exe -m data_platform.providers.norgate.fetch_continuous
+.\.venv\Scripts\python.exe -m data_platform.providers.norgate.migrate
+.\.venv\Scripts\python.exe -m lib.cache.runtime.bootstrap_source_candles --reset-existing
 ```
 
 ### IBKR append policy (live)
@@ -51,5 +51,5 @@ When appending IBKR daily bars to central cache:
 
 See:
 
-- `utils/cache/runtime/ib_candle_ratio_align.py`
+- `lib/cache/runtime/ib_candle_ratio_align.py`
 - `scripts/enigma_live_forecast.py`

@@ -28,12 +28,11 @@ feature-research pipelines and the vault feature-file validators
 
 ## Legacy binning is removed
 
-The class `BinningModelBase` (and `ContinuousBinningModel`, `RuleBasedModel`) still exist
-in [`feature_selection/base_models/base_model.py`](../../../feature_selection/base_models/base_model.py)
-only as **removed-runtime stubs**: their `__init__` raises
-`RuntimeError("Removed runtime; use the signed-signal contract.")`. They are not a usable
-ABC and must not be instantiated. Quantile / decision-tree / rule-based binning is no longer
-part of the production contract.
+The legacy binning classes `BinningModelBase`, `ContinuousBinningModel`, and `RuleBasedModel`
+have been **deleted** (the old `feature_selection/base_models/base_model.py` stub module no
+longer exists; only `features/models/feature_base_model.py` survives). Quantile / decision-tree /
+rule-based binning is no longer part of the production contract — the active path is
+`create_base_model_from_config` (signed-signal), which builds node-backed `BaseModel` instances.
 
 > Older docs used "base model" to describe ensembles of *fitted binning members* with
 > `n_bins` / `constructor_params`. That is legacy context only — the production contract is
@@ -55,4 +54,4 @@ The base-model layer gives [`DiversifiedEnsemble`](../../../ensemble/diversified
 - [Weight layer](weight_layer.md)
 - [Portfolio pipeline](portfolio.md)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
