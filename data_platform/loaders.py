@@ -15,6 +15,7 @@ imports keep working; new code should import from ``data_platform.loaders``.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import List
@@ -52,6 +53,17 @@ def _load_data_cache_key(
         int(pd.Timestamp(end).value),
         mtime_ns,
     )
+
+
+def _nautilus_research_candles_enabled() -> bool:
+    """Whether to route candle loads through the Nautilus research adapter.
+
+    Controlled by the ``NAUTILUS_RESEARCH_CANDLES`` env var (``"1"`` = ON).
+    Default OFF -> legacy provider-parquet path (no behaviour change). When ON,
+    ``load_data`` / ``load_data_multi_ticker`` delegate to
+    ``data_platform.nautilus.candles`` (WP-2 Unit-2, Option B).
+    """
+    return os.environ.get("NAUTILUS_RESEARCH_CANDLES") == "1"
 
 
 def _normalize_loaded_frame(df: pd.DataFrame, start: datetime, end: datetime) -> pd.DataFrame:
@@ -96,6 +108,11 @@ def load_data(
     Raises:
         FileNotFoundError: If the parquet file does not exist.
     """
+    if _nautilus_research_candles_enabled():
+        from data_platform.nautilus.candles import load_data_nautilus
+
+        return load_data_nautilus(ticker, timeframe, start=start, end=end)
+
     file_path = ohlc_data_dir() / ticker.name / f"{timeframe.name}_{ticker.name}.parquet"
     if not file_path.exists():
         raise FileNotFoundError(f"File {file_path} does not exist")
@@ -125,6 +142,17 @@ def load_data_multi_ticker(
     ``use_millisecond_offset`` is deprecated and ignored; the primary key is
     (datetime, ticker) with no per-ticker offset.
     """
+    if _nautilus_research_candles_enabled():
+        from data_platform.nautilus.candles import load_data_multi_ticker_nautilus
+
+        return load_data_multi_ticker_nautilus(
+            tickers,
+            timeframe,
+            start=start,
+            end=end,
+            use_millisecond_offset=use_millisecond_offset,
+        )
+
     all_dfs = []
     for ticker in tickers:
         ticker_df = load_data(ticker, timeframe, start=start, end=end).reset_index()

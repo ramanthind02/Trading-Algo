@@ -9,9 +9,9 @@ flag + equality test). Legacy loaders untouched (deletion = WP-5).
 ## Acceptance gate (from 02_data_layer.md)
 - [ ] `tests/data_platform/test_candles_equivalence.py`: legacy vs Nautilus candles equal for all WP-1 fixture windows.
 - [ ] WP-1 parity (`pytest tests/parity`) green with Nautilus adapter as default source.
-- [ ] Cache populate/read still works.
-- [ ] **Instrument round-trip:** every `InstrumentCatalog` row → valid Nautilus instrument; counts/ids reconcile.  ← Unit 1 (in progress)
-- [ ] NDX 2026 MT5 1-min + tick ingest smoke (Bar ts_init=close + QuoteTick).
+- [ ] Cache populate/read still works.  ← Unit 2 (blocked on fork)
+- [x] **Instrument round-trip:** 67 rows → Nautilus instruments; counts/ids reconcile. ✓ `e662cfe` (6 tests pass)
+- [x] NDX 2026 MT5 1-min + tick ingest smoke (Bar ts_init=close + QuoteTick). ✓ `e662cfe`
 
 ## Phase 1 — DISCOVERY (done; 3 explorers, read-only)
 
@@ -61,4 +61,5 @@ RECOMMEND (B) — exact research parity + native execution bars, cleanest separa
 |----|-------|------|--------|---------------------|-----------------|----------|-------|
 | init | 0 | setup | done | 2 passed / — | no | commit 5044624 | ledger created |
 | p1 | 1 | discovery | done | — | no | 3 explorer manifests | stale paths resolved; fork found |
-| p2 | 2 | unit1 instruments | in_progress | n/a (no research-path edit) | no | — | building data_platform/nautilus/ |
+| p2 | 2 | unit1 instruments + 1b intraday | done | 2 passed/2 passed | no | `e662cfe`, 6 tests | data_platform/nautilus/{catalog,instruments,ingest}.py |
+| -- | 2 | unit2 candle adapter | BLOCKED | — | — | — | awaiting user precision-fork decision (A/B/C) |
