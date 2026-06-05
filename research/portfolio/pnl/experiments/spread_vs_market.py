@@ -288,8 +288,11 @@ def _to_markdown(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> st
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--start", default="2026-01-05", help="UTC window start (date)")
-    ap.add_argument("--end", default="2026-01-09", help="UTC window end (exclusive)")
+    # Defaults pick a window where BOTH M1 bars and bid/ask ticks exist. The MT5
+    # NDX feed has ticks from 2026-01-02 but M1 bars only from 2026-02-23, so the
+    # lane (which needs bars to drive sessions) requires a >= 2026-02-23 window.
+    ap.add_argument("--start", default="2026-02-24", help="UTC window start (date)")
+    ap.add_argument("--end", default="2026-02-26", help="UTC window end (exclusive)")
     ap.add_argument("--fraction", type=float, default=1.0)
     ap.add_argument(
         "--out-dir",

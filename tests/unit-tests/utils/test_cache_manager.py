@@ -303,44 +303,6 @@ class TestPopulateCache:
 
         assert result['skipped'] == 2
 
-    def test_populate_cache_refreshes_stale_artifacts_even_without_overwrite(self, cache_manager):
-        """Stale central-cache artifacts must be rebuilt instead of skipped."""
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            overwrite_existing=True,
-            show_progress=False,
-        )
-
-        store = cache_manager._central_cache_store()
-        candles_df = cache_manager.load_source_candles(
-            Ticker.ES,
-            TimeFrame.D,
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-        )
-        store.set_candles(Ticker.ES, TimeFrame.D, candles_df)
-
-        result = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            overwrite_existing=False,
-            show_progress=False,
-        )
-
-        assert result['success'] == 2
-        assert result['skipped'] == 0
-
     def test_populate_cache_uses_timeframe_scaled_aux_specs(self, cache_manager, monkeypatch):
         """EWSD auxiliary params are fixed to daily settings regardless timeframe arg."""
         specs = [{

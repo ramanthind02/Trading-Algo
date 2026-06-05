@@ -444,14 +444,13 @@ class BiasNode(ABC):
             return None
 
         from lib.cache.runtime.central_cache_errors import (
-            ArtifactLifecycleError,
             ArtifactMissingError,
             CacheCoverageError,
         )
 
         try:
             cached_df = self._read_cached_artifact(start=start, end=end)
-        except (ArtifactLifecycleError, ArtifactMissingError, CacheCoverageError) as exc:
+        except (ArtifactMissingError, CacheCoverageError) as exc:
             if not require_cache:
                 return None
             self._raise_cache_miss(start=start, end=end, reason=str(exc))
@@ -501,14 +500,13 @@ class BiasNode(ABC):
             return None
 
         from lib.cache.runtime.central_cache_errors import (
-            ArtifactLifecycleError,
             ArtifactMissingError,
             CacheCoverageError,
         )
 
         try:
             cached_df = self._read_cached_artifact(start=start, end=end)
-        except (ArtifactLifecycleError, ArtifactMissingError, CacheCoverageError) as exc:
+        except (ArtifactMissingError, CacheCoverageError) as exc:
             if not require_cache:
                 return None
             self._raise_cache_miss(start=start, end=end, reason=str(exc))

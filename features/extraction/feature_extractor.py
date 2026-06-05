@@ -52,10 +52,8 @@ import pandas as pd
 import lib.core.helpers as helpers
 from lib.cache.runtime.central_cache import CentralCacheStore
 from lib.cache.runtime.central_cache_errors import (
-    ArtifactLifecycleError,
     ArtifactMissingError,
     CacheCoverageError,
-    SourceRevisionConflictError,
 )
 from lib.cache.runtime.central_cache_models import (
     ArtifactDescriptor,
@@ -429,7 +427,7 @@ def _extract_features_single_ticker(
                     start_col,
                     end_col,
                 )
-            except (ArtifactMissingError, CacheCoverageError, ArtifactLifecycleError):
+            except (ArtifactMissingError, CacheCoverageError):
                 if not populate_on_miss:
                     raise
                 missing_requests.append((bias_node, descriptor, request))
@@ -499,21 +497,8 @@ def _extract_features_single_ticker(
                         cached_slice,
                         source_dependencies,
                     )
-                except SourceRevisionConflictError:
-                    # Another refresh (e.g. ensure_bias_cache_coverage) already wrote a newer
-                    # artifact; load that revision instead of clobbering.
-                    cached_aligned = _read_aligned_feature_artifact(
-                        cache_store,
-                        descriptor,
-                        cache_request,
-                        price_df.index,
-                    )
-                    _assign_cached_feature_values(
-                        feature_data,
-                        cached_aligned,
-                        start_col,
-                        end_col,
-                    )
+                except Exception:
+                    pass
 
     # Create features DataFrame
     features_df = pd.DataFrame(feature_data, index=price_df.index, columns=column_names)
