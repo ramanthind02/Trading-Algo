@@ -86,6 +86,15 @@ semantics exactly. A missing item is a release blocker.
       require the package installed; this only confirms the source is importable,
       it does NOT connect.
 
+## Connecting + testing against a broker terminal
+
+See **[`CONNECTION_TEST.md`](CONNECTION_TEST.md)** — the operator runbook for connecting the
+adapter to a prop-firm **demo** and validating it end-to-end (`scripts/dev/mt5_adapter_test.py`).
+Covers the **one-terminal-install-per-broker** rule (and the `-10005 IPC timeout` you hit
+otherwise), the `--path` terminal binding, Algo-Trading / market-execution gotchas, the hard DEMO
+guard, the `MT5Config` `path` gap, and the confirmed broker symbol mappings. First validated on
+FTMO-Demo 2026-06-05 (round-trip order passed).
+
 ## How the sandbox config consumes this
 
 `deployment/live/config_mt5_sandbox.py` builds a Nautilus `TradingNodeConfig`

@@ -291,3 +291,52 @@ agreement report, paper-soak results, and the runbook. Legacy cull is WP-5.
 > approach** (which broker rung first — IB paper vs MT5 demo / NDX sandbox — vendoring the
 > mt5connect fork commit, and the soak duration). No funded account is touched at any point in this
 > WP; cutover is reversible until WP-5.
+
+---
+
+## 8. Live adapter connection test — FTMO demo (2026-06-05) ✓ PASSED
+
+Driver: `scripts/dev/mt5_adapter_test.py` (broker-agnostic; `--broker <PREFIX>` reads
+`<PREFIX>_DEMO_*` from `.env`, `--path` selects the terminal install). Run:
+`--broker FTMO --path "C:\Program Files\FTMO Global Markets MT5 Terminal\terminal64.exe"`.
+This is **partial ladder rung-2 evidence** (real broker demo, real order lifecycle) — NOT a
+sandbox (rung 1) and NOT a full strategy/governance run.
+
+**Environment finding (the blocker, now resolved):** MT5's Python bridge drives a *running
+terminal*, and each terminal install ships only its own broker's server list. The single prior
+install was a **Darwinex** terminal (`D0E8…075`, base `Darwinex-Live` only) → `mt5.login("FTMO-Demo")`
+and `login("FundedNext-Server3")` both `-10005 IPC timeout` (server not resolvable). Fix: install
+the broker's OWN MT5 terminal (FTMO Global Markets, data folder `81A933…3850`, base `FTMO-Demo`
+present) and bind to it via `mt5.initialize(path=<that terminal64.exe>)`.
+
+**ADAPTER GAP (additive fix for Unit 1):** `mt5connect.config.MT5Config` has **no `path` field**, and
+`MT5Connection._initialize()` calls bare `mt5.initialize()`. On a multi-terminal machine (live
+Darwinex + demo FTMO) that binds non-deterministically. The test driver works around it by
+pre-`initialize(path=...)` before `MT5Connection.connect()` (a subsequent bare attach binds to the
+same terminal). **Add a `path` field to `MT5Config` + thread it through `_initialize()`** when
+vendoring (edit unit 1). One-node-per-process (§4) still means two brokers = two processes.
+
+**Validated layers (against FTMO-Demo, $100k, lev 1:30, `trade_mode=DEMO`):**
+- L1-3 `MT5Connection` initialize→login→`get_account_info()` ✓
+- L4 `MT5InstrumentProvider.load_symbol` → Nautilus instruments: `US100.cash`→`Cfd` (pp=2),
+  `EURUSD`→`CurrencyPair` (pp=5) ✓
+- L5-6 live tick + H1 `copy_rates_range` ✓ (index CFDs only tick during session hours)
+- L7-8 `MT5DataClient` + `MT5LiveExecutionClient` construct against real NT msgbus/cache ✓
+- L9 **round-trip order via the adapter's exact `order_send` request shape** (DEMO-guarded): BUY
+  0.01 EURUSD @ 1.16150 (IN) → SELL 0.01 @ 1.16145 (OUT), net ≈ -$0.11 (½-spread + 2×-$0.03 comm),
+  **account flat, 0 residual** (verified via `history_deals_get`). ✓
+
+**Gotchas captured (fixed in the driver):** (a) FTMO terminal needs **Algo Trading ON** or
+`order_send`→`10027`; (b) under MT5 *market execution* the `order_send` result returns `deal=0
+price=0` even on success — the fill only appears in `history_deals_get` a beat later (treat history
+as authoritative + settle-delay before flat check). HARD DEMO guard (`trade_mode==DEMO`) aborts
+before any order on a non-demo account.
+
+**Symbol universe confirmed (166 symbols) → `configs/mt5_brokers.yaml` `ftmo` now `confirmed: true`:**
+`NQ→US100.cash, ES→US500.cash, YM→US30.cash, DAX→GER40.cash, FTSE→UK100.cash, GC→XAUUSD,
+SI→XAGUSD, CL→USOIL.cash, NG→NATGAS.cash`, FX 1:1. Every canonical matched exactly one native
+symbol (enumerated, not guessed). `brokers.resolve('ftmo',…)` / `canonical_for` verified.
+
+**Still pending for rung-2 proper:** index-CFD order during session hours (today closed), partial-close
+/ direction-flip / weekend-flatten semantics, governance (approval/audit/Telegram) firing, and the
+sandbox rung-1 (`SandboxExecutionClient`) which was skipped by going straight to the demo broker.

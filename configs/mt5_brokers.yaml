@@ -56,37 +56,36 @@ brokers:
       EURCHF: EURCHF
 
   # -------------------------------------------------------------------------
-  # FTMO — prop-firm broker, NOT yet connected. Symbols are PLACEHOLDERS to be
-  # confirmed by discover_symbols('ftmo') against a SEPARATE FTMO terminal
-  # instance (the live Darwinex terminal must NOT be used). Every entry is
-  # UNKNOWN until confirmed; resolve() will raise rather than trade a guess.
-  #
-  # `candidates` are the names to probe during discovery. Known FTMO naming
-  # tendencies (to verify, not assume): indices often use `US100`/`US500`/`US30`
-  # or `NAS100`/`SP500`/`DOW`; metals `XAUUSD`/`XAGUSD`; oil `USOIL`/`XTIUSD`.
+  # FTMO — prop-firm broker. Mappings CONFIRMED 2026-06-05 by enumerating
+  # mt5.symbols_get() (166 symbols) on the SEPARATE FTMO Global Markets MT5
+  # terminal (C:\Program Files\FTMO Global Markets MT5 Terminal) logged into
+  # the FTMO-Demo account — NOT the live Darwinex terminal. Each canonical
+  # matched exactly one native symbol (no guessing). FTMO uses a `.cash` suffix
+  # for index/energy CFDs; metals + FX are unsuffixed. CL = WTI -> USOIL.cash
+  # (Brent is UKOIL.cash, not used here).
   # -------------------------------------------------------------------------
   ftmo:
     display_name: "FTMO"
-    server: "UNKNOWN"                   # fill from FTMO_DEMO_SERVER in .env at connect time
-    confirmed: false
-    confirmed_on: null
+    server: "FTMO-Demo"                 # creds live in .env (FTMO_DEMO_*), never here
+    confirmed: true
+    confirmed_on: "2026-06-05"
     symbols:
-      ES:   UNKNOWN     # candidates: SP500, US500, USA500, SPX500
-      NQ:   UNKNOWN     # candidates: US100, NAS100, NDX, USTEC, USATECH
-      YM:   UNKNOWN     # candidates: US30, DOW, WS30, USA30
-      DAX:  UNKNOWN     # candidates: GER40, DE40, GDAXI, DAX40
-      FTSE: UNKNOWN     # candidates: UK100, FTSE100
-      GC:   UNKNOWN     # candidates: XAUUSD, GOLD
-      SI:   UNKNOWN     # candidates: XAGUSD, SILVER
-      CL:   UNKNOWN     # candidates: USOIL, XTIUSD, WTI, CL
-      NG:   UNKNOWN     # candidates: XNGUSD, NATGAS, NGAS
-      EURUSD: UNKNOWN   # candidates: EURUSD, EURUSD.r
-      GBPUSD: UNKNOWN
-      USDJPY: UNKNOWN
-      AUDUSD: UNKNOWN
-      USDCHF: UNKNOWN
-      AUDNZD: UNKNOWN
-      EURCHF: UNKNOWN
+      ES:   US500.cash    # S&P 500 CFD
+      NQ:   US100.cash    # Nasdaq 100 CFD
+      YM:   US30.cash     # Dow Jones 30 CFD
+      DAX:  GER40.cash    # DAX 40 CFD
+      FTSE: UK100.cash    # FTSE 100 CFD
+      GC:   XAUUSD        # Gold
+      SI:   XAGUSD        # Silver
+      CL:   USOIL.cash    # WTI Crude CFD
+      NG:   NATGAS.cash   # Natural Gas CFD
+      EURUSD: EURUSD
+      GBPUSD: GBPUSD
+      USDJPY: USDJPY
+      AUDUSD: AUDUSD
+      USDCHF: USDCHF
+      AUDNZD: AUDNZD
+      EURCHF: EURCHF
     candidates:
       ES:   [SP500, US500, USA500, SPX500]
       NQ:   [US100, NAS100, NDX, USTEC, USATECH]
