@@ -6,8 +6,9 @@ module wraps it verbatim behind a ``PnLEngine`` protocol so call sites can be
 routed through one indirection without changing behaviour.
 
 The ``nautilus`` lane (realistic intraday/quote-driven execution via
-``BacktestEngine``) is WP-3 Unit 2 and is not yet implemented — it is blocked on
-the WP-2 Unit-2 data-precision fork.
+``BacktestEngine``) lives in :mod:`research.portfolio.pnl.nautilus_engine` and is
+opt-in (``pnl_engine="nautilus"``); it is additive and never overwrites this
+vectorized baseline.
 """
 from __future__ import annotations
 
@@ -64,10 +65,11 @@ def make_pnl_engine(kind: str) -> PnLEngine:
     if kind == "vectorized":
         return VectorizedPnLEngine()
     if kind == "nautilus":
-        raise NotImplementedError(
-            "WP-3 Unit 2 (Nautilus PnL lane) — blocked on WP-2 Unit-2 "
-            "data-precision fork; see _workflow_state/WP-2.md"
-        )
+        # Imported lazily so the default (vectorized) path never pays the
+        # Nautilus import cost, and the parity baseline stays decoupled.
+        from research.portfolio.pnl.nautilus_engine import NautilusPnLEngine
+
+        return NautilusPnLEngine()
     raise ValueError(
         f"Unknown pnl_engine kind {kind!r}; expected 'vectorized' or 'nautilus'."
     )
