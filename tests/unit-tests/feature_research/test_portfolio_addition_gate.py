@@ -11,10 +11,10 @@ import pandas as pd
 import pytest
 from quantfoundry_core.portfolio_gate import compute_portfolio_addition_gate
 
-from feature_research.config import load_config
-from utils.core.enums import Ticker
-from feature_research.config import PortfolioAdditionGateConfig
-from feature_research.portfolio_addition.gate_runner import (
+from research.feature.config import load_config
+from lib.core.enums import Ticker
+from research.feature.config import PortfolioAdditionGateConfig
+from research.feature.portfolio_addition.gate_runner import (
     PortfolioGateInputs,
     _GatePhaseTask,
     _align_series_to_arrays,
@@ -29,8 +29,8 @@ from feature_research.portfolio_addition.gate_runner import (
     run_and_write_portfolio_addition_gate,
     write_portfolio_addition_summary,
 )
-from portfolio_research.config import PortfolioResearchConfig
-from portfolio_research.pipelines.portfolio_test import PhaseResult
+from research.portfolio.config import PortfolioResearchConfig
+from research.portfolio.pipelines.portfolio_test import PhaseResult
 
 
 def _synthetic_inputs(*, n: int = 260, seed: int = 11) -> PortfolioGateInputs:
@@ -162,7 +162,7 @@ def test_composite_pass_false_when_risk_fails_despite_sr() -> None:
 
 
 def test_gc_only_portfolio_discovery_includes_gc_breakout_only() -> None:
-    from feature_research.config import (
+    from research.feature.config import (
         PortfolioSourceConfig,
         discover_portfolio_source_ensemble_dirs,
     )
@@ -180,10 +180,10 @@ def test_build_portfolio_config_for_gate_allows_empty_baseline_for_gc_only(
 ) -> None:
     from dataclasses import replace
 
-    from feature_research.config import PortfolioSourceConfig
-    from feature_research.ui.planner import apply_ui_request, build_ui_request
-    from feature_research.shared import FeatureResearchPhase
-    from portfolio_research.config import EnsembleDirsPolicy
+    from research.feature.config import PortfolioSourceConfig
+    from research.feature.ui.planner import apply_ui_request, build_ui_request
+    from research.feature.shared import FeatureResearchPhase
+    from research.portfolio.config import EnsembleDirsPolicy
 
     config = load_config()
     request = build_ui_request(
@@ -205,7 +205,7 @@ def test_build_portfolio_config_for_gate_allows_empty_baseline_for_gc_only(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.portfolio_addition.gate_runner._baseline_ensemble_dirs_for_gate",
+        "research.feature.portfolio_addition.gate_runner._baseline_ensemble_dirs_for_gate",
         lambda _research: {},
     )
     portfolio_config = build_portfolio_config_for_gate(configured)
@@ -383,7 +383,7 @@ def test_write_sleeve_tearsheet_artifacts_respects_config(
         return (tmp_path / "sleeve_tearsheets_equity_indices_mean_reversion_indices" / "x.html",)
 
     monkeypatch.setattr(
-        "feature_research.portfolio_addition.gate_runner.write_sleeve_level_tearsheets",
+        "research.feature.portfolio_addition.gate_runner.write_sleeve_level_tearsheets",
         _fake_write,
     )
     gate_cfg_on = PortfolioAdditionGateConfig(enabled=True, emit_sleeve_tearsheets=True)
@@ -416,7 +416,7 @@ def test_run_and_write_portfolio_addition_gate_with_monkeypatched_inputs(
         return report, report, inputs, "candidate", None
 
     monkeypatch.setattr(
-        "feature_research.portfolio_addition.gate_runner.run_portfolio_addition_gate_pipeline",
+        "research.feature.portfolio_addition.gate_runner.run_portfolio_addition_gate_pipeline",
         _fake_pipeline,
     )
     artifacts = run_and_write_portfolio_addition_gate(config, output_dir=tmp_path)
@@ -464,7 +464,7 @@ def test_run_gate_phase_tasks_invokes_all_phases(
         )
 
     monkeypatch.setattr(
-        "feature_research.portfolio_addition.gate_runner.run_single_phase_for_prop_firm",
+        "research.feature.portfolio_addition.gate_runner.run_single_phase_for_prop_firm",
         _fake_phase,
     )
     portfolio_config = build_portfolio_config_for_gate(load_config())

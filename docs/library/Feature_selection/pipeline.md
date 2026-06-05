@@ -1,7 +1,7 @@
 # Feature Research Pipeline
 
 > [!note]
-> Status: current library reference for the `feature_research/` migration.
+> Status: current library reference for the `research/feature/` migration.
 
 > [!important]
 > The SaaS robustness docs are the source of truth for the research workflow:
@@ -22,7 +22,7 @@ The current mental model is:
 exploration -> validation -> portfolio_addition -> portfolio_holdout -> monitoring
 ```
 
-Only the first three stages belong to the local `feature_research/` package. The final two are downstream portfolio and live-operation workflows, not additional feature-research phases.
+Only the first three stages belong to the local `research/feature/` package. The final two are downstream portfolio and live-operation workflows, not additional feature-research phases.
 
 ## What each stage answers
 
@@ -56,15 +56,15 @@ Today the codebase already exposes the preferred stage names, even though some c
 
 | Canonical stage | Preferred surface | Compatibility alias still present | Notes |
 |---|---|---|---|
-| Exploration | `feature_research.exploration`, `python -m feature_research exploration` | `in_sample` | Preferred local entrypoint for sweep, visualization, and robustness work. |
-| Validation | `feature_research.validation`, `python -m feature_research validation` | none worth preferring | Uses the locked `eval_bias_spec`. |
-| Portfolio addition | `feature_research.portfolio_addition`, `python -m feature_research portfolio_addition` | `oos` | Some configs, scripts, and artifact paths still say `oos`; treat that as legacy naming only. |
+| Exploration | `research.feature.exploration`, `python -m research.feature exploration` | `in_sample` | Preferred local entrypoint for sweep, visualization, and robustness work. |
+| Validation | `research.feature.validation`, `python -m research.feature validation` | none worth preferring | Uses the locked `eval_bias_spec`. |
+| Portfolio addition | `research.feature.portfolio_addition`, `python -m research.feature portfolio_addition` | `oos` | Some configs, scripts, and artifact paths still say `oos`; treat that as legacy naming only. |
 
 ## Migration rules for reading older docs
 
 - Treat `in_sample` as a compatibility alias for **exploration**.
 - Treat `oos` as a compatibility alias for **portfolio addition**, not as the preferred stage name.
-- Do not treat project holdout or live monitoring as part of `feature_research/`; those belong to the downstream SaaS portfolio workflow.
+- Do not treat project holdout or live monitoring as part of `research/feature/`; those belong to the downstream SaaS portfolio workflow.
 
 ## Production contract
 
@@ -74,7 +74,7 @@ Today the codebase already exposes the preferred stage names, even though some c
 
 ## Portfolio holdout (local)
 
-- Command: `python -m portfolio_research holdout`
+- Command: `python -m research.portfolio holdout`
 - Library page: [[Portfolio_research/holdout]]
 - SaaS spec: [[SaaS/robustness_tests/portfolio_holdout]]
 
@@ -88,3 +88,5 @@ Today the codebase already exposes the preferred stage names, even though some c
 - [[Feature_selection/portfolio_addition]]
 - [[Feature_selection/Features/base_feature]]
 - [[Vault/user_guide]]
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

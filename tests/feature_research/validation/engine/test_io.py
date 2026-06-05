@@ -6,13 +6,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from utils.evaluation.walkforward.io import (
+from research.evaluation.walkforward.io import (
     _build_selected_params_detailed,
     resolve_walkforward_output_dir,
     write_walkforward_artifacts,
 )
-from utils.evaluation.walkforward.runner import WalkforwardRunReport
-from utils.evaluation.walkforward.selected_params_codec import serialize_selected_params
+from research.evaluation.walkforward.runner import WalkforwardRunReport
+from research.evaluation.walkforward.selected_params_codec import serialize_selected_params
 
 
 def _build_report() -> WalkforwardRunReport:

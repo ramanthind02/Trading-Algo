@@ -1,13 +1,13 @@
 from nodes import BiasNode
-from utils.core.models import Candle
-from utils.core.enums import Bias, Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Bias, Ticker, TimeFrame
 from typing import ClassVar, List, Optional
 import numpy as np
 from collections import deque
 
 # Try to import Cython optimized version
 try:
-    from utils.compute.fast_nodes import compute_atr_fast, CYTHON_NODES_AVAILABLE
+    from lib.compute.fast_nodes import compute_atr_fast, CYTHON_NODES_AVAILABLE
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
 

@@ -5,7 +5,7 @@ Local command surface for project test-zone evaluation and monitoring.
 ## Command
 
 ```bash
-python -m portfolio_research holdout
+python -m research.portfolio holdout
 ```
 
 Runs, in order:
@@ -16,7 +16,7 @@ Runs, in order:
 
 ## Configuration
 
-Edit `portfolio_research/config.py`:
+Edit `research/portfolio/config.py`:
 
 - `portfolio_fit_mode`: `ROLLING_HOLDOUT` (default) or `SINGLE_FIT`
 - `ROLLING_HOLDOUT` runs **two** folds only:
@@ -70,3 +70,5 @@ The workspace dashboard (shared with feature research via `frontend/static/resea
 | Raw data | CSV/JSON exports not shown as primary panels |
 
 Use phase tabs and section navigation to preview tearsheets (embed), summary JSON panels, and tables without hunting filenames in a flat list.
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

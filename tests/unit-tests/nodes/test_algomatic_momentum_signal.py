@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from nodes.momentum.core.algomatic_momentum_signal import AlgomaticMomentumSignal
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(day: int, *, c: float, h: Optional[float] = None) -> Candle:

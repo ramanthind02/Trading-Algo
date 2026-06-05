@@ -7,7 +7,7 @@ from ensemble.portfolio_impl.portfolio_returns import (
     calculate_idm_from_returns,
     calculate_returns_from_candles,
 )
-from utils.core.enums import TimeFrame, Ticker
+from lib.core.enums import TimeFrame, Ticker
 
 
 def test_calculate_returns_from_candles_normalizes_tickers_and_computes_returns() -> None:

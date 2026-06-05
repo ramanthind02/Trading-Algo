@@ -22,15 +22,15 @@ except ImportError:
 
 ensure_project_root_on_path()
 
-from utils.core.logger import get_logger
-from utils.core.enums import TimeFrame, Ticker
-from utils.core.models import Candle
-import utils.core.helpers as helpers
+from lib.core.logger import get_logger
+from lib.core.enums import TimeFrame, Ticker
+from lib.core.models import Candle
+import lib.core.helpers as helpers
 from deployment.forecast_live_inputs import ForecastLiveInputs
 from deployment.forecast_prediction_runtime import ForecastPredictionRuntime
 from deployment.mt5_data_connector import ForecastMT5DataConnector
 from deployment.telegram_notifier import TelegramNotifier
-from utils.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
+from lib.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
 
 logger = get_logger(__name__)
 NY_TZ = ZoneInfo("America/New_York")

@@ -7,9 +7,9 @@ from types import ModuleType, SimpleNamespace
 import pandas as pd
 import pytest
 
-from utils.cache.runtime.central_cache import CentralCacheStore
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.cache.runtime.central_cache import CentralCacheStore
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _install_forecast_server_stubs() -> None:

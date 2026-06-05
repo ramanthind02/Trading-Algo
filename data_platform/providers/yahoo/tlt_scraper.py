@@ -13,7 +13,7 @@ _PARENT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)
 if _PARENT_DIR not in sys.path:
     sys.path.append(_PARENT_DIR)
 
-from utils.core.enums import TimeFrame, Ticker
+from lib.core.enums import TimeFrame, Ticker
 
 
 def _get_project_root() -> Path:

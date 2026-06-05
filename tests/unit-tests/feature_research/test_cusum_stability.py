@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from quantfoundry_core.robustness import rolling_is_performance
 
-from feature_research.visualization.cusum_stability import (
+from research.feature.visualization.cusum_stability import (
     build_rolling_cusum_frame,
     plot_rolling_cusum_stability_csv,
     rolling_sharpe_end_indices,

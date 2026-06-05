@@ -1,0 +1,18 @@
+{
+  "baseline.calmar": 0.7758536424395944,
+  "baseline.max_drawdown": -0.19160237784111994,
+  "baseline.mean_return": 0.0005884762976339954,
+  "baseline.n_obs": 843.0,
+  "baseline.sharpe": 1.0650111083921123,
+  "baseline.sortino": 1.545956769473756,
+  "baseline.std_return": 0.00877152505017258,
+  "baseline.total_return": 0.5898241028468305,
+  "strategy.calmar": 0.8002926795333204,
+  "strategy.max_drawdown": -0.04646612061456319,
+  "strategy.mean_return": 0.00014756695563267728,
+  "strategy.n_obs": 843.0,
+  "strategy.sharpe": 1.013604415744576,
+  "strategy.sortino": 1.4354176357431447,
+  "strategy.std_return": 0.0023111114766493977,
+  "strategy.total_return": 0.129912859286588
+}

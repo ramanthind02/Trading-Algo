@@ -1,10 +1,10 @@
 from typing import Any, ClassVar, Dict, List, Optional
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 from nodes import BiasNode, LookbackWindow
 from nodes.ewsd import EWSDNode
 from collections import deque
-from utils.compute.fast_nodes import compute_roc_fast
+from lib.compute.fast_nodes import compute_roc_fast
 
 
 class ROC(BiasNode):

@@ -1,8 +1,8 @@
 import pytest
 import numpy as np
 import pandas as pd
-from feature_selection.validation.permutation_tests import run_vector_shuffle_test
-from feature_selection.validation.objective_metrics import metric_sharpe
+from features.validation.permutation_tests import run_vector_shuffle_test
+from features.validation.objective_metrics import metric_sharpe
 
 
 def test_run_vector_shuffle_test():

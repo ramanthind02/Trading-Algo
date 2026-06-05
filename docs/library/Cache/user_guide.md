@@ -18,7 +18,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from utils.cache import (
+from lib.cache import (
     ArtifactDescriptor,
     ArtifactScope,
     CacheRequest,
@@ -27,7 +27,7 @@ from utils.cache import (
     LookupMode,
     bootstrap_source_candles,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 ```
 
 ## 1. Write candles into the cache
@@ -55,11 +55,11 @@ Notes:
 
 ### IBKR `CONTFUT` vs Norgate `&*_CCB` (live append)
 
-Repository dailies in `data/ohlc_data/` are built from **Norgate continuous back-adjusted** futures symbols (e.g. `&ES_CCB`); see [[Data/NORGATE_MIGRATION]] and [[Data/norgate]]. The TWS live path fetches **Interactive Brokers continuous futures** (`secType=CONTFUT` in `scripts/enigma_live_forecast.py`), which use **IB’s own roll and adjustment rules** — they will not match Norgate levels bar-for-bar on the same calendar date.
+Repository dailies in `data/ohlc_data/` are built from **Norgate continuous back-adjusted** futures symbols (e.g. `&ES_CCB`); see [[Data/norgate]]. The TWS live path fetches **Interactive Brokers continuous futures** (`secType=CONTFUT` in `scripts/enigma_live_forecast.py`), which use **IB’s own roll and adjustment rules** — they will not match Norgate levels bar-for-bar on the same calendar date.
 
 When `upsert_tws_candles` writes IB dailies into `CentralCacheStore`:
 
-1. **Append-only:** only sessions **strictly after** the current cache’s last daily timestamp are kept, so a long IB lookback does not bulk-overwrite Norgate-backed overlap (see `prepare_ib_rows_for_central_cache_append` in `utils/cache/runtime/ib_candle_ratio_align.py`).
+1. **Append-only:** only sessions **strictly after** the current cache’s last daily timestamp are kept, so a long IB lookback does not bulk-overwrite Norgate-backed overlap (see `prepare_ib_rows_for_central_cache_append` in `lib/cache/runtime/ib_candle_ratio_align.py`).
 2. **Junction ratio:** the appended block's `open/high/low/close` are multiplied by a single factor `last_close_cache / first_new_ib_close` so the first new close lines up with the last pre-existing close; relative moves within the block are unchanged. Ratio alignment is applied for every IB append batch.
 
 `upsert_candles` itself remains a generic merge-by-timestamp; the IB-specific policy lives in the TWS upsert helper above.
@@ -68,7 +68,7 @@ When `upsert_tws_candles` writes IB dailies into `CentralCacheStore`:
 
 Use the bootstrap helper when you want a one-time write from `data/ohlc_data` into the runtime cache.
 
-`CacheManager.bootstrap_source_candles` (and the module wrapper) show a **tqdm** bar over each `(ticker, timeframe)` series. `ensure_bias_cache_coverage` shows a **Bias / EWSD artifacts** bar over refresh tasks.
+`CacheManager.bootstrap_source_candles` (and the module wrapper) show a **tqdm** bar (`Bootstrap OHLC → cache`) over each `(ticker, timeframe)` series. `ensure_bias_cache_coverage` shows a `Bias / EWSD cache (check)` bar over the coverage scan and a `Bias / EWSD artifacts (rebuild)` bar over the artifacts it actually rebuilds.
 
 ```python
 summary = bootstrap_source_candles(
@@ -80,13 +80,14 @@ summary = bootstrap_source_candles(
 )
 ```
 
-CLI equivalent:
+CLI equivalent (the runnable module is under `runtime/`; there is no top-level `lib/cache/bootstrap_source_candles.py`):
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES NQ --timeframes D W --start 2020-01-01 --end 2024-12-31
+python -m lib.cache.runtime.bootstrap_source_candles --tickers ES NQ --timeframes D W --start 2020-01-01 --end 2024-12-31
 ```
 
-`ingest_source_candles(...)` still exists as a deprecated compatibility alias, but new code should call `bootstrap_source_candles(...)`.
+`bootstrap_source_candles(...)` is the only bootstrap entrypoint; there is no
+`ingest_source_candles(...)` symbol in the current code.
 
 ### Automatic live refresh from candle writes
 
@@ -103,7 +104,7 @@ This path is inference only. It does not refit models and it does not create new
 Manual recovery:
 
 ```python
-from utils.cache import run_live_cache_refresh_now
+from lib.cache import run_live_cache_refresh_now
 
 summary = run_live_cache_refresh_now(
     manifest_path="deployment/config/live_cache_refresh.json",
@@ -219,7 +220,7 @@ as_of_row = cache.read_artifact(
 The cache contract is fail-fast. Expect typed exceptions.
 
 ```python
-from utils.cache import ArtifactMissingError, CacheCoverageError
+from lib.cache import ArtifactMissingError, CacheCoverageError
 
 try:
     feature_df = cache.read_artifact(descriptor, request=CacheRequest(start=start, end=end))
@@ -316,7 +317,7 @@ What this does:
 - rebuilds only missing, stale, or out-of-range `family="bias"` artifacts
 - always ensures daily EWSD coverage for the requested tickers
 
-`portfolio_research/run_portfolio_test.py` now does two explicit steps for the full train-to-test window:
+`research/portfolio/run_portfolio_test.py` now does two explicit steps for the full train-to-test window:
 
 - bootstraps the exact required candle set from `data/ohlc_data` into `.cache/trading_algo/central_cache/candles`
 - runs `ensure_vault_cache_coverage(...)` to rebuild only missing or stale live artifacts
@@ -331,7 +332,7 @@ The refresh step assumes candle coverage already exists in the central cache. It
 
 If you are running the standard portfolio research entrypoint, use this mental model:
 
-1. Run `python portfolio_research/run_portfolio_test.py`
+1. Run `python research/portfolio/run_portfolio_test.py`
 2. Let the runner bootstrap the exact required candles from `data/ohlc_data`
 3. Let the runner validate exact cache coverage and rebuild stale artifacts only
 
@@ -349,7 +350,7 @@ This means you do not need a separate manual bootstrap step before a normal port
 
 After a strategy clears exploration and validation, use the **portfolio addition** phase to decide whether it should enter the portfolio at all. In current local code, some configs and commands still use the older term `inclusion`, but the target workflow is `exploration -> validation -> portfolio_addition`.
 
-Local compatibility tooling still computes the familiar checks: per-peer validation forecast correlation, standalone metrics (Sharpe/Sortino/Calmar) for the candidate and each baseline ensemble, portfolio uplift on train / validation / train+validation, and an optional test-window check. Thresholds and CSV output currently live on `ResearchConfig.portfolio_inclusion`; baseline portfolio comes from `portfolio_research.config.load_config()`. Compatibility CLI: `python -m feature_research.run_inclusion_gates` (default candidate is `eval_bias_spec` from research config; use ``--candidate-mode vault_path`` and a path for an on-disk ensemble).
+Local compatibility tooling still computes the familiar checks: per-peer validation forecast correlation, standalone metrics (Sharpe/Sortino/Calmar) for the candidate and each baseline ensemble, portfolio uplift on train / validation / train+validation, and an optional test-window check. Thresholds and CSV output currently live on `ResearchConfig.portfolio_inclusion`; baseline portfolio comes from `research.portfolio.config.load_config()`. Compatibility CLI: `python -m research.feature.run_inclusion_gates` (default candidate is `eval_bias_spec` from research config; use ``--candidate-mode vault_path`` and a path for an on-disk ensemble).
 
 Canonical workflow reference: `docs/SaaS/robustness_tests/portfolio_addition.md`.
 
@@ -397,7 +398,7 @@ from datetime import datetime
 
 from ensemble.portfolio import PortfolioCacheQuery
 from ensemble.vault_manager import ensure_vault_cache_coverage
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 ensure_vault_cache_coverage(
     vault_ensemble_dirs=("vault/D/es_tlt/rebalancing_es_tlt_long",),
@@ -445,8 +446,8 @@ Why this order matters:
 Use this when live candles simply gained new rows or a bar was corrected.
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES TLT --timeframes D M
-python portfolio_research/run_portfolio_test.py
+python -m lib.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M
+python research/portfolio/run_portfolio_test.py
 ```
 
 Notes:
@@ -461,8 +462,8 @@ Notes:
 Use this when you replaced or corrected the source OHLC files and want to refresh the runtime candle cache from the repository dataset.
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES TLT --timeframes D M --reset-existing
-python portfolio_research/run_portfolio_test.py
+python -m lib.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M --reset-existing
+python research/portfolio/run_portfolio_test.py
 ```
 
 Use `--reset-existing` when:
@@ -502,8 +503,8 @@ This is the right tool when:
 Use this when the runtime cache is empty.
 
 ```bash
-python -m utils.cache.bootstrap_source_candles --tickers ES TLT --timeframes D W M
-python portfolio_research/run_portfolio_test.py
+python -m lib.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D W M
+python research/portfolio/run_portfolio_test.py
 ```
 
 Expected result:
@@ -517,14 +518,14 @@ Expected result:
 Use this day to day once the runtime candle cache is already bootstrapped and kept current via `upsert_candles(...)`.
 
 ```bash
-python portfolio_research/run_portfolio_test.py
+python research/portfolio/run_portfolio_test.py
 ```
 
 This is enough for most cases because the runner now performs the cache preflight automatically.
 
 ### Feature research after new data
 
-`feature_research` uses the same central-cache lifecycle. Each pipeline calls `populate_cache_if_needed` up front (bootstrap candles, refresh missing/stale bias artifacts and EWSD), then loads features with cache-backed reads. Cache population uses the **full common OHLC span** available for required tickers—not `ResearchConfig.start` / `end`—so indicators warm up once at data inception; analysis phases slice to train/validation windows only when loading features. `ResearchConfig` does not expose `use_cache` / `populate_cache` toggles—that behavior is fixed.
+`research.feature` uses the same central-cache lifecycle. Each pipeline calls `populate_cache_if_needed` up front (bootstrap candles, refresh missing/stale bias artifacts and EWSD), then loads features with cache-backed reads. Cache population uses the **full common OHLC span** available for required tickers—not `ResearchConfig.start` / `end`—so indicators warm up once at data inception; analysis phases slice to train/validation windows only when loading features. `ResearchConfig` does not expose `use_cache` / `populate_cache` toggles—that behavior is fixed.
 
 The documentation target is now a three-phase package structure:
 
@@ -537,8 +538,8 @@ The codebase is still in a compatibility-preserving migration, so the practical 
 Typical sequence during migration:
 
 ```bash
-python feature_research/in_sample/run_is.py
-python feature_research/validation/run_validation.py
+python research/feature/in_sample/run_is.py
+python research/feature/validation/run_validation.py
 ```
 
 Interpret these as:
@@ -564,7 +565,7 @@ Use persisted cleanup carefully. It removes writable runtime cache files under `
 ### Backtest
 
 1. Bootstrap or upsert the required candles into the runtime cache
-2. Run `python portfolio_research/run_portfolio_test.py`, or preflight manually if you want the summary first
+2. Run `python research/portfolio/run_portfolio_test.py`, or preflight manually if you want the summary first
 3. Let the cache rebuild only missing or stale artifacts
 4. Run portfolio queries with `PortfolioCacheQuery`
 
@@ -594,3 +595,5 @@ The live loop is “new OHLC → consistent derived features → next forecast,�
 - [[portfolio]] — portfolio layer behavior
 - [[pipeline]] — feature extraction workflow
 - [[live_multi_timeframe]] — live orchestration flow
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

@@ -111,3 +111,5 @@ cursor --folder-uri "vscode-remote://ssh-remote+trading-dev/home/raman/repos/Tra
 
 - **Venv on dev server:** `source /home/raman/repos/Trading-Algo/venv/bin/activate`
 - **Security:** Only use this over a trusted network (or VPN). Prefer key-based login; avoid password auth in production.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

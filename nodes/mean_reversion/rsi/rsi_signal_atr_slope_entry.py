@@ -26,10 +26,10 @@ import numpy as np
 
 from nodes import BiasNode, LookbackContribution
 from nodes.volatility.atr.atr_slope_filter import AtrSlopeDirection, _coerce_direction
-from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
-from utils.core import helpers
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
+from lib.compute.rsi_helpers import compute_rsi_initial, update_rsi
+from lib.core import helpers
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
 
 
 class RSISignalAtrSlopeEntry(BiasNode):

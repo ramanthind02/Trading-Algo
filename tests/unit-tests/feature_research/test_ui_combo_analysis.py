@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from feature_research.ui.combo_analysis import build_combo_diagnostics
+from research.feature.ui.combo_analysis import build_combo_diagnostics
 
 
 def test_build_combo_diagnostics_prefers_existing_robustness_report(
@@ -12,7 +12,7 @@ def test_build_combo_diagnostics_prefers_existing_robustness_report(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setattr(
-        "feature_research.ui.combo_analysis.expand_bias_specs",
+        "research.feature.ui.combo_analysis.expand_bias_specs",
         lambda _bias_spec: [{"params": {"period_1": 8}} for _ in range(6)],
     )
     (tmp_path / "robustness_report.json").write_text(

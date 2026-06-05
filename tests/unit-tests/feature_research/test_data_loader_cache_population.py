@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from feature_research.config import CachePopulationMode
-from feature_research.in_sample.data_loader import (
+from research.feature.config import CachePopulationMode
+from research.feature.in_sample.data_loader import (
     estimate_bias_lookback_buffer_days,
     BIAS_MODULE_COMBO_KEY,
     CachePopulationWindow,
@@ -15,7 +15,7 @@ from feature_research.in_sample.data_loader import (
     populate_cache_if_needed,
     resolve_cache_population_window,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _config(*, start: datetime, end: datetime) -> SimpleNamespace:
@@ -143,15 +143,15 @@ def test_populate_cache_if_needed_passes_full_history_to_manager(
             return {"failed": 0, "total_tasks": 1, "rebuilt": 0, "validated": 1}
 
     monkeypatch.setattr(
-        "feature_research.in_sample.data_loader._resolve_project_root",
+        "research.feature.in_sample.data_loader._resolve_project_root",
         lambda: tmp_path,
     )
     monkeypatch.setattr(
-        "feature_research.in_sample.data_loader.CacheManager",
+        "research.feature.in_sample.data_loader.CacheManager",
         lambda candle_dir: _FakeManager(),
     )
     monkeypatch.setattr(
-        "feature_research.in_sample.data_loader.expand_bias_specs",
+        "research.feature.in_sample.data_loader.expand_bias_specs",
         lambda _spec: [
             {
                 "module_name": "rsisignal",
@@ -198,15 +198,15 @@ def test_populate_cache_if_needed_fallback_uses_config_bounds(
             return {"failed": 0, "total_tasks": 0, "rebuilt": 0, "validated": 0}
 
     monkeypatch.setattr(
-        "feature_research.in_sample.data_loader._resolve_project_root",
+        "research.feature.in_sample.data_loader._resolve_project_root",
         lambda: tmp_path,
     )
     monkeypatch.setattr(
-        "feature_research.in_sample.data_loader.CacheManager",
+        "research.feature.in_sample.data_loader.CacheManager",
         lambda candle_dir: _FakeManager(),
     )
     monkeypatch.setattr(
-        "feature_research.in_sample.data_loader.expand_bias_specs",
+        "research.feature.in_sample.data_loader.expand_bias_specs",
         lambda _spec: [],
     )
 

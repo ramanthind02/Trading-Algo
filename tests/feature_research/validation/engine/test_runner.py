@@ -9,21 +9,21 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.evaluation.walkforward.config import (
+from research.evaluation.walkforward.config import (
     WeightLayerAlgorithm,
     WalkforwardResearchConfig,
 )
-from utils.evaluation.walkforward.runner import (
+from research.evaluation.walkforward.runner import (
     build_fold_rows_from_explicit_specs,
     run_walkforward_research,
     run_portfolio_simulation,
 )
-from utils.evaluation.walkforward.walkforward_labels import canonical_param_label
-from utils.evaluation.walkforward.portfolio_evaluator import evaluate_fold_portfolio
-from utils.evaluation.walkforward.selected_params_codec import serialize_selected_params
+from research.evaluation.walkforward.walkforward_labels import canonical_param_label
+from research.evaluation.walkforward.portfolio_evaluator import evaluate_fold_portfolio
+from research.evaluation.walkforward.selected_params_codec import serialize_selected_params
 from ensemble.weight_layer import WeightLayerConfig
-from feature_research.config import FeatureType
-from utils.core.enums import TimeFrame, Ticker
+from research.feature.config import FeatureType
+from lib.core.enums import TimeFrame, Ticker
 
 
 def _build_inputs() -> tuple[pd.DataFrame, pd.Series]:
@@ -663,7 +663,7 @@ def test_run_portfolio_simulation_records_error_without_crash(monkeypatch: pytes
     def _boom(**_kwargs: object) -> object:
         raise RuntimeError("sim failed")
 
-    monkeypatch.setattr("utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio", _boom)
+    monkeypatch.setattr("research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio", _boom)
 
     research_config = type(
         "ResearchCfg",
@@ -735,7 +735,7 @@ def test_run_portfolio_simulation_builds_weight_layer_config_from_algorithm(
         )()
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
 
@@ -830,7 +830,7 @@ def test_run_portfolio_simulation_overrides_weight_layer_method_but_preserves_co
         )()
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
 
@@ -987,11 +987,11 @@ def test_run_portfolio_simulation_forwards_timeframe_to_tearsheets(
         )()
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "metrics.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
@@ -1085,11 +1085,11 @@ def test_run_portfolio_simulation_generates_per_fold_ticker_tearsheets_when_enab
         )()
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "metrics.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
@@ -1204,11 +1204,11 @@ def test_run_portfolio_simulation_generates_aggregate_ticker_tearsheets_when_ena
         )()
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "metrics.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
@@ -1314,11 +1314,11 @@ def test_run_portfolio_simulation_skips_ticker_tearsheets_when_disabled(
         )()
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "metrics.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
@@ -1408,7 +1408,7 @@ def test_run_portfolio_simulation_passes_decoded_selected_params_to_evaluator(
         )()
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
+        "research.evaluation.walkforward.portfolio_evaluator.evaluate_fold_portfolio",
         _fake_evaluate,
     )
 

@@ -61,12 +61,12 @@ from ensemble.portfolio import (
     discover_ensemble_dirs_in_vault,
 )
 from deployment.telegram_notifier import TelegramNotifier
-from utils.core.enums import TimeFrame, Ticker
-from utils.futures_micro_specs import (
+from lib.core.enums import TimeFrame, Ticker
+from lib.core.futures_micro_specs import (
     listed_micro_futures_row,
     micro_contract_fractional_and_whole,
 )
-from utils.vault_paths import resolve_vault_root
+from lib.core.vault_paths import resolve_vault_root
 
 
 # ==============================================================================
@@ -417,8 +417,8 @@ def ensure_cache_ready(required_tickers: Set[str]) -> Dict[str, Any]:
 
     Returns dict with 'bootstrapped' bool and coverage info per ticker.
     """
-    from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.cache.runtime.cache_manager import CacheManager
+    from lib.cache.runtime.central_cache import CentralCacheStore
+    from lib.cache.runtime.cache_manager import CacheManager
 
     store = CentralCacheStore.get_instance()
     manager = CacheManager()
@@ -483,9 +483,9 @@ def upsert_tws_candles(
         junction ratio alignment and append-only filtering (all IB appends) via
         :func:`prepare_ib_rows_for_central_cache_append`.
     """
-    from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.cache.runtime.central_cache_errors import ArtifactMissingError
-    from utils.cache.runtime.ib_candle_ratio_align import (
+    from lib.cache.runtime.central_cache import CentralCacheStore
+    from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+    from lib.cache.runtime.ib_candle_ratio_align import (
         prepare_ib_rows_for_central_cache_append,
     )
 
@@ -676,8 +676,8 @@ def refresh_bias_caches(
 
     Returns the summary dict from ensure_vault_cache_coverage.
     """
-    from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.cache.runtime.cache_manager import CacheManager
+    from lib.cache.runtime.central_cache import CentralCacheStore
+    from lib.cache.runtime.cache_manager import CacheManager
 
     store = CentralCacheStore.get_instance()
     manager = CacheManager()
@@ -773,8 +773,8 @@ def build_cache_query(
     limits the **daily** candle history passed into fit/predict; monthly
     candles still use the full ``start``/``end`` window.
     """
-    from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.cache.runtime.central_cache_models import ArtifactScope
+    from lib.cache.runtime.central_cache import CentralCacheStore
+    from lib.cache.runtime.central_cache_models import ArtifactScope
     from ensemble.portfolio import PortfolioCacheQuery
     from ensemble.portfolio_impl.portfolio_cache import _query_candles_from_cache
 
@@ -845,7 +845,7 @@ def compute_fetch_lookback(
     If cache has recent data, only fetch the gap. If cache is empty or stale,
     fetch max_lookback.
     """
-    from utils.cache.runtime.central_cache import CentralCacheStore
+    from lib.cache.runtime.central_cache import CentralCacheStore
 
     store = CentralCacheStore.get_instance()
     try:

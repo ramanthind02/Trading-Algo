@@ -8,9 +8,9 @@ from nodes.momentum.core.macd_hook_signal import (
     MacdHookSignal,
     _histogram_hook,
 )
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(day: int, *, close: float, open_: float | None = None) -> Candle:

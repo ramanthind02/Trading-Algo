@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from feature_research.inclusion_gates import gate_tearsheet_panel_title
+from research.feature.inclusion_gates import gate_tearsheet_panel_title
 
 
 def test_gate_tearsheet_panel_title_full_portfolio() -> None:

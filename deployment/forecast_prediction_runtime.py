@@ -7,7 +7,7 @@ from typing import Any, Dict
 import numpy as np
 import pandas as pd
 
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def normalize_forecast_value(forecast: float) -> float:

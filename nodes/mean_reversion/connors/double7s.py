@@ -9,8 +9,8 @@ Output: Rule-based 0 or 1
 
 from typing import ClassVar, List
 from collections import deque
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

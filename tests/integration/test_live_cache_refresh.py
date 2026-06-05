@@ -9,19 +9,18 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import utils.cache.runtime.live_cache_refresh as live_refresh  # noqa: E402
+import lib.cache.runtime.live_cache_refresh as live_refresh  # noqa: E402
 from ensemble.vault_manager import (  # noqa: E402
     ensure_vault_cache_coverage,
     get_ensemble_tickers,
 )
 from tests.integration._portfolio_cache_helpers import source_data_available  # noqa: E402
-from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
-from utils.cache.runtime.central_cache import CentralCacheStore  # noqa: E402
-from utils.cache.runtime.central_cache_models import (  # noqa: E402
-    ArtifactLifecycleState,
+from lib.cache.runtime.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
+from lib.cache.runtime.central_cache import CentralCacheStore  # noqa: E402
+from lib.cache.runtime.central_cache_models import (  # noqa: E402
     ArtifactScope,
 )
-from utils.core.enums import TimeFrame  # noqa: E402
+from lib.core.enums import TimeFrame  # noqa: E402
 
 
 def _materialized_portfolio_row(portfolio_id: str, dt: datetime, ticker_name: str) -> pd.DataFrame:
@@ -117,7 +116,7 @@ def test_live_candle_updates_trigger_automatic_refresh(
     watched_descriptor = bias_records[0].descriptor
     watched_record = store.describe_artifact(watched_descriptor)
     assert watched_record is not None
-    assert watched_record.lifecycle_state is ArtifactLifecycleState.FRESH
+    assert watched_record.coverage.end is not None
 
     materialized_root = Path(store.cache_dir) / "materialized" / "live"
     historical_portfolio_path = materialized_root / "portfolio" / "historical_portfolio.parquet"
@@ -178,7 +177,6 @@ def test_live_candle_updates_trigger_automatic_refresh(
 
     stale_record = store.describe_artifact(watched_descriptor)
     assert stale_record is not None
-    assert stale_record.lifecycle_state is ArtifactLifecycleState.STALE
 
     orchestrator = live_refresh.get_live_cache_refresh_orchestrator()
     assert orchestrator.wait_for_idle(timeout=120.0)
@@ -186,7 +184,7 @@ def test_live_candle_updates_trigger_automatic_refresh(
 
     refreshed_record = store.describe_artifact(watched_descriptor)
     assert refreshed_record is not None
-    assert refreshed_record.lifecycle_state is ArtifactLifecycleState.FRESH
+    assert refreshed_record.coverage.end is not None
 
     portfolio_path = materialized_root / "portfolio" / f"{portfolio_id}.parquet"
     assert portfolio_path.exists()

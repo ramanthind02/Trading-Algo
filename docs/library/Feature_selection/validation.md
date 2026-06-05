@@ -19,7 +19,7 @@ The important contract is simple:
 
 ## Locked handoff: `eval_bias_spec`
 
-The local handoff surface is `eval_bias_spec` in `feature_research/config.py`.
+The local handoff surface is `eval_bias_spec` in `research/feature/config.py`.
 
 Conceptually this means:
 
@@ -42,13 +42,13 @@ This library page exists only to explain the local command and artifact surface 
 ## Local command surface
 
 ```bash
-python -m feature_research validation
+python -m research.feature validation
 ```
 
 Vector-shuffle permutation is a **separate** command (not chained into the main validation run):
 
 ```bash
-python -m feature_research validation_permutation
+python -m research.feature validation_permutation
 ```
 
 ## Iterative vs release profiles
@@ -59,10 +59,10 @@ For faster iteration while tuning `eval_bias_spec` or windows, use `apply_fast_v
 
 ```python
 from dataclasses import replace
-from feature_research.config import load_config, apply_fast_validation_profile
+from research.feature.config import load_config, apply_fast_validation_profile
 
 config = apply_fast_validation_profile(load_config())
-# python -m feature_research validation  # via UI or run_validation with this config
+# python -m research.feature validation  # via UI or run_validation with this config
 ```
 
 | Setting | Release (default) | Fast (`apply_fast_validation_profile`) |
@@ -75,7 +75,7 @@ Additional knobs (manual `dataclasses.replace`):
 
 - `portfolio_addition_gate.emit_tearsheets=False` — keep gate metrics, skip QuantStats HTML.
 - `portfolio_addition_gate.n_jobs` — parallel portfolio phase backtests (defaults to `ResearchConfig.n_jobs`).
-- `cache_population_mode=CachePopulationMode.ANALYSIS_PLUS_LOOKBACK` — narrower bias-cache warmup (opt-in; see `feature_research/in_sample/data_loader.py`).
+- `cache_population_mode=CachePopulationMode.ANALYSIS_PLUS_LOOKBACK` — narrower bias-cache warmup (opt-in; enum defined in `research/feature/config.py`, default `FULL_HISTORY`; consumed by `populate_cache_if_needed` in `research/feature/in_sample/data_loader.py`).
 - Run `validation_permutation` only after core validation passes.
 
 ## Local artifact surface
@@ -91,7 +91,7 @@ This area is the local validation-stage view of the locked combo.
 The built-in plotting surface can consume the visualization tree directly:
 
 ```bash
-python -m feature_research.visualization.matplotlib_reports --input-dir <output_root>/visualization
+python -m research.feature.visualization.matplotlib_reports --input-dir <output_root>/visualization
 ```
 
 ## Relationship to exploration artifacts
@@ -120,3 +120,5 @@ The next stage after validation is [[Feature_selection/portfolio_addition]], not
 - [[Feature_selection/parameter_sensitivity]]
 - [[Feature_selection/portfolio_addition]]
 - [[SaaS/robustness_tests/validation]]
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

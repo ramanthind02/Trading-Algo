@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from feature_research.shared import FeatureResearchPhase
-from feature_research.ui.artifact_catalog import (
+from research.feature.shared import FeatureResearchPhase
+from research.feature.ui.artifact_catalog import (
     PANEL_KIND_PRIMARY,
     PANEL_KIND_RAW,
     RAW_DATA_SECTION_ID,
@@ -251,7 +251,7 @@ def test_build_phase_report_sections_assigns_unique_embed_panel_ids() -> None:
 
 
 def test_validation_phase_includes_robustness_category() -> None:
-    from feature_research.ui.artifact_catalog import category_groups_for_phase
+    from research.feature.ui.artifact_catalog import category_groups_for_phase
 
     categories = {group.category for group in category_groups_for_phase(FeatureResearchPhase.VALIDATION)}
     assert WorkspaceArtifactCategory.ROBUSTNESS in categories
@@ -306,7 +306,7 @@ def test_ensure_phase_visualization_reports_generates_matplotlib_outputs(
     ).to_csv(input_dir / "filter_exploration_summary.csv", index=False)
 
     monkeypatch.setattr(
-        "feature_research.ui.artifact_catalog.canonical_in_sample_visualization_dir",
+        "research.feature.ui.artifact_catalog.canonical_in_sample_visualization_dir",
         lambda: input_dir,
     )
     config = type(

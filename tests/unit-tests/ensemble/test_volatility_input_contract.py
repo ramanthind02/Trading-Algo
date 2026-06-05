@@ -6,10 +6,10 @@ import pandas as pd
 import pytest
 
 from ensemble.portfolio import GlobalPortfolio, TFPortfolio, PortfolioCacheQuery
-from utils.cache.runtime.central_cache import CentralCacheStore
-from utils.cache.runtime.central_cache_errors import ArtifactMissingError
-from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
-from utils.core.enums import TimeFrame, Ticker
+from lib.cache.runtime.central_cache import CentralCacheStore
+from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
+from lib.core.enums import TimeFrame, Ticker
 
 
 def _candles_frame(ticker: str = "ES") -> pd.DataFrame:

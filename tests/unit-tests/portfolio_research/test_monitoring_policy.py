@@ -6,13 +6,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from portfolio_research.config import (
+from research.portfolio.config import (
     PortfolioFitMode,
     PortfolioHoldoutRobustnessConfig,
     PortfolioResearchConfig,
     ResearchWindow,
 )
-from portfolio_research.holdout.monitoring_policy import (
+from research.portfolio.holdout.monitoring_policy import (
     MonitoringTrafficLight,
     MonitoringWindow,
     ReferenceSigmaMethod,
@@ -27,9 +27,9 @@ from portfolio_research.holdout.monitoring_policy import (
     traffic_light_from_fail_count,
     trend_traffic_lights,
 )
-from portfolio_research.holdout.strategy_monitoring import run_strategy_holdout_monitoring
-from utils.core.enums import Ticker, TimeFrame
-from utils.evaluation.holdout_robustness import HoldoutRobustnessConfig, run_holdout_robustness_pipeline
+from research.portfolio.holdout.strategy_monitoring import run_strategy_holdout_monitoring
+from lib.core.enums import Ticker, TimeFrame
+from research.evaluation.holdout_robustness import HoldoutRobustnessConfig, run_holdout_robustness_pipeline
 
 
 @pytest.mark.parametrize(

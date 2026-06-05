@@ -13,8 +13,8 @@ except ImportError:
 PROJECT_ROOT = ensure_project_root_on_path()
 
 from deployment.forecast_server import ForecastServer
-from utils.core.enums import TimeFrame
-from utils.core.logger import get_logger
+from lib.core.enums import TimeFrame
+from lib.core.logger import get_logger
 
 logger = get_logger(__name__)
 

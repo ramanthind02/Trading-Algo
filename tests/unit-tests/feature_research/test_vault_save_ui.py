@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from feature_research.config import VaultSaveConfig, load_config
-from feature_research.shared import FeatureResearchPhase
-from feature_research.shared.visualization_paths import walkforward_visualization_csv_dir
-from feature_research.ui.contracts import FeatureResearchUiRequest
-from feature_research.ui.vault_save import (
+from research.feature.config import VaultSaveConfig, load_config
+from research.feature.shared import FeatureResearchPhase
+from research.feature.shared.visualization_paths import walkforward_visualization_csv_dir
+from research.feature.ui.contracts import FeatureResearchUiRequest
+from research.feature.ui.vault_save import (
     VaultGateStatus,
     assess_vault_save_eligibility,
     build_vault_commit_view,

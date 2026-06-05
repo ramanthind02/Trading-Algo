@@ -4,11 +4,20 @@
 
 This document describes how the platform converts a strategy's raw forecast signal into a tradeable contract quantity. The pipeline has four stages: signal-level volatility scaling, signal combination, portfolio-level sizing, and contract conversion. Each stage has a distinct multiplier that the researcher configures.
 
+**Implementation status.** Stages 1–4 (§3–§6) are implemented in `Trading-Algo`
+today and the formulas below match the code. §9 ("Account Simulation Model") is a
+**forward-looking spec** — the `AccountState`, `MarginSpec`, margin-call, and
+`AccountSimReport` machinery is design intent and is **not yet built**; the
+current backtest/return path is the vectorized `research/portfolio/futures_sim.py`
+simulation, which does not model margin, cash, or risk-free accrual (and does not
+model transaction costs — see `transaction_costs.md`).
+
 Related documents:
 - `docs/SaaS/weight_layer.md` — FDM and weight layer methodology
 - `docs/SaaS/portfolio_deployment.md` — IDM and portfolio-level fitting
-- `docs/SaaS/transaction_costs.md` — cost deduction from position changes; feeds §9.4 daily settlement
-- `docs/SaaS/robustness_tests/monitoring.md` — uses equity curve and drawdown outputs from §9.7
+- `docs/SaaS/transaction_costs.md` — cost spec (not yet wired into the return path)
+- `docs/SaaS/robustness_tests/monitoring.md` — equity-curve / drawdown monitoring spec
+- `docs/library/Ensemble/portfolio.md` — implementation reference for IDM / `TFPortfolio`
 
 ---
 
@@ -39,7 +48,7 @@ $$F_i = \frac{\tau}{\sigma_\text{inst} \times \sqrt{h_i}} \times X_i$$
 | Variable | Meaning |
 |---|---|
 | $X_i$ | Raw base model signal ∈ [-1, 1]; binary strategies output {-1, 0, 1} |
-| $\tau$ | Target volatility fraction (e.g. 0.25 for a 25% annual target) |
+| $\tau$ | Target volatility fraction. Configured as `target_volatility` on `DiversifiedEnsemble` (constructor default `0.15`; examples below use `0.25`). |
 | $\sigma_\text{inst}$ | Rolling daily volatility of the instrument's returns |
 | $h_i$ | Holding period of this signal in bars |
 | $F_i$ | Volatility-scaled forecast for signal $i$ |
@@ -112,7 +121,7 @@ $$\text{contracts} = \text{round}\!\left(\frac{\text{target\_dollars}}{\text{con
 
 **Rounding methods:** `ROUND` (standard, default), `FLOOR` (conservative — never over-allocate), `CEILING` (aggressive). For a small account where one contract is a significant fraction of capital, rounding error can be large — this is a minimum account size consideration, not a platform bug.
 
-**Granularity consideration:** Micro futures contracts (e.g. MES = $5/point vs ES = $50/point) reduce the minimum position increment tenfold. For accounts below ~$50,000 trading standard ES, micro contracts significantly reduce rounding error.
+**Granularity consideration:** Micro futures contracts (e.g. MES = $5/point vs ES = $50/point) reduce the minimum position increment tenfold. For accounts below ~$50,000 trading standard ES, micro contracts significantly reduce rounding error. The canonical micro/mini dollar-per-point table lives in `utils/futures_micro_specs.py` (`canonical_listed_micro_futures()`); `micro_contract_fractional_and_whole(...)` is the shared sizing helper used by `research/portfolio/futures_sim.py` and the live prop forecast path, and `PositionSizer.from_listed_micro(...)` exposes it for live sizing.
 
 ---
 
@@ -164,9 +173,18 @@ All of these are stored in the `PortfolioSnapshot` at deployment time. The live 
 
 ---
 
-## 9. Account Simulation Model
+## 9. Account Simulation Model (forward-looking spec — not yet implemented)
 
-The backtest engine tracks a full account simulation rather than applying a single capital scaling factor. This section specifies the account state, margin mechanics, cash treatment, and daily settlement procedure.
+> **Status:** This section is a design spec. The classes below (`AccountState`,
+> `MarginSpec`, `AccountSimConfig`, `AccountSimReport`) do **not** exist in the
+> current codebase, and the present return path does not simulate margin, cash,
+> risk-free accrual, or margin calls. Today, returns are produced by the
+> vectorized `research/portfolio/futures_sim.py` (`run_futures_sim`), which sizes
+> positions and computes instrument returns but applies no account-level margin
+> or cash mechanics and no transaction costs. Treat everything below as intended
+> future behaviour.
+
+The future backtest engine is intended to track a full account simulation rather than applying a single capital scaling factor. This section specifies the account state, margin mechanics, cash treatment, and daily settlement procedure.
 
 ### 9.1 Account State
 
@@ -286,3 +304,5 @@ class AccountSimReport:
     max_drawdown: float
     annualised_return: float
 ```
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

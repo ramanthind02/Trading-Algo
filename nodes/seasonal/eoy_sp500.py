@@ -9,8 +9,8 @@ calendar date. Outputs 1 (long), 0 (flat).
 from typing import List
 
 from nodes import BiasNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 class EoySp500(BiasNode):

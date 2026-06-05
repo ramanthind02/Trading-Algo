@@ -1,5 +1,7 @@
 # Prop vs Personal Forecast Workflows
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 Two scripts run daily, both on top of the same pipeline
 (`scripts/enigma_live_forecast.py`). They differ in vault, instrument type,
 timing, and Telegram channel. Pick the workflow you care about below.
@@ -210,7 +212,7 @@ To tabulate **forecast_score** and **position_fraction** for the last *N* **busi
     python scripts/replay_prop_forecast_window.py --trading-days 10
     python scripts/replay_prop_forecast_window.py --trading-days 10 --output deploy/prop_forecast_replay.csv
 
-This fits once like ``enigma_prop_forecast``, runs ``predict_from_cache`` on the full overlap, then **filters** rows to the replay window. It is **not** a causal walk-forward (the global weight layer is not re-fit per day). For strict as-of research, use ``portfolio_research`` walk-forward tooling instead.
+This fits once like ``enigma_prop_forecast``, runs ``predict_from_cache`` on the full overlap, then **filters** rows to the replay window. It is **not** a causal walk-forward (the global weight layer is not re-fit per day). For strict as-of research, use ``research.portfolio`` walk-forward tooling instead.
 
 ---
 
@@ -226,3 +228,5 @@ This fits once like ``enigma_prop_forecast``, runs ``predict_from_cache`` on the
 | Schedule time                              | `deploy/setup_scheduled_task.bat` → `/st HH:MM`                  |
 | Live daily lookback for fit/predict        | `configs/live_forecast_config_*.json` → `data.prediction_daily_max_bars` (default **500**; `0` = unlimited) |
 | Telegram bot / channel                     | `deployment/telegram_notifier.py` → `_PROP_*` / `_PERSONAL_*`    |
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

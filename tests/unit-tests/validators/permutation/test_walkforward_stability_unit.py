@@ -4,8 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from feature_selection.validation.reports import FoldResult, WalkforwardStabilityReport
-from feature_selection.validation.stability_analysis import (
+from features.validation.reports import FoldResult, WalkforwardStabilityReport
+from features.validation.stability_analysis import (
     _compute_consistency_metrics,
     _compute_neighbor_smoothed_objectives,
     _param_combo_name,

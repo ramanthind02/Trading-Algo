@@ -10,13 +10,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from feature_selection.validation.report_generator import (
+from features.validation.report_generator import (
     generate_permutation_reports,
     plot_funnel_diagram,
     plot_null_distribution,
     plot_walkforward_stability,
 )
-from feature_selection.validation.reports import (
+from features.validation.reports import (
     ComboDecisionRecord,
     FoldResult,
     FunnelStatistics,

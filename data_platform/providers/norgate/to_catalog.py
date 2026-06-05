@@ -71,7 +71,12 @@ _ETF_PROXY: dict[str, str] = {
     "ES": "SPY", "NQ": "QQQ", "YM": "DIA", "RTY": "IWM", "GC": "GLD", "TLT": "TLT",
 }
 _MT5_SYMBOL: dict[str, str] = {
-    "ES": "US500.cash", "NQ": "US100.cash", "GC": "XAUUSD", "SI": "XAGUSD",
+    # Darwinex terminal uses non-standard index names — confirmed 2026-06-04
+    "ES": "SP500",       # was US500.cash — Darwinex uses SP500
+    "NQ": "NDX",         # was US100.cash — Darwinex uses NDX (not NAS100/US100)
+    "GC": "XAUUSD",
+    "SI": "XAGUSD",
+    "CL": "XTIUSD",
 }
 
 

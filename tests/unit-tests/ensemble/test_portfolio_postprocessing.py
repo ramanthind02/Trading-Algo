@@ -8,7 +8,7 @@ from ensemble.portfolio_impl.portfolio_postprocessing import (
     aggregate_forecast_vectors_fallback,
     apply_forecast_risk_management,
 )
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def test_aggregate_forecast_vectors_fallback_averages_by_ticker_and_datetime() -> None:

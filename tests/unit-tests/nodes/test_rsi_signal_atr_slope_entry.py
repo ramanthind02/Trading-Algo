@@ -7,9 +7,9 @@ from typing import List
 from unittest.mock import MagicMock, patch
 
 from nodes.mean_reversion.rsi.rsi_signal_atr_slope_entry import RSISignalAtrSlopeEntry
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(day: int, *, c: float = 100.0) -> Candle:

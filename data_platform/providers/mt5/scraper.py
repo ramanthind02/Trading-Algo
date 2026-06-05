@@ -42,6 +42,7 @@ from typing import Optional
 
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 _HERE = Path(__file__).resolve()
@@ -55,7 +56,7 @@ if str(_REPO_ROOT) not in sys.path:
 import scripts._bootstrap  # noqa: F401
 
 import MetaTrader5 as mt5
-from utils.core.logger import get_logger
+from lib.core.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -175,7 +176,20 @@ def _last_stored_ts(symbol: str, kind: str) -> Optional[datetime]:
 
 
 def _write_ticks(symbol: str, raw: "np.ndarray") -> None:
-    """Convert MT5 tick array → DataFrame → year-partitioned parquet."""
+    """Convert MT5 tick array → DataFrame → year-partitioned parquet.
+
+    The new chunk is sorted/deduped on its own (cheap — it's small). When an
+    existing year file is present we merge memory-efficiently:
+
+    - Incremental append (new ticks strictly newer than what's stored — the
+      common case, since fetches resume from last_stored_ts + 1ms): zero-copy
+      ``concat_tables`` + streaming write, so peak memory stays ~O(file).
+    - Overlap/backfill (rare): merge and dedup in Arrow via ``sort_by``.
+
+    The previous implementation always did a pandas ``drop_duplicates`` +
+    ``sort_values`` on the *combined* old+new frame, which deep-copies the
+    whole file several times over and OOMed once year files reached ~40M rows.
+    """
     if raw is None or len(raw) == 0:
         return
     df = pd.DataFrame(raw)
@@ -185,17 +199,33 @@ def _write_ticks(symbol: str, raw: "np.ndarray") -> None:
     for year, grp in df.groupby("year"):
         path = _ticks_path(symbol, int(year))
         path.parent.mkdir(parents=True, exist_ok=True)
-        grp = grp.drop(columns=["year"])
+        grp = grp.drop(columns=["year"]).drop_duplicates("time_msc").sort_values("time_msc")
         tbl_new = pa.Table.from_pandas(
             grp[["time_msc", "bid", "ask", "last", "volume", "time", "flags"]],
             schema=_TICKS_SCHEMA, preserve_index=False,
         )
         if path.exists():
             tbl_old = pq.read_table(path, schema=_TICKS_SCHEMA)
-            combined = pa.concat_tables([tbl_old, tbl_new]).to_pandas()
-            combined = combined.drop_duplicates("time_msc").sort_values("time_msc")
-            tbl_new = pa.Table.from_pandas(combined, schema=_TICKS_SCHEMA, preserve_index=False)
-        pq.write_table(tbl_new, path, compression="zstd")
+            old_max = pc.max(tbl_old.column("time_msc")).as_py()
+            new_min = pc.min(tbl_new.column("time_msc")).as_py()
+            if old_max is not None and new_min is not None and new_min > old_max:
+                # Pure append: no cross-overlap, both sides already sorted/deduped.
+                combined = pa.concat_tables([tbl_old, tbl_new])
+            else:
+                # Overlap/backfill (rare): re-scraping dates already on disk.
+                # Fall back to the pandas merge+dedup.
+                pdf = (
+                    pa.concat_tables([tbl_old, tbl_new])
+                    .to_pandas()
+                    .drop_duplicates("time_msc")
+                    .sort_values("time_msc")
+                )
+                combined = pa.Table.from_pandas(
+                    pdf, schema=_TICKS_SCHEMA, preserve_index=False
+                )
+            pq.write_table(combined, path, compression="zstd")
+        else:
+            pq.write_table(tbl_new, path, compression="zstd")
 
 
 def _write_bars(symbol: str, raw: "np.ndarray") -> None:

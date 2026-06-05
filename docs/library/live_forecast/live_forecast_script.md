@@ -1,5 +1,7 @@
 ## How the Live Trading Script Works
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
   The pipeline is driven by `scripts/enigma_live_forecast.py`. It supports two
   profiles, each with a thin wrapper entrypoint:
 
@@ -106,7 +108,7 @@
   before upsert so incomplete IB dailies are not cached). Session-only partial
   rows for the current run are merged in memory via `PortfolioCacheQuery.daily_candle_overlay`.
 
-  1. Daily candles: `upsert_tws_candles()` first calls `prepare_ib_rows_for_central_cache_append()` (`utils/cache/runtime/ib_candle_ratio_align.py`): **append-only** rows (strictly after the cache’s last session), then a **junction ratio** on OHLC for `CONTFUT` so the new tail matches the last Norgate-backed close. Then `CentralCacheStore.upsert_candles()` merges (deduplicates by date, keeps latest). The merged result is written to `.cache/.../candles/{ticker}/D.parquet`.
+  1. Daily candles: `upsert_tws_candles()` first calls `prepare_ib_rows_for_central_cache_append()` (`lib/cache/runtime/ib_candle_ratio_align.py`): **append-only** rows (strictly after the cache’s last session), then a **junction ratio** on OHLC for `CONTFUT` so the new tail matches the last Norgate-backed close. Then `CentralCacheStore.upsert_candles()` merges (deduplicates by date, keeps latest). The merged result is written to `.cache/.../candles/{ticker}/D.parquet`.
   1. Monthly candles: Reads the full cached daily series back from the cache, resamples to monthly (OHLCV aggregation), and upserts the      
   monthly candles. This ensures monthly bars are always derived from the **cached** complete history, not from session-only partials.
 
@@ -237,3 +239,5 @@ Notes for Linux:
 - `1-5` means Monday through Friday only (skip weekends)
 - TWS/IB Gateway must be running -- you can use `tmux` or `screen` to keep it alive, or run IB Gateway in headless mode
 - The shared venv is at `/home/raman/repos/Trading-Algo/venv/` per CLAUDE.md
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

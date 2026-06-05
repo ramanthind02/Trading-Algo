@@ -7,9 +7,9 @@ import numpy as np
 import pytest
 
 from nodes.ewsd import EWSDNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.compute.fast_volatility import compute_ewsd_annualized_from_closes
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.compute.fast_volatility import compute_ewsd_annualized_from_closes
+from lib.core.models import Candle
 
 
 def _make_candle(close: float, day_index: int) -> Candle:
@@ -91,20 +91,20 @@ def test_ewsd_matches_fast_volatility_blending() -> None:
 
 def test_log_return_ewsd_coverage_is_close_to_log_return_when_cache_available() -> None:
     from dataclasses import replace
-    from feature_research.config import FeatureType
+    from research.feature.config import FeatureType
 
     project_root = Path(__file__).resolve().parents[2]
     data_dir = project_root / "data" / "ohlc_data"
     if not data_dir.exists():
         pytest.skip(f"Skipping coverage check, dataset missing at {data_dir}")
 
-    from feature_research.config import load_config
-    from feature_research.in_sample.data_loader import (
+    from research.feature.config import load_config
+    from research.feature.in_sample.data_loader import (
         expand_bias_specs,
         load_features_for_combo,
     )
 
-    from feature_research.config import InSampleDefaultsCatalog, InSamplePhaseDefaultsConfig
+    from research.feature.config import InSampleDefaultsCatalog, InSamplePhaseDefaultsConfig
 
     config = None
     try:

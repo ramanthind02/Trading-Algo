@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-from feature_research.validation.phase_permutation import run_permutation_for_phase
+from research.feature.validation.phase_permutation import run_permutation_for_phase
 
 
 @dataclass(frozen=True)

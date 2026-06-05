@@ -17,10 +17,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.cache.runtime.bias_node_cache import BiasNodeCache
-from utils.cache.runtime.cache_manager import CacheManager
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.cache.runtime.bias_node_cache import BiasNodeCache
+from lib.cache.runtime.cache_manager import CacheManager
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 from nodes.rsi import RSI
 from nodes.momentum import Momentum
 

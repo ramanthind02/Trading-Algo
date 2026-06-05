@@ -15,7 +15,7 @@ import pandas as pd
 from ensemble.ensemble_utils import normalize_ticker_key
 from ensemble.portfolio import PortfolioCacheQuery
 from ensemble.portfolio_impl.tf_portfolio import ensemble_prediction_dict_key
-from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
+from lib.plotting.graphing.quantstats_reports import generate_tearsheet
 
 
 def _empty_returns_series(name: str) -> pd.Series:

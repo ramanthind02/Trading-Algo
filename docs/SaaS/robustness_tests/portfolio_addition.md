@@ -12,6 +12,8 @@ The reasoning is conservative by design: if a strategy cannot improve the portfo
 
 For local `Trading-Algo` docs and code, this is the canonical `portfolio_addition` phase. Some compatibility surfaces still use the older `oos` name for commands or artifact folders, but the workflow meaning is portfolio admission, not a separate fourth strategy phase.
 
+**Implementation anchor (current code):** the gate computation lives in the external **`quantfoundry_core.portfolio_gate`** package — `compute_portfolio_addition_gate` plus submodules `models` (the result dataclasses: `PairwiseRedundancyResult`, `AnalyticalHurdleResult`, `EmpiricalComparisonResult`, `PortfolioRiskImpactResult`, `WeightAssessmentResult`, `IDMImprovementResult`, `BootstrapCI`), `hurdle`, `empirical`, `risk_impact`, `idm`, `weight`. The top-level `PortfolioAdditionReport` is exported from `quantfoundry_core.portfolio_gate`. The repo orchestrates it in `research/feature/portfolio_addition/gate_runner.py` (`run_and_write_portfolio_addition_gate`, `compute_dual_scope_portfolio_addition_gate`) and `research/feature/portfolio_addition/sleeve_gate.py`. The dataclasses shown inline below mirror those `models` types; field names are current as of the verification commit.
+
 Related documents:
 - `docs/SaaS/robustness_tests/validation.md` — individual strategy validation; must pass before this gate
 - `docs/SaaS/weight_layer.md` — weight layer method; must be selected before this gate runs
@@ -449,6 +451,8 @@ Files live under `…/validation/sleeve_tearsheets_<asset>_<style>/` (for exampl
 
 ### 11.2 Outputs
 
+The current `PortfolioAdditionReport` (`quantfoundry_core.portfolio_gate`) has these fields (see `gate_runner.py::load_portfolio_addition_report_from_json`):
+
 ```python
 @dataclass(frozen=True)
 class PortfolioAdditionReport:
@@ -461,6 +465,9 @@ class PortfolioAdditionReport:
     # §5 — Empirical comparison
     empirical_comparison: EmpiricalComparisonResult
 
+    # §5.2 — Portfolio risk impact (composite-gate legs)
+    risk_impact: PortfolioRiskImpactResult
+
     # §6 — Weight assessment
     weight_assessment: WeightAssessmentResult
 
@@ -468,12 +475,16 @@ class PortfolioAdditionReport:
     idm_improvement: IDMImprovementResult
 
     # Aggregate
-    passed: bool                    # delta_sr >= delta_sr_threshold (primary gate)
-    redundancy_warning: bool        # max pairwise corr > pairwise_corr_threshold
+    passed: bool                    # composite gate (Sharpe + risk legs)
     weight_warning: bool            # weight_assigned < weight_floor
     interpretation: str             # plain-English diagnostic for UI
+    schema_version: str             # persisted report schema tag (default "1.0")
 ```
+
+The persisted `portfolio_addition_report.json` also carries a `gate_criteria` block with the per-leg booleans (`delta_sr`, `max_dd`, `ulcer`, `stress_max_dd`) read back by the runner. There is no separate `redundancy_warning` field — pairwise redundancy is advisory and surfaced from `pairwise_redundancy`.
 
 ### 11.3 Worker Behaviour
 
-All portfolio addition gate tests run as a single synchronous job triggered when the researcher clicks "Check Portfolio Fit" from the strategy validation results view. The weight layer refit (with new strategy included) is the most expensive step — it runs on the IS data only, using the same CV procedure as the original weight layer selection. Results are cached against the strategy version ID and the current portfolio version ID; they are invalidated if either changes.
+All portfolio addition gate tests run as a single job triggered from the strategy validation results view. The weight layer refit (with new strategy included) is the most expensive step — it refits the weight layer on the IS + validation data, using the same method as the original portfolio (locked beforehand). In the repo this is `research/feature/portfolio_addition/gate_runner.py::run_and_write_portfolio_addition_gate`, which writes `portfolio_addition_report.json`, `portfolio_risk_impact.csv`, and (when `portfolio_addition_gate.emit_sleeve_tearsheets` is on) the sleeve tearsheet directory.
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

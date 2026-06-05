@@ -7,8 +7,8 @@ from datetime import datetime
 from nodes.seasonal.calendar.fomc_drift import FomcDrift
 from nodes.seasonal.calendar.pre_holiday_equity import PreHolidayEquity
 from nodes.seasonal.calendar.pre_holiday_gold import PreHolidayGold
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(session: str, close: float = 100.0, ticker: Ticker = Ticker.ES) -> Candle:

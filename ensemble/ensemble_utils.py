@@ -12,11 +12,11 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-import utils.core.helpers as helpers
-from utils.core.ticker_key import normalize_ticker_key
+import lib.core.helpers as helpers
+from lib.core.ticker_key import normalize_ticker_key
 from ensemble.vault.feature_files import validate_signed_signal_bias_node_spec
-from feature_selection.base_models import BaseModel
-from utils.core.enums import Direction, Ticker, TimeFrame, coerce_direction
+from features.models import BaseModel
+from lib.core.enums import Direction, Ticker, TimeFrame, coerce_direction
 
 
 def _reject_legacy_feature_artifact(message: str) -> None:

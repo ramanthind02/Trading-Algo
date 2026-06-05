@@ -1,5 +1,7 @@
 # Norgate Data
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-2 data layer). See docs/refactor/nautilus/.
+
 Norgate Data is the external market data provider accessed via the `norgatedata` Python package, which reads locally-maintained data synced by the Norgate Data Updater (NDU).
 
 ## Requirements
@@ -90,3 +92,5 @@ A US Stocks + Futures subscription exposes these databases; all are now mirrored
 
 - [[pipeline]]
 - [[vault]]
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

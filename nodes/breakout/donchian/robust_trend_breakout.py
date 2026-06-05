@@ -28,8 +28,8 @@ import math
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.core.enums import DirectionInput, TimeFrame, Ticker, coerce_direction
-from utils.core.models import Candle
+from lib.core.enums import DirectionInput, TimeFrame, Ticker, coerce_direction
+from lib.core.models import Candle
 
 
 class RobustTrendBreakout(BiasNode):

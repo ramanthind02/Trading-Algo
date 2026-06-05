@@ -12,8 +12,8 @@ from typing import ClassVar, List
 from nodes import BiasNode
 from nodes.seasonal.calendar._event_signal import build_active_sessions, load_bundle
 from data_platform.events.trading_day_index import TradingDayIndex, load_es_trading_sessions
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 _DEFAULT_ENTRY = -2
 _DEFAULT_EXIT = 0

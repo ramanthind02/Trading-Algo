@@ -27,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 from scripts import mt5_data_fetch as fetch_mod
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +299,7 @@ class TestSyncMt5DailiesIntoCentralCache:
 
         fake_store = FakeStore()
 
-        import utils.cache.runtime.central_cache as central_cache_mod
+        import lib.cache.runtime.central_cache as central_cache_mod
         monkeypatch.setattr(
             central_cache_mod.CentralCacheStore, "get_instance",
             classmethod(lambda cls: fake_store),

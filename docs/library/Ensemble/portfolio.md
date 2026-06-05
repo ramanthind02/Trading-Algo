@@ -30,18 +30,24 @@ BaseModels → DiversifiedEnsemble → WeightLayer → TFPortfolio (D) ──┐
 
 ### DiversifiedEnsemble — vol-scaled forecast per model
 ```
-F_i = (τ / (σ × √h_i)) × X_i
+F = (τ / σ) × X      (then clipped at 2.0)
 ```
-- `τ` = target volatility (e.g. 0.20)
-- `σ` = instrument blended volatility
-- `h_i` = exposure fraction (`1 / n_bins`)
-- `X_i` = binary signal (0 or 1)
+- `τ` = target volatility (`target_volatility_`, default 0.15)
+- `σ` = instrument blended (EWSD) volatility, floored at `1e-8`
+- `X` = signal (0 when inactive; carries the signed direction when active)
+
+The implementation in [`ensemble/diversified_ensemble.py`](../../../ensemble/diversified_ensemble.py)
+uses **direct Carver vol-targeting with `h_i = 1`** (the `√h_i` exposure-fraction term has been
+dropped). The per-bar "forecast if active" is `τ / σ`, capped at `2.0`, then multiplied by the
+signal. Exposure fractions (`model_exposure_fractions_`, `1/n_bins`) are still tracked as fitted
+metadata but no longer divide the forecast.
 
 ### WeightLayer — Forecast Diversification Multiplier
 ```
-FDM = min(√(1 / (mean_corr + 0.01)), 2.0)
+FDM = min(√(1 / (mean_corr + 0.01)), fdm_max)      (default fdm_max = 2.0)
 ```
-Applied after combining per-model forecasts into a single `forecast_score`.
+Applied after combining per-model forecasts into a single `forecast_score`, which is then
+clipped to `[-2.0, 2.0]`.
 
 ### Portfolio — Instrument Diversification Multiplier
 ```
@@ -65,7 +71,9 @@ contracts = (position_fraction × capital) / (price × multiplier × fx_rate)
 | IDM | TFPortfolio | **2.5** | Instrument return correlations (instrument-level, within one timeframe) |
 | cross-stream FDM | GlobalPortfolio-internal WeightLayer | **2.0** | Encoded stream correlations across tickers/timeframes/strategies |
 
-All three use the same functional form: `√(1 / (mean_corr + ε))`. The higher cap on IDM reflects that instrument-level diversification can be greater than forecast-level diversification.
+All three use the same functional form: `√(1 / (mean_corr + ε))` with `ε = 0.01` (shared helper
+`_correlation_multiplier_from_corr_matrix` in `ensemble/weight_layer.py`). The higher cap on IDM
+reflects that instrument-level diversification can be greater than forecast-level diversification.
 
 ---
 
@@ -73,22 +81,39 @@ All three use the same functional form: `√(1 / (mean_corr + ε))`. The higher 
 
 ```
 ensemble/
-├── diversified_ensemble.py  # Owns base models; generates per-model vol-scaled forecasts
-├── weight_layer.py          # Per-TF: combines forecasts; applies intra-TF FDM
-├── portfolio.py             # TFPortfolio (per-TF IDM), GlobalPortfolio (top-level orchestrator)
-│                            # Portfolio = TFPortfolio (backward-compatible alias)
-└── __init__.py
+├── diversified_ensemble.py        # Owns base models; generates per-model vol-scaled forecasts
+├── weight_layer.py                # Combines forecasts; applies FDM (factory + ClusteredWeightLayer)
+├── weight_hierarchy.py            # Nested-tree parsing / equal-split weights for hierarchy modes
+├── portfolio.py                   # Public re-exports: TFPortfolio, GlobalPortfolio, Portfolio,
+│                                  #   PortfolioWorld, PortfolioCacheQuery, helpers
+├── portfolio_impl/
+│   ├── tf_portfolio.py            # TFPortfolio (per-TF IDM); Portfolio = backward-compatible alias
+│   ├── global_portfolio_impl.py   # GlobalPortfolio (top-level orchestrator + cross-TF WeightLayer)
+│   ├── portfolio_cache.py         # PortfolioCacheQuery (cache-native request dataclass)
+│   ├── portfolio_returns.py       # calculate_idm_from_returns, return matrices
+│   ├── portfolio_global_streams.py# build_daily_grid, align_forecast_vectors_to_daily_grid, ...
+│   └── global_weight_layer_adapter.py  # encode/decode synthetic __GLOBAL__ streams
+└── __init__.py                    # exports DiversifiedEnsemble, GlobalPortfolio, Portfolio,
+                                   #   PortfolioWorld, TFPortfolio, WeightLayer, BaseWeightLayer,
+                                   #   ClusteredWeightLayer
 
 execution/
-├── position_sizer.py        # Converts position fractions → contract quantities
+├── position_sizer.py              # PositionSizer, ContractSpec, Position, RoundingMethod
 └── __init__.py
 ```
+
+`Portfolio` is exported from both `ensemble` and `ensemble.portfolio` as a backward-compatible
+alias for `TFPortfolio` (defined in `ensemble/portfolio_impl/tf_portfolio.py`). `PortfolioCacheQuery`
+is re-exported from `ensemble.portfolio` (defined in `ensemble/portfolio_impl/portfolio_cache.py`).
 
 ---
 
 ## Control File Format (JSON)
 
-Ensembles are configured and persisted via JSON control files. The `is_fit` flag tracks training state.
+Ensembles are configured and persisted via JSON control files validated by
+`validate_control_file` in [`ensemble/ensemble_utils.py`](../../../ensemble/ensemble_utils.py).
+The `metadata.is_fit` flag tracks training state. Every base-model entry must use the
+**signed-signal** contract (legacy binning model types are rejected — see [base model](base_model.md)).
 
 ```json
 {
@@ -96,22 +121,31 @@ Ensembles are configured and persisted via JSON control files. The `is_fit` flag
   "base_models": [
     {
       "name": "rsi_signal_D_lookback_14_long",
-      "model_type": "QuantileBinningModel",
+      "model_type": "signed_signal",
       "feature_column": "rsi_signal_D_lookback_14",
       "strategy": "long",
-      "constructor_params": { "n_bins": 10 }
+      "bias_node_spec": { "module_name": "rsi", "timeframes": ["D"], "params": { "lookback": 14 } }
     }
   ],
-  "fitted_base_models": { "...": "..." },
   "fitted_ensemble": {
     "weights": {},
-    "model_exposure_fractions": {},
-    "feature_names": []
+    "exposure_fractions": {},
+    "feature_names": [],
+    "target_volatility": 0.15,
+    "unique_tickers": [],
+    "instrument_weights": {},
+    "n_tickers": 0
   }
 }
 ```
 
-Control files live in [[vault]]. `is_fit: false` → ensemble must be trained before prediction.
+Required base-model keys: `name`, `model_type` (`"signed_signal"`), `feature_column`, `strategy`,
+`bias_node_spec`. When `metadata.is_fit` is `true`, `fitted_ensemble` is required and must contain
+`weights`, `exposure_fractions`, `feature_names`, `target_volatility`, `unique_tickers`,
+`instrument_weights`, and `n_tickers`. When `is_fit` is `false`, `fitted_ensemble` must be absent.
+
+Control files live in the [vault](../Vault/vault.md). `is_fit: false` → the ensemble must be
+trained before prediction.
 
 ---
 
@@ -191,7 +225,7 @@ This section describes the local portfolio-fit workflow for deciding whether to 
 > [!note]
 > Some local code, config, and CLI names still use the older term `inclusion`. Treat that as migration-era compatibility terminology for the **portfolio addition** phase.
 
-The local workflow reuses the same **train / validation / test** windows as `portfolio_research.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
+The local workflow reuses the same **train / validation / test** windows as `research.portfolio.config.load_config()` and the same global portfolio scoring path as `run_single_phase_for_prop_firm` (validation = fit on train, score on validation; test = fit on train+validation, score on test).
 
 **Principle:** The target workflow is `exploration -> validation -> portfolio_addition`. For local compatibility tooling, the portfolio-addition checks still appear under `inclusion`-named config and CLI surfaces.
 
@@ -203,23 +237,23 @@ The local workflow reuses the same **train / validation / test** windows as `por
 | **Uplift** | Full portfolio **without** vs **with** candidate on **train**, **validation**, and **concatenated train+validation**; Sharpe / Sortino / Calmar each window. | Pass if **each** window satisfies `Sharpe_with > Sharpe_without - uplift_slack` (default slack **0.05**). |
 | **Optional test confirmation** | Opt-in: standalone candidate **test** Sharpe vs **validation** Sharpe ratio. | Pass if `Sharpe_test / Sharpe_val > test_sharpe_ratio_min` (default **0.5**). |
 
-> **Correlation estimators:** Gate 1 uses **Pearson** and **Spearman** on aligned **validation** `forecast_score` series per ticker. The live **WeightLayer** FDM uses **Ledoit–Wolf** on **standardized in-sample** pivots at fit time — same economic object (forecasts), different estimator and window. See [[weight_layer]] for production FDM.
+> **Correlation estimators:** Gate 1 uses **Pearson** and **Spearman** on aligned **validation** `forecast_score` series per ticker. The live **WeightLayer** FDM uses **Ledoit–Wolf** on **standardized in-sample** pivots at fit time — same economic object (forecasts), different estimator and window. See [weight layer](weight_layer.md) for production FDM.
 
 ### Configuration
 
-- **`PortfolioInclusionConfig`** in `feature_research/config.py`: compatibility-era config for the portfolio-addition gate. It holds thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), and optional default candidate path/key.
+- **`PortfolioInclusionConfig`** in `research/feature/config.py`: compatibility-era config for the portfolio-addition gate. It holds thresholds (`corr_max`, `spearman_corr_max`, `sharpe_min`, `uplift_slack`, `test_sharpe_ratio_min`), `output_subdir` (default `inclusion`), and optional default candidate path/key.
 - **`ResearchConfig.portfolio_inclusion`**: current compatibility container for those defaults while the package migrates toward explicit `portfolio_addition` naming.
-- **Baseline portfolio** (tickers, train/validation/test windows, `ensemble_dirs`, weight layer, etc.) still comes from **`portfolio_research.config.load_config()`** — the CLI loads both configs.
+- **Baseline portfolio** (tickers, train/validation/test windows, `ensemble_dirs`, weight layer, etc.) still comes from **`research.portfolio.config.load_config()`** — the CLI loads both configs.
 
 ### CLI
 
 From the repo root (venv Python), pass a **repo-relative** path to the candidate ensemble directory (same style as `ensemble_dirs` values):
 
 ```powershell
-.\.venv\Scripts\python.exe -m feature_research.run_inclusion_gates
+.\.venv\Scripts\python.exe -m research.feature.run_inclusion_gates
 ```
 
-With ``portfolio_inclusion.candidate_repo_relative_path`` set in ``feature_research.config.load_config()``, no CLI arguments are required. Optional overrides: ``--candidate-path``, ``--candidate-key``, ``--emit-tearsheets`` / ``--no-emit-tearsheets``, ``--no-preflight``.
+With ``portfolio_inclusion.candidate_repo_relative_path`` set in ``research.feature.config.load_config()``, no CLI arguments are required. Optional overrides: ``--candidate-path``, ``--candidate-key``, ``--emit-tearsheets`` / ``--no-emit-tearsheets``, ``--no-preflight``.
 
 The command name is expected to change as the migration finishes; until then, interpret it as the local entrypoint for the portfolio-addition phase.
 
@@ -229,18 +263,18 @@ Under `output_root` / `portfolio_inclusion.output_subdir`: `inclusion_<candidate
 
 ### Code entrypoints
 
-- `feature_research/inclusion_gates.py` — compatibility implementation of the portfolio-addition decision (`run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …)
-- `feature_research/run_inclusion_gates.py` — compatibility CLI
+- `research/feature/inclusion_gates.py` — compatibility implementation of the portfolio-addition decision (`run_inclusion_decision`, `pearson_corr_candidate_vs_each_peer`, `write_inclusion_reports`, …)
+- `research/feature/run_inclusion_gates.py` — compatibility CLI
 
-**See also:** [[Cache/user_guide]] (portfolio workflow and preflight), [[Vault/user_guide]] (ensemble layout).
-
----
+**See also:** [Cache user guide](../Cache/user_guide.md) (portfolio workflow and preflight), [Vault user guide](../Vault/user_guide.md) (ensemble layout).
 
 ---
 
-## Futures Contract Simulation (`portfolio_research.futures_sim`)
+---
 
-An optional parallel simulation path that converts `position_fraction` signals to **integer futures contracts** and produces tearsheets and diagnostics alongside the standard log-return tearsheets.  Activated by setting `futures_sim.enabled = True` in `portfolio_research.config.load_config()`.
+## Futures Contract Simulation (`research.portfolio.futures_sim`)
+
+An optional parallel simulation path that converts `position_fraction` signals to **integer futures contracts** and produces tearsheets and diagnostics alongside the standard log-return tearsheets.  Activated by setting `futures_sim.enabled = True` in `research.portfolio.config.load_config()`.
 
 ### Purpose
 
@@ -255,7 +289,7 @@ The standard research pipeline works in fractional-return space (`position_fract
 All parameters live in `PortfolioResearchConfig.futures_sim` (`FuturesSimConfig`):
 
 ```python
-from portfolio_research.config import (
+from research.portfolio.config import (
     FuturesSimConfig, FuturesInstrumentSpec, LeverageMode
 )
 
@@ -329,9 +363,9 @@ All written to `output_root / {phase} / futures_sim /`:
 
 ### Code entrypoints
 
-- `portfolio_research/futures_sim.py` — `run_futures_sim()` (main function), `_simulate_ticker_bars()`, `_emit_discrete_tearsheet()`, `_emit_tracking_error_summary()`
-- `portfolio_research/config.py` — `FuturesSimConfig`, `FuturesInstrumentSpec`, `LeverageMode`
-- `portfolio_research/pipelines/portfolio_test.py` — hook in `_evaluate_phase()` after `combined_positions` is clipped, before standard return calculation
+- `research/portfolio/futures_sim.py` — `run_futures_sim()` (main function), `_simulate_ticker_bars()`, `_emit_discrete_tearsheet()`, `_emit_tracking_error_summary()`
+- `research/portfolio/config.py` — `FuturesSimConfig`, `FuturesInstrumentSpec`, `LeverageMode`
+- `research/portfolio/pipelines/portfolio_test.py` — hook in `_evaluate_phase()` after `combined_positions` is clipped, before standard return calculation
 
 ---
 
@@ -344,4 +378,6 @@ All written to `output_root / {phase} / futures_sim /`:
 
 ---
 
-**See also:** [[weight_layer]], [[base_model]], [[vault]], [[Cache/architecture]], [[Cache/user_guide]] (portfolio workflow; portfolio-addition summary cross-linked there)
+**See also:** [weight layer](weight_layer.md), [base model](base_model.md), [vault](../Vault/vault.md), [Cache architecture](../Cache/architecture.md), [Cache user guide](../Cache/user_guide.md) (portfolio workflow; portfolio-addition summary cross-linked there)
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

@@ -9,16 +9,16 @@ from typing import Callable, cast
 import pandas as pd
 import pytest
 
-from feature_research.config import (
+from research.feature.config import (
     FeatureType,
     InSampleDefaultsCatalog,
     InSamplePhaseDefaultsConfig,
     ResearchWindowConfig,
 )
-from feature_research.config import ResearchConfig, load_config
-from feature_research.pipeline import run_validation_pipeline
-from utils.core.enums import Ticker, TimeFrame
-from utils.evaluation.walkforward.runner import WalkforwardRunReport
+from research.feature.config import ResearchConfig, load_config
+from research.feature.pipeline import run_validation_pipeline
+from lib.core.enums import Ticker, TimeFrame
+from research.evaluation.walkforward.runner import WalkforwardRunReport
 
 
 def _build_signed_signal_config_rsi_lookback_grid(tmp_path: Path) -> ResearchConfig:
@@ -216,19 +216,19 @@ def test_run_validation_pipeline_returns_report_and_writes_artifacts(
     specs = expand_bias()
 
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.populate_cache_if_needed",
+        "research.feature.pipelines._shared.populate_cache_if_needed",
         lambda _config, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.expand_bias_specs",
+        "research.feature.pipelines._shared.expand_bias_specs",
         lambda _bias_spec: specs,
     )
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.research_data.load_features_for_combo",
+        "research.evaluation.walkforward.research_data.load_features_for_combo",
         lambda single_spec, _config, **_kwargs: series_fn(single_spec["params"]),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.load_portfolio_candles",
+        "research.feature.pipelines._shared.load_portfolio_candles",
         lambda _config: _mock_candles(),
     )
 

@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 import pytest
 
 from nodes.momentum.core.pullback_continuation_signal import PullbackContinuationSignal
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(

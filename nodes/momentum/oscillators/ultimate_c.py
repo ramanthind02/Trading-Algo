@@ -2,12 +2,12 @@ from typing import ClassVar, List
 import numpy as np
 from numba import njit
 from collections import deque
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 from nodes import BiasNode, LookbackWindow
 
 try:
-    from utils.compute.fast_nodes import (
+    from lib.compute.fast_nodes import (
         CYTHON_NODES_AVAILABLE,
         compute_pct_change_fast,
         compute_ultimate_c_fast,

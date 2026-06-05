@@ -1,5 +1,7 @@
 # Live Forecast — Complete Testing Plan
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 End-to-end checkout for the prop-firm forecast, personal forecast (with
 intraday daily-candle synthesis), and personal IB auto-execution. Run
 top-to-bottom; each stage gates the next.
@@ -36,7 +38,7 @@ in parentheses.
 git status                                    # clean, on abhi/ib-auto-execution
 
 # Unit tests all green
-cpython_env/Scripts/python -m pytest tests/unit-tests/execution/ -q
+.venv/Scripts/python.exe -m pytest tests/unit-tests/execution/ -q
 # expected: 69 passed
 ```
 
@@ -51,7 +53,7 @@ Verifies the pipeline runs end-to-end. Works any time of day.
 ### 1a. Prop dry-run
 
 ```bash
-cpython_env/Scripts/python -m scripts.enigma_prop_forecast --dry-run --port 7497
+.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --dry-run --port 7497
 ```
 
 **Verify in console output:**
@@ -63,7 +65,7 @@ cpython_env/Scripts/python -m scripts.enigma_prop_forecast --dry-run --port 7497
 ### 1b. Personal dry-run (also confirms partial daily candle)
 
 ```bash
-cpython_env/Scripts/python -m scripts.enigma_personal_forecast --dry-run --port 7497
+.venv/Scripts/python.exe -m scripts.enigma_personal_forecast --dry-run --port 7497
 ```
 
 **Verify additionally:**
@@ -85,7 +87,7 @@ Most common cause is TWS not running, port mismatch, or API permissions.
 Anytime. Prop pulls daily bars only.
 
 ```bash
-cpython_env/Scripts/python -m scripts.enigma_prop_forecast --port 7497
+.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --port 7497
 ```
 
 **Verify on Telegram (Enigma Signals - Prop Firms channel):**
@@ -102,7 +104,7 @@ the 15-min synthesis has real data. Outside hours it still runs but the
 check but won't exercise live-data behavior.
 
 ```bash
-cpython_env/Scripts/python -m scripts.enigma_personal_forecast --port 7497
+.venv/Scripts/python.exe -m scripts.enigma_personal_forecast --port 7497
 ```
 
 **Verify on Telegram (Enigma Signals - Personal Account channel):**
@@ -119,7 +121,7 @@ cpython_env/Scripts/python -m scripts.enigma_personal_forecast --port 7497
 In **elevated** Command Prompt:
 
 ```cmd
-cd C:\Users\adabla\Trading-Algo
+cd C:\Users\raman\Documents\repos\Trading-Algo
 deploy\setup_scheduled_task.bat
 ```
 
@@ -173,7 +175,7 @@ in Stage 1/2.
 gate refuses to proceed otherwise.
 
 ```bash
-cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
+.venv/Scripts/python.exe -m scripts.enigma_personal_forecast \
     --port 7497 --execute --dry-run-execute
 ```
 
@@ -226,7 +228,7 @@ that only one ETF crosses the dead-band:
 
 ```bash
 # Run the full flow, with approval, on $10K test sizing
-cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
+.venv/Scripts/python.exe -m scripts.enigma_personal_forecast \
     --port 7497 --execute --approve-via-telegram --capital 10000
 ```
 
@@ -252,7 +254,7 @@ cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
 ### 5b. Second run same-day (proves the lock)
 
 ```bash
-cpython_env/Scripts/python -m scripts.enigma_personal_forecast \
+.venv/Scripts/python.exe -m scripts.enigma_personal_forecast \
     --port 7497 --execute --approve-via-telegram --capital 10000
 ```
 
@@ -282,10 +284,10 @@ exits cleanly, audit shows `approval (decision: timed_out)`, no lock.
 
 | Goal | Command |
 |------|---------|
-| Smoke prop | `cpython_env/Scripts/python -m scripts.enigma_prop_forecast --dry-run --port 7497` |
-| Smoke personal | `cpython_env/Scripts/python -m scripts.enigma_personal_forecast --dry-run --port 7497` |
-| Real Telegram (prop) | `cpython_env/Scripts/python -m scripts.enigma_prop_forecast --port 7497` |
-| Real Telegram (personal) | `cpython_env/Scripts/python -m scripts.enigma_personal_forecast --port 7497` |
+| Smoke prop | `.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --dry-run --port 7497` |
+| Smoke personal | `.venv/Scripts/python.exe -m scripts.enigma_personal_forecast --dry-run --port 7497` |
+| Real Telegram (prop) | `.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --port 7497` |
+| Real Telegram (personal) | `.venv/Scripts/python.exe -m scripts.enigma_personal_forecast --port 7497` |
 | Trigger scheduled task | `schtasks /run /tn "TradingAlgo\PropForecast"` |
 | Auto-execute dry-run | `... enigma_personal_forecast --port 7497 --execute --dry-run-execute` |
 | Auto-execute live (paper) | `... enigma_personal_forecast --port 7497 --execute --approve-via-telegram` |
@@ -311,3 +313,5 @@ system in one session, run in this order:
 8. Wait for **Stage 3c** to fire on its own at 12:45 PM PT and 3:00 PM PT.
 
 That's ~25 minutes of active testing.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

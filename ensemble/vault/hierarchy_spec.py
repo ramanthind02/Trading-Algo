@@ -21,8 +21,8 @@ from ensemble.vault.constants import (
 )
 from ensemble.vault.discovery import iter_vault_feature_members
 from ensemble.vault.feature_files import load_validated_feature_config
-from utils.core.enums import TimeFrame
-from utils.vault_paths import vault_root_from_repo_relative_ensemble
+from lib.core.enums import TimeFrame
+from lib.core.vault_paths import vault_root_from_repo_relative_ensemble
 
 logger = logging.getLogger(__name__)
 

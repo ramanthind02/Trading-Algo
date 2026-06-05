@@ -4,9 +4,9 @@ from typing import ClassVar, Deque, List
 import numpy as np
 
 from nodes import BiasNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.compute.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.compute.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
+from lib.core.models import Candle
 
 
 class LaggedRSI(BiasNode):

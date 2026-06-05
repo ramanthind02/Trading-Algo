@@ -270,7 +270,7 @@ class PositionSizer:
         rounding_method
             Applied by :meth:`calculate_positions` (default matches Enigma ``round``).
         """
-        from utils.futures_micro_specs import canonical_listed_micro_futures
+        from lib.core.futures_micro_specs import canonical_listed_micro_futures
 
         table = canonical_listed_micro_futures()
         if research_tickers is None:

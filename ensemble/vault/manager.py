@@ -35,11 +35,11 @@ from ensemble.vault.feature_files import (
     validate_feature_configs_for_ensemble,
     validate_signed_signal_feature_config,
 )
-from feature_selection.base_models.feature_base_model import BaseModel
+from features.models.feature_base_model import BaseModel
 
-from utils.cache.runtime.cache_paths import project_root, win32_extended_path
-from utils.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
-from utils.vault_paths import resolve_vault_personal, resolve_vault_prop, resolve_vault_root
+from lib.cache.runtime.cache_paths import project_root, win32_extended_path
+from lib.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
+from lib.core.vault_paths import resolve_vault_personal, resolve_vault_prop, resolve_vault_root
 
 from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
 
@@ -1182,7 +1182,7 @@ def ensure_vault_cache_coverage(
     This wrapper stays intentionally thin: it resolves ensemble paths, migrates
     legacy feature files, and delegates the refresh to ``CacheManager``.
     """
-    from utils.cache.runtime.cache_manager import CacheManager
+    from lib.cache.runtime.cache_manager import CacheManager
 
     resolved_dirs = list(
         dict.fromkeys(

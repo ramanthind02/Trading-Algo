@@ -36,8 +36,8 @@ def _prepend_repo_root_to_syspath() -> Path:
 _REPO_ROOT = _prepend_repo_root_to_syspath()
 
 from ensemble.vault.feature_files import migrate_legacy_signed_signal_feature_files_under_vault  # noqa: E402
-from utils.repo_bootstrap import require_repo_root  # noqa: E402
-from utils.vault_paths import resolve_vault_prop  # noqa: E402
+from lib.core.repo_bootstrap import require_repo_root  # noqa: E402
+from lib.core.vault_paths import resolve_vault_prop  # noqa: E402
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

@@ -123,3 +123,5 @@ The point of this stage is to lock one defensible definition and move on.
 - [[Feature_selection/exploration]]
 - [[Feature_selection/permutation_testing]]
 - [[Feature_selection/validation]]
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

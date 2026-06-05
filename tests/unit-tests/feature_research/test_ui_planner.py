@@ -4,12 +4,12 @@ from datetime import datetime
 
 import pytest
 
-from feature_research.config import ResearchWindowConfig
-from feature_research.shared import FeatureResearchPhase
-from feature_research.ui.contracts import ComboDiagnostics
-from feature_research.ui.module_catalog import module_options
-from feature_research.ui.contracts import UiRunAction
-from feature_research.ui.planner import (
+from research.feature.config import ResearchWindowConfig
+from research.feature.shared import FeatureResearchPhase
+from research.feature.ui.contracts import ComboDiagnostics
+from research.feature.ui.module_catalog import module_options
+from research.feature.ui.contracts import UiRunAction
+from research.feature.ui.planner import (
     apply_ui_request,
     build_phase_command,
     build_phase_plan,
@@ -18,8 +18,8 @@ from feature_research.ui.planner import (
 )
 from nodes._taxonomy import CANONICAL_MODULE_CLASSES
 from tests.feature_research.support.fixtures import minimal_research_config
-from utils.core.enums import Direction, Ticker
-from utils.evaluation.walkforward.io import resolve_walkforward_output_dir
+from lib.core.enums import Direction, Ticker
+from research.evaluation.walkforward.io import resolve_walkforward_output_dir
 
 def test_build_ui_request_uses_default_tickers_when_blank() -> None:
     config = minimal_research_config()
@@ -149,7 +149,7 @@ def test_apply_ui_request_updates_phase_window_and_related_tickers() -> None:
 def test_apply_ui_request_syncs_single_ticker_portfolio_context() -> None:
     from dataclasses import replace
 
-    from feature_research.config import PortfolioInclusionConfig
+    from research.feature.config import PortfolioInclusionConfig
 
     base = minimal_research_config()
     config = replace(
@@ -198,7 +198,7 @@ def test_apply_ui_request_portfolio_tickers_override() -> None:
 def test_apply_ui_request_tickers_override_config_universe() -> None:
     from dataclasses import replace
 
-    from feature_research.config import (
+    from research.feature.config import (
         PortfolioInclusionConfig,
         PortfolioSourceConfig,
         VaultSaveConfig,
@@ -246,7 +246,7 @@ def test_apply_ui_request_tickers_override_config_universe() -> None:
 def test_build_phase_plan_for_validation_uses_real_output_dir(monkeypatch) -> None:
     config = minimal_research_config()
     monkeypatch.setattr(
-        "feature_research.ui.planner.build_combo_diagnostics",
+        "research.feature.ui.planner.build_combo_diagnostics",
         lambda _config: ComboDiagnostics(
             raw_combo_count=6,
             loaded_combo_count=6,
@@ -272,7 +272,7 @@ def test_build_phase_plan_for_validation_uses_real_output_dir(monkeypatch) -> No
 
     assert plan.phase is FeatureResearchPhase.VALIDATION
     assert plan.output_path == expected_output
-    assert "feature_research.ui.run_phase" in plan.command
+    assert "research.feature.ui.run_phase" in plan.command
     assert "--action execute" in plan.command
     assert "--module" not in plan.command
     assert any(
@@ -287,7 +287,7 @@ def test_build_phase_plan_for_validation_uses_real_output_dir(monkeypatch) -> No
 def test_build_phase_plan_for_portfolio_addition_reviews_validation_gate_artifacts(monkeypatch) -> None:
     config = minimal_research_config()
     monkeypatch.setattr(
-        "feature_research.ui.planner.build_combo_diagnostics",
+        "research.feature.ui.planner.build_combo_diagnostics",
         lambda _config: ComboDiagnostics(
             raw_combo_count=1,
             loaded_combo_count=1,

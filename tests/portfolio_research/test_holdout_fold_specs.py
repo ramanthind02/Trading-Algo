@@ -4,14 +4,14 @@ from datetime import datetime
 
 import pandas as pd
 
-from portfolio_research.config import (
+from research.portfolio.config import (
     HoldoutFoldRole,
     PortfolioFitMode,
     PortfolioResearchConfig,
     ResearchWindow,
     build_holdout_fold_specs,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _minimal_config() -> PortfolioResearchConfig:

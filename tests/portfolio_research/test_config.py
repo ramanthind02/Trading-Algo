@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from portfolio_research.config import (
+from research.portfolio.config import (
     EnsembleDirsPolicy,
     PortfolioResearchConfig,
     ResearchWindow,
@@ -11,7 +11,7 @@ from portfolio_research.config import (
     load_prop_firm_portfolio_research_config,
     scoped_tickers_for_ensemble_dirs,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def test_research_window_order_validation() -> None:
@@ -65,9 +65,9 @@ def test_discover_ensemble_dirs_uses_vault_relative_paths(tmp_path: Path, monkey
 
     # Point the config module's _PORTFOLIO_RESEARCH_DIR parent to our temp root
     # and import the helper directly to avoid interacting with real vault/.
-    import portfolio_research.config as cfg
+    import research.portfolio.config as cfg
 
-    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "research.portfolio")
 
     discovered = cfg._discover_ensemble_dirs()
 
@@ -82,9 +82,9 @@ def test_discover_ensemble_dirs_supports_nested_weight_group_folders(tmp_path: P
     nested.mkdir(parents=True, exist_ok=True)
     (nested / "feature.json").write_text("{}", encoding="utf-8")
 
-    import portfolio_research.config as cfg
+    import research.portfolio.config as cfg
 
-    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "research.portfolio")
 
     discovered = cfg._discover_ensemble_dirs()
     assert Path(discovered["my_strat_long"]) == Path("vault/D/momentum/my_strat_long")
@@ -94,7 +94,7 @@ def _patch_feature_iter(
     monkeypatch: pytest.MonkeyPatch,
     handler: object,
 ) -> None:
-    import portfolio_research.config as cfg
+    import research.portfolio.config as cfg
 
     monkeypatch.setattr(
         cfg._vault_feature_files,
@@ -140,9 +140,9 @@ def test_filter_drops_rebalancing_when_primary_ticker_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """rebalancing_flow TLT leg is in feature tickers, not only cross_tickers."""
-    import portfolio_research.config as cfg_mod
+    import research.portfolio.config as cfg_mod
 
-    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "research.portfolio")
     for rel in (
         "vault/D/es_tlt/rebalancing_tlt_es_long/features",
         "vault/D/mean_reversion_indices/mr_indices_long/features",
@@ -195,7 +195,7 @@ def test_filter_drops_mr_indices_when_portfolio_is_gc_only(
         return frozenset()
 
     monkeypatch.setattr(
-        "portfolio_research.config._ensemble_config_ticker_symbols",
+        "research.portfolio.config._ensemble_config_ticker_symbols",
         _fake_ensemble_symbols,
     )
     out = filter_ensemble_dirs_for_portfolio_tickers(
@@ -235,9 +235,9 @@ def test_filter_drops_single_instrument_feature_without_that_ticker(
 ) -> None:
     """Bonds/TLT-only features must not pass when TLT is absent (no cross_tickers)."""
 
-    import portfolio_research.config as cfg
+    import research.portfolio.config as cfg
 
-    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "research.portfolio")
     for rel in (
         "vault/D/seasonal/seasonal_bonds_long_short/features",
         "vault/D/mean_reversion_indices/mr_indices_long/features",
@@ -397,11 +397,11 @@ def test_scoped_tickers_for_gc_only_ensemble(
 ) -> None:
     import json
 
-    import portfolio_research.config as cfg_mod
+    import research.portfolio.config as cfg_mod
 
     repo = tmp_path
     (repo / "portfolio_research").mkdir()
-    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", repo / "portfolio_research")
+    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", repo / "research.portfolio")
 
     vault = repo / "vault" / "D" / "crude_oil_mr" / "mr_cl_long"
     (vault / "features").mkdir(parents=True)

@@ -4,9 +4,9 @@ import polars as pl
 import numpy as np
 from datetime import datetime
 from nodes import BiasNode, LookbackContribution
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
-import utils.core.helpers as _helpers
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+import lib.core.helpers as _helpers
 
 
 class TimeSeriesFeatureNode(BiasNode):

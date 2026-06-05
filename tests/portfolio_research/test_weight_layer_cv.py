@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from portfolio_research.weight_layer_cv import (
+from research.portfolio.weight_layer_cv import (
     CvMetrics,
     CvRunRow,
     build_cv_arms,

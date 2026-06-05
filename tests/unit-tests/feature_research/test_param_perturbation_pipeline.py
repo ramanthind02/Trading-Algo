@@ -10,8 +10,8 @@ import pandas as pd
 import pytest
 from quantfoundry_core.robustness import ParamPerturbationSpec
 
-from feature_research.config import FeatureType, ParamSensitivityConfig
-from feature_research.pipelines.param_perturbation import (
+from research.feature.config import FeatureType, ParamSensitivityConfig
+from research.feature.pipelines.param_perturbation import (
     _merge_perturbation_param_view,
     _perturbation_param_view,
     exploration_perturbation_enabled,
@@ -68,7 +68,7 @@ def test_run_min_step_perturbation_pipeline_inflates_robustness_flat_params(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from feature_research.binning.transforms import flatten_params_for_combo_long_table
+    from research.feature.binning.transforms import flatten_params_for_combo_long_table
 
     config = _Config(
         param_sensitivity=ParamSensitivityConfig(
@@ -89,7 +89,7 @@ def test_run_min_step_perturbation_pipeline_inflates_robustness_flat_params(
     flat["_bias_module"] = "filter_gate"
 
     monkeypatch.setattr(
-        "feature_research.pipelines.param_perturbation._metric_for_params",
+        "research.feature.pipelines.param_perturbation._metric_for_params",
         lambda _config, _params: 2.0,
     )
 
@@ -131,7 +131,7 @@ def test_run_min_step_perturbation_pipeline_filters_specs_to_chosen_params(
     chosen = {"lookback": 40, "_bias_module": "donchian_channel"}
 
     monkeypatch.setattr(
-        "feature_research.pipelines.param_perturbation._metric_for_params",
+        "research.feature.pipelines.param_perturbation._metric_for_params",
         lambda _config, _params: 2.0,
     )
 
@@ -167,7 +167,7 @@ def test_run_min_step_perturbation_pipeline_writes_artifacts(
         return metric_by_combo[key]
 
     monkeypatch.setattr(
-        "feature_research.pipelines.param_perturbation._metric_for_params",
+        "research.feature.pipelines.param_perturbation._metric_for_params",
         _fake_metric,
     )
 
@@ -197,7 +197,7 @@ def test_run_min_step_perturbation_pipeline_writes_artifacts(
 def test_write_perturbation_artifacts_round_trip(tmp_path: Path) -> None:
     from quantfoundry_core.robustness import aggregate_perturbation_results
 
-    from feature_research.pipelines.param_perturbation import PerturbationRunRecord
+    from research.feature.pipelines.param_perturbation import PerturbationRunRecord
 
     chosen = {"lookback": 10}
     result = aggregate_perturbation_results(

@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from feature_research.config import ResearchWindowConfig, load_config
-from feature_research.core_helpers import combo_key
-from feature_research.pipelines.permutation import _filter_param_grid_to_selected_combo
-from feature_research.pipelines.robustness import (
+from research.feature.config import ResearchWindowConfig, load_config
+from research.feature.core_helpers import combo_key
+from research.feature.pipelines.permutation import _filter_param_grid_to_selected_combo
+from research.feature.pipelines.robustness import (
     _PreparedRobustnessCombo,
     _build_core_permutation_grid,
     _build_metric_adapter,
@@ -22,10 +22,10 @@ from feature_research.pipelines.robustness import (
     run_robustness_pipeline,
     write_robustness_summary,
 )
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from feature_selection.validation.stability_analysis import _param_combo_name
-from feature_research.in_sample.data_loader import enrich_param_combo_with_module
-from utils.core.enums import Direction
+from features.validation.objective_metrics import ObjectiveMetricSpec
+from features.validation.stability_analysis import _param_combo_name
+from research.feature.in_sample.data_loader import enrich_param_combo_with_module
+from lib.core.enums import Direction
 
 
 def _build_combo_frame(
@@ -66,18 +66,18 @@ def test_run_robustness_pipeline_builds_core_report(monkeypatch, tmp_path: Path)
     }
 
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.populate_cache_if_needed",
+        "research.feature.pipelines.robustness.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.expand_bias_specs",
+        "research.feature.pipelines.robustness.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": [], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.load_signed_signal_research_data",
+        "research.feature.pipelines.robustness.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=combo_params,
@@ -144,18 +144,18 @@ def test_run_robustness_pipeline_writes_artifacts(monkeypatch, tmp_path: Path) -
     }
 
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.populate_cache_if_needed",
+        "research.feature.pipelines.robustness.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.expand_bias_specs",
+        "research.feature.pipelines.robustness.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": [], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.load_signed_signal_research_data",
+        "research.feature.pipelines.robustness.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=combo_params,
@@ -236,18 +236,18 @@ def test_run_robustness_pipeline_normalizes_enum_params_for_core(
     }
 
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.populate_cache_if_needed",
+        "research.feature.pipelines.robustness.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.expand_bias_specs",
+        "research.feature.pipelines.robustness.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": [], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.robustness.load_signed_signal_research_data",
+        "research.feature.pipelines.robustness.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=combo_params,
@@ -305,7 +305,7 @@ def test_plain_grid_score_skips_newey_west_for_t_stat() -> None:
 
 
 def test_build_metric_adapter_uses_plain_metric_for_grid_permutation() -> None:
-    from feature_research.pipelines.robustness import _PreparedRobustnessCombo
+    from research.feature.pipelines.robustness import _PreparedRobustnessCombo
     from quantfoundry_core.robustness import PermutationGrid
 
     index = pd.date_range("2020-01-01", periods=8, freq="D")

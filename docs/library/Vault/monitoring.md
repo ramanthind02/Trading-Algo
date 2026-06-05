@@ -1,9 +1,21 @@
 # Strategy Decay Monitoring
 
 > [!summary] What Is the Monitoring Store?
-> Persistent `(signal, target)` vector store per base model, co-located in the vault.
-> Initialized automatically when a fitted model is saved. Designed to support rolling Sharpe,
-> CUSUM, and Bayesian changepoint detection — computed on demand from the raw vectors.
+> A standalone Parquet store of raw `(signal, target)` vectors per base model, co-located in
+> the vault under each ensemble's `monitoring/` folder. It is designed to support rolling
+> Sharpe, CUSUM, and Bayesian changepoint detection — all computed on demand from the raw
+> vectors. The store is a thin set of read/write helpers; you call them explicitly.
+
+> [!warning] Manual store — not auto-seeded
+> The current code has **no automatic integration** between the monitoring store and the
+> base-model save path. `BaseModel.save_to_vault()` only writes the feature control file
+> (via `add_feature_to_ensemble`); it does **not** call `initialize_monitoring`. The legacy
+> binning models (`BinningModelBase`, `ContinuousBinningModel`, `RuleBasedModel`) have been
+> removed — they now raise `RuntimeError` on instantiation — and the old hooks they used
+> (`_training_target_data`, `get_fitted_vector()`) no longer exist. To use the monitoring
+> store you call `initialize_monitoring(...)` / `append_monitoring_data(...)` yourself with
+> signal and target series you have on hand. `initialize_monitoring` and
+> `append_monitoring_data` currently have no callers in the repository.
 
 ---
 
@@ -33,42 +45,29 @@ vault/D/mean_reversion_indices/mr_indices_long/
 
 - One Parquet file per `(feature_name, model_id)` pair
 - Double-underscore separator: `{feature_name}__{model_id}.parquet`
-- `monitoring/` directory is created lazily on first save
+- The `monitoring/` directory is created lazily on first write
+- The file path is resolved by `_monitoring_path(...)`, which uses `_resolve_ensemble_path(...)` from `ensemble/vault/manager.py`, so it understands both the nested and legacy-flat ensemble layouts
 
 ---
 
 ## Data Schema
 
-Each Parquet file stores a `DatetimeIndex` DataFrame:
+Each Parquet file stores a `DatetimeIndex` DataFrame (index name `date`) built by `_build_df(...)`:
 
 | Column   | Type    | Description |
 |----------|---------|-------------|
-| `signal` | float64 | Position multiplier from `predict()` |
-| `target` | float64 | Bar return used during training |
+| `signal` | float64 | Position multiplier for the bar |
+| `target` | float64 | Bar return aligned to the signal |
 | `period` | str     | `"IS"` / `"OOS"` / `"LIVE"` |
 
+Rows are the union of the signal and target indices, with any row missing either value dropped.
+
 The `period` tag is the key design choice:
-- **`IS`** — in-sample training data, auto-written at `save_to_vault()` time
-- **`OOS`** — out-of-sample walkforward data, written manually
+- **`IS`** — in-sample seed data (the default for `initialize_monitoring`)
+- **`OOS`** — out-of-sample walkforward data
 - **`LIVE`** — post-deployment live observations, appended over time
 
 The IS slice gives **μ₀** (baseline expected alpha) for CUSUM calibration without contamination from live data.
-
----
-
-## Auto-Initialization
-
-When `BaseModel.save_to_vault()` is called on a **fitted** model, the monitoring file is
-created automatically with `period="IS"`:
-
-```python
-base_model.fit(candles_df, target)
-model_id = base_model.save_to_vault(ensemble_dir)
-# vault/D/.../monitoring/{feature}__{model_id}.parquet now exists
-```
-
-Unfitted models (e.g. rule-based) skip initialization silently — `is_fitted_` is False.
-Re-saving an already-vaulted model is safe — `FileExistsError` is silenced.
 
 ---
 
@@ -76,7 +75,7 @@ Re-saving an already-vaulted model is safe — `FileExistsError` is silenced.
 
 **Module**: `ensemble/vault/monitoring_store.py`
 
-### Initialize (IS seed — called automatically by `save_to_vault`)
+### Initialize (IS seed)
 ```python
 from ensemble.vault.monitoring_store import initialize_monitoring
 
@@ -85,11 +84,11 @@ path = initialize_monitoring(
     feature_name='rsi_signal_D',
     model_id='signed_signal_<model_id>',
     signals=signal_series,   # pd.Series with DatetimeIndex
-    targets=target_series,
+    targets=target_series,   # pd.Series with DatetimeIndex
     period='IS',             # default
 )
 ```
-Raises `FileExistsError` if the file already exists.
+Raises `FileExistsError` if a monitoring file already exists for this `(feature_name, model_id)` pair (use `append_monitoring_data` to add to it).
 
 ---
 
@@ -106,7 +105,8 @@ append_monitoring_data(
     period='LIVE',           # default
 )
 ```
-Idempotent: deduplicates on date index (last write wins for any repeated date).
+Creates the file if it does not exist. Idempotent: when the file exists it concatenates,
+deduplicates on the date index (last write wins for any repeated date), and re-sorts.
 
 ---
 
@@ -127,6 +127,21 @@ Raises `FileNotFoundError` if no monitoring file exists.
 
 ---
 
+## Producing the signal / target series
+
+Because there is no automatic hook, you build the inputs yourself. A `BaseModel`
+(`features/models/feature_base_model.py`) is a node-backed adapter whose
+`predict(candles_df, strategy=...)` returns the signed-signal series; pair that with the
+aligned bar returns you trained/evaluated against:
+
+```python
+signal_series = base_model.predict(candles_df)          # position multiplier
+target_series = bar_returns                              # aligned bar returns
+initialize_monitoring(ensemble_dir, feature_name, model_id, signal_series, target_series)
+```
+
+---
+
 ## Computing Decay Metrics (On Demand)
 
 All metrics are computed from `pnl = signal * target`. No pre-computation is stored.
@@ -142,15 +157,16 @@ rolling_sharpe = pnl.rolling(window).mean() / pnl.rolling(window).std() * (252 *
 ```python
 import numpy as np
 
-is_pnl = load_monitoring_data(ensemble_dir, feature_name, model_id, period='IS')['signal'] * ...
-mu0 = (is_pnl['signal'] * is_pnl['target']).mean()   # baseline expected return
-sigma = (is_pnl['signal'] * is_pnl['target']).std()
+is_df = load_monitoring_data(ensemble_dir, feature_name, model_id, period='IS')
+is_pnl = is_df['signal'] * is_df['target']
+mu0 = is_pnl.mean()    # baseline expected return
+sigma = is_pnl.std()
 
 k = 0.5 * sigma    # allowance (slack) — standard setting
 h = 4.0 * sigma    # alarm threshold
 
-live_pnl = load_monitoring_data(..., period='LIVE')
-pnl = live_pnl['signal'] * live_pnl['target']
+live_df = load_monitoring_data(ensemble_dir, feature_name, model_id, period='LIVE')
+pnl = (live_df['signal'] * live_df['target']).to_numpy()
 
 cusum = np.zeros(len(pnl))
 for i, x in enumerate(pnl):
@@ -160,7 +176,7 @@ for i, x in enumerate(pnl):
 alarm_days = np.where(cusum > h)[0]
 ```
 
-Key CUSUM parameters (from blog):
+Key CUSUM parameters:
 | Parameter | Value | Effect |
 |-----------|-------|--------|
 | `k = 0.5σ` | allowance | standard setting, recommended start |
@@ -171,26 +187,17 @@ Key CUSUM parameters (from blog):
 
 ## Implementation Notes
 
-### Where `_training_target_data` Lives
-
-Both `BinningModelBase.fit()` and `ContinuousBinningModel.fit()` (which overrides `fit()`
-independently) store the target series:
-
-```python
-self._training_feature_data = feature_data.copy()   # pre-existing
-self._training_target_data = target_data.copy()      # added for monitoring
-```
-
-The signal is recovered via the already-existing `get_fitted_vector()`:
-
-```python
-signal_vector = bm.get_fitted_vector(strategy=bm.strategy)
-```
-
 ### File Format
 
-Parquet with `fastparquet` engine — consistent with OHLC data storage across the project.
-Files are small (<5k rows for years of daily data) but read frequently.
+Parquet with the `fastparquet` engine — consistent with the project's other small Parquet
+stores. Files are small (<5k rows for years of daily data) but read frequently.
+
+### Relationship to portfolio materialization
+
+The monitoring store is per-`(feature, model_id)` and tags rows with `period`
+(`IS`/`OOS`/`LIVE`). It is separate from the portfolio prediction materialization store,
+which lives under the central cache and tags rows with `world` (`train`/`val`/`test`/`live`).
+Do not conflate `period` and `world`. See [[Vault/portfolio_snapshots_and_predictions]].
 
 ---
 
@@ -202,7 +209,7 @@ Weekly:  compute rolling_sharpe, check CUSUM statistic vs threshold
 Monthly: compute CUSUM with fresh μ₀ from IS slice, review trend
 ```
 
-Alert tiers (from the blog):
+Alert tiers:
 
 | Level  | Trigger | Action |
 |--------|---------|--------|
@@ -214,5 +221,8 @@ Alert tiers (from the blog):
 
 ## See Also
 
-- [[vault]] — Vault directory structure and control file schema
-- [[base_model]] — `BinningModelBase`, `get_fitted_vector()`
+- [[Vault/vault]] — Vault directory structure and control file schema
+- [[Ensemble/base_model]] — `BaseModel` (signed-signal node adapter)
+- [[Vault/portfolio_snapshots_and_predictions]] — `world`-tagged portfolio prediction store
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

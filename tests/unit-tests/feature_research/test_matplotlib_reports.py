@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from feature_research.research_table_exports import AGGREGATE_EQUITY_TICKER
-from feature_research.visualization.matplotlib_reports import (
+from research.feature.research_table_exports import AGGREGATE_EQUITY_TICKER
+from research.feature.visualization.matplotlib_reports import (
     generate_detected_matplotlib_plots,
 )
 

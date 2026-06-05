@@ -5,12 +5,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from feature_selection.validation.permutation_tests import (
+from features.validation.objective_metrics import ObjectiveMetricSpec
+from features.validation.permutation_tests import (
     run_vector_shuffle_target_perm_batch,
     run_vector_shuffle_test,
 )
-from feature_selection.validation.reports import VectorShuffleReport
+from features.validation.reports import VectorShuffleReport
 
 
 def _sharpe(returns: pd.Series) -> float:

@@ -10,13 +10,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_research.config import (
+from research.feature.config import (
     PortfolioInclusionConfig,
     VaultSaveConfig,
     inferred_inclusion_candidate_path,
     load_config,
 )
-from feature_research.inclusion_gates import (
+from research.feature.inclusion_gates import (
     _write_inclusion_tearsheets_from_phases,
     compute_peer_forecast_correlations,
     config_with_ensemble_dirs,
@@ -24,10 +24,10 @@ from feature_research.inclusion_gates import (
     materialize_inclusion_candidate_from_eval_bias_spec,
     pearson_corr_candidate_vs_each_peer,
 )
-from portfolio_research.pipelines.portfolio_test import PhaseResult
-from portfolio_research.config import EnsembleDirsPolicy, PortfolioResearchConfig, ResearchWindow
-from utils.cache.runtime.cache_paths import win32_extended_path
-from utils.core.enums import Ticker, TimeFrame
+from research.portfolio.pipelines.portfolio_test import PhaseResult
+from research.portfolio.config import EnsembleDirsPolicy, PortfolioResearchConfig, ResearchWindow
+from lib.cache.runtime.cache_paths import win32_extended_path
+from lib.core.enums import Ticker, TimeFrame
 
 
 def test_pearson_corr_vs_each_peer_perfect() -> None:
@@ -149,7 +149,7 @@ def test_materialize_inclusion_candidate_from_eval_bias_spec_writes_feature(
     import shutil
 
     from ensemble.vault.hierarchy_spec import global_stream_ids_for_signed_signal_feature
-    from feature_research.config import TREND_FOLLOWING_UNIVERSE
+    from research.feature.config import TREND_FOLLOWING_UNIVERSE
 
     fr = load_config()
     train = ResearchWindow(start=datetime(2000, 1, 1), end=datetime(2005, 12, 31))
@@ -221,7 +221,7 @@ def test_config_with_ensemble_dirs_rebuilds_asset_first_hierarchy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import feature_research.inclusion_gates as inclusion_gates_mod
+    import research.feature.inclusion_gates as inclusion_gates_mod
     from ensemble.weight_hierarchy import parse_hierarchy_spec
 
     monkeypatch.setattr(inclusion_gates_mod, "_REPO_ROOT", tmp_path)
@@ -289,13 +289,13 @@ def test_config_with_ensemble_dirs_scopes_tickers_to_active_ensemble(
 ) -> None:
     import json
 
-    import feature_research.inclusion_gates as inclusion_gates_mod
-    import portfolio_research.config as cfg_mod
+    import research.feature.inclusion_gates as inclusion_gates_mod
+    import research.portfolio.config as cfg_mod
 
     repo = tmp_path
     monkeypatch.setattr(inclusion_gates_mod, "_REPO_ROOT", repo)
     (repo / "portfolio_research").mkdir()
-    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", repo / "portfolio_research")
+    monkeypatch.setattr(cfg_mod, "_PORTFOLIO_RESEARCH_DIR", repo / "research.portfolio")
 
     vault = repo / "vault" / "D" / "crude_oil_mr" / "mr_cl_long"
     (vault / "features").mkdir(parents=True)

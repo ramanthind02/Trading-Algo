@@ -6,8 +6,8 @@ from math import log
 import pandas as pd
 import pytest
 
-from utils.core.enums import TimeFrame, Ticker
-from utils.evaluation.walkforward.portfolio_evaluator import (
+from lib.core.enums import TimeFrame, Ticker
+from research.evaluation.walkforward.portfolio_evaluator import (
     _calculate_oos_returns_from_positions,
     build_research_portfolio,
     ensure_portfolio_candle_columns,

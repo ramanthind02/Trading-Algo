@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from feature_research.exploration import (
+from research.feature.exploration import (
     PHASE as EXPLORATION_PHASE,
     run_exploration_permutation_pipeline,
     run_exploration_pipeline,
@@ -13,18 +13,18 @@ from feature_research.exploration import (
     write_exploration_permutation_summary,
     write_exploration_robustness_summary,
 )
-from feature_research.portfolio_addition import (
+from research.feature.portfolio_addition import (
     PHASE as PORTFOLIO_ADDITION_PHASE,
     PortfolioAdditionBundle,
     run_portfolio_addition_pipeline,
     run_portfolio_addition_pipeline_with_bundle,
 )
-from feature_research.shared import FeatureResearchPhase, OosCorrelationBundle
-from feature_research.validation import (
+from research.feature.shared import FeatureResearchPhase, OosCorrelationBundle
+from research.feature.validation import (
     PHASE as VALIDATION_PHASE,
     run_validation_pipeline,
 )
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def test_shared_contracts_preserve_legacy_oos_bundle_alias() -> None:
@@ -57,7 +57,7 @@ def test_exploration_public_api_forwards_to_current_pipelines(
     permutation_paths = (tmp_path / "permutation_summary.csv", tmp_path / "permutation_summary.md")
 
     monkeypatch.setattr(
-        "feature_research.exploration._run_eda_pipeline",
+        "research.feature.exploration._run_eda_pipeline",
         lambda received_config, received_output_dir: (
             exploration_result
             if received_config is config and received_output_dir == tmp_path
@@ -65,7 +65,7 @@ def test_exploration_public_api_forwards_to_current_pipelines(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration._run_robustness_pipeline",
+        "research.feature.exploration._run_robustness_pipeline",
         lambda received_config, received_output_dir: (
             robustness_report,
             raw_parameter_grid,
@@ -74,7 +74,7 @@ def test_exploration_public_api_forwards_to_current_pipelines(
         else (None, []),
     )
     monkeypatch.setattr(
-        "feature_research.exploration._write_robustness_summary",
+        "research.feature.exploration._write_robustness_summary",
         lambda received_report, received_output_dir: (
             artifact_paths
             if received_report is robustness_report and received_output_dir == tmp_path
@@ -82,7 +82,7 @@ def test_exploration_public_api_forwards_to_current_pipelines(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration._run_permutation_pipeline",
+        "research.feature.exploration._run_permutation_pipeline",
         lambda received_config, received_output_dir: (
             permutation_suite,
             raw_parameter_grid,
@@ -91,7 +91,7 @@ def test_exploration_public_api_forwards_to_current_pipelines(
         else (None, []),
     )
     monkeypatch.setattr(
-        "feature_research.exploration._write_permutation_summary",
+        "research.feature.exploration._write_permutation_summary",
         lambda received_suite, received_output_dir, *, objective_metric=None, param_grid=None: (
             permutation_paths
             if received_suite is permutation_suite
@@ -131,7 +131,7 @@ def test_validation_public_api_forwards_to_current_pipeline(
     validation_report = object()
 
     monkeypatch.setattr(
-        "feature_research.validation._run_validation_pipeline",
+        "research.feature.validation._run_validation_pipeline",
         lambda received_config, received_output_dir: (
             validation_report
             if received_config is config and received_output_dir == tmp_path
@@ -160,11 +160,11 @@ def test_portfolio_addition_public_api_forwards_to_oos_pipeline(
     )
 
     monkeypatch.setattr(
-        "feature_research.portfolio_addition._run_oos_pipeline",
+        "research.feature.portfolio_addition._run_oos_pipeline",
         lambda received_config: report if received_config is config else None,
     )
     monkeypatch.setattr(
-        "feature_research.portfolio_addition._run_oos_pipeline_with_bundle",
+        "research.feature.portfolio_addition._run_oos_pipeline_with_bundle",
         lambda received_config: (report, bundle) if received_config is config else (None, None),
     )
 

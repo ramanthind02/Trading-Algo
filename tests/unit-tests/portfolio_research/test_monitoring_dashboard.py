@@ -5,17 +5,17 @@ from pathlib import Path
 
 import pandas as pd
 
-from portfolio_research.config import (
+from research.portfolio.config import (
     PortfolioFitMode,
     PortfolioResearchConfig,
     ResearchWindow,
 )
-from portfolio_research.shared.phase import PortfolioResearchPhase
-from portfolio_research.ui.monitoring_dashboard import (
+from research.portfolio.shared.phase import PortfolioResearchPhase
+from research.portfolio.ui.monitoring_dashboard import (
     build_monitoring_dashboard,
     inject_monitoring_section,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _config(tmp_path: Path) -> PortfolioResearchConfig:

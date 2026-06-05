@@ -13,9 +13,14 @@ Related documents:
 - `docs/SaaS/data_flow.md` — IS zone lifecycle
 - `docs/SaaS/metrics_library.md` — canonical metric conventions
 
-Existing implementation references:
-- `feature_selection/eda/parameter_analysis.py` — `compute_neighbor_smoothing`, `generate_parameter_sensitivity_report`, `ParameterSensitivityReport`
-- `utils/compute/grid_smoothing.py` — `add_smoothed_objective` (core neighbourhood averaging)
+Existing implementation references (verified):
+- `features/eda/parameter_analysis.py` — `compute_neighbor_smoothing`, `generate_parameter_sensitivity_report`, `ParameterSensitivityReport` (grid-surface EDA, grid-step neighbours).
+- `lib/compute/grid_smoothing.py` — `add_smoothed_objective` (core neighbourhood averaging).
+- `quantfoundry_core.robustness` — `ParamPerturbationSpec`, `build_perturbation_neighbors`, `aggregate_perturbation_results`, `PerturbationTestResult` (off-grid min-step perturbation).
+- `research/feature/pipelines/param_perturbation.py` — the min-step perturbation pipeline; runs inside `research/feature/exploration/orchestrate.py::execute_exploration_phase` after robustness, before vector-shuffle permutation.
+- `research/feature/config.py` — `ParamSensitivityConfig.perturbation_specs: dict[str, ParamPerturbationSpec]`, exposed as `ResearchConfig.param_sensitivity`.
+
+Note on terminology: the perturbation step is **min_step** (smallest economically meaningful change), not a fixed percentage. The "±10%" labels that appear in some UI mockups and section headers below are shorthand for the perturbation band; the implemented step is `ParamPerturbationSpec.min_step`.
 
 ---
 
@@ -29,7 +34,7 @@ Grid steps bound the search space; **min_step** is the smallest economically mea
 
 The **median metric across neighbour runs** is the realistic performance estimate. The gap between peak and median is **optimism bias**. **Stability ratio** (`median / peak`) near 1.0 means the edge does not flinch at the smallest parameter nudge.
 
-Implementation: `quantfoundry_core.robustness.build_perturbation_neighbors` + `aggregate_perturbation_results`; pipeline: `feature_research/pipelines/param_perturbation.py`.
+Implementation: `quantfoundry_core.robustness.build_perturbation_neighbors` + `aggregate_perturbation_results`; pipeline: `research/feature/pipelines/param_perturbation.py`.
 
 ### 2.2 Configuration
 
@@ -224,4 +229,6 @@ For the current research workspace, the practical artifact is the pivot explorer
 
 **Grid surface (EDA):** runs during the exploration EDA sweep; writes `param_sensitivity.csv`, `param_combo_long.csv`, and optional by-ticker tables. Neighbour smoothing uses **grid-step** neighbours only. Review surfaces in the workspace pivot explorer, not Matplotlib heatmaps.
 
-**Min-step perturbation:** runs after robustness in `execute_exploration_phase`, before vector-shuffle permutation. Builds neighbours via `build_perturbation_neighbors`, then **re-runs** the strategy for each off-grid neighbour (typically `2 × n_params` evaluations). Writes `perturbation_report.json`, `perturbation_runs.csv`, and `perturbation_summary.md`. Surfaced in the Parameter Sensitivity workspace section via `renderPerturbationSummaryPanel`.
+**Min-step perturbation:** runs after robustness in `execute_exploration_phase`, before vector-shuffle permutation. Builds neighbours via `build_perturbation_neighbors`, then **re-runs** the strategy for each off-grid neighbour (typically `2 × n_params` evaluations). Writes `perturbation_report.json`, `perturbation_runs.csv`, and `perturbation_summary.md`. Surfaced in the Parameter Sensitivity workspace section via `renderPerturbationSummaryPanel` (`frontend/feature_research.html`).
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

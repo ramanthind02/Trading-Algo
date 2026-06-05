@@ -8,9 +8,9 @@ from uuid import uuid4
 import pytest
 
 from nodes.ibs_lower_band import IBSLowerBand
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.helpers import create_bias_node
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.helpers import create_bias_node
+from lib.core.models import Candle
 
 
 def _candle(day: int, o: float, h: float, l: float, c: float) -> Candle:

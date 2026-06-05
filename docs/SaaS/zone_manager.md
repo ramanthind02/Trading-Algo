@@ -1,8 +1,17 @@
  # Zone Manager
 
+> **Status: forward-looking SaaS design — not yet implemented.** This document
+> defines the planned zone model for the QuantFoundry SaaS platform. The
+> `quantfoundry_core.zone_manager` module, the `ZoneSnapshot`/`ZoneConfig` Core
+> types, and the PostgreSQL `Zone` entity referenced below **do not exist in the
+> repo today** (no `quantfoundry_core` package and no `zone_manager.py` are
+> present; only a `tests/unit-tests/quantfoundry_core/` test stub exists). The
+> contamination/test-integrity doctrine (§8) is the design discipline this model
+> is meant to enforce; treat the APIs and storage as target, not current, state.
+
 ## 1. Purpose
 
-This document defines **QuantFoundry** data zones for research projects: the **three zone types**, **time-boundary rules**, where logic lives (**Core** vs **API**), and how configurations are **stored and snapshotted**. Product-level lifecycle and research flow are in `data_flow.md`; API entity shapes are in `technical_design.md` §6.3. **UI:** portfolio zone at `docs/SaaS/UI-UX/portfolios.md` (create, lock); strategy zones at `docs/SaaS/UI-UX/research_workspace/project_setup.md`; field reference `docs/SaaS/UI-UX/research_workspace/zone_manager.md`.
+This document defines **QuantFoundry** data zones for research projects: the **three zone types**, **time-boundary rules**, where logic lives (**Core** vs **API**), and how configurations are **stored and snapshotted**. Product-level lifecycle and research flow are in `data_flow.md`; API entity shapes are in `technical_design.md` §6.3. **UI:** the current local workspace UI is the Flask app described in `ui_ux.md`; dedicated hosted zone-management pages are planned but not yet present in `docs/`.
 
 ---
 
@@ -40,7 +49,7 @@ All zone boundaries are interpreted in **UTC**.
 
 The Web app and API may collect **calendar dates** from users; they **normalize** to UTC instants (e.g. start-of-day and end-of-day in UTC for daily bars) before persistence and before calling **QuantFoundry-Core**. Exact normalization for each timeframe belongs in Core and worker tests; this document fixes **UTC + inclusive ends** as the platform contract.
 
-**QuantFoundry-Core** (`quantfoundry_core.zone_manager` or equivalent) must implement this contract so local research, workers, and parity tests agree.
+**QuantFoundry-Core** (`quantfoundry_core.zone_manager` or equivalent) is intended to implement this contract so local research, workers, and parity tests agree. This module does not exist yet — it is part of the planned Core extraction (`technical_design.md` §2).
 
 ---
 
@@ -204,6 +213,7 @@ The goal is not to make contamination impossible but to make it visible. A resea
 | Document | Relevance |
 |----------|-----------|
 | `data_flow.md` | Research phases, portfolio snapshots, discipline around test zones. |
-| `technical_design.md` | Zone entity, REST routes, worker flow. |
-| `UI-UX/portfolios.md` | Create portfolio; lock project test zone. |
-| `UI-UX/research_workspace/project_setup.md` | Strategy zones only; read-only portfolio zone. |
+| `technical_design.md` | Zone entity (§6.3), REST routes, worker flow (all planned). |
+| `ui_ux.md` | Current local research UI (Flask); hosted zone-management pages are planned. |
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

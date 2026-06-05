@@ -6,8 +6,8 @@ from collections import deque
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 class SmaAboveFilterNode(BiasNode):

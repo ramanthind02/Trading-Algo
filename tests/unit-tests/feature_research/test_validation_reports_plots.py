@@ -20,11 +20,11 @@ from quantfoundry_core.robustness.validation import (
 )
 from quantfoundry_core.robustness import BootstrapCI, SharpeCI, sharpe_confidence_interval
 
-from feature_research.validation.robustness_runner import (
+from research.feature.validation.robustness_runner import (
     load_validation_robustness_report_from_json,
     write_validation_robustness_summary,
 )
-from feature_research.visualization.validation_reports import write_validation_robustness_plots
+from research.feature.visualization.validation_reports import write_validation_robustness_plots
 
 
 def _synthetic_report() -> ValidationRobustnessReport:

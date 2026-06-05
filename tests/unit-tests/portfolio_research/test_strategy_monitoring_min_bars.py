@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from portfolio_research.config import load_config
-from portfolio_research.holdout.strategy_monitoring import (
+from research.portfolio.config import load_config
+from research.portfolio.holdout.strategy_monitoring import (
     _ensemble_trading_timeframe,
     _min_evaluation_bars_for_strategy,
 )
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def test_buy_hold_ensemble_maps_to_monthly_timeframe() -> None:

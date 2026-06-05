@@ -25,20 +25,20 @@ Portfolio addition is a portfolio-admission decision, not a general-purpose OOS 
 
 The primary gate is **composite** (sleeve ΔSR plus max drawdown, ulcer index, and stress-period drawdown). See [[SaaS/robustness_tests/portfolio_addition]] §5.2.
 
-When validation runs with the portfolio addition gate enabled, sleeve-scoped QuantStats HTML tearsheets are written under the validation visualization folder (`sleeve_tearsheets_<asset>_<style>/`, with/without candidate on train, validation, and train+validation). Toggle via `portfolio_addition_gate.emit_sleeve_tearsheets` (default on).
+When validation runs with the portfolio addition gate enabled, sleeve-scoped QuantStats HTML tearsheets are written under the validation visualization folder at `portfolio_gate_tearsheets/sleeve_<label>/` (sanitized `<asset>_<style>` sleeve label; with/without candidate on train, validation, and train+validation). Toggle via `portfolio_addition_gate.emit_sleeve_tearsheets` (default `True`). The full-book with/without and candidate-standalone tearsheets are written under the same `portfolio_gate_tearsheets/` root and toggle via `portfolio_addition_gate.emit_tearsheets` (default `True`).
 
 ## Local command surface
 
 Preferred command:
 
 ```bash
-python -m feature_research portfolio_addition
+python -m research.feature portfolio_addition
 ```
 
 Compatibility alias still present:
 
 ```bash
-python -m feature_research oos
+python -m research.feature oos
 ```
 
 Use the first name in docs and discussion. Keep the second only as a migration note.
@@ -91,3 +91,5 @@ Those downstream workflows live in:
 - [[Feature_selection/pipeline]]
 - [[Feature_selection/validation]]
 - [[SaaS/robustness_tests/portfolio_addition]]
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

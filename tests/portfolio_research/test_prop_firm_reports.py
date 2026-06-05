@@ -9,9 +9,9 @@ import pytest
 
 from dataclasses import replace
 
-from portfolio_research.config import PropFirmReportConfig, load_config
-from portfolio_research.pipelines.portfolio_test import PhaseResult
-from portfolio_research.prop_firm_reports import run_prop_firm_reports_for_phases
+from research.portfolio.config import PropFirmReportConfig, load_config
+from research.portfolio.pipelines.portfolio_test import PhaseResult
+from research.portfolio.prop_firm_reports import run_prop_firm_reports_for_phases
 
 
 def _phase(name: str, out: Path) -> PhaseResult:
@@ -66,18 +66,18 @@ def test_run_prop_firm_reports_for_phases_writes_artifacts(tmp_path: Path) -> No
 
     with (
         patch(
-            "portfolio_research.prop_firm_reports.build_prop_firm_returns",
+            "research.portfolio.prop_firm_reports.build_prop_firm_returns",
             return_value=pd.Series([0.01], index=pd.to_datetime(["2024-01-02"])),
         ),
         patch(
-            "portfolio_research.prop_firm_reports.align_portfolio_returns_with_report_engine",
+            "research.portfolio.prop_firm_reports.align_portfolio_returns_with_report_engine",
             return_value=pd.Series([0.01], index=pd.to_datetime(["2024-01-02"])),
         ),
         patch(
-            "portfolio_research.prop_firm_reports.create_prop_firm_portfolio_simulator",
+            "research.portfolio.prop_firm_reports.create_prop_firm_portfolio_simulator",
         ) as mock_create,
         patch(
-            "portfolio_research.prop_firm_reports.generate_portfolio_report",
+            "research.portfolio.prop_firm_reports.generate_portfolio_report",
             return_value=fake_artifacts,
         ) as mock_report,
     ):
@@ -121,18 +121,18 @@ def test_run_prop_firm_reports_skips_rolling_on_value_error(tmp_path: Path) -> N
 
     with (
         patch(
-            "portfolio_research.prop_firm_reports.build_prop_firm_returns",
+            "research.portfolio.prop_firm_reports.build_prop_firm_returns",
             return_value=pd.Series([0.01], index=pd.to_datetime(["2024-01-02"])),
         ),
         patch(
-            "portfolio_research.prop_firm_reports.align_portfolio_returns_with_report_engine",
+            "research.portfolio.prop_firm_reports.align_portfolio_returns_with_report_engine",
             return_value=pd.Series([0.01], index=pd.to_datetime(["2024-01-02"])),
         ),
         patch(
-            "portfolio_research.prop_firm_reports.create_prop_firm_portfolio_simulator",
+            "research.portfolio.prop_firm_reports.create_prop_firm_portfolio_simulator",
         ) as mock_create,
         patch(
-            "portfolio_research.prop_firm_reports.generate_portfolio_report",
+            "research.portfolio.prop_firm_reports.generate_portfolio_report",
             return_value=fake_artifacts,
         ) as mock_report,
     ):
@@ -162,18 +162,18 @@ def test_run_prop_firm_reports_rolling_disabled(tmp_path: Path) -> None:
 
     with (
         patch(
-            "portfolio_research.prop_firm_reports.build_prop_firm_returns",
+            "research.portfolio.prop_firm_reports.build_prop_firm_returns",
             return_value=pd.Series([0.01], index=pd.to_datetime(["2024-01-02"])),
         ),
         patch(
-            "portfolio_research.prop_firm_reports.align_portfolio_returns_with_report_engine",
+            "research.portfolio.prop_firm_reports.align_portfolio_returns_with_report_engine",
             return_value=pd.Series([0.01], index=pd.to_datetime(["2024-01-02"])),
         ),
         patch(
-            "portfolio_research.prop_firm_reports.create_prop_firm_portfolio_simulator",
+            "research.portfolio.prop_firm_reports.create_prop_firm_portfolio_simulator",
         ) as mock_create,
         patch(
-            "portfolio_research.prop_firm_reports.generate_portfolio_report",
+            "research.portfolio.prop_firm_reports.generate_portfolio_report",
             return_value=Mock(),
         ) as mock_report,
     ):

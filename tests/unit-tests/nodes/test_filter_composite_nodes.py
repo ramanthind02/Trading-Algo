@@ -9,9 +9,9 @@ from nodes import BiasNode
 from nodes.composite.filter_and_signal import FilterAndSignalNode
 from nodes.composite.filter_gate import FilterGateNode
 from nodes.composite.filter_gate_entry_only import FilterGateEntryOnlyNode
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(day: int = 0) -> Candle:

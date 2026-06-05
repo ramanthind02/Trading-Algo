@@ -7,10 +7,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
-from utils.cache.runtime.central_cache import CentralCacheStore
-from utils.cache.runtime.central_cache_errors import ArtifactMissingError
-from utils.core.enums import Ticker, TimeFrame
+from lib.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
+from lib.cache.runtime.central_cache import CentralCacheStore
+from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _source_frame(
@@ -57,8 +57,8 @@ def test_bootstrap_source_candles_writes_to_central_cache(
     isolated_central_cache: None,
     temp_source_dir: Path,
 ) -> None:
-    bootstrap_module = importlib.import_module("utils.cache.runtime.bootstrap_source_candles")
-    from utils.cache.runtime.cache_manager import CacheManager
+    bootstrap_module = importlib.import_module("lib.cache.runtime.bootstrap_source_candles")
+    from lib.cache.runtime.cache_manager import CacheManager
 
     monkeypatch.setattr(
         bootstrap_module,
@@ -96,8 +96,8 @@ def test_bootstrap_source_candles_reset_existing_clears_prior_candle_cache(
     isolated_central_cache: None,
     temp_source_dir: Path,
 ) -> None:
-    bootstrap_module = importlib.import_module("utils.cache.runtime.bootstrap_source_candles")
-    from utils.cache.runtime.cache_manager import CacheManager
+    bootstrap_module = importlib.import_module("lib.cache.runtime.bootstrap_source_candles")
+    from lib.cache.runtime.cache_manager import CacheManager
 
     monkeypatch.setattr(
         bootstrap_module,

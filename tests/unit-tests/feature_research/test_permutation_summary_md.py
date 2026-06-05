@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from feature_research.pipelines.permutation import write_permutation_summary
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
+from research.feature.pipelines.permutation import write_permutation_summary
+from features.validation.objective_metrics import ObjectiveMetricSpec
 
 
 @dataclass(frozen=True)
@@ -41,13 +41,13 @@ def test_write_permutation_summary_includes_full_grid_section(
         stage1_reports={},
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.write_permutation_vector_shuffle_exports",
+        "research.feature.pipelines.permutation.write_permutation_vector_shuffle_exports",
         lambda *_args, **_kwargs: {
             "permutation_vector_shuffle_csv": tmp_path / "permutation_vector_shuffle.csv"
         },
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.permutation_vector_shuffle_records",
+        "research.feature.pipelines.permutation.permutation_vector_shuffle_records",
         lambda *_args, **_kwargs: [
             {
                 "param_combo": "period_126",

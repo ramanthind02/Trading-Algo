@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from portfolio_research.pipelines.portfolio_test import (
+from research.portfolio.pipelines.portfolio_test import (
     _build_daily_dates_per_ticker,
     _group_ensembles_by_timeframe,
     _portfolio_cache_query,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 class _DummyEnsemble:

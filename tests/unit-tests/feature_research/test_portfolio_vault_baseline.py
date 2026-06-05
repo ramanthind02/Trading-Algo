@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from feature_research.config import PortfolioSourceConfig, discover_portfolio_source_ensemble_dirs, load_config
-from portfolio_research.config import discover_ensemble_dirs
-from utils.core.enums import Ticker, TimeFrame
-from utils.vault_paths import vault_discovery_dirnames_for_profile
+from research.feature.config import PortfolioSourceConfig, discover_portfolio_source_ensemble_dirs, load_config
+from research.portfolio.config import discover_ensemble_dirs
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.vault_paths import vault_discovery_dirnames_for_profile
 
 
 def test_discover_ensemble_dirs_prop_profile_excludes_personal_vault(
@@ -20,9 +20,9 @@ def test_discover_ensemble_dirs_prop_profile_excludes_personal_vault(
     (prop_root / "feature.json").write_text("{}", encoding="utf-8")
     (personal_root / "feature.json").write_text("{}", encoding="utf-8")
 
-    import portfolio_research.config as cfg
+    import research.portfolio.config as cfg
 
-    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "portfolio_research")
+    monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "research.portfolio")
 
     prop_only = discover_ensemble_dirs(
         allowed_timeframes=(TimeFrame.D,),

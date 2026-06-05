@@ -1,5 +1,7 @@
 # Additive Back-Adjustment Distorts Percentage Returns & Vol Sizing
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-2 data layer). See docs/refactor/nautilus/.
+
 > [!warning] Known issue — not yet fixed
 > `data/ohlc_data` futures series are **additively** back-adjusted continuous contracts
 > (Norgate `&XX_CCB`). Additive adjustment preserves *point* moves but inflates the
@@ -71,7 +73,7 @@ faithfulness, i.e. the proportional/cash convention, not additive.
    price).
 
 3. **Research P&L is computed in the same (back-adjusted) % convention.**
-   [`utils/evaluation/walkforward/portfolio_evaluator.py:142-145`](../../../utils/evaluation/walkforward/portfolio_evaluator.py)
+   [`research/evaluation/walkforward/portfolio_evaluator.py:142-145`](../../../research/evaluation/walkforward/portfolio_evaluator.py)
    ```text
    forecast_score    = min(τ / EWSD[t], 2.0) × signal
    position_fraction = forecast_score × instrument_weight × IDM
@@ -228,11 +230,11 @@ P&L vs the reference's arithmetic aggregation):
 cash SPY/TLT, reporting σ, realized vol, Sharpe, and the `1/k` live overshoot:
 ```python
 import glob, os, numpy as np, pandas as pd
-import utils.core.helpers as h
+import lib.core.helpers as h
 from nodes import BiasNode
 from nodes.pairs.rebalancing_flow import RebalancingFlow, RebalancingFlowNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 from utils.data.cross_ticker_store import CrossTickerDataStore
 
 TAU, ANN = 0.15, np.sqrt(252.0)
@@ -285,3 +287,5 @@ Expected: `k≈0.69`; (i) ≈10.7%/0.71, (ii) ≈11.6%/0.77, (iii) ≈14.9%/0.80
 - [[multi_source_update_architecture]] — repository data layering.
 - Carver vol-target / forecast scaling: `ensemble/diversified_ensemble.py`,
   `nodes/volatility/ewsd/ewsd.py`.
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

@@ -1,0 +1,10 @@
+role,param_changed,direction,metric,param_exit_bars,param_momentum_lookback,param_rsi_max,param_rsi_period
+center,,,3.0,5,10,85.0,2
+neighbor,exit_bars,down,2.5,4,10,85.0,2
+neighbor,exit_bars,up,2.5,6,10,85.0,2
+neighbor,momentum_lookback,down,2.5,5,9,85.0,2
+neighbor,momentum_lookback,up,2.5,5,11,85.0,2
+neighbor,rsi_max,down,2.5,5,10,84.0,2
+neighbor,rsi_max,up,2.5,5,10,86.0,2
+neighbor,rsi_period,down,2.5,5,10,85.0,1
+neighbor,rsi_period,up,2.5,5,10,85.0,3

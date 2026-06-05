@@ -8,15 +8,15 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from portfolio_research.correlation_export import write_vault_correlation_visualization_long
-from portfolio_research.vault_correlation import (
+from research.portfolio.correlation_export import write_vault_correlation_visualization_long
+from research.portfolio.vault_correlation import (
     build_vault_correlation_long_rows,
     candidate_returns_long_frame,
     rows_for_vault_member_correlations,
 )
-from utils.core.enums import TimeFrame, Ticker
-from utils.core.helpers import build_feature_column_name
-from utils.evaluation.walkforward.selected_params_codec import serialize_selected_params
+from lib.core.enums import TimeFrame, Ticker
+from lib.core.helpers import build_feature_column_name
+from research.evaluation.walkforward.selected_params_codec import serialize_selected_params
 
 
 def _minimal_signed_feature_json(stem: str, *, tf: str = "D") -> str:
@@ -81,7 +81,7 @@ def test_candidate_returns_long_frame_matches_combo_key() -> None:
     idx = pd.DatetimeIndex(pd.date_range("2020-01-01", periods=3, freq="D"))
     params = {"x": 1}
     key = __import__(
-        "feature_research.core_helpers", fromlist=["combo_key"]
+        "research.feature.core_helpers", fromlist=["combo_key"]
     ).combo_key(params)
     paired = pd.DataFrame(
         {
@@ -135,7 +135,7 @@ def test_build_vault_correlation_long_rows_with_mocks(tmp_path: Path) -> None:
         },
         index=idx,
     )
-    from feature_research.core_helpers import combo_key as ck
+    from research.feature.core_helpers import combo_key as ck
 
     combo_signal_target = {ck(params): paired}
     summary = pd.DataFrame(
@@ -164,10 +164,10 @@ def test_build_vault_correlation_long_rows_with_mocks(tmp_path: Path) -> None:
     feat_name = build_feature_column_name("rsi_signal", "signal", TimeFrame.D, params)
 
     with patch(
-        "portfolio_research.vault_correlation.extract_features_for_bias_node",
+        "research.portfolio.vault_correlation.extract_features_for_bias_node",
         return_value=(features_df, targets_df),
     ), patch(
-        "portfolio_research.vault_correlation.populate_cache_if_needed",
+        "research.portfolio.vault_correlation.populate_cache_if_needed",
         autospec=True,
     ):
         rows = build_vault_correlation_long_rows(
@@ -211,7 +211,7 @@ def test_build_vault_correlation_skips_mismatched_timeframe(tmp_path: Path) -> N
         },
         index=idx,
     )
-    from feature_research.core_helpers import combo_key as ck
+    from research.feature.core_helpers import combo_key as ck
 
     combo_signal_target = {ck(params): paired}
     summary = pd.DataFrame(

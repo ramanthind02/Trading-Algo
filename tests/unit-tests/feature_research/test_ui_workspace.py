@@ -6,16 +6,16 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from feature_research.shared import FeatureResearchPhase
-from feature_research.ui.artifact_catalog import RAW_DATA_SECTION_ID
-from feature_research.ui.workspace import build_workspace_view, load_artifact_preview
+from research.feature.shared import FeatureResearchPhase
+from research.feature.ui.artifact_catalog import RAW_DATA_SECTION_ID
+from research.feature.ui.workspace import build_workspace_view, load_artifact_preview
 
 
 def test_load_artifact_preview_builds_table_and_chart(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr("feature_research.ui.workspace._REPO_ROOT", tmp_path)
+    monkeypatch.setattr("research.feature.ui.workspace._REPO_ROOT", tmp_path)
     artifact = tmp_path / "reports" / "equity_curve_validation_only.csv"
     artifact.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
@@ -71,11 +71,11 @@ def test_build_workspace_view_discovers_phase_artifacts(
     ).to_csv(validation_dir / "equity_curve_validation_only.csv", index=False)
 
     monkeypatch.setattr(
-        "feature_research.ui.workspace.resolve_ui_config",
+        "research.feature.ui.workspace.resolve_ui_config",
         lambda config, request: (config, None),
     )
     monkeypatch.setattr(
-        "feature_research.ui.workspace.phase_discovery_roots",
+        "research.feature.ui.workspace.phase_discovery_roots",
         lambda config, phase: {
             FeatureResearchPhase.EXPLORATION: (exploration_dir,),
             FeatureResearchPhase.VALIDATION: (validation_dir,),
@@ -83,10 +83,10 @@ def test_build_workspace_view_discovers_phase_artifacts(
         }[phase],
     )
     monkeypatch.setattr(
-        "feature_research.ui.workspace._vault_commit_view",
+        "research.feature.ui.workspace._vault_commit_view",
         lambda config, request: {"enabled": False},
     )
-    monkeypatch.setattr("feature_research.ui.workspace._REPO_ROOT", tmp_path)
+    monkeypatch.setattr("research.feature.ui.workspace._REPO_ROOT", tmp_path)
 
     workspace = build_workspace_view(
         config=SimpleNamespace(),

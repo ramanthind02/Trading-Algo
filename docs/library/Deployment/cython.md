@@ -1,5 +1,7 @@
 # Cython & Portfolio Backtest
 
+> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+
 > [!summary] Overview
 > Cython extensions accelerate inner math kernels for feature extraction and base-model fitting.
 > The portfolio backtest API uses `Portfolio` + `PortfolioTester`: fit → predict → strategy returns.
@@ -11,17 +13,17 @@
 
 ```bash
 source /home/raman/repos/Trading-Algo/venv/bin/activate
-python utils/compute/cython/setup_cython.py build_ext --inplace
+python lib/compute/cython/setup_cython.py build_ext --inplace
 ```
 
 Compiles two modules:
 
 | Source | Module | Used by |
 |---|---|---|
-| `utils/compute/cython/cython_optimized.pyx` | `utils.compute.cython.cython_optimized` | `utils.compute.fast_stats` (Spearman, rank, threshold opt, MA-diff) |
-| `utils/compute/cython/cython_nodes.pyx` | `utils.compute.cython.cython_nodes` | `utils.compute.fast_nodes` (ATR, EMA, RSI, ROC, Donchian, etc.) |
+| `lib/compute/cython/cython_optimized.pyx` | `lib.compute.cython.cython_optimized` | `lib.compute.fast_stats` (Spearman, rank, threshold opt, MA-diff) |
+| `lib/compute/cython/cython_nodes.pyx` | `lib.compute.cython.cython_nodes` | `lib.compute.fast_nodes` (ATR, EMA, RSI, ROC, Donchian, etc.) |
 
-> [!note] Portfolio volatility uses `utils.compute.fast_volatility` (pure NumPy EWSD). No Cython required for that path.
+> [!note] Portfolio volatility uses `lib.compute.fast_volatility` (pure NumPy EWSD). No Cython required for that path.
 
 ---
 
@@ -31,8 +33,8 @@ Compiles two modules:
 
 ```python
 from ensemble.portfolio import Portfolio
-from ensemble.portfolio_tester import PortfolioTester
-from utils.core.enums import TimeFrame
+from ensemble.portfolio_impl.portfolio_tester import PortfolioTester
+from lib.core.enums import TimeFrame
 
 portfolio = Portfolio(
     ensembles=ensembles,          # list of DiversifiedEnsemble or vault-loaded ensembles
@@ -55,7 +57,7 @@ Candles DataFrame columns: `datetime`, `open`, `high`, `low`, `close`, `volume`,
 python scripts/benchmark_portfolio_backtest.py [--warmup 1] [--runs 2]
 ```
 
-Uses the same config as `portfolio_research/run_portfolio_test.py`: tickers, ensemble list, and train/test dates come from `portfolio_research.config.load_config()`.
+Uses the same config as `research/portfolio/run_portfolio_test.py`: tickers, ensemble list, and train/test dates come from `research.portfolio.config.load_config()`.
 
 ### Profiling Script (Synthetic Data)
 
@@ -69,7 +71,7 @@ Uses mock ensembles and synthetic candles. Writes `profile_portfolio_pipeline.pr
 
 ## What Is Vectorized / Optimized
 
-- **Volatility** — `compute_ewsd_annualized_from_closes` in `utils.compute.fast_volatility` (array-based, no per-bar loops)
+- **Volatility** — `compute_ewsd_annualized_from_closes` in `lib.compute.fast_volatility` (array-based, no per-bar loops)
 - **Risk management** — `_apply_risk_management_to_forecasts`: vectorized pandas merge/clip/instrument weights
 - **Returns calculation** — `calculate_strategy_returns_from_positions`, baseline returns: vectorized groupby/merge/diff
 - **Cython kernels** — RSI, EMA, ATR, MA-diff, Spearman rank (when built)
@@ -126,3 +128,5 @@ Until then, Cython's contribution is within run-to-run noise.
 ## See Also
 
 - [[portfolio]] — Portfolio and PortfolioTester architecture
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 _GLOBAL_WEIGHT_LAYER_TICKER = "__GLOBAL__"
 _UNKNOWN_GROUP = "__unknown__"

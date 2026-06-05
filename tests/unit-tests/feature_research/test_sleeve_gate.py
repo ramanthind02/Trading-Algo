@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from feature_research.portfolio_addition.gate_runner import (
+from research.feature.portfolio_addition.gate_runner import (
     _candidate_weight_assigned,
     _normalize_gate_weight_assigned,
     _sleeve_weight_assigned_fraction,
 )
-from feature_research.portfolio_addition.sleeve_gate import (
+from research.feature.portfolio_addition.sleeve_gate import (
     candidate_sleeve_identity,
     candidate_stream_ids_for_ensemble,
     candidate_ticker_names_from_ensemble,
@@ -162,7 +162,7 @@ def test_candidate_sleeve_uses_ensemble_tickers_not_portfolio_mix(tmp_path: Path
 
 
 def test_multi_asset_trend_following_candidate_uses_diversified_sleeve() -> None:
-    from feature_research.config import TREND_FOLLOWING_UNIVERSE
+    from research.feature.config import TREND_FOLLOWING_UNIVERSE
 
     names = frozenset(t.name for t in TREND_FOLLOWING_UNIVERSE)
     asset, style = candidate_sleeve_identity(
@@ -270,7 +270,7 @@ def test_normalize_gate_weight_assigned_clamps_invalid_values() -> None:
 def test_candidate_weight_assigned_ignores_total_book_when_no_new_rows(tmp_path: Path) -> None:
     from dataclasses import replace
 
-    from portfolio_research.pipelines.portfolio_test import PhaseResult
+    from research.portfolio.pipelines.portfolio_test import PhaseResult
 
     index = pd.date_range("2020-01-01", periods=5, freq="B")
     diagnostics = pd.DataFrame(

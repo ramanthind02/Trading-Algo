@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from utils import vault_paths
+from lib.core import vault_paths
 
 
 @pytest.fixture(autouse=True)

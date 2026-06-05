@@ -54,9 +54,9 @@ from ensemble.portfolio import GlobalPortfolio, PortfolioCacheQuery
 from ensemble.portfolio_impl.portfolio_cache import _query_candles_from_cache
 from scripts import enigma_live_forecast as _elf
 from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
-from utils.core.enums import TimeFrame
-from utils.futures_micro_specs import listed_micro_futures_row, micro_contract_fractional_and_whole
-from utils.vault_paths import resolve_vault_root
+from lib.core.enums import TimeFrame
+from lib.core.futures_micro_specs import listed_micro_futures_row, micro_contract_fractional_and_whole
+from lib.core.vault_paths import resolve_vault_root
 
 
 def _load_config(path: Path) -> Dict[str, Any]:
@@ -145,8 +145,8 @@ def _replay_window_bounds(
 
 def _print_daily_coverage_banner(required: Set[str], title: str) -> None:
     """Print min daily ``coverage.end`` across required tickers (sets portfolio query end)."""
-    from utils.cache.runtime.central_cache import CentralCacheStore
-    from utils.core.enums import Ticker
+    from lib.cache.runtime.central_cache import CentralCacheStore
+    from lib.core.enums import Ticker
 
     store = CentralCacheStore.get_instance()
     ends: list[pd.Timestamp] = []

@@ -4,13 +4,14 @@
 
 ## Short version
 
-Use the vault for persisted feature and portfolio state:
+Use the vault for persisted feature and ensemble definitions:
 
 - saved signed-signal features
 - working ensemble structure
-- frozen portfolio snapshots
 
-Do not use it for candles, live cache artifacts, or current forecasts.
+Do not use it for candles, live cache artifacts, current forecasts, or materialized
+portfolio predictions (those live in the central cache — see
+[[Vault/portfolio_snapshots_and_predictions]]).
 
 ## Common tasks
 
@@ -26,7 +27,7 @@ initialize_vault("vault")  # or None for prop default; use vault_personal / reso
 
 ```python
 from ensemble.vault_manager import create_ensemble_directory
-from utils.core.enums import Direction, TimeFrame
+from lib.core.enums import Direction, TimeFrame
 
 # Nested under a manual weight-hierarchy group (recommended for new ensembles)
 ensemble_dir = create_ensemble_directory(
@@ -62,24 +63,34 @@ models = load_feature_base_models(
 )
 ```
 
-### Save a portfolio snapshot
+### Materialize portfolio predictions
+
+There is no `GlobalPortfolio.save_to_vault(...)`. To persist predictions, fit the portfolio
+and materialize its outputs into the central cache under a `portfolio_id` you choose:
 
 ```python
-portfolio_id = global_portfolio.save_to_vault(
-    fit_start=train_query.start,
-    fit_end=train_query.end,
-    vault_root="vault",
+from ensemble.portfolio import PortfolioWorld, materialize_global_portfolio_predictions
+from lib.cache import ArtifactScope
+
+materialize_global_portfolio_predictions(
+    portfolio=global_portfolio,
+    query=train_query,
+    portfolio_id="my_portfolio_2024",
+    world=PortfolioWorld.TRAIN,
+    scope=ArtifactScope.LIVE,
 )
 ```
 
+See [[Vault/portfolio_snapshot_usage]] for the full workflow.
+
 ## Research workflow
 
-1. Research the idea in `feature_research` using the canonical three-phase model: `exploration -> validation -> portfolio_addition`.
+1. Research the idea in `research.feature` using the canonical three-phase model: `exploration -> validation -> portfolio_addition`.
 2. Treat `docs/SaaS/robustness_tests/` as the workflow source of truth; local module names are still migrating toward that structure.
 3. If the idea is continuous, convert it into a native signed-signal node before production.
 4. Save the signed-signal feature to the vault only after it has survived the individual research phases.
 5. Build and evaluate portfolios.
-6. Save a snapshot when you need a frozen deployment artifact.
+6. Materialize portfolio predictions into the central cache when you need a persisted, queryable prediction set.
 
 ## Related
 
@@ -88,3 +99,5 @@ portfolio_id = global_portfolio.save_to_vault(
 - [[Ensemble/weight_layer]] - Manual `hierarchy_equal` groups match vault folder names
 - [[Vault/portfolio_snapshot_usage]]
 - [[Deployment/live_cache_refresh]]
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

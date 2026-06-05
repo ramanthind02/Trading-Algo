@@ -18,9 +18,9 @@ import numpy as np
 
 from nodes import BiasNode
 from nodes.mean_reversion.rsi.cumulative_rsi import compute_avg_rsi
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
-from utils.compute.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
+from lib.compute.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
 
 
 class CumulativeRSISignal(BiasNode):

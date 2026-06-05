@@ -1,7 +1,7 @@
 """Unit tests for pivot explorer display labels."""
 from __future__ import annotations
 
-from feature_research.ui.pivot_labels import (
+from research.feature.ui.pivot_labels import (
     metric_display_label,
     param_field_display_label,
     param_field_group,

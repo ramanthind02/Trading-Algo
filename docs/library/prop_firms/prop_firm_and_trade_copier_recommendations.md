@@ -143,3 +143,5 @@ Monte Carlo backtest across all 5 firms (20 runs, Sharpe 1.5, 10% annual vol):
 Simulators: `prop_firms/{apex,lucid,mffu,topstep,tradeday}/`
 
 MFFU leads with 85% pass rate thanks to the generous 1:1 target-to-drawdown ratio ($3K/$3K). TradeDay has solid payouts despite tighter drawdown. Apex's 95% breach rate is due to the 30-day evaluation expiry -- a 10% vol strategy can't reliably hit $3K in 30 days.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

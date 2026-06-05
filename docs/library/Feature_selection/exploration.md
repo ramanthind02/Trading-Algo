@@ -8,7 +8,7 @@
 
 ## Purpose
 
-Exploration is the first stage of `feature_research/`.
+Exploration is the first stage of `research/feature/`.
 
 Its job is to answer one question:
 
@@ -37,9 +37,9 @@ product (expensive). Set ``enabled=False`` to skip filter follow-up entirely.
 Filter follow-up writes under the **shared** visualization folder (not under
 ``reports_dir/donchian_long_only_gc``):
 
-- ``feature_research/in_sample/results/visualization/filter_exploration_summary.csv`` — A/B/C table (Sharpe, gate type, trade reduction)
-- ``feature_research/in_sample/results/visualization/filter_exploration_long.csv`` — long pivot rows
-- ``feature_research/in_sample/results/visualization/matplotlib/filter_gate_comparison.png`` — bar chart (after exploration finishes / report refresh)
+- ``research/feature/in_sample/results/visualization/filter_exploration_summary.csv`` — A/B/C table (Sharpe, gate type, trade reduction)
+- ``research/feature/in_sample/results/visualization/filter_exploration_long.csv`` — long pivot rows
+- ``research/feature/in_sample/results/visualization/matplotlib/filter_gate_comparison.png`` — bar chart (after exploration finishes / report refresh)
 
 In the research workspace (**Exploration** phase):
 
@@ -85,7 +85,7 @@ These artifacts help answer:
 Matplotlib still renders equity curves, filter-gate comparison, permutation summaries, and other CSV-backed charts:
 
 ```bash
-python -m feature_research.visualization.matplotlib_reports \
+python -m research.feature.visualization.matplotlib_reports \
   --input-dir <reports_dir>/visualization
 ```
 
@@ -113,7 +113,7 @@ For native signed signals `-1/0/+1`, focus on:
 The canonical entrypoint runs sweep, robustness, and permutation in order:
 
 ```bash
-python -m feature_research exploration
+python -m research.feature exploration
 ```
 
 Full-grid search-bias permutation runs inside robustness when
@@ -134,3 +134,5 @@ If the source idea began as a continuous node, the graduation target should stil
 - [[Feature_selection/permutation_testing]]
 - [[Feature_selection/parameter_sensitivity]]
 - [[Vault/user_guide]]
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

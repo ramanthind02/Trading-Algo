@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from feature_research.shared import FeatureResearchPhase
-from feature_research.ui.workspace_manifest import (
+from research.feature.shared import FeatureResearchPhase
+from research.feature.ui.workspace_manifest import (
     build_workspace_manifest,
     exploration_viz_matches_config,
     manifest_matches_config,
@@ -43,7 +43,7 @@ def test_write_workspace_manifest_round_trip(tmp_path) -> None:
 def test_exploration_viz_matches_config_allows_run_ticker_subset() -> None:
     from dataclasses import replace
 
-    from utils.core.enums import Ticker
+    from lib.core.enums import Ticker
 
     config = minimal_research_config()
     manifest = build_workspace_manifest(config, FeatureResearchPhase.EXPLORATION)
@@ -69,7 +69,7 @@ def test_validation_viz_matches_config_allows_run_ticker_subset(
 ) -> None:
     from dataclasses import replace
 
-    from utils.core.enums import Ticker
+    from lib.core.enums import Ticker
 
     config = minimal_research_config()
     manifest = build_workspace_manifest(config, FeatureResearchPhase.VALIDATION)
@@ -83,7 +83,7 @@ def test_validation_viz_matches_config_allows_run_ticker_subset(
     manifest_path = tmp_path / "workspace_manifest.json"
     manifest_path.write_text(__import__("json").dumps(nq_only), encoding="utf-8")
     monkeypatch.setattr(
-        "feature_research.ui.workspace_manifest.validation_manifest_path",
+        "research.feature.ui.workspace_manifest.validation_manifest_path",
         lambda _config: manifest_path,
     )
     assert validation_artifacts_current(full_config)

@@ -34,7 +34,7 @@ pytest tests/test_integration.py -v
 pytest tests/test_integration.py::TestFormulaVerification -v
 
 # Compile Cython extensions (optional, for performance)
-python utils/compute/cython/setup_cython.py build_ext --inplace
+python lib/compute/cython/setup_cython.py build_ext --inplace
 ```
 
 ## Commands (Windows PowerShell, repo root)
@@ -45,11 +45,11 @@ Prefer the venv interpreter explicitly; `python -m pytest` avoids needing `pytes
 # Example: one file
 .\.venv\Scripts\python.exe -m pytest tests\unit-tests\feature_research\test_permutation_pipeline.py -v
 
-# In-sample research (same as: python -m feature_research.in_sample.run_is)
-.\.venv\Scripts\python.exe -m feature_research.in_sample.run_is
+# In-sample research (same as: python -m research.feature.in_sample.run_is)
+.\.venv\Scripts\python.exe -m research.feature.in_sample.run_is
 
-# Feature–vault correlation CSV (runs feature_research OOS once; enable FeatureVaultCorrelationConfig in portfolio_research.config.load_config; unset vault_root scans prop vault, set Path for vault_personal)
-.\.venv\Scripts\python.exe -m portfolio_research.run_feature_vault_correlation
+# Feature–vault correlation CSV (runs research.feature OOS once; enable FeatureVaultCorrelationConfig in research.portfolio.config.load_config; unset vault_root scans prop vault, set Path for vault_personal)
+.\.venv\Scripts\python.exe -m research.portfolio.run_feature_vault_correlation
 ```
 
 If your venv directory is named `venv` instead of `.venv`, use `.\venv\Scripts\python.exe` in place of `.\.venv\Scripts\python.exe`.
@@ -93,7 +93,7 @@ The pipeline has two levels: per-timeframe stacks and a cross-timeframe global c
 
 ```
 Per TF:  Candles (OHLCV) → Bias Nodes → Base Models → DiversifiedEnsemble → TFPortfolio (D / W / M)
-         (nodes/)          (feature_selection/)      (ensemble/)            (ensemble/portfolio_impl/)
+         (nodes/)          (features/models/)         (ensemble/)            (ensemble/portfolio_impl/)
 
 Global:  TFPortfolio forecast streams → WeightLayer (cross-TF) → GlobalPortfolio → PositionSizer
                                         (ensemble/weight_layer.py)          (ensemble/)        (execution/)
@@ -103,11 +103,11 @@ Non-daily forecasts are forward-filled to a daily grid before `WeightLayer` runs
 
 **Bias Nodes** (`nodes/`): 50+ technical indicators (RSI, ATR, EWMAC, etc.). Each produces one feature column per instrument. Naming convention: `{module}_{feature}_{timeframe}_{param}_{value}` (e.g., `rsi_signal_D_lookback_14`).
 
-**Base Models** (`feature_selection/base_models/`): Transform continuous features into binary signals (0/1) via binning strategies (quantile, decision tree, rule-based). ABC is `BinningModelBase` in `base_model.py`.
+**Base Models** (`features/models/`): The alpha unit per timeframe. The legacy binning ABCs (`BinningModelBase`/`ContinuousBinningModel`/`RuleBasedModel`) are retired/deleted; the active path is `create_base_model_from_config` (in `ensemble/ensemble_utils.py`), which builds thin `BaseModel` instances backed by native `signed_signal` node specs.
 
-**DiversifiedEnsemble** (`ensemble/diversified_ensemble.py`): Owns base models, generates per-model volatility-scaled forecasts. Formula: `F_i = (τ / (σ × √h_i)) × X_i`. Configured via JSON control files.
+**DiversifiedEnsemble** (`ensemble/diversified_ensemble.py`): Owns base models, generates per-model volatility-scaled forecasts. Formula: `F = τ / σ`, capped at `2.0` (the all-in/all-out signal means `h_i = 1`, so the `√h_i` term drops out). Configured via JSON control files.
 
-**WeightLayer** (`ensemble/weight_layer.py`): Combines encoded global forecast streams. Modes include `equal_signal`, `inverse_avg_pairwise_corr`, and manual `hierarchy_equal` (nested tree in `ensemble/weight_hierarchy.py`). Applies FDM (Forecast Diversification Multiplier) from positive-clipped signal correlation: `FDM = min(√(1 / (mean_corr + 0.01)), fdm_max)` (default `fdm_max = 2.0`). Legacy HRP-based weighting methods are no longer valid config.
+**WeightLayer** (`ensemble/weight_layer.py`): Combines encoded global forecast streams. Exposes 9 weighting methods: `equal_signal`, `inverse_avg_pairwise_corr`, `hierarchy_equal`, `inverse_corr_hierarchy`, `ledoit_wolf_min_corr`, `risk_parity_corr`, `hierarchy_theme_inv_corr`, `hierarchy_theme_ledoit`, `ledoit_wolf_hierarchy_within` (manual hierarchy nested tree in `ensemble/weight_hierarchy.py`). Applies FDM (Forecast Diversification Multiplier) from positive-clipped signal correlation: `FDM = min(√(1 / (mean_corr + 0.01)), fdm_max)` (default `fdm_max = 2.0`). The genuinely-removed legacy methods are `hrp_cluster_equal`, `hrp_classic`, and `optimize_sortino_capped`.
 
 **TFPortfolio** (`ensemble/portfolio.py` / `ensemble/portfolio_impl/tf_portfolio.py`): Per-timeframe portfolio. Applies instrument weights and IDM (Instrument Diversification Multiplier): `IDM = min(√(1 / (mean_corr + 0.01)), 2.5)`. `Portfolio` is a backward-compatible alias for `TFPortfolio`.
 
@@ -117,19 +117,88 @@ Non-daily forecasts are forward-filled to a daily grid before `WeightLayer` runs
 
 ### Key Data Models
 
-- `utils/models.py`: `Candle` (Pydantic model with OHLCV + ticker + timeframe)
-- `utils/enums.py`: `TimeFrame` (D/W/M), `Ticker` (ES, NQ, CL, GC, etc.), `Bias`, `Direction`, `PositionMode`
+- `lib/core/models.py`: `Candle` (Pydantic model with OHLCV + ticker + timeframe)
+- `lib/core/enums.py`: `TimeFrame` (D/W/M), `Ticker` (ES, NQ, CL, GC, etc.), `Bias`, `Direction`, `PositionMode`
 
 ### Supporting Systems
 
-- **Cache** (`cache/`, `utils/cache_manager.py`): Stores computed bias node outputs per node type
-- **Vault:** default prop tree `vault/`, personal `vault_personal/` (env overrides in `utils/vault_paths.py`; see `docs/library/Vault/vault.md`). Validated feature storage by timeframe under `<vault_root>/D|W|M/`. Working ensembles use a **nested** layout `<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble_leaf>/` (groups: `mean_reversion_indices`, `buy_hold`, `es_tlt`, `seasonal`, `momentum`) so on-disk folders match the manual global weight hierarchy; feature JSONs carry `weight_hierarchy_group`. Legacy flat `<vault_root>/<TF>/<ensemble_leaf>/` is still supported for discovery and cache preflight.
+- **Cache** (`cache/`, `lib/cache/runtime/cache_manager.py`): Stores computed bias node outputs per node type
+- **Vault:** default prop tree `vault/`, personal `vault_personal/` (env overrides in `lib/core/vault_paths.py`; see `docs/library/Vault/vault.md`). Validated feature storage by timeframe under `<vault_root>/D|W|M/`. Working ensembles use a **nested** layout `<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble_leaf>/` (the 13 `VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES`: `mean_reversion_indices`, `buy_hold`, `es_tlt`, `seasonal`, `momentum`, `trend_following`, `momentum_gc`, `crude_oil_mr`, `gc_breakout`, `cl_breakout`, `breakout`, `silver_mr`, `silver_trend`) so on-disk folders match the manual global weight hierarchy; feature JSONs carry `weight_hierarchy_group`. Legacy flat `<vault_root>/<TF>/<ensemble_leaf>/` is still supported for discovery and cache preflight.
 - **Deployment** (`deployment/`): REST forecast server, production training pipeline, Telegram notifier, MT5 connector
 - **Live Trading**: Interactive Brokers integration via `scripts/enigma_live_forecast.py`
 
 ### Control Files (JSON)
 
 Ensembles are configured/persisted via JSON control files containing metadata, base model configs, fitted state, and ensemble weights. The `is_fit` flag tracks whether the ensemble has been trained.
+
+## NautilusTrader Reference
+
+Local docs mirror at `docs/nautilustrader/` — fetched from the GitHub source repo (raw Markdown, not the rendered site). Refresh with:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\scrape_nautilus_docs.py --force
+```
+
+Key pages for the architecture refactor (read these before writing Nautilus wrappers):
+
+| File | What it covers |
+|---|---|
+| `concepts/architecture.md` | NautilusKernel, MessageBus, threading model, environment contexts |
+| `concepts/strategies.md` | Strategy ABC, lifecycle hooks, signal generation |
+| `concepts/actors.md` | Actor pattern (base of Strategy), subscriptions, handlers |
+| `concepts/data.md` | Data pipeline, subscriptions, bar/quote/trade types |
+| `concepts/execution.md` | Order lifecycle, execution engine, routing |
+| `concepts/orders/index.md` | Order types overview |
+| `concepts/cache.md` | In-memory cache API (instruments, orders, positions) |
+| `concepts/message_bus.md` | Pub/Sub, Req/Rep, custom topics |
+| `concepts/backtesting.md` | BacktestEngine vs BacktestNode, data loading |
+| `concepts/live.md` | TradingNode, live adapter lifecycle |
+| `concepts/configuration.md` | Config system, environment variables |
+| `concepts/continuous_futures.md` | Continuous contract roll logic |
+| `concepts/portfolio.md` | Portfolio component, P&L tracking |
+| `concepts/positions.md` | Position model, netting vs hedging |
+| `integrations/ib.md` | Interactive Brokers adapter (our current live broker) |
+| `getting_started/installation.md` | Install + quickstart |
+
+## CodeGraph — use this first for all code exploration
+
+This repo is indexed by **CodeGraph** (MCP server: `codegraph`). It provides a pre-built
+knowledge graph of every symbol, call edge, and file — queries are sub-millisecond and
+return verbatim source, so one `codegraph_explore` call replaces dozens of Grep/Glob/Read
+round-trips.
+
+**Rules:**
+
+1. **Always call `codegraph_explore` first** for any question about how code works, where
+   something is defined, what calls what, or what a symbol does. Do NOT start with Grep,
+   Glob, or Read for exploration tasks.
+
+2. **`codegraph_explore` returns verbatim source** — treat each file block it returns as
+   an already-performed Read. Do NOT re-read those files with the Read tool.
+
+3. **Only fall back to Grep/Read** for a specific line range that codegraph didn't surface,
+   or to confirm a detail not covered by the response.
+
+4. **Use `codegraph_search`** when you know a symbol name but not its file — it returns
+   locations instantly without reading any code.
+
+5. **Use `codegraph_callers` / `codegraph_callees` / `codegraph_impact`** before editing
+   anything — know the blast radius first.
+
+**Tool selection cheat-sheet:**
+
+| Intent | Tool |
+|--------|------|
+| How does X work / what is X / where is X | `codegraph_explore` (PRIMARY) |
+| Find a symbol by name (location only) | `codegraph_search` |
+| What calls this function? | `codegraph_callers` |
+| What does this function call? | `codegraph_callees` |
+| What would break if I change X? | `codegraph_impact` |
+| Single specific line range not in explore result | `Read` (fallback only) |
+| Grep for a pattern codegraph can't match | `Grep` (fallback only) |
+
+**Current index stats** (2026-06-04): 818 files · 12,117 nodes · 25,510 edges · Python 813 files.
+The file watcher auto-syncs on save; no manual reindex needed.
 
 ## Coding Conventions
 

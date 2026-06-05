@@ -3,8 +3,8 @@ import pytest
 from nodes._taxonomy import CANONICAL_MODULE_CLASSES
 from nodes.mean_reversion.rsi.rsi import RSI
 from nodes.momentum.core.momentum import Momentum
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.helpers import (
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.helpers import (
     _normalize_module_base_name,
     _resolve_bias_node_import_path,
     create_bias_node,

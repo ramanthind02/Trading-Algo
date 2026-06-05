@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 import pandas as pd
 
 from .portfolio_allocation import effective_instrument_weights
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def collect_tf_forecast_streams(

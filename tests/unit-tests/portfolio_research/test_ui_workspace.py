@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from portfolio_research.config import PortfolioFitMode, PortfolioResearchConfig, ResearchWindow
-from portfolio_research.shared.phase import PortfolioResearchPhase
-from portfolio_research.ui.contracts import PortfolioResearchUiRequest
-from portfolio_research.ui.workspace import build_workspace_view
-from utils.core.enums import Ticker, TimeFrame
+from research.portfolio.config import PortfolioFitMode, PortfolioResearchConfig, ResearchWindow
+from research.portfolio.shared.phase import PortfolioResearchPhase
+from research.portfolio.ui.contracts import PortfolioResearchUiRequest
+from research.portfolio.ui.workspace import build_workspace_view
+from lib.core.enums import Ticker, TimeFrame
 
 
 def test_build_workspace_view_payload_shape(tmp_path: Path) -> None:

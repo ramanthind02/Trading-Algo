@@ -6,10 +6,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from feature_research.binning.config import BinningResearchConfig
-from feature_research.binning.pipeline import _attach_investigation_strategy_returns
-from feature_research.binning.transforms import summarize_bins_by_metrics
-from utils.core.enums import Ticker, TimeFrame
+from research.feature.binning.config import BinningResearchConfig
+from research.feature.binning.pipeline import _attach_investigation_strategy_returns
+from research.feature.binning.transforms import summarize_bins_by_metrics
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _panel_frame() -> pd.DataFrame:
@@ -71,7 +71,7 @@ def test_attach_investigation_strategy_returns_merges_signal(
     )
 
     monkeypatch.setattr(
-        "feature_research.binning.pipeline.extract_features_for_bias_node",
+        "research.feature.binning.pipeline.extract_features_for_bias_node",
         lambda **_kwargs: (features, pd.DataFrame()),
     )
 

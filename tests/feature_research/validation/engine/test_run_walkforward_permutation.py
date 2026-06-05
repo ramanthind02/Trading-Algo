@@ -8,20 +8,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.evaluation.walkforward.config import WalkforwardResearchConfig
-from utils.evaluation.permutation_test.permutation_nulls import (
+from research.evaluation.walkforward.config import WalkforwardResearchConfig
+from research.evaluation.permutation_test.permutation_nulls import (
     aggregate_oos_metric_from_report,
     two_unit_masks_from_fold_rows,
 )
-from utils.evaluation.walkforward.runner import _build_fold_rows
-from utils.evaluation.permutation_test.permutation_core import (
+from research.evaluation.walkforward.runner import _build_fold_rows
+from research.evaluation.permutation_test.permutation_core import (
     _one_vector_shuffle_rep_fixed_signal,
     aggregate_per_ticker_metrics,
     aggregate_per_ticker_nulls,
     run_vector_shuffle_null,
     run_vector_shuffle_null_vectorized,
 )
-from feature_research.validation.phase_permutation import _two_unit_train_windows
+from research.feature.validation.phase_permutation import _two_unit_train_windows
 
 
 def _minimal_candles_and_target() -> tuple[pd.DataFrame, pd.Series]:
@@ -304,7 +304,7 @@ def test_aggregate_per_ticker_nulls_mismatched_lengths() -> None:
 
 def test_return_shuffle_null_vectorized_raises_for_order_invariant_metrics() -> None:
     """Return-shuffle null is degenerate for our supported metrics (order-invariant)."""
-    from utils.evaluation.permutation_test.permutation_core import run_return_shuffle_null_vectorized
+    from research.evaluation.permutation_test.permutation_core import run_return_shuffle_null_vectorized
 
     idx = pd.date_range("2022-01-01", periods=10, freq="D")
     oos_returns = pd.Series(np.arange(len(idx), dtype=float), index=idx)

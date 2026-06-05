@@ -10,9 +10,9 @@ from nodes.mean_reversion.price_action.lrs_hook_signal import (
     LrsHookSignal,
     _ols_slope,
 )
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(

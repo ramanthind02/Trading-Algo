@@ -7,10 +7,10 @@ from typing import Any
 import pandas as pd
 import pytest
 
-import feature_extraction.feature_extractor as feature_extractor
-from utils.cache.runtime.central_cache import CentralCacheStore
-from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
-from utils.core.enums import Ticker, TimeFrame
+import features.extraction.feature_extractor as feature_extractor
+from lib.cache.runtime.central_cache import CentralCacheStore
+from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _sample_price_df() -> pd.DataFrame:

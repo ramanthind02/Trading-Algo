@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from feature_research.config import (
+from research.feature.config import (
     BinningAnalysisConfig,
     EvaluationDefaultsCatalog,
     EvaluationPhaseDefaultsConfig,
@@ -22,8 +22,8 @@ from feature_research.config import (
     VaultSaveConfig,
     build_objective_metric_presets,
 )
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from utils.core.enums import Direction, Ticker, TimeFrame
+from features.validation.objective_metrics import ObjectiveMetricSpec
+from lib.core.enums import Direction, Ticker, TimeFrame
 
 
 def minimal_research_config(**overrides: Any) -> ResearchConfig:

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from data_platform.providers.norgate.backadjust.roll_detector import RollEvent, detect_roll_dates
 from data_platform.providers.norgate.backadjust.roll_rules import RollRule
-from utils.core.enums import Ticker
+from lib.core.enums import Ticker
 
 
 def _make_daily_series(

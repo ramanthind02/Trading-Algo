@@ -10,15 +10,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_research.config import ResearchWindowConfig
-from feature_research.oos.run_oos_permutation import main
+from research.feature.config import ResearchWindowConfig
+from research.feature.oos.run_oos_permutation import main
 
 
 def test_oos_permutation_main_returns_1_when_research_window_none() -> None:
     """When config.research_window is None, main() exits with code 1."""
     with (
         patch("sys.argv", ["run_oos_permutation.py"]),
-        patch("feature_research.config.load_config") as m_load,
+        patch("research.feature.config.load_config") as m_load,
     ):
         config = m_load.return_value
         config.research_window = None
@@ -30,7 +30,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
     """With mocked data and pipeline, main() writes report and null dist; p_value in [0, 1]."""
     from dataclasses import replace
 
-    from feature_research.config import load_config
+    from research.feature.config import load_config
 
     index = pd.date_range("2020-01-01", periods=1100, freq="D")
     reference_target = pd.Series(0.01, index=index, name="walkforward_target")
@@ -68,17 +68,17 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
 
     with (
         patch("sys.argv", ["run_oos_permutation.py", "--nreps", "3"]),
-        patch("feature_research.config.load_config") as m_load,
+        patch("research.feature.config.load_config") as m_load,
         patch(
-            "feature_research.validation.phase_permutation.load_research_data",
+            "research.feature.validation.phase_permutation.load_research_data",
             side_effect=fake_load_research_data,
         ),
         patch(
-            "utils.evaluation.walkforward.runner.run_walkforward_research",
+            "research.evaluation.walkforward.runner.run_walkforward_research",
             return_value=minimal_report,
         ),
         patch(
-            "utils.evaluation.permutation_test.permutation_core.run_vector_shuffle_null",
+            "research.evaluation.permutation_test.permutation_core.run_vector_shuffle_null",
             return_value=np.array([0.0, 0.0, 0.0]),
         ),
     ):
@@ -86,7 +86,7 @@ def test_oos_permutation_produces_report_and_null_distribution(tmp_path: Path) -
         config_with_window = replace(base_config, research_window=research_window)
         m_load.return_value = config_with_window
         with patch(
-            "utils.evaluation.walkforward.io.resolve_walkforward_output_dir",
+            "research.evaluation.walkforward.io.resolve_walkforward_output_dir",
             return_value=tmp_path / "continuous" / "rsi" / "oos",
         ):
             exit_code = main()

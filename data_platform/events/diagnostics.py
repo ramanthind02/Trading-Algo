@@ -11,8 +11,8 @@ import pandas as pd
 
 from data_platform.events.calendar_loader import CalendarBundle, HolidayAssetBucket, load_calendar_bundle
 from data_platform.events.trading_day_index import TradingDayIndex, load_es_trading_sessions
-from utils.core.enums import Ticker, TimeFrame
-from utils.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core import helpers
 
 
 @dataclass(frozen=True)
@@ -263,8 +263,8 @@ def vol_scaled_portfolio_returns(
     train_end: datetime | None = None,
 ) -> pd.Series:
     """Equal-weight vol-targeted portfolio daily returns (production-style)."""
-    from feature_research.in_sample.data_loader import expand_bias_specs
-    from feature_research.research_table_exports import _build_portfolio_positions_df
+    from research.feature.in_sample.data_loader import expand_bias_specs
+    from research.feature.research_table_exports import _build_portfolio_positions_df
     from ensemble.portfolio_impl.portfolio_tester import calculate_strategy_returns_from_positions
 
     spec = {
@@ -285,7 +285,7 @@ def vol_scaled_portfolio_returns(
 
     leg_returns: list[pd.Series] = []
     for ticker in tickers:
-        from feature_extraction.feature_extractor import extract_features_for_bias_node
+        from features.extraction.feature_extractor import extract_features_for_bias_node
 
         feats, _ = extract_features_for_bias_node(
             spec, [ticker], start, end, "log_return", use_cache=True

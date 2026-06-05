@@ -2,12 +2,14 @@
 
 ## 1. Purpose
 
-This document defines how **QuantFoundry** computes and exposes **raw performance and risk metrics** (e.g. Sharpe, Sortino, drawdown statistics) across research jobs, portfolios, and future API surfaces.
+This document defines how performance and risk metrics (e.g. Sharpe, Sortino, drawdown statistics) are computed and exposed across research jobs, portfolios, and product API surfaces.
 
-Scope for the MVP narrative here:
+The authoritative implementation is the **external package `quantfoundry_core`** (installed dependency, imported as `quantfoundry_core.metrics` / `quantfoundry_core.robustness`). Scalar Sharpe/Sortino helpers live in `features.validation.objective_metrics` (themselves backed by `quantfoundry_core.metrics`); a few local equity/risk helpers live in `lib.metrics`. The former top-level `metrics/` compatibility shell has been **deleted**. See §7–§8.
 
-- **Scalar / tabular metric outputs only** — no dependence on HTML tearsheets or plotting for product correctness.
-- **One canonical numerical contract** so workers, Core, and API responses stay aligned.
+Scope:
+
+- **Scalar / tabular metric outputs** are the product-correctness contract — no dependence on HTML tearsheets or plotting.
+- **One canonical numerical contract** so research code, workers, and API responses stay aligned.
 
 Related documents:
 
@@ -116,27 +118,42 @@ Do not mix conventions inside a single formula without naming it in code and doc
 
 The metrics **row vocabulary** from QuantStats `reports.metrics(..., display=False)` (basic vs full, compounded vs simple summed returns, optional benchmark columns) defines the baseline table for dashboards and APIs: Sharpe, Probabilistic Sharpe, Omega, VaR rows, streak stats, horizon returns (`MTD`, `3M`, …), drawdown summaries, ulcer/serenity, and—with a benchmark—R², information ratio, Treynor, and formatted Greek rows.
 
-**Stable façade:**
+**Stable façade — the authoritative metrics surface:**
 
-- Module: **`quantfoundry_core.metrics`**.
+- Module: **`quantfoundry_core.metrics`** (external package, verified present at commit a07b6bf).
 - Entrypoints:
   - **`compute_aligned_performance_metrics(...)` → `AlignedMetricsReport`** for full/basic tables.
   - **`compute_scalar_metric(...)`** with **`MetricName`** for hot-path single-metric loops.
   - **`compute_rolling_sharpe(...)`** / **`compute_monthly_returns_heatmap(...)`** for time-series chart payloads.
-- Artifact shape: prefer **`report.to_json_dict()`** for worker/API persistence; materialize DataFrames only at display/export boundaries.
-- Contract helpers: **`ReportMode`**, **`ReturnsCompounding`**, **`ReturnsValidationError`**, **`MetricsSchemaError`**, and **`returns_fingerprint(...)`**.
+- Artifact shape: prefer **`AlignedMetricsReport.to_json_dict()`** for worker/API persistence; materialize DataFrames only at display/export boundaries.
+- Contract helpers: **`ReportMode`**, **`ReturnsCompounding`**, **`ReturnsValidationError`**, **`MetricsSchemaError`**, and **`returns_fingerprint(...)`** (all exported from `quantfoundry_core.metrics`).
 - **Timezone:** UTC-aware indexes are stripped to UTC-naive before the metrics pipeline (mixed tz-aware alignment is brittle otherwise).
-- **Usage rule:** application code must call the public `quantfoundry_core.metrics` surface and must not import private `_quantstats` modules directly.
+- **Usage rule:** application code must call the public `quantfoundry_core.metrics` surface and must not import private QuantStats internals directly.
+
+**In-repo consumers (verified):**
+
+- `lib/plotting/graphing/quantstats_reports.py` imports `AlignedMetricsReport`, `ReportMode`, `ReturnsCompounding`, `compute_aligned_performance_metrics` directly from `quantfoundry_core.metrics`.
+- `research/feature/research_table_exports.py` imports `ReturnsValidationError`, `compute_rolling_sharpe`.
+- `features/validation/objective_metrics.py` imports `compute_scalar_metric`, `MetricName`, `ReturnsCompounding`, `ReturnsValidationError` and wraps them as the `metric_sharpe`/`metric_sortino`/`metric_calmar`/… scalar helpers (with local edge-case fallbacks).
 
 **Catalog**
 
-Static tuple **`BASIC_ROWS_STRATEGY_ONLY`** plus **`EXTRA_FULL_ROWS`** approximate the programmatic row titles for **`compounded=False`**. QuantStats substitutes **“Cumulative Return”** for **“Total Return”** when `compounded=True`; treat returned keys as authoritative.
+Static tuples **`BASIC_ROWS_STRATEGY_ONLY`** plus **`EXTRA_FULL_ROWS`** (both exported by `quantfoundry_core.metrics`) approximate the programmatic row titles for **`compounded=False`**. QuantStats substitutes **“Cumulative Return”** for **“Total Return”** when `compounded=True`; treat returned keys as authoritative.
 
 ---
 
-## 8. NumPy-first engine (future / optional footprint)
+## 8. Local `lib.metrics` helpers
 
-Workers or stripped environments may swap the adapter body for pure NumPy/pandas helpers while preserving **`AlignedMetricsReport`** keys. Rough layering stays:
+There is **no** repo-local barrel that re-exports performance formulas — the old top-level `metrics/` package (including its `metrics/__init__.py` shell and `metrics/performance/` scalar-class wrappers `SharpeRatio`/`SortinoRatio`) has been **deleted**. Performance scalars come from `features.validation.objective_metrics` (`metric_sharpe`, `metric_sortino`, …, backed by `quantfoundry_core.metrics`).
+
+The only local helpers are the small risk/equity utilities re-exported by `lib/metrics/__init__.py`:
+
+- `cumulative_returns`, `equity_peak` (from `lib/metrics/equity.py`), and
+- `drawdown_series`, `max_drawdown` (from `lib/metrics/drawdown.py`).
+
+(The former `equity_curve` alias was dropped.) Plotting/tearsheet code under `lib/plotting/graphing/` consumes `quantfoundry_core.metrics` directly.
+
+Layering for any pure-NumPy/pandas worker variant must still preserve **`AlignedMetricsReport`** keys:
 
 ```
 normalized returns + periods_per_year
@@ -145,8 +162,6 @@ normalized returns + periods_per_year
        →
   immutable report dict / DataFrame
 ```
-
-`Trading-Algo/metrics/` acts only as a compatibility shell for older imports (risk/drawdown helpers and re-exports of `feature_selection.validation.objective_metrics`), not as an independent source of truth for performance formulas. The removed `metrics/performance/` class wrappers (`SharpeRatio`, `SortinoRatio`) are superseded by `quantfoundry_core.metrics` via `objective_metrics.py`.
 
 ---
 
@@ -158,3 +173,5 @@ normalized returns + periods_per_year
 - **Benchmark-relative** metrics (beta, information ratio): second return series plus alignment rules.
 
 When those are fixed, add a subsection here and mirror field lists in `technical_design.md` if exposed on HTTP APIs.
+
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._

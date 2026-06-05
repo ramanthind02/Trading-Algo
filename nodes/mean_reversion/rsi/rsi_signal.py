@@ -10,9 +10,9 @@ Output: Rule-based -1, 0, or 1
 
 from typing import ClassVar, List, Optional
 import numpy as np
-from utils.core.models import Candle
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
+from lib.core.models import Candle
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.compute.rsi_helpers import compute_rsi_initial, update_rsi
 from nodes import BiasNode
 
 

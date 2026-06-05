@@ -1,13 +1,21 @@
 # QuantFoundry SaaS Technical Design
 
+> **Status: forward-looking technical plan — not yet built.** This document is
+> the target architecture for turning `Trading-Algo` into the hosted QuantFoundry
+> SaaS platform. The repositories (`QuantFoundry-Core`/`-API`/`-Worker`/`-Web`),
+> Azure infrastructure, PostgreSQL product entities, queue/worker orchestration,
+> Signal API, and billing models below **do not exist yet**. The repo today is
+> the `Trading-Algo` research workbench plus a local Flask UI (`ui_ux.md`). Read
+> this as the migration plan, not a description of current code.
+
 ## 1. Purpose
 
 This document captures the current technical plan for turning the existing `Trading-Algo` research system into the QuantFoundry SaaS platform. It complements:
 
 - `docs/SaaS/data_flow.md` - research, portfolio, deployment, and zone lifecycle.
 - `docs/SaaS/zone_manager.md` - zone types, UTC slicing contract, Core vs API responsibilities, snapshots.
-- `docs/SaaS/strategy_spec.md` - user strategy contract and runtime expectations.
-- `docs/SaaS/UI-UX/` - product navigation, page specs, components, and MVP user surfaces ([README](UI-UX/README.md)).
+- `docs/SaaS/strategy_spec.md` - planned user strategy contract and runtime expectations.
+- `docs/SaaS/ui_ux.md` - current local research UI; the hosted product navigation and page specs are planned (not yet present in `docs/`).
 - `docs/SaaS/metrics_library.md` - canonical return conventions, KPI computation boundaries, UTC series, QuantStats posture, NumPy-centric implementation.
 
 The guiding product goal is to let independent traders build, validate, combine, and deploy systematic strategies without needing to build the surrounding infrastructure themselves.
@@ -1201,4 +1209,6 @@ These are the main items still worth hashing out before deeper implementation:
 10. Add rate limit/quota admission checks before queued compute.
 11. Add market data publishing scripts for weekly TWS updates and quarterly backadjusted dataset versions.
 12. Add hosted deployment scheduler and Signal API for latest portfolio signals.
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
 

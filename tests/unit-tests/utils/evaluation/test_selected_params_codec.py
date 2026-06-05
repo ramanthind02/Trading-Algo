@@ -1,13 +1,13 @@
 """Tests for walkforward selected-params JSON codec."""
 from __future__ import annotations
 
-from feature_research.core_helpers import combo_key
-from utils.core.enums import PositionMode
-from utils.evaluation.walkforward.selected_params_codec import (
+from research.feature.core_helpers import combo_key
+from lib.core.enums import PositionMode
+from research.evaluation.walkforward.selected_params_codec import (
     decode_selected_params_list,
     serialize_selected_params,
 )
-from utils.evaluation.walkforward.walkforward_labels import canonical_param_label
+from research.evaluation.walkforward.walkforward_labels import canonical_param_label
 
 
 def test_serialize_decode_round_trips_nested_filter_gate_params() -> None:

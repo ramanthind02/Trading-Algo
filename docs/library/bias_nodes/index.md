@@ -27,3 +27,5 @@ OHLCV → Bias node(s) → (optional composition) → Research → Native discre
 - [[Cache/user_guide]] — central cache for candles and bias artifacts
 - [[Vault/user_guide]] — persisting frozen feature definitions
 - [[Data/norgate]] — OHLCV sourcing (data layer, not a bias node doc)
+
+> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._

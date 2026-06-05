@@ -4,8 +4,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from feature_research.core_helpers import combo_key
-from utils.evaluation.walkforward.evaluators import build_signed_signal_walkforward_evaluator
+from research.feature.core_helpers import combo_key
+from research.evaluation.walkforward.evaluators import build_signed_signal_walkforward_evaluator
 
 
 def test_signed_signal_evaluator_returns_signal_times_target() -> None:

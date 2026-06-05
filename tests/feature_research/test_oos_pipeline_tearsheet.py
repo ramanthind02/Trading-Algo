@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
-from feature_research.config import FeatureType, ResearchWindowConfig
-from feature_research.config import load_config
-from feature_research.pipeline import run_oos_pipeline
-from utils.core.enums import Ticker
+from research.feature.config import FeatureType, ResearchWindowConfig
+from research.feature.config import load_config
+from research.feature.pipeline import run_oos_pipeline
+from lib.core.enums import Ticker
 
 
 def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_path) -> None:
@@ -39,19 +39,19 @@ def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_pa
     ]
 
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.populate_cache_if_needed",
+        "research.feature.pipelines._shared.populate_cache_if_needed",
         lambda _cfg, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.get_tickers_with_coverage_for_config",
+        "research.feature.pipelines._shared.get_tickers_with_coverage_for_config",
         lambda _cfg, **_kwargs: _cfg.tickers,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.resolve_walkforward_output_dir",
+        "research.feature.pipelines._shared.resolve_walkforward_output_dir",
         lambda **_kwargs: tmp_path / "oos",
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.expand_bias_specs",
+        "research.feature.pipelines._shared.expand_bias_specs",
         lambda _spec: [
             {
                 "module_name": "rsi_signal",
@@ -68,7 +68,7 @@ def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_pa
         ],
     )
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.research_data.load_features_for_combo",
+        "research.evaluation.walkforward.research_data.load_features_for_combo",
         lambda _single_spec, _cfg, **_kwargs: (
             feature,
             target,
@@ -81,15 +81,15 @@ def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_pa
         ),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.build_fold_rows_from_explicit_specs",
+        "research.feature.pipelines._shared.build_fold_rows_from_explicit_specs",
         lambda *_args, **_kwargs: fold_rows,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.load_portfolio_candles",
+        "research.feature.pipelines._shared.load_portfolio_candles",
         lambda _cfg: portfolio_candles,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.write_walkforward_artifacts",
+        "research.feature.pipelines._shared.write_walkforward_artifacts",
         lambda *_args, **_kwargs: None,
     )
 
@@ -100,7 +100,7 @@ def test_signed_signal_oos_passes_portfolio_inputs_to_runner(monkeypatch, tmp_pa
         return SimpleNamespace(selection_summary_df=pd.DataFrame(), folds_df=pd.DataFrame())
 
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.run_walkforward_research",
+        "research.feature.pipelines._shared.run_walkforward_research",
         _mock_run_walkforward_research,
     )
 
@@ -161,23 +161,23 @@ def test_oos_pipeline_uses_available_data_when_no_full_coverage(
         ]
 
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.populate_cache_if_needed",
+        "research.feature.pipelines._shared.populate_cache_if_needed",
         lambda _cfg, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.get_tickers_with_coverage_for_config",
+        "research.feature.pipelines._shared.get_tickers_with_coverage_for_config",
         lambda _cfg, **_kwargs: [],
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.get_effective_range_and_tickers",
+        "research.feature.pipelines._shared.get_effective_range_and_tickers",
         lambda _cfg, **_kwargs: (narrowed_start, narrowed_end, [Ticker.TLT]),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.resolve_walkforward_output_dir",
+        "research.feature.pipelines._shared.resolve_walkforward_output_dir",
         lambda **_kwargs: tmp_path / "oos",
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.expand_bias_specs",
+        "research.feature.pipelines._shared.expand_bias_specs",
         lambda _spec: [
             {
                 "module_name": "rsi_signal",
@@ -194,7 +194,7 @@ def test_oos_pipeline_uses_available_data_when_no_full_coverage(
         ],
     )
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.research_data.load_features_for_combo",
+        "research.evaluation.walkforward.research_data.load_features_for_combo",
         lambda _single_spec, _cfg, **_kwargs: (
             feature,
             target,
@@ -207,19 +207,19 @@ def test_oos_pipeline_uses_available_data_when_no_full_coverage(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.build_fold_rows_from_explicit_specs",
+        "research.feature.pipelines._shared.build_fold_rows_from_explicit_specs",
         _capture_fold_rows,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.load_portfolio_candles",
+        "research.feature.pipelines._shared.load_portfolio_candles",
         lambda _cfg: portfolio_candles,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.write_walkforward_artifacts",
+        "research.feature.pipelines._shared.write_walkforward_artifacts",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines._shared.run_walkforward_research",
+        "research.feature.pipelines._shared.run_walkforward_research",
         lambda *_args, **_kwargs: SimpleNamespace(
             selection_summary_df=pd.DataFrame(), folds_df=pd.DataFrame()
         ),
