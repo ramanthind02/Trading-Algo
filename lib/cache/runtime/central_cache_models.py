@@ -14,13 +14,6 @@ class ArtifactScope(str, Enum):
     RESEARCH = "research"
 
 
-class ArtifactLifecycleState(str, Enum):
-    FRESH = "fresh"
-    STALE = "stale"
-    REBUILDING = "rebuilding"
-    FAILED = "failed"
-
-
 class LookupMode(str, Enum):
     EXACT = "exact"
     AS_OF = "as_of"
@@ -92,7 +85,3 @@ class ArtifactDescriptor:
 class ArtifactRecord:
     descriptor: ArtifactDescriptor
     coverage: CoverageWindow
-    lifecycle_state: ArtifactLifecycleState
-    revision: int
-    source_revision: int = 0
-    depends_on: tuple[tuple[str, str], ...] = ()

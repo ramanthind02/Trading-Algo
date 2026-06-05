@@ -589,7 +589,6 @@ class CacheManager:
             Result dict with status and details
         """
         from .central_cache import CentralCacheStore
-        from .central_cache_models import ArtifactLifecycleState
         from lib.core.helpers import create_fresh_bias_node
 
         ticker_str = ticker.name if hasattr(ticker, 'name') else str(ticker)
@@ -639,13 +638,10 @@ class CacheManager:
             store = self._central_cache_store()
             record = store.describe_artifact(descriptor)
 
-            # Skip only fresh, in-range artifacts. Stale or partial artifacts
-            # must be rebuilt even when overwrite=False.
             if (
                 cache.exists()
                 and not overwrite
                 and record is not None
-                and record.lifecycle_state is ArtifactLifecycleState.FRESH
                 and self._coverage_spans_window(
                     record.coverage.start,
                     record.coverage.end,
@@ -654,7 +650,7 @@ class CacheManager:
                 )
             ):
                 result['status'] = 'skipped'
-                result['message'] = 'Cache exists, artifact is fresh, and overwrite=False'
+                result['message'] = 'Cache exists and covers requested window; overwrite=False'
                 return result
 
             # Load candles
@@ -683,14 +679,7 @@ class CacheManager:
                 & (output_df.index <= pd.Timestamp(end_date))
             ].copy()
 
-            # Save through the central cache so parquet payload and metadata stay in sync.
-            depends_on = self._depends_on_for_spec(ticker, tf, actual_params)
-            store.write_artifact(
-                descriptor,
-                output_df,
-                depends_on=depends_on,
-                source_revision=self._resolved_source_revision(descriptor, depends_on),
-            )
+            store.write_artifact(descriptor, output_df)
 
             result['status'] = 'success'
             result['row_count'] = len(output_df)
@@ -1043,15 +1032,10 @@ class CacheManager:
         start_date: datetime,
         end_date: datetime,
     ) -> tuple[bool, str]:
-        from .central_cache import CentralCacheStore
-        from .central_cache_models import ArtifactLifecycleState
-
         store = self._central_cache_store()
         record = store.describe_artifact(descriptor)
         if record is None:
             return True, "missing"
-        if record.lifecycle_state is not ArtifactLifecycleState.FRESH:
-            return True, record.lifecycle_state.value.lower()
         if not self._coverage_spans_window(
             record.coverage.start,
             record.coverage.end,
@@ -1272,50 +1256,6 @@ class CacheManager:
         )
         return pd.Timestamp(rebuild_frame.index[0]).to_pydatetime()
 
-    def _depends_on_for_spec(
-        self,
-        ticker: Ticker,
-        tf: TimeFrame,
-        params: Dict[str, Any],
-    ) -> tuple[tuple[Ticker, TimeFrame], ...]:
-        from .cross_ticker_store import extract_cross_ticker_names
-
-        dependencies: list[tuple[Ticker, TimeFrame]] = [(ticker, tf)]
-        for cross_name in sorted(extract_cross_ticker_names(params)):
-            if cross_name not in Ticker.__members__:
-                logger.warning("Unknown cross ticker in cache refresh params: %s", cross_name)
-                continue
-            dependency = (Ticker[cross_name], tf)
-            if dependency not in dependencies:
-                dependencies.append(dependency)
-        return tuple(dependencies)
-
-    def _resolved_source_revision(
-        self,
-        descriptor: "ArtifactDescriptor",
-        depends_on: Sequence[tuple[Ticker, TimeFrame]],
-    ) -> int:
-        """Return a monotonic source revision for artifact rebuilds.
-
-        Candle revision counters are local cache metadata, not source-of-truth market
-        data versions. After cache reinitialization it is possible for dependency candle
-        revisions to be lower than an already-persisted artifact revision even when the
-        underlying candle payload is unchanged. In that case we preserve the higher
-        persisted artifact source revision so stale artifacts can still be rebuilt.
-        """
-        store = self._central_cache_store()
-        current_dependency_revision = max(
-            (
-                record.revision
-                for ticker, timeframe in depends_on
-                if (record := store.describe_candle(ticker, timeframe)) is not None
-            ),
-            default=0,
-        )
-        existing_record = store.describe_artifact(descriptor)
-        existing_source_revision = 0 if existing_record is None else existing_record.source_revision
-        return max(current_dependency_revision, existing_source_revision)
-
     def ensure_bias_cache_coverage(
         self,
         bias_node_specs: Sequence[Dict[str, Any]],
@@ -1358,7 +1298,6 @@ class CacheManager:
             )
 
         requested_tickers = sorted(set(tickers), key=lambda item: item.name)
-        dependency_tickers: set[Ticker] = set()
         source_timeframes: set[TimeFrame] = {TimeFrame.D} if include_daily_ewsd else set()
         artifact_tasks: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 
@@ -1372,21 +1311,20 @@ class CacheManager:
             source_timeframes.update(timeframes)
             for ticker in requested_tickers:
                 for tf in timeframes:
-                    depends_on = self._depends_on_for_spec(ticker, tf, params)
-                    dependency_tickers.update(dep_ticker for dep_ticker, _ in depends_on)
                     task_key = (
                         module_name,
                         ticker.name,
                         tf.name,
                         repr(sorted(params.items(), key=lambda item: item[0])),
                     )
-                    existing_task = artifact_tasks.get(task_key)
-                    task_payload = {
+                    if task_key in artifact_tasks:
+                        continue
+                    artifact_tasks[task_key] = {
                         "module_name": module_name,
                         "params": params,
                         "ticker": ticker,
                         "tf": tf,
-                        "depends_on": depends_on,
+                        "depends_on": ((ticker, tf),),
                         "cold_rebuild_candle_count": self._cold_rebuild_candle_count_for_spec(
                             module_name,
                             params,
@@ -1401,12 +1339,6 @@ class CacheManager:
                             scope=resolved_scope,
                         ),
                     }
-                    if existing_task is None:
-                        artifact_tasks[task_key] = task_payload
-                        continue
-                    existing_task["depends_on"] = tuple(
-                        dict.fromkeys(existing_task["depends_on"] + depends_on)
-                    )
 
         if include_daily_ewsd:
             for ticker in requested_tickers:
@@ -1439,10 +1371,6 @@ class CacheManager:
                         ),
                     }
 
-        source_tickers = sorted(
-            set(requested_tickers).union(dependency_tickers),
-            key=lambda item: item.name,
-        )
         compatibility_bootstrap_summary = {
             "total": 0,
             "success": 0,
@@ -1584,15 +1512,7 @@ class CacheManager:
                 descriptor = task["descriptor"]
                 try:
                     _, artifact_df = _run_rebuild(item)
-                    store.write_artifact(
-                        descriptor,
-                        artifact_df,
-                        depends_on=task["depends_on"],
-                        source_revision=self._resolved_source_revision(
-                            descriptor,
-                            task["depends_on"],
-                        ),
-                    )
+                    store.write_artifact(descriptor, artifact_df)
                     details.append(
                         {
                             "module_name": task["module_name"],
@@ -1706,7 +1626,6 @@ class CacheManager:
             "validated": validated,
             "failed": failed,
             "requested_tickers": [ticker.name for ticker in requested_tickers],
-            "dependency_tickers": [ticker.name for ticker in sorted(dependency_tickers)],
             "timeframes": [tf.name for tf in sorted(source_timeframes)],
             "details": details,
         }

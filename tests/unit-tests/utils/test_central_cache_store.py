@@ -10,14 +10,11 @@ import pytest
 import lib.cache.runtime.central_cache as central_cache_module
 from lib.cache.runtime.central_cache import CentralCacheStore, _candle_frame_semantically_equal
 from lib.cache.runtime.central_cache_errors import (
-    ArtifactLifecycleError,
     ArtifactMissingError,
     CacheCoverageError,
-    SourceRevisionConflictError,
 )
 from lib.cache.runtime.central_cache_models import (
     ArtifactDescriptor,
-    ArtifactLifecycleState,
     ArtifactRecord,
     ArtifactScope,
     CacheRequest,
@@ -116,9 +113,6 @@ def test_upsert_candles_appends_new_rows_without_losing_existing_data(
 ) -> None:
     central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 1, 1), 3, timedelta(days=1)))
 
-    initial_record = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
-    assert initial_record is not None
-
     central_cache.upsert_candles(
         Ticker.ES,
         TimeFrame.D,
@@ -133,9 +127,9 @@ def test_upsert_candles_appends_new_rows_without_losing_existing_data(
         pd.Timestamp("2024-01-04"),
         pd.Timestamp("2024-01-05"),
     ]
-    updated_record = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
-    assert updated_record is not None
-    assert updated_record.revision == initial_record.revision + 1
+    record = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
+    assert record is not None
+    assert record.coverage.end == pd.Timestamp("2024-01-05").to_pydatetime()
 
 
 def test_upsert_candles_overwrites_existing_datetime_rows(
@@ -153,53 +147,7 @@ def test_upsert_candles_overwrites_existing_datetime_rows(
     assert updated.close == pytest.approx(500.5)
 
 
-def test_upsert_candles_noop_does_not_increment_revision(
-    central_cache: CentralCacheStore,
-) -> None:
-    payload = _frame(datetime(2024, 1, 1), 3, timedelta(days=1))
-    central_cache.set_candles(Ticker.ES, TimeFrame.D, payload)
-
-    initial_record = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
-    assert initial_record is not None
-
-    central_cache.upsert_candles(Ticker.ES, TimeFrame.D, payload)
-
-    updated_record = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
-    assert updated_record is not None
-    assert updated_record.revision == initial_record.revision
-
-
-def test_upsert_candles_marks_dependent_artifacts_stale_on_real_change(
-    central_cache: CentralCacheStore,
-) -> None:
-    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 1, 1), 3, timedelta(days=1)))
-    descriptor = ArtifactDescriptor(
-        family="signals",
-        ticker=Ticker.ES,
-        timeframe=TimeFrame.D,
-        module_name="rsi",
-        params={"lookback": 14},
-        scope=ArtifactScope.RESEARCH,
-        artifact_name="signal",
-    )
-    central_cache.write_artifact(
-        descriptor,
-        _frame(datetime(2024, 1, 1), 3, timedelta(days=1)),
-        depends_on=[(Ticker.ES, TimeFrame.D)],
-    )
-
-    central_cache.upsert_candles(
-        Ticker.ES,
-        TimeFrame.D,
-        _frame(datetime(2024, 1, 4), 1, timedelta(days=1), base=250.0),
-    )
-
-    record = central_cache.describe_artifact(descriptor)
-    assert record is not None
-    assert record.lifecycle_state is ArtifactLifecycleState.STALE
-
-
-def test_artifact_read_as_of_and_lifecycle_state(central_cache: CentralCacheStore) -> None:
+def test_artifact_read_exact_and_as_of(central_cache: CentralCacheStore) -> None:
     central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 3, 1), 4, timedelta(days=1), base=200.0))
 
     descriptor = ArtifactDescriptor(
@@ -208,10 +156,10 @@ def test_artifact_read_as_of_and_lifecycle_state(central_cache: CentralCacheStor
         timeframe=TimeFrame.D,
         module_name="rsi",
         params={"lookback": 14},
-        scope=ArtifactScope.RESEARCH,
+        scope=ArtifactScope.LIVE,
         artifact_name="signal",
     )
-    central_cache.write_artifact(descriptor, _frame(datetime(2024, 3, 1), 4, timedelta(days=1)), depends_on=[(Ticker.ES, TimeFrame.D)])
+    central_cache.write_artifact(descriptor, _frame(datetime(2024, 3, 1), 4, timedelta(days=1)))
 
     exact = central_cache.read_artifact(descriptor, CacheRequest(exact_dt=datetime(2024, 3, 2)))
     assert exact.iloc[0]["open"] == pytest.approx(101.0)
@@ -221,147 +169,47 @@ def test_artifact_read_as_of_and_lifecycle_state(central_cache: CentralCacheStor
 
     record = central_cache.describe_artifact(descriptor)
     assert isinstance(record, ArtifactRecord)
-    assert record.lifecycle_state is ArtifactLifecycleState.FRESH
-
-    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 3, 1), 4, timedelta(days=1), base=250.0))
-
-    stale_record = central_cache.describe_artifact(descriptor)
-    assert isinstance(stale_record, ArtifactRecord)
-    assert stale_record.lifecycle_state is ArtifactLifecycleState.STALE
-
-    with pytest.raises(ArtifactLifecycleError):
-        central_cache.read_artifact(descriptor)
+    assert record.coverage.start is not None
+    assert record.coverage.end is not None
 
 
-def test_describe_artifact_uses_sidecar_without_loading_parquet(
-    central_cache: CentralCacheStore,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Coverage validation should not read full Parquet when ``*.parquet.meta.json`` exists."""
-    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 6, 1), 3, timedelta(days=1)))
+def test_artifact_reload_from_disk_after_memory_clear(central_cache: CentralCacheStore) -> None:
     descriptor = ArtifactDescriptor(
         family="signals",
         ticker=Ticker.ES,
         timeframe=TimeFrame.D,
         module_name="rsi",
         params={"lookback": 14},
-        scope=ArtifactScope.RESEARCH,
-        artifact_name="signal",
+        scope=ArtifactScope.LIVE,
+        artifact_name="rsi",
     )
-    central_cache.write_artifact(
-        descriptor,
-        _frame(datetime(2024, 6, 1), 3, timedelta(days=1)),
-        depends_on=[(Ticker.ES, TimeFrame.D)],
-    )
+    payload = _frame(datetime(2024, 6, 1), 3, timedelta(days=1))
+    central_cache.write_artifact(descriptor, payload)
     central_cache.clear()
-    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 6, 1), 3, timedelta(days=1)))
 
-    def _no_parquet_load(self) -> pd.DataFrame:
-        raise AssertionError("BiasNodeCache.load() should not run when sidecar metadata exists")
-
-    monkeypatch.setattr("lib.cache.runtime.central_cache.BiasNodeCache.load", _no_parquet_load)
     record = central_cache.describe_artifact(descriptor)
     assert record is not None
-    assert record.lifecycle_state is ArtifactLifecycleState.FRESH
+    assert record.coverage.start == pd.Timestamp("2024-06-01").to_pydatetime()
 
 
-def test_artifact_dependency_metadata_survives_memory_clear(central_cache: CentralCacheStore) -> None:
-    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 4, 1), 3, timedelta(days=1)))
-
-    descriptor = ArtifactDescriptor(
-        family="signals",
-        ticker=Ticker.ES,
-        timeframe=TimeFrame.D,
-        module_name="atr",
-        params={"lookback": 20},
-        scope=ArtifactScope.RESEARCH,
-        artifact_name="signal",
-    )
-    central_cache.write_artifact(
-        descriptor,
-        _frame(datetime(2024, 4, 1), 3, timedelta(days=1)),
-        depends_on=[(Ticker.ES, TimeFrame.D)],
-    )
-
-    central_cache.clear()
-    central_cache.set_candles(Ticker.ES, TimeFrame.D, _frame(datetime(2024, 4, 1), 3, timedelta(days=1), base=300.0))
-
-    record = central_cache.describe_artifact(descriptor)
-    assert isinstance(record, ArtifactRecord)
-    assert record.lifecycle_state is ArtifactLifecycleState.STALE
-
-    with pytest.raises(ArtifactLifecycleError):
-        central_cache.read_artifact(descriptor)
-
-
-def test_source_revision_conflict_rejects_older_artifact_write(central_cache: CentralCacheStore) -> None:
+def test_write_artifact_overwrites_existing(central_cache: CentralCacheStore) -> None:
     descriptor = ArtifactDescriptor(
         family="signals",
         ticker=Ticker.ES,
         timeframe=TimeFrame.D,
         module_name="rsi",
         params={"lookback": 14},
-        scope=ArtifactScope.RESEARCH,
-        artifact_name="signal",
+        scope=ArtifactScope.LIVE,
+        artifact_name="rsi",
     )
-    payload = _frame(datetime(2024, 5, 1), 3, timedelta(days=1))
-    central_cache.write_artifact(descriptor, payload, source_revision=8)
-
-    with pytest.raises(SourceRevisionConflictError):
-        central_cache.write_artifact(
-            descriptor,
-            _frame(datetime(2024, 5, 1), 3, timedelta(days=1), base=500.0),
-            source_revision=7,
-        )
-
-
-def test_newer_source_revision_refresh_is_allowed(central_cache: CentralCacheStore) -> None:
-    descriptor = ArtifactDescriptor(
-        family="signals",
-        ticker=Ticker.ES,
-        timeframe=TimeFrame.D,
-        module_name="rsi",
-        params={"lookback": 14},
-        scope=ArtifactScope.RESEARCH,
-        artifact_name="signal",
-    )
-
-    central_cache.write_artifact(descriptor, _frame(datetime(2024, 5, 1), 3, timedelta(days=1)), source_revision=7)
+    central_cache.write_artifact(descriptor, _frame(datetime(2024, 5, 1), 3, timedelta(days=1)))
     central_cache.write_artifact(
         descriptor,
         _frame(datetime(2024, 5, 1), 3, timedelta(days=1), base=500.0),
-        source_revision=8,
     )
 
     refreshed = central_cache.read_artifact(descriptor, CacheRequest(exact_dt=datetime(2024, 5, 2)))
     assert refreshed.iloc[0]["open"] == pytest.approx(501.0)
-    assert central_cache.get_artifact_record(descriptor).source_revision == 8
-
-
-def test_non_node_artifact_support_promotion_and_prune(central_cache: CentralCacheStore) -> None:
-    descriptor = ArtifactDescriptor(
-        family="portfolio",
-        artifact_name="forecast_vectors",
-        scope=ArtifactScope.RESEARCH,
-    )
-    payload = _frame(datetime(2024, 6, 1), 3, timedelta(days=1))
-    central_cache.write_artifact(descriptor, payload)
-
-    promoted = central_cache.promote_artifact(descriptor, target_scope=ArtifactScope.LIVE)
-    assert promoted.scope is ArtifactScope.LIVE
-
-    live_descriptor = descriptor.with_scope(ArtifactScope.LIVE)
-    live_result = central_cache.read_artifact(live_descriptor, CacheRequest(exact_dt=datetime(2024, 6, 2)))
-    assert live_result.iloc[0]["close"] == pytest.approx(101.5)
-
-    records_before_prune = central_cache.list_artifacts()
-    assert any(record.descriptor.scope is ArtifactScope.RESEARCH for record in records_before_prune)
-    assert any(record.descriptor.scope is ArtifactScope.LIVE for record in records_before_prune)
-
-    removed = central_cache.prune_scope(ArtifactScope.RESEARCH)
-    assert descriptor in removed
-    assert central_cache.describe_artifact(descriptor) is None
-    assert central_cache.describe_artifact(live_descriptor) is not None
 
 
 def test_exact_lookup_miss_on_artifact(central_cache: CentralCacheStore) -> None:
@@ -371,7 +219,7 @@ def test_exact_lookup_miss_on_artifact(central_cache: CentralCacheStore) -> None
         timeframe=TimeFrame.D,
         module_name="atr",
         params={"lookback": 20},
-        scope=ArtifactScope.RESEARCH,
+        scope=ArtifactScope.LIVE,
         artifact_name="signal",
     )
     central_cache.write_artifact(descriptor, _frame(datetime(2024, 7, 1), 2, timedelta(days=1)))
@@ -421,19 +269,18 @@ def test_candle_frame_semantically_equal_accepts_float_dtype_mismatch() -> None:
 def test_set_candles_skips_rewrite_when_semantically_equal_to_disk(
     central_cache: CentralCacheStore,
 ) -> None:
-    """Parquet round-trip must not force candle revision + dependent artifact staleness."""
+    """Parquet round-trip must not force a candle re-persist."""
     df = _frame(datetime(2024, 1, 1), 3, timedelta(days=1))
     central_cache.set_candles(Ticker.ES, TimeFrame.D, df)
-    rev_after_first = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
-    assert rev_after_first is not None
-    r1 = rev_after_first.revision
 
     central_cache._candle_frames.clear()
     central_cache._candle_records.clear()
     loaded = central_cache._read_candles_from_disk(Ticker.ES, TimeFrame.D)
     assert loaded is not None
 
+    parquet_path = central_cache._candle_path(Ticker.ES, TimeFrame.D)
+    mtime_before = parquet_path.stat().st_mtime
+
     central_cache.set_candles(Ticker.ES, TimeFrame.D, df)
-    rev_after_second = central_cache.describe_candle(Ticker.ES, TimeFrame.D)
-    assert rev_after_second is not None
-    assert rev_after_second.revision == r1
+
+    assert parquet_path.stat().st_mtime == mtime_before

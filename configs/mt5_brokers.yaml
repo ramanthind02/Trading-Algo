@@ -1,0 +1,99 @@
+# MT5 broker-aware symbol mapping.
+#
+# Different MT5 brokers expose the SAME underlying instrument under DIFFERENT
+# symbol names. e.g. the Nasdaq-100 may be `NDX`, `US100`, or `NAS100`; the
+# S&P-500 may be `SP500` or `US500`. FTMO is a different broker from Darwinex,
+# so it has different symbols AND a different data history.
+#
+# This file maps a repo-internal *canonical* ticker (the name used everywhere
+# in the alpha core / catalog) to each broker's native MT5 symbol.
+#
+#   canonical -> broker_symbol     via brokers.resolve(broker, canonical)
+#   broker_symbol -> canonical     via brokers.canonical_for(broker, broker_symbol)
+#
+# Conventions:
+#   - A `null` / "UNKNOWN" broker_symbol means the mapping is NOT yet confirmed
+#     on a live terminal for that broker. resolve() raises on UNKNOWN so we can
+#     never silently trade the wrong instrument. Fill these in via the
+#     `discover_symbols(broker)` step once a SEPARATE terminal for that broker
+#     is connected (see brokers.py). Do NOT guess.
+#   - `candidates` lists the plausible native names to probe during discovery.
+#
+# SAFETY: editing this file never connects to a terminal. Discovery
+# (mt5.symbols_get) is a separate, explicit step against a separate terminal.
+
+brokers:
+
+  # -------------------------------------------------------------------------
+  # Darwinex — CURRENT live broker. Mappings CONFIRMED on the live terminal
+  # 2026-06-04 (mirrors data_platform/providers/norgate/to_catalog._MT5_SYMBOL
+  # and data_platform/providers/mt5/to_catalog._DARWINEX). These are the
+  # authoritative, in-use Darwinex names.
+  # -------------------------------------------------------------------------
+  darwinex:
+    display_name: "Darwinex"
+    server: "liveUK-mt5.darwinex.com"   # informational; creds live in .env, never here
+    confirmed: true
+    confirmed_on: "2026-06-04"
+    symbols:
+      # canonical:  broker_symbol
+      ES:   SP500       # S&P 500     (was US500.cash — Darwinex uses SP500)
+      NQ:   NDX         # Nasdaq 100  (NOT NAS100 / US100)
+      YM:   WS30        # Dow Jones 30
+      DAX:  GDAXI       # DAX 40      (NOT GER40 / DE40)
+      FTSE: UK100       # FTSE 100
+      GC:   XAUUSD      # Gold
+      SI:   XAGUSD      # Silver
+      CL:   XTIUSD      # WTI Crude
+      NG:   XNGUSD      # Natural Gas
+      # FX pairs are 1:1 (canonical == broker symbol on Darwinex)
+      EURUSD: EURUSD
+      GBPUSD: GBPUSD
+      USDJPY: USDJPY
+      AUDUSD: AUDUSD
+      USDCHF: USDCHF
+      AUDNZD: AUDNZD
+      EURCHF: EURCHF
+
+  # -------------------------------------------------------------------------
+  # FTMO — prop-firm broker, NOT yet connected. Symbols are PLACEHOLDERS to be
+  # confirmed by discover_symbols('ftmo') against a SEPARATE FTMO terminal
+  # instance (the live Darwinex terminal must NOT be used). Every entry is
+  # UNKNOWN until confirmed; resolve() will raise rather than trade a guess.
+  #
+  # `candidates` are the names to probe during discovery. Known FTMO naming
+  # tendencies (to verify, not assume): indices often use `US100`/`US500`/`US30`
+  # or `NAS100`/`SP500`/`DOW`; metals `XAUUSD`/`XAGUSD`; oil `USOIL`/`XTIUSD`.
+  # -------------------------------------------------------------------------
+  ftmo:
+    display_name: "FTMO"
+    server: "UNKNOWN"                   # fill from FTMO_DEMO_SERVER in .env at connect time
+    confirmed: false
+    confirmed_on: null
+    symbols:
+      ES:   UNKNOWN     # candidates: SP500, US500, USA500, SPX500
+      NQ:   UNKNOWN     # candidates: US100, NAS100, NDX, USTEC, USATECH
+      YM:   UNKNOWN     # candidates: US30, DOW, WS30, USA30
+      DAX:  UNKNOWN     # candidates: GER40, DE40, GDAXI, DAX40
+      FTSE: UNKNOWN     # candidates: UK100, FTSE100
+      GC:   UNKNOWN     # candidates: XAUUSD, GOLD
+      SI:   UNKNOWN     # candidates: XAGUSD, SILVER
+      CL:   UNKNOWN     # candidates: USOIL, XTIUSD, WTI, CL
+      NG:   UNKNOWN     # candidates: XNGUSD, NATGAS, NGAS
+      EURUSD: UNKNOWN   # candidates: EURUSD, EURUSD.r
+      GBPUSD: UNKNOWN
+      USDJPY: UNKNOWN
+      AUDUSD: UNKNOWN
+      USDCHF: UNKNOWN
+      AUDNZD: UNKNOWN
+      EURCHF: UNKNOWN
+    candidates:
+      ES:   [SP500, US500, USA500, SPX500]
+      NQ:   [US100, NAS100, NDX, USTEC, USATECH]
+      YM:   [US30, DOW, WS30, USA30]
+      DAX:  [GER40, DE40, GDAXI, DAX40]
+      FTSE: [UK100, FTSE100]
+      GC:   [XAUUSD, GOLD]
+      SI:   [XAGUSD, SILVER]
+      CL:   [USOIL, XTIUSD, WTI, CL]
+      NG:   [XNGUSD, NATGAS, NGAS]
