@@ -1,0 +1,32 @@
+# Multi-source reconciliation priority.
+# First matching rule wins; conditions evaluated against {norgate_active}.
+# Flip `norgate_active` to false at the Norgate->IB futures handover (no code change).
+# See docs/library/Data/multi_source_update_architecture.md §3.
+
+norgate_active: true
+
+source_priority_rules:
+  # Futures daily — Norgate while subscribed, then IB
+  - instrument_class: FUTURE
+    resolution: D
+    priority:
+      - { source: norgate, condition: "norgate_active == True" }
+      - { source: ib,      condition: "always" }
+
+  # Futures weekly/monthly — resampled from the reconciled daily winner
+  - instrument_class: FUTURE
+    resolution: [W, M]
+    priority:
+      - { source: derived_from_daily, condition: "always" }
+
+  # Equities / ETFs (Norgate US stocks feed, fallback IB STK)
+  - instrument_class: SPOT
+    resolution: D
+    priority:
+      - { source: norgate, condition: "norgate_active == True" }
+      - { source: ib,      condition: "always" }
+
+  # CFDs — MT5 (Darwinex) only
+  - instrument_class: CFD
+    priority:
+      - { source: mt5, condition: "always" }

@@ -37,8 +37,8 @@ class ForecastMT5DataConnector:
     
     def __init__(self):
         """Initialize MT5 connection for forecasting."""
-        self.username = int(os.environ.get('MT5_USERNAME', '1520871062'))
-        self.password = os.environ.get('MT5_PASSWORD', 'm34bn4x6$W')
+        self.username = int(os.environ.get('MT5_USERNAME', '0'))
+        self.password = os.environ.get('MT5_PASSWORD', '')
         self.server = os.environ.get('MT5_SERVER', 'FTMO-Demo2')
         self.path = 'C:/Program Files/FTMO MetaTrader 5/terminal64.exe'
         

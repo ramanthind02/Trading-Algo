@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from utils.calendar.fed_fomc import (
+from data_platform.events.fed_fomc import (
     parse_forward_calendar_html,
     parse_historical_year_html,
     validate_fomc_dates,

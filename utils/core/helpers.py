@@ -13,26 +13,14 @@ from utils.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# In-process cache for OHLC parquet reads (same ticker, timeframe, range, file).
-# Feature research and permutation call ``load_data`` / ``load_data_multi_ticker`` many
-# times per run with identical arguments; the bias-node parquet cache is separate.
-_LOAD_DATA_CACHE: dict[tuple[str, int, int, int], pd.DataFrame] = {}
-
-
-def _load_data_cache_key(
-    file_path: Path,
-    start: datetime,
-    end: datetime,
-    *,
-    mtime_ns: int,
-) -> tuple[str, int, int, int]:
-    resolved = str(file_path.resolve())
-    return (
-        resolved,
-        int(pd.Timestamp(start).value),
-        int(pd.Timestamp(end).value),
-        mtime_ns,
-    )
+# OHLC loaders moved to data_platform.loaders; re-exported here so existing
+# ``from utils.core.helpers import load_data`` imports keep working.
+from data_platform.loaders import (  # noqa: E402,F401
+    _LOAD_DATA_CACHE,
+    _load_data_cache_key,
+    load_data,
+    load_data_multi_ticker,
+)
 
 
 def is_dst(dt: datetime) -> bool:
@@ -84,131 +72,6 @@ def convert_ny_time_to_ftmo_time(dt_ny: datetime) -> int:
     hours_offset = 3 if is_dst(dt_ny) else 2
     dt_ny = dt_ny + timedelta(hours=hours_offset)
     return int(dt_ny.timestamp())
-
-
-def load_data(ticker: Ticker, timeframe: TimeFrame, start: datetime = datetime(1990, 1, 1), end: datetime = datetime(2025, 12, 30)) -> pd.DataFrame:
-    """Load OHLC data from parquet files using pandas for efficient reading.
-
-    Args:
-        ticker: The ticker symbol to load data for.
-        timeframe: The timeframe of the OHLC data.
-        start: The start datetime to filter from, defaults to Jan 1, 1990.
-        end: The end datetime to filter to, defaults to Dec 1, 2025.
-
-    Returns:
-        pd.DataFrame: DataFrame containing the OHLC data
-
-    Raises:
-        FileNotFoundError: If the parquet file does not exist.
-    """
-    # Project root: repo root (parent of utils/), not utils/ itself
-    _helpers_path = Path(__file__).resolve()
-    project_root = next(
-        (p for p in _helpers_path.parents if (p / "pyproject.toml").exists()),
-        _helpers_path.parents[2],
-    )
-    base_dir = project_root / "data" / "ohlc_data"
-    file_path = base_dir / ticker.name / f"{timeframe.name}_{ticker.name}.parquet"
-
-    if file_path.exists():
-        mtime_ns = file_path.stat().st_mtime_ns
-        cache_key = _load_data_cache_key(file_path, start, end, mtime_ns=mtime_ns)
-        cached = _LOAD_DATA_CACHE.get(cache_key)
-        if cached is not None:
-            return cached.copy()
-
-        # Read parquet file with pandas (fastparquet engine for PyPy compatibility)
-        df = pd.read_parquet(file_path, engine='fastparquet')
-
-        # Convert datetime column to proper datetime type
-        df['datetime'] = pd.to_datetime(df['datetime'])
-
-        # Filter by date range
-        mask = (df['datetime'] >= start) & (df['datetime'] <= end)
-        df = df[mask]
-
-        # Create proper timestamp index
-        df['timestamp'] = df['datetime'].astype('int64') // 10**9
-        df.set_index('timestamp', inplace=True)
-
-        # Sort by timestamp index
-        df.sort_index(inplace=True)
-
-        _LOAD_DATA_CACHE[cache_key] = df.copy()
-        return df.copy()
-    raise FileNotFoundError(f"File {file_path} does not exist")
-
-
-def load_data_multi_ticker(
-    tickers: List[Ticker],
-    timeframe: TimeFrame,
-    start: datetime = datetime(1990, 1, 1),
-    end: datetime = datetime(2025, 12, 30),
-    use_millisecond_offset: bool = False
-) -> pd.DataFrame:
-    """
-    Load OHLC data from multiple tickers and append rows with ticker column.
-    
-    Parameters
-    ----------
-    tickers : List[Ticker]
-        List of ticker symbols to load data for
-    timeframe : TimeFrame
-        The timeframe of the OHLC data
-    start : datetime, default=datetime(1990, 1, 1)
-        Start datetime to filter from
-    end : datetime, default=datetime(2025, 12, 30)
-        End datetime to filter to
-    use_millisecond_offset : bool, default=False
-        Deprecated. Ignored. Primary key is (datetime, ticker); no offsets applied.
-        
-    Returns
-    -------
-    pd.DataFrame
-        Combined DataFrame with all tickers' data. Includes:
-        - All OHLC columns (datetime, open, high, low, close, volume)
-        - 'ticker' column identifying the ticker for each row
-        - 'timeframe' column (same for all rows)
-        - Rows keyed by (datetime, ticker); datetime is bar time (no per-ticker offset)
-        
-    Examples
-    --------
-    >>> from utils.core.enums import Ticker, TimeFrame
-    >>> from datetime import datetime
-    >>> 
-    >>> # Load multiple tickers
-    >>> df = load_data_multi_ticker(
-    ...     tickers=[Ticker.ES, Ticker.NQ, Ticker.YM],
-    ...     timeframe=TimeFrame.D,
-    ...     start=datetime(2020, 1, 1),
-    ...     end=datetime(2024, 12, 31)
-    ... )
-    >>> 
-    >>> # DataFrame has ticker column
-    >>> print(df['ticker'].unique())  # ['ES', 'NQ', 'YM']
-    >>> print(df.columns)  # ['datetime', 'open', 'high', 'low', 'close', 'volume', 'ticker', 'timeframe']
-    """
-    all_dfs = []
-    
-    for ticker in tickers:
-        # Load data for this ticker
-        ticker_df = load_data(ticker, timeframe, start=start, end=end)
-        
-        # Reset index to get timestamp as column (we'll use datetime as index)
-        ticker_df = ticker_df.reset_index()
-        
-        # Add ticker column (primary key is (datetime, ticker); no millisecond offset)
-        ticker_df['ticker'] = ticker
-        ticker_df['timeframe'] = timeframe
-        all_dfs.append(ticker_df)
-    
-    # Concatenate all tickers
-    combined_df = pd.concat(all_dfs, axis=0, ignore_index=True)
-    
-    # Sort by datetime
-    combined_df = combined_df.sort_values('datetime').reset_index(drop=True)
-    
-    return combined_df
 
 
 def _normalize_module_base_name(module_name: str) -> str:

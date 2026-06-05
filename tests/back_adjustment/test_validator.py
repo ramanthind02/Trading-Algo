@@ -7,7 +7,7 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 
-from data_cleaning.back_adjustment.validator import (
+from data_platform.providers.norgate.backadjust.validator import (
     compare_price_levels,
     compare_roll_dates,
     generate_comparison_report,

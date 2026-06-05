@@ -6,8 +6,8 @@ import pandas as pd
 from pathlib import Path
 
 from utils.core.enums import Ticker
-from data_cleaning.back_adjustment.orchestrator import process_ticker
-from data_cleaning.back_adjustment.validator import compare_price_levels
+from data_platform.providers.norgate.backadjust.orchestrator import process_ticker
+from data_platform.providers.norgate.backadjust.validator import compare_price_levels
 
 _INTRADAY_DIR = Path("data/intraday_original")
 _NORGATE_ADJ = Path("data/norgate/continuous_futures/adjusted")

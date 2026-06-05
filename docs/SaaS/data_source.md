@@ -112,12 +112,25 @@ Conflicts (for example close deviation above threshold) must be logged and alert
 
 ## Shared Trading-Algo implementation
 
-SaaS mirrors this repository implementation:
+SaaS mirrors this repository's `data_platform` stack:
 
-- architecture reference: `docs/library/Data/canonical_data_architecture.md`
-- Norgate rebuild flow: `docs/library/Data/NORGATE_MIGRATION.md`
-- IB splice reconciliation: `utils/cache/runtime/ib_candle_ratio_align.py`
-- live upsert path: `scripts/enigma_live_forecast.py` (`upsert_tws_candles`)
+- **Instrument model + catalog**: `data_platform/core/` — `InstrumentId` (`symbol.venue`),
+  `Instrument`, `BarType`, `InstrumentCatalog`. Nautilus-aligned (see
+  [[data_platform_README]]).
+- **Source adapters**: `data_platform/providers/{norgate,ib,mt5,yahoo}/`.
+- **Source-priority reconciliation**: `data_platform/core/{source_priority,reconciler,provenance}.py`
+  + `configs/source_priority.yaml` (see [[multi_source_update_architecture]]).
+- **IB splice primitive** (runtime/engine layer): `utils/cache/runtime/ib_candle_ratio_align.py`.
+- **Live upsert path**: `scripts/enigma_live_forecast.py` (`upsert_tws_candles`).
+
+## Future state: NautilusTrader
+
+The `data_platform` model is intentionally 1:1 compatible with NautilusTrader's
+domain model — `InstrumentId`/`BarType` string forms are identical, and each
+`Instrument` row maps onto a nautilus `FuturesContract`/`Equity`/`Cfd` by
+`instrument_class`. On migration, the gold parquet store feeds a Nautilus
+`ParquetDataCatalog`; the reconciliation layer here remains the bronze→silver→gold
+ingestion pipeline, and Nautilus's DataEngine becomes the downstream consumer.
 
 ## Mandatory IB append rule
 
@@ -126,3 +139,7 @@ Every IB daily append must:
 1. append only sessions newer than canonical max date
 2. apply ratio splice adjustment `anchor_close / first_new_ib_close`
 3. rebuild derived timeframe aggregates from reconciled daily bars
+
+This rule is encoded in `prepare_ib_rows_for_central_cache_append` and wrapped by
+the `SourcePriorityReconciler`, which flips Norgate→IB via the `norgate_active`
+config flag with no code change.

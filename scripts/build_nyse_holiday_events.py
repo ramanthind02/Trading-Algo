@@ -13,7 +13,7 @@ from scripts._bootstrap import ensure_project_root_on_path
 
 ensure_project_root_on_path()
 
-from utils.calendar.nyse_holidays import build_holiday_events  # noqa: E402
+from data_platform.events.nyse_holidays import build_holiday_events  # noqa: E402
 from utils.core.enums import Ticker, TimeFrame  # noqa: E402
 from utils.core import helpers  # noqa: E402
 
@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/calendar/nyse_holiday_events.json"),
+        default=Path("data/events/calendar/nyse_holiday_events.json"),
     )
     args = parser.parse_args(argv)
     repo_root = ensure_project_root_on_path()

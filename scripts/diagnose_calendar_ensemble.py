@@ -13,7 +13,7 @@ from scripts._bootstrap import ensure_project_root_on_path
 
 ensure_project_root_on_path()
 
-from utils.calendar.diagnostics import (  # noqa: E402
+from data_platform.events.diagnostics import (  # noqa: E402
     BLOG_NARRATIVE_WINDOWS,
     BLOG_PARAMETER_WINDOWS,
     aggregate_event_stats,
@@ -24,7 +24,7 @@ from utils.calendar.diagnostics import (  # noqa: E402
     summarize_return_series,
     vol_scaled_portfolio_returns,
 )
-from utils.calendar.trading_day_index import TradingDayIndex, load_es_trading_sessions
+from data_platform.events.trading_day_index import TradingDayIndex, load_es_trading_sessions
 from utils.core.enums import Ticker
 
 _OUTPUT_DIR = (
@@ -72,7 +72,7 @@ def _fomc_only_returns(
         windows.fomc_exit,
     )
     legs = {"equity_holiday": frozenset(), "gold_holiday": frozenset(), "fomc": fomc_sessions}
-    from utils.calendar.diagnostics import combined_signal_series
+    from data_platform.events.diagnostics import combined_signal_series
 
     frames = []
     for ticker in fomc_tickers:

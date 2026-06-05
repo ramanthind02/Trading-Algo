@@ -3,11 +3,11 @@ from __future__ import annotations
 import pytest
 from datetime import datetime
 
-from data_cleaning.back_adjustment.gap_calculator import (
+from data_platform.providers.norgate.backadjust.gap_calculator import (
     AdjustmentFactor,
     calculate_adjustments,
 )
-from data_cleaning.back_adjustment.roll_detector import RollEvent
+from data_platform.providers.norgate.backadjust.roll_detector import RollEvent
 
 
 def _make_events(*gaps: float) -> list[RollEvent]:

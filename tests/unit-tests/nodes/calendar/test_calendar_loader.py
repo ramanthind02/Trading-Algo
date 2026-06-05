@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from utils.calendar.calendar_loader import (
+from data_platform.events.calendar_loader import (
     HolidayAssetBucket,
     load_calendar_bundle,
     repo_calendar_dir,
@@ -39,6 +39,6 @@ def test_fomc_json_missing_dates_raises(tmp_path: Path) -> None:
     (bad_dir / "fomc_decision_dates.json").write_text('{"dates": "not-a-list"}', encoding="utf-8")
     (bad_dir / "nyse_holiday_events.json").write_text('{"events": []}', encoding="utf-8")
     with pytest.raises(ValueError, match="dates"):
-        from utils.calendar import calendar_loader
+        from data_platform.events import calendar_loader
 
         calendar_loader._load_fomc_dates(bad_dir / "fomc_decision_dates.json")

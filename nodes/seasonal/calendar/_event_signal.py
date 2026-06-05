@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from utils.calendar.calendar_loader import CalendarBundle, HolidayAssetBucket, load_calendar_bundle
-from utils.calendar.trading_day_index import TradingDayIndex, load_es_trading_sessions
+from data_platform.events.calendar_loader import CalendarBundle, HolidayAssetBucket, load_calendar_bundle
+from data_platform.events.trading_day_index import TradingDayIndex, load_es_trading_sessions
 
 
 def build_active_sessions(
