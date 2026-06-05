@@ -16,9 +16,9 @@ from typing import ClassVar, List, Union
 import numpy as np
 
 from nodes import BiasNode
-from utils.compute.fast_nodes import compute_atr_fast
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.compute.fast_nodes import compute_atr_fast
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 
 
 class AtrSlopeDirection(Enum):

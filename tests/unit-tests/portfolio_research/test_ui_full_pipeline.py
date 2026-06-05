@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from portfolio_research.config import load_config
-from portfolio_research.shared.phase import PortfolioResearchPhase, artifact_view_phases
-from portfolio_research.ui.planner import build_phase_plan, build_ui_defaults, build_ui_request
+from research.portfolio.config import load_config
+from research.portfolio.shared.phase import PortfolioResearchPhase, artifact_view_phases
+from research.portfolio.ui.planner import build_phase_plan, build_ui_defaults, build_ui_request
 
 
 def test_full_pipeline_plan_lists_all_stage_steps() -> None:

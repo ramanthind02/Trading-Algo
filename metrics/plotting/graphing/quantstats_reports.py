@@ -16,8 +16,8 @@ from quantfoundry_core.metrics import (
     compute_aligned_performance_metrics,
 )
 
-from utils.cache.runtime.cache_paths import win32_extended_path
-from utils.core.enums import TimeFrame
+from lib.cache.runtime.cache_paths import win32_extended_path
+from lib.core.enums import TimeFrame
 
 # Import QuantStats
 try:

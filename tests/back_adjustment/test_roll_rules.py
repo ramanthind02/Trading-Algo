@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from utils.core.enums import Ticker
+from lib.core.enums import Ticker
 from data_platform.providers.norgate.backadjust.roll_rules import (
     RollRule,
     get_roll_rule,

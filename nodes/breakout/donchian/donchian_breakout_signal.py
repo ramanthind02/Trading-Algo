@@ -18,11 +18,11 @@ from collections import deque
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 try:
-    from utils.compute.fast_nodes import compute_high_low_channel_fast, CYTHON_NODES_AVAILABLE
+    from lib.compute.fast_nodes import compute_high_low_channel_fast, CYTHON_NODES_AVAILABLE
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from quantfoundry_core.metrics import MetricName, compute_scalar_metric
 
-from feature_selection.validation.objective_metrics import (
+from features.validation.objective_metrics import (
     resolve_objective_metric_name as resolve_objective_metric,
 )
 

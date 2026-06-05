@@ -1,6 +1,6 @@
 from typing import ClassVar, List
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 from nodes import BiasNode, LookbackWindow
 from nodes.momentum import Momentum
 

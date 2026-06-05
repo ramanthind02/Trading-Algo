@@ -1,13 +1,13 @@
 from typing import ClassVar, List, Optional
 
 from nodes import BiasNode, LookbackWindow
-from utils.core.models import Candle
-from utils.core.enums import Bias, Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Bias, Ticker, TimeFrame
 import numpy as np
 from collections import deque
 import math
 
-from utils.compute.fast_nodes import compute_ema_fast
+from lib.compute.fast_nodes import compute_ema_fast
 
 class EWMACNode(BiasNode):
     """

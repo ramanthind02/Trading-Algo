@@ -18,9 +18,9 @@ from __future__ import annotations
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.compute.fast_nodes import compute_ema_fast
-from utils.core.enums import TimeFrame, Ticker
-from utils.core.models import Candle
+from lib.compute.fast_nodes import compute_ema_fast
+from lib.core.enums import TimeFrame, Ticker
+from lib.core.models import Candle
 
 
 def _ema_alpha(period: int) -> float:

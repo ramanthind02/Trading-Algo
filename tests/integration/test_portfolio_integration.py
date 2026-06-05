@@ -29,8 +29,8 @@ import numpy as np
 from datetime import datetime
 from typing import Dict, Any
 
-from utils.core.enums import TimeFrame, Ticker
-from utils.core import helpers
+from lib.core.enums import TimeFrame, Ticker
+from lib.core import helpers
 from ensemble.portfolio import Portfolio
 from ensemble.diversified_ensemble import DiversifiedEnsemble
 from metrics.plotting.graphing.quantstats_reports import generate_tearsheet
@@ -40,7 +40,7 @@ from ensemble.portfolio_impl.portfolio_tester import (
     calculate_strategy_returns_from_positions,
     calculate_baseline_returns
 )
-from utils.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
+from lib.compute.daily_ewsd_volatility import compute_daily_ewsd_volatility
 
 
 # Hardcoded buy_hold feature config (from vault/D/buy_hold_long/features/buy_hold_signal_D.json)

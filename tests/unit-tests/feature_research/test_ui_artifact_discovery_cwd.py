@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from feature_research.config import load_config
-from feature_research.shared import FeatureResearchPhase
-from feature_research.ui.artifact_catalog import phase_discovery_roots
-from feature_research.ui.planner import build_ui_defaults, build_ui_request
-from feature_research.ui.workspace import build_workspace_view
-from feature_research.ui.workspace_manifest import validation_artifacts_current
+from research.feature.config import load_config
+from research.feature.shared import FeatureResearchPhase
+from research.feature.ui.artifact_catalog import phase_discovery_roots
+from research.feature.ui.planner import build_ui_defaults, build_ui_request
+from research.feature.ui.workspace import build_workspace_view
+from research.feature.ui.workspace_manifest import validation_artifacts_current
 
 
 def test_validation_discovery_works_when_cwd_is_not_repo_root(monkeypatch: pytest.MonkeyPatch) -> None:

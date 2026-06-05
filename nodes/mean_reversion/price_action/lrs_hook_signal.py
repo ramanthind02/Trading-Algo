@@ -18,8 +18,8 @@ from typing import ClassVar, Deque, List
 import numpy as np
 
 from nodes import BiasNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 class LrsHookExitVariant(Enum):

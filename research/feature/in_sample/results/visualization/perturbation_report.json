@@ -1,0 +1,130 @@
+{
+  "schema_version": "robustness-v1",
+  "chosen_params": {
+    "momentum_lookback": 10,
+    "rsi_period": 2,
+    "rsi_max": 85.0,
+    "exit_bars": 5
+  },
+  "peak_metric": 3.0,
+  "median_metric": 2.5,
+  "p10_metric": 2.5,
+  "p90_metric": 2.5,
+  "optimism_bias": 0.5,
+  "stability_ratio": 0.8333333333333334,
+  "n_perturbed": 8,
+  "metric_floor": 2.0,
+  "passed": true,
+  "interpretation": "Passes: median metric 2.50 clears the floor of 2.00 but shows optimism bias (+0.50, 17% of peak) or stability 0.83. Monitor parameter sensitivity before going live.",
+  "perturbation_metric": "t_stat",
+  "neighbor_runs": [
+    {
+      "role": "center",
+      "param_changed": "",
+      "direction": "",
+      "metric": 3.0,
+      "params": {
+        "exit_bars": 5,
+        "momentum_lookback": 10,
+        "rsi_max": 85.0,
+        "rsi_period": 2
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "exit_bars",
+      "direction": "down",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 4,
+        "momentum_lookback": 10,
+        "rsi_max": 85.0,
+        "rsi_period": 2
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "exit_bars",
+      "direction": "up",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 6,
+        "momentum_lookback": 10,
+        "rsi_max": 85.0,
+        "rsi_period": 2
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "momentum_lookback",
+      "direction": "down",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 5,
+        "momentum_lookback": 9,
+        "rsi_max": 85.0,
+        "rsi_period": 2
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "momentum_lookback",
+      "direction": "up",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 5,
+        "momentum_lookback": 11,
+        "rsi_max": 85.0,
+        "rsi_period": 2
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "rsi_max",
+      "direction": "down",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 5,
+        "momentum_lookback": 10,
+        "rsi_max": 84.0,
+        "rsi_period": 2
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "rsi_max",
+      "direction": "up",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 5,
+        "momentum_lookback": 10,
+        "rsi_max": 86.0,
+        "rsi_period": 2
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "rsi_period",
+      "direction": "down",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 5,
+        "momentum_lookback": 10,
+        "rsi_max": 85.0,
+        "rsi_period": 1
+      }
+    },
+    {
+      "role": "neighbor",
+      "param_changed": "rsi_period",
+      "direction": "up",
+      "metric": 2.5,
+      "params": {
+        "exit_bars": 5,
+        "momentum_lookback": 10,
+        "rsi_max": 85.0,
+        "rsi_period": 3
+      }
+    }
+  ]
+}

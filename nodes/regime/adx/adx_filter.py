@@ -12,8 +12,8 @@ from enum import Enum
 from typing import ClassVar, List, Union
 
 from nodes import BiasNode
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 
 
 class AdxFilterCompare(Enum):

@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 import pytest
 
-from utils.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
+from lib.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
 
 
 def _daily_candles(

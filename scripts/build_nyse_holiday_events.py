@@ -14,8 +14,8 @@ from scripts._bootstrap import ensure_project_root_on_path
 ensure_project_root_on_path()
 
 from data_platform.events.nyse_holidays import build_holiday_events  # noqa: E402
-from utils.core.enums import Ticker, TimeFrame  # noqa: E402
-from utils.core import helpers  # noqa: E402
+from lib.core.enums import Ticker, TimeFrame  # noqa: E402
+from lib.core import helpers  # noqa: E402
 
 
 def load_es_trading_sessions(start_year: int, end_year: int) -> list:

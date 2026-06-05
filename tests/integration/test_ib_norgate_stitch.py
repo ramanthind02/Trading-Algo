@@ -28,7 +28,7 @@ from data_platform.core import load_catalog, source_symbol
 from data_platform.core.reconciler import SourcePriorityReconciler
 from data_platform.core.source_priority import SourcePriorityConfig
 from data_platform.loaders import load_data
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 DEFAULT_PORT = 7497
 DEFAULT_TICKERS = ["ES", "NQ", "GC"]

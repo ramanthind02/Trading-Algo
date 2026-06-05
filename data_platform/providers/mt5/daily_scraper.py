@@ -38,7 +38,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 import MetaTrader5 as mt5  # noqa: E402
-from utils.core.logger import get_logger  # noqa: E402
+from lib.core.logger import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 

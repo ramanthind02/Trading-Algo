@@ -8,7 +8,7 @@ from typing import Callable, cast
 import pandas as pd
 import pytest
 
-from feature_selection.validation.objective_metrics import (
+from features.validation.objective_metrics import (
     BuiltinMetricName,
     ObjectiveMetricSpec,
     metric_calmar,

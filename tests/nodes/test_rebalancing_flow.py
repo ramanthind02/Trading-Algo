@@ -19,15 +19,15 @@ from datetime import datetime, timedelta
 import pandas as pd
 import pytest
 
-import utils.core.helpers as helpers
+import lib.core.helpers as helpers
 from nodes import BiasNode
 from nodes.pairs.rebalancing_flow import (
     RebalancingDirection,
     RebalancingFlow,
     RebalancingFlowNode,
 )
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 from utils.data.cross_ticker_store import CrossTickerDataStore
 
 

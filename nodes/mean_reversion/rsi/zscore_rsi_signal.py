@@ -16,8 +16,8 @@ from typing import ClassVar, List, Optional
 
 from nodes import BiasNode
 from nodes.mean_reversion.rsi.zscore_rsi import ZScoreRSIEngine
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
 
 
 class ZScoreRSISignal(BiasNode):

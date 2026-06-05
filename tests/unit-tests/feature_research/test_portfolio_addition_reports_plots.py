@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from quantfoundry_core.portfolio_gate import compute_portfolio_addition_gate
 
-from feature_research.portfolio_addition.gate_runner import (
+from research.feature.portfolio_addition.gate_runner import (
     PortfolioGateInputs,
     build_pairwise_peer_rows,
     build_portfolio_addition_context,
@@ -17,7 +17,7 @@ from feature_research.portfolio_addition.gate_runner import (
     write_portfolio_addition_context_csvs,
     write_portfolio_addition_summary,
 )
-from feature_research.visualization.portfolio_addition_reports import (
+from research.feature.visualization.portfolio_addition_reports import (
     _correlation_heatmap_axis_labels,
     write_portfolio_addition_plots,
 )

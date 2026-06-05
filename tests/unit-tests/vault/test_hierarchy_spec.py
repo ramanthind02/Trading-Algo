@@ -20,7 +20,7 @@ from ensemble.vault.hierarchy_spec import (
     infer_weight_hierarchy_group_from_feature_path,
 )
 from ensemble.weight_hierarchy import parse_hierarchy_spec
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def _minimal_ensemble_config(ensemble_dir: Path, *, timeframe: str = "M") -> None:

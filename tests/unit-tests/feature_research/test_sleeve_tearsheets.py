@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_research.inclusion_gates import write_sleeve_level_tearsheets
-from portfolio_research.pipelines.portfolio_test import PhaseResult
+from research.feature.inclusion_gates import write_sleeve_level_tearsheets
+from research.portfolio.pipelines.portfolio_test import PhaseResult
 
 
 def _phase_result(name: str, *, n: int = 120, seed: int = 0) -> PhaseResult:
@@ -31,7 +31,7 @@ def test_write_sleeve_level_tearsheets_full_comparison(tmp_path: Path, monkeypat
         written.append(str(kwargs["output_file"]))
 
     monkeypatch.setattr(
-        "feature_research.inclusion_gates.generate_tearsheet",
+        "research.feature.inclusion_gates.generate_tearsheet",
         _fake_generate,
     )
     paths = write_sleeve_level_tearsheets(
@@ -59,7 +59,7 @@ def test_write_sleeve_level_tearsheets_with_only_first_in_sleeve(
         written.append(str(kwargs["output_file"]))
 
     monkeypatch.setattr(
-        "feature_research.inclusion_gates.generate_tearsheet",
+        "research.feature.inclusion_gates.generate_tearsheet",
         _fake_generate,
     )
     paths = write_sleeve_level_tearsheets(
@@ -81,7 +81,7 @@ def test_write_sleeve_level_tearsheets_skips_flat_without(tmp_path: Path, monkey
         written.append(str(kwargs["output_file"]))
 
     monkeypatch.setattr(
-        "feature_research.inclusion_gates.generate_tearsheet",
+        "research.feature.inclusion_gates.generate_tearsheet",
         _fake_generate,
     )
     base_flat = _phase_result("flat")

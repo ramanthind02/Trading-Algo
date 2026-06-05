@@ -18,12 +18,12 @@ from prop_firms.base.return_engine import build_return_series, normalize_return_
 from prop_firms.fundednext.provider import create_fundednext_portfolio_simulator
 from prop_firms.lucid.provider import create_lucid_portfolio_simulator
 from prop_firms.reporting import generate_portfolio_report
-from portfolio_research.config import PortfolioResearchConfig, load_prop_firm_portfolio_research_config
-from portfolio_research.pipelines.portfolio_test import (
+from research.portfolio.config import PortfolioResearchConfig, load_prop_firm_portfolio_research_config
+from research.portfolio.pipelines.portfolio_test import (
     run_portfolio_research_cache_preflight,
     run_single_phase_for_prop_firm,
 )
-from portfolio_research.prop_firm_bridge import (
+from research.portfolio.prop_firm_bridge import (
     align_portfolio_returns_with_report_engine,
     build_prop_firm_returns,
 )

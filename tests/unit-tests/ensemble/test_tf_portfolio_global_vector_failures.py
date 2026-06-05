@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from ensemble.portfolio_impl.tf_portfolio import TFPortfolio
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def _minimal_candles() -> pd.DataFrame:

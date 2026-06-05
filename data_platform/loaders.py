@@ -22,7 +22,7 @@ from typing import List
 import pandas as pd
 
 from data_platform.providers.norgate.stocks import StockAdjustment, price_path
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _repo_root() -> Path:

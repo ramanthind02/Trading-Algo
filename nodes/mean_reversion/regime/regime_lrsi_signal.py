@@ -16,8 +16,8 @@ from collections import deque
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
 
 
 def _round6(value: float) -> float:

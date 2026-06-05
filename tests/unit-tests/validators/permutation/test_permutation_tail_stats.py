@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from feature_selection.validation.permutation_tests import _permutation_tail_stats
+from features.validation.permutation_tests import _permutation_tail_stats
 
 
 def test_permutation_tail_stats_uses_pseudo_count_denominator_nreps_plus_one() -> None:

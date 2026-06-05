@@ -17,9 +17,9 @@ from collections import deque
 from typing import ClassVar, Deque, List
 
 from nodes import BiasNode
-from utils.compute.fast_nodes import compute_ema_fast
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.compute.fast_nodes import compute_ema_fast
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _histogram_hook(h_curr: float, h_prev: float, h_prev2: float) -> bool:

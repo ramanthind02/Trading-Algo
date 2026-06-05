@@ -7,7 +7,7 @@ Compatibility shell: performance scalars live in
 prop-firm simulation and drawdown utilities.
 """
 
-from feature_selection.validation.objective_metrics import metric_sharpe, metric_sortino
+from features.validation.objective_metrics import metric_sharpe, metric_sortino
 
 from metrics.equity import cumulative_returns, equity_peak
 from metrics.risk import drawdown_series, max_drawdown

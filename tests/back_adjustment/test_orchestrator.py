@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-from utils.core.enums import Ticker
+from lib.core.enums import Ticker
 from data_platform.providers.norgate.backadjust.orchestrator import (
     AdjustmentMetadata,
     process_ticker,

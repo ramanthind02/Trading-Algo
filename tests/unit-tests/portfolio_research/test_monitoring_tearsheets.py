@@ -6,23 +6,23 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from portfolio_research.config import (
+from research.portfolio.config import (
     PortfolioFitMode,
     PortfolioHoldoutRobustnessConfig,
     PortfolioResearchConfig,
     ResearchWindow,
 )
-from portfolio_research.holdout.monitoring_policy import (
+from research.portfolio.holdout.monitoring_policy import (
     MonitoringWindow,
     ReferenceCalibration,
     ReferenceSigmaMethod,
     StrategyReferenceSlices,
 )
-from portfolio_research.holdout.monitoring_tearsheets import (
+from research.portfolio.holdout.monitoring_tearsheets import (
     full_period_strategy_returns,
     write_strategy_monitoring_tearsheet,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def test_full_period_strategy_returns_stitches_without_duplicates() -> None:
@@ -102,7 +102,7 @@ def test_write_strategy_monitoring_tearsheet_writes_html(tmp_path: Path, monkeyp
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
-        "portfolio_research.holdout.monitoring_tearsheets._load_benchmark_returns_for_index",
+        "research.portfolio.holdout.monitoring_tearsheets._load_benchmark_returns_for_index",
         lambda _config, index: pd.Series(0.0005, index=index, name="ES_buy_hold"),
     )
     reference = StrategyReferenceSlices(

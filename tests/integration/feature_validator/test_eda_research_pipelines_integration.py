@@ -10,7 +10,7 @@ from typing import Literal
 
 import pytest
 
-from feature_research.config import (
+from research.feature.config import (
     BinningAnalysisConfig,
     FeatureType,
     InSampleDefaultsCatalog,
@@ -20,11 +20,11 @@ from feature_research.config import (
     load_config,
     build_objective_metric_presets,
 )
-from feature_research.pipeline import (
+from research.feature.pipeline import (
     run_eda_pipeline,
     run_permutation_pipeline,
 )
-from utils.core.enums import Direction, Ticker, TimeFrame
+from lib.core.enums import Direction, Ticker, TimeFrame
 
 from ._support import (
     skip_if_missing_data_prereq as _skip_if_missing_data_prereq,

@@ -5,7 +5,7 @@ import pytest
 import pandas as pd
 from pathlib import Path
 
-from utils.core.enums import Ticker
+from lib.core.enums import Ticker
 from data_platform.providers.norgate.backadjust.orchestrator import process_ticker
 from data_platform.providers.norgate.backadjust.validator import compare_price_levels
 

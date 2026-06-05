@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import importlib
 
-import feature_research
-import feature_research.__main__ as feature_research_main
-from feature_research import exploration, portfolio_addition, validation
-from feature_research.exploration import (
+import research.feature
+import research.feature.__main__ as feature_research_main
+from research.feature import exploration, portfolio_addition, validation
+from research.feature.exploration import (
     run_exploration_permutation_pipeline,
     run_exploration_pipeline,
     run_exploration_robustness_pipeline,
     write_exploration_permutation_summary,
     write_exploration_robustness_summary,
 )
-from feature_research.pipeline import (
+from research.feature.pipeline import (
     run_eda_pipeline,
     run_oos_pipeline,
     run_oos_pipeline_with_bundle,
@@ -22,33 +22,33 @@ from feature_research.pipeline import (
     write_permutation_summary,
     write_robustness_summary,
 )
-from feature_research.portfolio_addition import (
+from research.feature.portfolio_addition import (
     run_portfolio_addition_pipeline,
     run_portfolio_addition_pipeline_with_bundle,
 )
-from feature_research.shared import FeatureResearchPhase
-from feature_research.shared.cli import build_usage, resolve_command
+from research.feature.shared import FeatureResearchPhase
+from research.feature.shared.cli import build_usage, resolve_command
 
 
 def test_root_package_exports_canonical_phase_modules() -> None:
-    assert feature_research.exploration is exploration
-    assert feature_research.validation is validation
-    assert feature_research.portfolio_addition is portfolio_addition
-    assert feature_research.FeatureResearchPhase is FeatureResearchPhase
+    assert research.feature.exploration is exploration
+    assert research.feature.validation is validation
+    assert research.feature.portfolio_addition is portfolio_addition
+    assert research.feature.FeatureResearchPhase is FeatureResearchPhase
 
 
 def test_legacy_helper_imports_resolve_to_internal_modules() -> None:
-    legacy_core_helpers = importlib.import_module("feature_research.core_helpers")
-    legacy_bootstrap = importlib.import_module("feature_research.bootstrap")
+    legacy_core_helpers = importlib.import_module("research.feature.core_helpers")
+    legacy_bootstrap = importlib.import_module("research.feature.bootstrap")
 
     _ = legacy_core_helpers.combo_key
     _ = legacy_bootstrap.ensure_repo_root_on_syspath
     _ = legacy_bootstrap.find_repo_root
-    legacy_core_helpers = importlib.import_module("feature_research.core_helpers")
-    legacy_bootstrap = importlib.import_module("feature_research.bootstrap")
+    legacy_core_helpers = importlib.import_module("research.feature.core_helpers")
+    legacy_bootstrap = importlib.import_module("research.feature.bootstrap")
 
-    assert legacy_core_helpers.__name__ == "feature_research._internal.core_helpers"
-    assert legacy_bootstrap.__name__ == "feature_research._internal.bootstrap"
+    assert legacy_core_helpers.__name__ == "research.feature._internal.core_helpers"
+    assert legacy_bootstrap.__name__ == "research.feature._internal.bootstrap"
 
 
 def test_pipeline_module_reexports_canonical_phase_wrappers() -> None:

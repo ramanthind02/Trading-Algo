@@ -19,8 +19,8 @@ from enum import Enum
 from typing import ClassVar, List, Optional, Union
 
 from nodes import BiasNode
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
 
 
 class EnvelopeWidthMode(Enum):

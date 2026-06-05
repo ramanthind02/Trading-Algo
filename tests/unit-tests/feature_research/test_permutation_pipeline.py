@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from feature_research.config import FeatureType, ResearchWindowConfig, VectorShuffleScope, load_config
-from utils.core.enums import Ticker, TimeFrame
-from feature_research.pipelines.permutation import (
+from research.feature.config import FeatureType, ResearchWindowConfig, VectorShuffleScope, load_config
+from lib.core.enums import Ticker, TimeFrame
+from research.feature.pipelines.permutation import (
     _require_permutation_enabled,
     run_permutation_pipeline,
 )
@@ -36,18 +36,18 @@ def test_run_permutation_pipeline_uses_preloaded_signed_signal_data(
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.populate_cache_if_needed",
+        "research.feature.pipelines.permutation.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.expand_bias_specs",
+        "research.feature.pipelines.permutation.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": [], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.load_signed_signal_research_data",
+        "research.feature.pipelines.permutation.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=combo_params,
@@ -56,7 +56,7 @@ def test_run_permutation_pipeline_uses_preloaded_signed_signal_data(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.load_candles_for_config",
+        "research.feature.pipelines.permutation.load_candles_for_config",
         lambda _config: pd.DataFrame({"close": target}, index=index),
     )
 
@@ -68,7 +68,7 @@ def test_run_permutation_pipeline_uses_preloaded_signed_signal_data(
         return SimpleNamespace(feature_name="sig_2", feature_type="signed_signal", funnel_stats=SimpleNamespace(total_params=2, stage1_pass=2))
 
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.run_permutation_test_suite",
+        "research.feature.pipelines.permutation.run_permutation_test_suite",
         _fake_run_suite,
     )
 
@@ -135,18 +135,18 @@ def test_run_permutation_pipeline_selected_combo_filters_grid(monkeypatch) -> No
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.populate_cache_if_needed",
+        "research.feature.pipelines.permutation.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.expand_bias_specs",
+        "research.feature.pipelines.permutation.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": [], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.load_signed_signal_research_data",
+        "research.feature.pipelines.permutation.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=combo_params,
@@ -155,11 +155,11 @@ def test_run_permutation_pipeline_selected_combo_filters_grid(monkeypatch) -> No
         ),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.load_candles_for_config",
+        "research.feature.pipelines.permutation.load_candles_for_config",
         lambda _config: pd.DataFrame({"close": target}, index=index),
     )
     monkeypatch.setattr(
-        "feature_research.pipelines.permutation.run_permutation_test_suite",
+        "research.feature.pipelines.permutation.run_permutation_test_suite",
         lambda **kwargs: captured.update(kwargs) or SimpleNamespace(
             feature_name="sig_3",
             feature_type="signed_signal",

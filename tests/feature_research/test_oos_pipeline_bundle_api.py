@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from feature_research.config import load_config
-from feature_research.pipeline import run_oos_pipeline, run_oos_pipeline_with_bundle
+from research.feature.config import load_config
+from research.feature.pipeline import run_oos_pipeline, run_oos_pipeline_with_bundle
 
 
 def test_run_oos_pipeline_returns_only_report(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -15,7 +15,7 @@ def test_run_oos_pipeline_returns_only_report(monkeypatch: pytest.MonkeyPatch) -
         return sentinel_report, sentinel_bundle
 
     monkeypatch.setattr(
-        "feature_research.pipelines.oos._run_evaluation_pipeline",
+        "research.feature.pipelines.oos._run_evaluation_pipeline",
         _fake_run,
     )
     cfg = load_config()
@@ -31,7 +31,7 @@ def test_run_oos_pipeline_with_bundle_returns_pair(monkeypatch: pytest.MonkeyPat
         return sentinel_report, sentinel_bundle
 
     monkeypatch.setattr(
-        "feature_research.pipelines.oos._run_evaluation_pipeline",
+        "research.feature.pipelines.oos._run_evaluation_pipeline",
         _fake_run,
     )
     cfg = load_config()

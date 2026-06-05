@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_research.binning.transforms import build_param_combo_long_table
-from feature_research.core_helpers import combo_key
-from feature_research.research_table_exports import (
+from research.feature.binning.transforms import build_param_combo_long_table
+from research.feature.core_helpers import combo_key
+from research.feature.research_table_exports import (
     _vol_scaled_forecast,
     canonical_in_sample_visualization_dir,
     objective_metric_display_label,
@@ -21,17 +21,17 @@ from feature_research.research_table_exports import (
     write_permutation_vector_shuffle_exports,
     write_walkforward_equity_csvs,
 )
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from feature_selection.validation.stability_analysis import _param_combo_name
-from feature_selection.validation.reports import (
+from features.validation.objective_metrics import ObjectiveMetricSpec
+from features.validation.stability_analysis import _param_combo_name
+from features.validation.reports import (
     ComboDecisionRecord,
     FunnelStatistics,
     PermutationTestSuite,
     VectorShuffleReport,
     WalkforwardStabilityReport,
 )
-from utils.core.enums import TimeFrame
-from utils.evaluation.walkforward.selected_params_codec import serialize_selected_params
+from lib.core.enums import TimeFrame
+from research.evaluation.walkforward.selected_params_codec import serialize_selected_params
 
 
 def test_walkforward_visualization_dir_stable_under_output_root(tmp_path: Path) -> None:
@@ -375,7 +375,7 @@ def test_write_walkforward_equity_csvs_vol_scaling_applied(tmp_path: Path) -> No
     lower ``forecast_score = tau / sigma`` → smaller ``strategy_return`` magnitude.
     """
     import numpy as np
-    from feature_research.research_table_exports import _vol_scaled_forecast
+    from research.feature.research_table_exports import _vol_scaled_forecast
 
     params = {"p": 1}
     key = combo_key(params)

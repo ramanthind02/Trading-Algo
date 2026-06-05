@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from feature_research.ui.pivot_data import (
+from research.feature.ui.pivot_data import (
     build_parameter_sensitivity_pivot_payload,
     pivot_payload_available,
 )
@@ -246,7 +246,7 @@ def test_build_filter_exploration_dataset_includes_signal_params_from_metadata(
         encoding="utf-8",
     )
 
-    from feature_research.ui.pivot_data import _build_filter_exploration_dataset
+    from research.feature.ui.pivot_data import _build_filter_exploration_dataset
 
     dataset = _build_filter_exploration_dataset(input_dir, ["sharpe", "t_stat"])
     assert dataset is not None

@@ -32,25 +32,25 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_extraction.feature_extractor import extract_features_for_bias_node
-from feature_selection.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from feature_selection.validation.orchestration import run_permutation_test_suite
-from feature_selection.validation.permutation_tests import run_pipeline_permutation, run_vector_shuffle_test
-from feature_selection.validation.report_generator import generate_permutation_reports
-from feature_selection.validation.reports import (
+from features.extraction.feature_extractor import extract_features_for_bias_node
+from features.validation.config import OutOfSamplePermutationConfig, PermutationTestConfig
+from features.validation.objective_metrics import ObjectiveMetricSpec
+from features.validation.orchestration import run_permutation_test_suite
+from features.validation.permutation_tests import run_pipeline_permutation, run_vector_shuffle_test
+from features.validation.report_generator import generate_permutation_reports
+from features.validation.reports import (
     PipelinePermutationReport,
     PermutationTestSuite,
     VectorShuffleReport,
     WalkforwardStabilityReport,
 )
-from feature_selection.validation.stability_analysis import (
+from features.validation.stability_analysis import (
     _param_combo_name,
     run_walkforward_stability,
 )
-from utils.cache.runtime.cache_manager import CacheManager
-from utils.core.enums import Ticker, TimeFrame
-from utils.evaluation.permutation_test.candle_shuffle import CandleShuffler
+from lib.cache.runtime.cache_manager import CacheManager
+from lib.core.enums import Ticker, TimeFrame
+from research.evaluation.permutation_test.candle_shuffle import CandleShuffler
 from ._support import project_root as _project_root
 
 # ---------------------------------------------------------------------------

@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from nodes.breakout.donchian.robust_trend_breakout import RobustTrendBreakout
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(day: int, close: float, *, spread: float = 2.0) -> Candle:

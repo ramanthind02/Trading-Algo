@@ -126,10 +126,10 @@ def _try_import_pipelines() -> PipelineImports:
     an error, so the harness still proves it is wired correctly.
     """
     try:
-        from feature_research.config import load_config as feature_load_config
-        from feature_research.pipelines.oos import run_oos_pipeline
-        from portfolio_research.config import load_config as portfolio_load_config
-        from portfolio_research.pipelines.portfolio_test import (
+        from research.feature.config import load_config as feature_load_config
+        from research.feature.pipelines.oos import run_oos_pipeline
+        from research.portfolio.config import load_config as portfolio_load_config
+        from research.portfolio.pipelines.portfolio_test import (
             run_single_phase_for_prop_firm,
         )
     except Exception as exc:  # noqa: BLE001 - we want the message verbatim

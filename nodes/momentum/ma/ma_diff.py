@@ -1,11 +1,11 @@
 from nodes import BiasNode
-from utils.core.models import Candle
-from utils.core.enums import Bias, Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Bias, Ticker, TimeFrame
 from typing import ClassVar, List, Optional
 import numpy as np
 from collections import deque
 
-from utils.compute.fast_stats import compute_ma_diff_fast
+from lib.compute.fast_stats import compute_ma_diff_fast
 
 class MADiffNode(BiasNode):
     """

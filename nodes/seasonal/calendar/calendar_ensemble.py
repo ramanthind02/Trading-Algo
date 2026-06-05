@@ -15,9 +15,9 @@ from __future__ import annotations
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 _DEFAULT_EQUITY_ENTRY = -4
 _DEFAULT_EQUITY_EXIT = 0

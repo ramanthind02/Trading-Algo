@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from utils.evaluation.walkforward.config import (
+from research.evaluation.walkforward.config import (
     WalkforwardResearchConfig,
     WeightLayerAlgorithm,
 )

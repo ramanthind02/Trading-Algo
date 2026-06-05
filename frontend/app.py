@@ -6,9 +6,9 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
 from flask_cors import CORS
 
-from feature_research.config import load_config
-from feature_research.ui.job_manager import WorkspaceJobManager
-from feature_research.ui.planner import (
+from research.feature.config import load_config
+from research.feature.ui.job_manager import WorkspaceJobManager
+from research.feature.ui.planner import (
     build_phase_plan,
     build_ui_defaults,
     build_ui_request,
@@ -16,28 +16,28 @@ from feature_research.ui.planner import (
     plan_to_dict,
     resolve_ui_config,
 )
-from feature_research.shared import FeatureResearchPhase
-from feature_research.ui.pivot_data import load_parameter_sensitivity_pivot_payload_for_phase
-from feature_research.ui.workspace import (
+from research.feature.shared import FeatureResearchPhase
+from research.feature.ui.pivot_data import load_parameter_sensitivity_pivot_payload_for_phase
+from research.feature.ui.workspace import (
     build_workspace_view,
     load_artifact_preview,
     resolve_workspace_artifact_path,
 )
-from feature_research.ui.vault_save import (
+from research.feature.ui.vault_save import (
     build_vault_commit_view,
     execute_vault_save,
     vault_save_execution_to_dict,
 )
-from portfolio_research.config import load_config as load_portfolio_config
-from portfolio_research.ui.job_manager import PortfolioWorkspaceJobManager
-from portfolio_research.ui.planner import (
+from research.portfolio.config import load_config as load_portfolio_config
+from research.portfolio.ui.job_manager import PortfolioWorkspaceJobManager
+from research.portfolio.ui.planner import (
     build_phase_plan as build_portfolio_phase_plan,
     build_ui_defaults as build_portfolio_ui_defaults,
     build_ui_request as build_portfolio_ui_request,
     defaults_to_dict as portfolio_defaults_to_dict,
     plan_to_dict as portfolio_plan_to_dict,
 )
-from portfolio_research.ui.workspace import (
+from research.portfolio.ui.workspace import (
     build_workspace_view as build_portfolio_workspace_view,
     load_artifact_preview as load_portfolio_artifact_preview,
     resolve_workspace_artifact_path as resolve_portfolio_artifact_path,

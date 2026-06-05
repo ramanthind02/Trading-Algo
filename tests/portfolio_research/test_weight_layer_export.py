@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from portfolio_research.weight_layer_export import weight_layer_diagnostics_to_dataframe
+from research.portfolio.weight_layer_export import weight_layer_diagnostics_to_dataframe
 
 
 def test_unfitted_diagnostics_yields_empty_typed_frame() -> None:

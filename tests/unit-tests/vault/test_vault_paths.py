@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from utils.cache.runtime.cache_paths import project_root
-from utils.vault_paths import (
+from lib.cache.runtime.cache_paths import project_root
+from lib.core.vault_paths import (
     default_vault_discovery_dirnames,
     default_vault_root,
     resolve_vault_personal,

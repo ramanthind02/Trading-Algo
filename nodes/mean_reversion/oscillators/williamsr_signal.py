@@ -13,8 +13,8 @@ from collections import deque
 from typing import ClassVar, List, Optional
 
 from nodes import BiasNode
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
 
 
 class WilliamsRSignal(BiasNode):

@@ -25,9 +25,9 @@ from collections import deque
 from typing import ClassVar, List, Optional
 
 from nodes import BiasNode
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
-from utils.compute.fast_nodes import compute_ema_fast
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
+from lib.compute.fast_nodes import compute_ema_fast
 
 
 class CaseyPercentCSignal(BiasNode):

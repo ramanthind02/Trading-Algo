@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from portfolio_research.holdout.rolling_eval import _stitch_frames, _stitch_series
+from research.portfolio.holdout.rolling_eval import _stitch_frames, _stitch_series
 
 
 def test_stitch_series_deduplicates_overlapping_index() -> None:

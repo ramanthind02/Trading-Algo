@@ -15,12 +15,12 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 
-import utils.core.helpers as helpers
-from utils.compute.daily_ewsd_volatility import (
+import lib.core.helpers as helpers
+from lib.compute.daily_ewsd_volatility import (
     align_daily_ewsd_volatility_to_candles,
 )
-from utils.core.enums import TimeFrame, Ticker
-from utils.core.models import Candle
+from lib.core.enums import TimeFrame, Ticker
+from lib.core.models import Candle
 from .ensemble_utils import (
     filter_dataframe_by_timeframe,
     normalize_candles_datetime_column,

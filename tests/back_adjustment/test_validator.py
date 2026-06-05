@@ -12,7 +12,7 @@ from data_platform.providers.norgate.backadjust.validator import (
     compare_roll_dates,
     generate_comparison_report,
 )
-from utils.core.enums import Ticker
+from lib.core.enums import Ticker
 
 
 def _make_aligned_data(

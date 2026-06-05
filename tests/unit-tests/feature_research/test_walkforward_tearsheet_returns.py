@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_research.inclusion_gates import write_candidate_strategy_tearsheets
-from portfolio_research.pipelines.portfolio_test import PhaseResult
-from utils.evaluation.walkforward.tearsheet_returns import (
+from research.feature.inclusion_gates import write_candidate_strategy_tearsheets
+from research.portfolio.pipelines.portfolio_test import PhaseResult
+from research.evaluation.walkforward.tearsheet_returns import (
     load_wf_tearsheet_returns_csv,
     write_wf_tearsheet_returns_csv,
 )
@@ -55,7 +55,7 @@ def test_candidate_always_written_even_when_identical_to_sleeve(
 
     written: list[str] = []
     monkeypatch.setattr(
-        "feature_research.inclusion_gates.generate_tearsheet",
+        "research.feature.inclusion_gates.generate_tearsheet",
         lambda **kw: written.append(str(kw.get("feature_name", ""))),
     )
 

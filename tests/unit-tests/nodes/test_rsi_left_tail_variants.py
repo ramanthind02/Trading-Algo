@@ -8,10 +8,10 @@ from nodes.lagged_rsi import LaggedRSI
 from nodes.rsi_left_tail_pressure import RSILeftTailPressure
 from nodes.rsi_left_tail_streak import RSILeftTailStreak
 from nodes.rsi_rebound_velocity import RSIReboundVelocity
-from utils.core.enums import Ticker, TimeFrame
-from utils.compute.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
-from utils.core.helpers import _resolve_bias_node_import_path, create_bias_node
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.compute.fast_nodes import compute_rsi_initial_fast, update_rsi_fast
+from lib.core.helpers import _resolve_bias_node_import_path, create_bias_node
+from lib.core.models import Candle
 
 
 def _build_candles(count: int, start_close: float = 100.0) -> list[Candle]:

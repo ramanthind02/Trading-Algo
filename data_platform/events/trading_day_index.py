@@ -53,8 +53,8 @@ def load_es_trading_sessions(
     """Load ES daily session dates from repository OHLC parquet."""
     from datetime import datetime
 
-    from utils.core import helpers
-    from utils.core.enums import Ticker, TimeFrame
+    from lib.core import helpers
+    from lib.core.enums import Ticker, TimeFrame
 
     start_dt = datetime(start.year, start.month, start.day) if start else datetime(1990, 1, 1)
     end_dt = datetime(end.year, end.month, end.day) if end else datetime(2030, 12, 31)

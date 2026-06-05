@@ -6,8 +6,8 @@ from typing import cast
 
 import pandas as pd
 
-from feature_research.config import ResearchConfig
-from utils.evaluation.walkforward.research_data import load_signed_signal_research_data
+from research.feature.config import ResearchConfig
+from research.evaluation.walkforward.research_data import load_signed_signal_research_data
 
 
 def test_load_signed_signal_research_data_adds_returns_column_with_parallel_workers(
@@ -29,7 +29,7 @@ def test_load_signed_signal_research_data_adds_returns_column_with_parallel_work
         return signal, target, signal.name, ticker_s
 
     monkeypatch.setattr(
-        "utils.evaluation.walkforward.research_data.load_features_for_combo",
+        "research.evaluation.walkforward.research_data.load_features_for_combo",
         _fake_load_features_for_combo,
     )
 

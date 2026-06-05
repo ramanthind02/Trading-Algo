@@ -22,8 +22,8 @@ from itertools import combinations
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.core.enums import PositionMode, Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import PositionMode, Ticker, TimeFrame
+from lib.core.models import Candle
 
 _SIGNAL_ABS_MAX = 2.0
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Literal
 
-from utils.core.enums import Ticker
+from lib.core.enums import Ticker
 
 
 @dataclass(frozen=True)

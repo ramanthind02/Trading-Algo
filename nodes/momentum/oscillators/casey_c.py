@@ -10,8 +10,8 @@ Output: Continuous 0-100 (percentile rank)
 from typing import ClassVar, List
 import numpy as np
 from collections import deque
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

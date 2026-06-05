@@ -5,8 +5,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.validation.permutation_tests import run_pipeline_permutation
-from feature_selection.validation.reports import PipelinePermutationReport
+from features.validation.permutation_tests import run_pipeline_permutation
+from features.validation.reports import PipelinePermutationReport
 
 
 def _sharpe(returns: pd.Series) -> float:

@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import feature_selection.validation.permutation_tests as permutation_tests
-from feature_selection.validation.reports import (
+import features.validation.permutation_tests as permutation_tests
+from features.validation.reports import (
     OutOfSamplePermutationReport,
     PipelinePermutationReport,
     VectorShuffleReport,

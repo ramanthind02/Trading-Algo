@@ -7,9 +7,9 @@ from datetime import datetime, timedelta
 import pytest
 
 from nodes.mean_reversion.bands.casey_percent_c_signal import CaseyPercentCSignal
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(day: int, *, o: float, h: float, l: float, c: float) -> Candle:

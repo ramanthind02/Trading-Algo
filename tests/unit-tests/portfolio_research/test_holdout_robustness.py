@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from utils.evaluation.holdout_robustness import HoldoutRobustnessConfig, run_holdout_robustness_pipeline
+from research.evaluation.holdout_robustness import HoldoutRobustnessConfig, run_holdout_robustness_pipeline
 
 
 def test_run_holdout_robustness_pipeline_without_rank_correlation() -> None:

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from utils.evaluation.permutation_test.candle_shuffle import (
+from research.evaluation.permutation_test.candle_shuffle import (
     CandleShuffler,
     CandleShuffleMode,
     GapType,

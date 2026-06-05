@@ -21,7 +21,7 @@ import os
 import numpy as np
 import pandas as pd
 
-from utils.compute.grid_smoothing import add_smoothed_objective
+from lib.compute.grid_smoothing import add_smoothed_objective
 
 
 class TestWorkedExample2D(unittest.TestCase):

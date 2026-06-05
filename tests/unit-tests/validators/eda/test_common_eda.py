@@ -9,11 +9,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.eda.common_eda import (
+from features.eda.common_eda import (
     compute_descriptive_stats,
     compute_correlation_analysis,
 )
-from feature_selection.eda.eda_dataclasses import (
+from features.eda.eda_dataclasses import (
     DescriptiveStats,
     CorrelationAnalysis,
 )

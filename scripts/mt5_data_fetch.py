@@ -39,7 +39,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 import pandas as pd
 
-from utils.core.enums import TimeFrame, Ticker
+from lib.core.enums import TimeFrame, Ticker
 
 
 logger = logging.getLogger(__name__)
@@ -187,8 +187,8 @@ def _sanity_check_price_scale(
     if new_candles.empty:
         return
     try:
-        from utils.cache.runtime.central_cache import CentralCacheStore
-        from utils.cache.runtime.central_cache_errors import ArtifactMissingError
+        from lib.cache.runtime.central_cache import CentralCacheStore
+        from lib.cache.runtime.central_cache_errors import ArtifactMissingError
     except ImportError:
         return
 
@@ -246,7 +246,7 @@ def upsert_mt5_candles(
     IB-specific (continuous-futures rollover handling) and inappropriate for
     CFDs which have no contract rollover.
     """
-    from utils.cache.runtime.central_cache import CentralCacheStore
+    from lib.cache.runtime.central_cache import CentralCacheStore
 
     store = CentralCacheStore.get_instance()
 

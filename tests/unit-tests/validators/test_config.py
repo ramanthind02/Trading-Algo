@@ -1,5 +1,5 @@
 import pytest
-from feature_selection.validation.config import ValidationConfig
+from features.validation.config import ValidationConfig
 
 
 def test_validation_config_defaults():

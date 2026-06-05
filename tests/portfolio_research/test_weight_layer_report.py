@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pandas as pd
 
-from portfolio_research.config import load_config
-from portfolio_research.weight_layer_export import weight_layer_diagnostics_to_dataframe
-from portfolio_research.weight_layer_report import (
+from research.portfolio.config import load_config
+from research.portfolio.weight_layer_export import weight_layer_diagnostics_to_dataframe
+from research.portfolio.weight_layer_report import (
     build_portfolio_weight_layer_report,
     build_weight_layer_member_records,
 )

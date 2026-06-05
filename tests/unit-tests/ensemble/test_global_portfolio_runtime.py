@@ -9,7 +9,7 @@ from ensemble.portfolio_impl.global_portfolio_runtime import (
     build_reference_grid_from_daily_candles,
     collect_tf_forecast_streams,
 )
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 class _MockTFPortfolio:

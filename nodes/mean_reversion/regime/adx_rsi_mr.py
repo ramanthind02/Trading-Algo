@@ -19,9 +19,9 @@ from typing import ClassVar, List
 import numpy as np
 
 from nodes import BiasNode
-from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
-from utils.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
-from utils.core.models import Candle
+from lib.compute.rsi_helpers import compute_rsi_initial, update_rsi
+from lib.core.enums import DirectionInput, Ticker, TimeFrame, coerce_direction
+from lib.core.models import Candle
 
 _RSI_SEED_SIZE = 256
 

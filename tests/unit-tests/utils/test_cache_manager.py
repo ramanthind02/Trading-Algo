@@ -17,9 +17,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from utils.cache.runtime.cache_manager import CacheManager, get_auxiliary_specs_for_timeframe
-from utils.cache.runtime.cache_paths import default_source_candle_dir
-from utils.core.enums import Ticker, TimeFrame
+from lib.cache.runtime.cache_manager import CacheManager, get_auxiliary_specs_for_timeframe
+from lib.cache.runtime.cache_paths import default_source_candle_dir
+from lib.core.enums import Ticker, TimeFrame
 
 
 @pytest.fixture
@@ -93,11 +93,11 @@ class TestCacheManagerInit:
         expected_cache_dir = tmp_path / ".cache" / "trading_algo" / "central_cache" / "artifacts" / "live"
         expected_candle_dir = tmp_path / "data" / "ohlc_data"
         monkeypatch.setattr(
-            "utils.cache.runtime.cache_manager.default_live_artifact_cache_dir",
+            "lib.cache.runtime.cache_manager.default_live_artifact_cache_dir",
             lambda: expected_cache_dir,
         )
         monkeypatch.setattr(
-            "utils.cache.runtime.cache_manager.default_source_candle_dir",
+            "lib.cache.runtime.cache_manager.default_source_candle_dir",
             lambda: expected_candle_dir,
         )
 

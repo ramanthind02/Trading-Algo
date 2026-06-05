@@ -3,13 +3,13 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from portfolio_research.config import (
+from research.portfolio.config import (
     PortfolioFitMode,
     PortfolioResearchConfig,
     ResearchWindow,
 )
-from portfolio_research.shared.phase import PortfolioResearchPhase
-from portfolio_research.ui.artifact_catalog import (
+from research.portfolio.shared.phase import PortfolioResearchPhase
+from research.portfolio.ui.artifact_catalog import (
     WorkspaceArtifactCategory,
     _portfolio_friendly_panel_title,
     build_phase_report_sections,
@@ -18,7 +18,7 @@ from portfolio_research.ui.artifact_catalog import (
     group_artifact_records,
     phase_discovery_roots,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _config(tmp_path: Path) -> PortfolioResearchConfig:

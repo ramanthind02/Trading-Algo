@@ -8,7 +8,7 @@ import pandas as pd
 
 from ensemble.weight_layer import WeightLayer, WeightLayerConfig
 from ensemble.portfolio import Portfolio
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def _member_forecasts() -> list[pd.DataFrame]:

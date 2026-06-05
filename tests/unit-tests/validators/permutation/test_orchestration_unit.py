@@ -5,13 +5,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.validation.config import (
+from features.validation.config import (
     InSamplePermutationConfig,
     OutOfSamplePermutationConfig,
     PermutationTestConfig,
 )
-from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-from feature_selection.validation.reports import (
+from features.validation.objective_metrics import ObjectiveMetricSpec
+from features.validation.reports import (
     FunnelStatistics,
     OutOfSamplePermutationReport,
     PermutationTestSuite,
@@ -81,7 +81,7 @@ def _objective(values: pd.Series) -> float:
 
 
 def test_run_oos_permutation_false_skips_phase3() -> None:
-    from feature_selection.validation import orchestration
+    from features.validation import orchestration
 
     candles = _make_candles(12)
     target = pd.Series(np.linspace(0.1, 1.2, 12), index=candles.index)
@@ -112,7 +112,7 @@ def test_run_oos_permutation_false_skips_phase3() -> None:
 
 
 def test_vector_shuffle_only_empty_stage2_reports(monkeypatch: pytest.MonkeyPatch) -> None:
-    from feature_selection.validation import orchestration
+    from features.validation import orchestration
 
     candles = _make_candles(30)
     target = pd.Series(np.linspace(-0.1, 0.2, 30), index=candles.index)
@@ -155,7 +155,7 @@ def test_vector_shuffle_only_empty_stage2_reports(monkeypatch: pytest.MonkeyPatc
 
 def test_parallel_combo_parity_with_sequential() -> None:
     """Parallel (n_jobs_combos=2) and sequential (n_jobs_combos=1) produce identical p-values and pass flags."""
-    from feature_selection.validation import orchestration
+    from features.validation import orchestration
 
     rng = np.random.default_rng(0)
     n = 60
@@ -210,7 +210,7 @@ def test_parallel_combo_parity_with_sequential() -> None:
 
 
 def test_suite_runs_oos_on_vector_passers_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    from feature_selection.validation import orchestration
+    from features.validation import orchestration
 
     candles = _make_candles(8)
     target = pd.Series(np.linspace(0.1, 0.8, 8), index=candles.index)

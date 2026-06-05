@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from feature_research.filter_research_labels import (
+from research.feature.filter_research_labels import (
     build_filter_exploration_long_pairs,
     is_filter_exploration_modules,
     research_display_label,
 )
-from feature_research.in_sample.data_loader import BIAS_MODULE_COMBO_KEY, enrich_param_combo_with_module
+from research.feature.in_sample.data_loader import BIAS_MODULE_COMBO_KEY, enrich_param_combo_with_module
 
 
 def test_research_display_label_for_trend_entry_only() -> None:

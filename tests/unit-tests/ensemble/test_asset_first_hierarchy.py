@@ -23,7 +23,7 @@ from ensemble.weight_hierarchy import (
     parse_hierarchy_spec,
     validate_strict_stream_coverage,
 )
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def _minimal_ensemble_config(ensemble_dir: Path, *, timeframe: str = "D") -> None:

@@ -10,10 +10,10 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-rpt = importlib.import_module("portfolio_research.run_portfolio_test")
-pipeline = importlib.import_module("portfolio_research.pipelines.portfolio_test")
-from portfolio_research.config import ResearchWindow
-from utils.core.enums import Ticker, TimeFrame
+rpt = importlib.import_module("research.portfolio.run_portfolio_test")
+pipeline = importlib.import_module("research.portfolio.pipelines.portfolio_test")
+from research.portfolio.config import ResearchWindow
+from lib.core.enums import Ticker, TimeFrame
 
 
 # ---------------------------------------------------------------------------

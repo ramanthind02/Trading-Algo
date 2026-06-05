@@ -7,9 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from feature_research.config import FeatureType, ParamSensitivityConfig
-from feature_research.exploration.filter_gate_catalog import ExplorationFilterGatesConfig
-from feature_research.exploration.orchestrate import (
+from research.feature.config import FeatureType, ParamSensitivityConfig
+from research.feature.exploration.filter_gate_catalog import ExplorationFilterGatesConfig
+from research.feature.exploration.orchestrate import (
     execute_exploration_phase,
     exploration_permutation_enabled,
 )
@@ -43,11 +43,11 @@ class _Config:
 @pytest.fixture(autouse=True)
 def _disable_pass1_vol_regime_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate.exploration_includes_filter_gate",
+        "research.feature.exploration.orchestrate.exploration_includes_filter_gate",
         lambda _config: False,
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate.ensure_phase_visualization_reports",
+        "research.feature.exploration.orchestrate.ensure_phase_visualization_reports",
         lambda *_args, **_kwargs: [],
     )
 
@@ -73,7 +73,7 @@ def test_execute_exploration_phase_runs_eda_only_when_optional_steps_disabled(
     call_order: list[str] = []
 
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_eda_pipeline",
+        "research.feature.exploration.orchestrate._run_eda_pipeline",
         lambda _config, output_dir: (
             call_order.append("eda") or eda_paths
             if output_dir == tmp_path
@@ -81,11 +81,11 @@ def test_execute_exploration_phase_runs_eda_only_when_optional_steps_disabled(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_robustness_pipeline",
+        "research.feature.exploration.orchestrate._run_robustness_pipeline",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("robustness")),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_permutation_pipeline",
+        "research.feature.exploration.orchestrate._run_permutation_pipeline",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("permutation")),
     )
 
@@ -105,7 +105,7 @@ def test_execute_exploration_phase_runs_pass1_when_auto_filter_gates_enabled(
     from datetime import datetime
     from pathlib import Path as PathType
 
-    from feature_research.config import (
+    from research.feature.config import (
         BinningAnalysisConfig,
         ExplorationFilterGatesConfig,
         FeatureType,
@@ -114,8 +114,8 @@ def test_execute_exploration_phase_runs_pass1_when_auto_filter_gates_enabled(
         PermutationResearchConfig,
         ResearchConfig,
     )
-    from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-    from utils.core.enums import Direction, Ticker, TimeFrame
+    from features.validation.objective_metrics import ObjectiveMetricSpec
+    from lib.core.enums import Direction, Ticker, TimeFrame
 
     spec = {
         "module_name": "donchian_long_only",
@@ -154,15 +154,15 @@ def test_execute_exploration_phase_runs_pass1_when_auto_filter_gates_enabled(
     pass1_summary = {"n_bins": 10}
 
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate.exploration_includes_filter_gate",
+        "research.feature.exploration.orchestrate.exploration_includes_filter_gate",
         lambda _config: True,
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate.run_pass1_vol_regime_binning",
+        "research.feature.exploration.orchestrate.run_pass1_vol_regime_binning",
         lambda _config: call_order.append("pass1") or pass1_summary,
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_eda_pipeline",
+        "research.feature.exploration.orchestrate._run_eda_pipeline",
         lambda _config, output_dir: call_order.append("eda") or {},
     )
 
@@ -181,15 +181,15 @@ def test_execute_exploration_phase_runs_pass1_before_eda_for_filter_exploration(
     pass1_summary = {"n_bins": 10, "feature": "atrPct"}
 
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate.exploration_includes_filter_gate",
+        "research.feature.exploration.orchestrate.exploration_includes_filter_gate",
         lambda _config: True,
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate.run_pass1_vol_regime_binning",
+        "research.feature.exploration.orchestrate.run_pass1_vol_regime_binning",
         lambda _config: call_order.append("pass1") or pass1_summary,
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_eda_pipeline",
+        "research.feature.exploration.orchestrate._run_eda_pipeline",
         lambda _config, output_dir: call_order.append("eda") or {"combo": output_dir},
     )
 
@@ -209,7 +209,7 @@ def test_execute_exploration_phase_runs_robustness_before_vector_shuffle(
     call_order: list[str] = []
 
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_eda_pipeline",
+        "research.feature.exploration.orchestrate._run_eda_pipeline",
         lambda _config, output_dir: call_order.append("eda") or {"combo": output_dir},
     )
     robustness_report = SimpleNamespace(
@@ -218,20 +218,20 @@ def test_execute_exploration_phase_runs_robustness_before_vector_shuffle(
         best_param_combo="period_126",
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_robustness_pipeline",
+        "research.feature.exploration.orchestrate._run_robustness_pipeline",
         lambda _config, output_dir: (
             call_order.append("robustness") or (robustness_report, [])
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._write_robustness_summary",
+        "research.feature.exploration.orchestrate._write_robustness_summary",
         lambda _report, output_dir: (
             call_order.append("robustness_write")
             or {"summary_csv": output_dir / "robustness_summary.csv"}
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_permutation_pipeline",
+        "research.feature.exploration.orchestrate._run_permutation_pipeline",
         lambda _config, output_dir, *, selected_combo_name=None: (
             call_order.append("permutation") or (MagicMock(), [])
             if selected_combo_name == "period_126"
@@ -239,7 +239,7 @@ def test_execute_exploration_phase_runs_robustness_before_vector_shuffle(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._write_permutation_summary",
+        "research.feature.exploration.orchestrate._write_permutation_summary",
         lambda *_args, **_kwargs: (
             call_order.append("permutation_write")
             or (tmp_path / "permutation_summary.csv", tmp_path / "permutation_summary.md")
@@ -284,32 +284,32 @@ def test_execute_exploration_phase_runs_perturbation_between_robustness_and_perm
     )
 
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_eda_pipeline",
+        "research.feature.exploration.orchestrate._run_eda_pipeline",
         lambda _config, output_dir: call_order.append("eda") or {"combo": output_dir},
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_robustness_pipeline",
+        "research.feature.exploration.orchestrate._run_robustness_pipeline",
         lambda _config, output_dir: call_order.append("robustness") or (robustness_report, []),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._write_robustness_summary",
+        "research.feature.exploration.orchestrate._write_robustness_summary",
         lambda _report, output_dir: call_order.append("robustness_write")
         or {"summary_csv": output_dir / "robustness_summary.csv"},
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate.run_min_step_perturbation_pipeline",
+        "research.feature.exploration.orchestrate.run_min_step_perturbation_pipeline",
         lambda _config, output_dir, *, chosen_params: (
             call_order.append("perturbation") or perturbation_result
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_permutation_pipeline",
+        "research.feature.exploration.orchestrate._run_permutation_pipeline",
         lambda _config, output_dir, *, selected_combo_name=None: (
             call_order.append("permutation") or (MagicMock(), [])
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._write_permutation_summary",
+        "research.feature.exploration.orchestrate._write_permutation_summary",
         lambda *_args, **_kwargs: (
             call_order.append("permutation_write")
             or (tmp_path / "permutation_summary.csv", tmp_path / "permutation_summary.md")
@@ -344,17 +344,17 @@ def test_execute_exploration_phase_runs_robustness_then_permutation(
     call_order: list[str] = []
 
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_eda_pipeline",
+        "research.feature.exploration.orchestrate._run_eda_pipeline",
         lambda _config, output_dir: call_order.append("eda") or {"combo": output_dir},
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_robustness_pipeline",
+        "research.feature.exploration.orchestrate._run_robustness_pipeline",
         lambda _config, output_dir: (
             call_order.append("robustness") or (robustness_report, param_grid)
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._write_robustness_summary",
+        "research.feature.exploration.orchestrate._write_robustness_summary",
         lambda report, output_dir: (
             call_order.append("robustness_write")
             or {"summary_csv": output_dir / "robustness_summary.csv"}
@@ -363,7 +363,7 @@ def test_execute_exploration_phase_runs_robustness_then_permutation(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._run_permutation_pipeline",
+        "research.feature.exploration.orchestrate._run_permutation_pipeline",
         lambda _config, output_dir, *, selected_combo_name=None: (
             call_order.append("permutation") or (permutation_suite, param_grid)
             if selected_combo_name == "period_126"
@@ -371,7 +371,7 @@ def test_execute_exploration_phase_runs_robustness_then_permutation(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.exploration.orchestrate._write_permutation_summary",
+        "research.feature.exploration.orchestrate._write_permutation_summary",
         lambda suite, output_dir, *, objective_metric=None, param_grid=None, **kwargs: (
             call_order.append("permutation_write")
             or (

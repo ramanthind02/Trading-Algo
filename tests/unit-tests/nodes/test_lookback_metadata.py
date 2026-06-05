@@ -14,7 +14,7 @@ from nodes.mean_reversion.rsi.rsi import RSI
 from nodes.misc.transforms.ts_feature import TimeSeriesFeatureNode
 from nodes.momentum.oscillators.ultimate_c import UltimateC
 from nodes.volatility.ewsd.ewsd import EWSDNode
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 def _label_map(contributions: tuple[LookbackContribution, ...]) -> dict[str, int]:

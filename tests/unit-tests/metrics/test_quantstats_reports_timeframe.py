@@ -13,7 +13,7 @@ from metrics.plotting.graphing.quantstats_reports import (
     generate_tearsheet,
     vol_scale_returns_to_target_annualized_volatility,
 )
-from utils.core.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 
 def test_resample_to_daily_if_needed_sums_subdaily_returns() -> None:

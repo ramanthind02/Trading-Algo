@@ -8,11 +8,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.eda.continuous_eda import (
+from features.eda.continuous_eda import (
     compute_decile_analysis,
     compute_distribution_diagnostics,
 )
-from feature_selection.eda.eda_dataclasses import (
+from features.eda.eda_dataclasses import (
     DecileAnalysis, DistributionDiagnostics,
 )
 
@@ -83,8 +83,8 @@ def test_n_bins_2_minimum() -> None:
     assert len(result.bin_stats.sample_count) == 2
 
 
-from feature_selection.eda.continuous_eda import compute_quintile_spread
-from feature_selection.eda.eda_dataclasses import QuintileSpread
+from features.eda.continuous_eda import compute_quintile_spread
+from features.eda.eda_dataclasses import QuintileSpread
 
 
 def test_quintile_spread_shape() -> None:

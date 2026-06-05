@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from nodes.seasonal.weekday.seasonal_gold_friday import SeasonalGoldFriday
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(session: str, ticker: Ticker = Ticker.GC) -> Candle:

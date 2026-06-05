@@ -5,7 +5,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from feature_selection.validation.permutation_tests import (
+from features.validation.permutation_tests import (
     _SignedSignalPermutationBatchItem,
     _run_pipeline_permutation_batch,
     run_pipeline_permutation,

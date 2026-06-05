@@ -9,19 +9,19 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import utils.cache.runtime.live_cache_refresh as live_refresh  # noqa: E402
+import lib.cache.runtime.live_cache_refresh as live_refresh  # noqa: E402
 from ensemble.vault_manager import (  # noqa: E402
     ensure_vault_cache_coverage,
     get_ensemble_tickers,
 )
 from tests.integration._portfolio_cache_helpers import source_data_available  # noqa: E402
-from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
-from utils.cache.runtime.central_cache import CentralCacheStore  # noqa: E402
-from utils.cache.runtime.central_cache_models import (  # noqa: E402
+from lib.cache.runtime.bootstrap_source_candles import bootstrap_source_candles  # noqa: E402
+from lib.cache.runtime.central_cache import CentralCacheStore  # noqa: E402
+from lib.cache.runtime.central_cache_models import (  # noqa: E402
     ArtifactLifecycleState,
     ArtifactScope,
 )
-from utils.core.enums import TimeFrame  # noqa: E402
+from lib.core.enums import TimeFrame  # noqa: E402
 
 
 def _materialized_portfolio_row(portfolio_id: str, dt: datetime, ticker_name: str) -> pd.DataFrame:

@@ -6,9 +6,9 @@ from datetime import datetime, timedelta
 from typing import List, Sequence
 
 from nodes.regime.adx.adx_filter import AdxFilterCompare, AdxFilterNode
-from utils.core import helpers
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core import helpers
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(day: int, *, o: float = 100.0, h: float = 101.0, low: float = 99.0, c: float = 100.0) -> Candle:

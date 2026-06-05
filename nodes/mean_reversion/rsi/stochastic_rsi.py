@@ -10,9 +10,9 @@ Output: Continuous 0-100
 from typing import ClassVar, List
 import numpy as np
 from collections import deque
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
-from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.compute.rsi_helpers import compute_rsi_initial, update_rsi
 from nodes import BiasNode
 
 

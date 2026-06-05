@@ -10,10 +10,10 @@ from ensemble.vault_manager import (
     get_ensemble_tickers,
     load_ensemble_from_vault,
 )
-from utils.cache.runtime.central_cache import CentralCacheStore
-from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
-from utils.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
-from utils.core.enums import TimeFrame
+from lib.cache.runtime.central_cache import CentralCacheStore
+from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
+from lib.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
+from lib.core.enums import TimeFrame
 
 
 def test_monthly_buy_hold_portfolio_runs_from_central_cache(

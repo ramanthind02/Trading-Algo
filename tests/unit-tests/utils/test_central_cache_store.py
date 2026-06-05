@@ -7,15 +7,15 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import utils.cache.runtime.central_cache as central_cache_module
-from utils.cache.runtime.central_cache import CentralCacheStore, _candle_frame_semantically_equal
-from utils.cache.runtime.central_cache_errors import (
+import lib.cache.runtime.central_cache as central_cache_module
+from lib.cache.runtime.central_cache import CentralCacheStore, _candle_frame_semantically_equal
+from lib.cache.runtime.central_cache_errors import (
     ArtifactLifecycleError,
     ArtifactMissingError,
     CacheCoverageError,
     SourceRevisionConflictError,
 )
-from utils.cache.runtime.central_cache_models import (
+from lib.cache.runtime.central_cache_models import (
     ArtifactDescriptor,
     ArtifactLifecycleState,
     ArtifactRecord,
@@ -23,7 +23,7 @@ from utils.cache.runtime.central_cache_models import (
     CacheRequest,
     LookupMode,
 )
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.enums import Ticker, TimeFrame
 
 
 @pytest.fixture
@@ -259,7 +259,7 @@ def test_describe_artifact_uses_sidecar_without_loading_parquet(
     def _no_parquet_load(self) -> pd.DataFrame:
         raise AssertionError("BiasNodeCache.load() should not run when sidecar metadata exists")
 
-    monkeypatch.setattr("utils.cache.runtime.central_cache.BiasNodeCache.load", _no_parquet_load)
+    monkeypatch.setattr("lib.cache.runtime.central_cache.BiasNodeCache.load", _no_parquet_load)
     record = central_cache.describe_artifact(descriptor)
     assert record is not None
     assert record.lifecycle_state is ArtifactLifecycleState.FRESH

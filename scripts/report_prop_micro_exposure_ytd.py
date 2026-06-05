@@ -31,20 +31,20 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from ensemble.portfolio_impl.portfolio_cache import _query_candles_from_cache
-from portfolio_research.futures_sim import (
+from research.portfolio.futures_sim import (
     _compute_simple_instrument_returns,
     _simulate_ticker_bars,
 )
 from scripts import enigma_live_forecast as elf
-from utils.cache.runtime.cache_manager import CacheManager
-from utils.cache.runtime.central_cache import CentralCacheStore
-from utils.core.enums import TimeFrame, Ticker
-from utils.futures_micro_specs import (
+from lib.cache.runtime.cache_manager import CacheManager
+from lib.cache.runtime.central_cache import CentralCacheStore
+from lib.core.enums import TimeFrame, Ticker
+from lib.core.futures_micro_specs import (
     canonical_listed_micro_futures,
     listed_micro_futures_row,
     micro_contract_fractional_and_whole,
 )
-from utils.vault_paths import resolve_vault_root
+from lib.core.vault_paths import resolve_vault_root
 
 
 def _ticker_str(value: object) -> str:

@@ -22,15 +22,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from nodes import BiasNode
-from utils.core.models import Candle
-from utils.core.enums import Bias, Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Bias, Ticker, TimeFrame
 from typing import ClassVar, List, Optional
 import numpy as np
 import pandas as pd
 from collections import deque
 
 try:
-    from utils.compute.fast_nodes import CYTHON_NODES_AVAILABLE, compute_stddev_sample_fast
+    from lib.compute.fast_nodes import CYTHON_NODES_AVAILABLE, compute_stddev_sample_fast
 except ImportError:
     CYTHON_NODES_AVAILABLE = False
     compute_stddev_sample_fast = None  # type: ignore[assignment]
@@ -42,7 +42,7 @@ def _load_unadj_close_series(ticker: Ticker) -> pd.Series | None:
     Returns a Series indexed by normalized date (tz-naive), or None if the
     file does not exist (non-futures instruments, or pre-migration state).
     """
-    from utils.cache.runtime.cache_paths import project_root as _project_root
+    from lib.cache.runtime.cache_paths import project_root as _project_root
     project_root = _project_root()
     path = project_root / "data" / "ohlc_data" / ticker.name / f"D_{ticker.name}_unadj.parquet"
     if not path.exists():

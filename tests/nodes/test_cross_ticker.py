@@ -21,11 +21,11 @@ import pandas as pd
 import pytest
 
 from nodes import BiasNode
-from utils.cache.runtime.central_cache import CentralCacheStore
-from utils.cache.runtime.central_cache_errors import ArtifactMissingError
-from utils.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, LookupMode
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.cache.runtime.central_cache import CentralCacheStore
+from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, LookupMode
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 from utils.data.cross_ticker_store import (
     CrossTickerDataStore,
     extract_cross_ticker_names,
@@ -353,7 +353,7 @@ class TestSpreadNode:
 class TestExtractorPreloading:
     def test_preload_cross_ticker_data(self) -> None:
         """The helper scans params for cross_tickers and loads into store."""
-        from feature_extraction.feature_extractor import _preload_cross_ticker_data
+        from features.extraction.feature_extractor import _preload_cross_ticker_data
 
         param_combos = [
             {"cross_tickers": ["NQ"], "lookback": 20},
@@ -372,7 +372,7 @@ class TestExtractorPreloading:
 
     def test_preload_no_cross_ticker_is_noop(self) -> None:
         """When no params have cross_tickers, nothing is loaded."""
-        from feature_extraction.feature_extractor import _preload_cross_ticker_data
+        from features.extraction.feature_extractor import _preload_cross_ticker_data
 
         param_combos = [{"lookback": 14}]
         _preload_cross_ticker_data(
@@ -387,7 +387,7 @@ class TestExtractorPreloading:
 
     def test_preload_skips_already_loaded(self) -> None:
         """If ticker is already loaded, load() is not called again."""
-        from feature_extraction.feature_extractor import _preload_cross_ticker_data
+        from features.extraction.feature_extractor import _preload_cross_ticker_data
 
         store = CrossTickerDataStore.get_instance()
         store.set_data(Ticker.NQ, TimeFrame.D, _make_ohlcv_df())
@@ -404,7 +404,7 @@ class TestExtractorPreloading:
         assert store.is_loaded(Ticker.NQ, TimeFrame.D)
 
     def test_preload_cross_ticker_list_loads_all(self) -> None:
-        from feature_extraction.feature_extractor import _preload_cross_ticker_data
+        from features.extraction.feature_extractor import _preload_cross_ticker_data
 
         _preload_cross_ticker_data(
             [{"cross_tickers": ["NQ", "GC"], "lookback": 20}],
@@ -418,7 +418,7 @@ class TestExtractorPreloading:
 
     def test_preload_override_data_sets_store(self) -> None:
         """Override candles should be pushed into CrossTickerDataStore via set_data."""
-        from feature_extraction.feature_extractor import _preload_cross_ticker_override_data
+        from features.extraction.feature_extractor import _preload_cross_ticker_override_data
 
         override = pd.DataFrame(
             {
@@ -447,7 +447,7 @@ class TestExtractorPreloading:
 
     def test_extract_features_with_override_preloads_extra_ticker(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Extra tickers in candles_override should preload store for cross-ticker nodes."""
-        import feature_extraction.feature_extractor as fe
+        import features.extraction.feature_extractor as fe
 
         idx = pd.DatetimeIndex([datetime(2020, 1, 1), datetime(2020, 1, 2)], tz="UTC")
         override = pd.DataFrame(
@@ -623,7 +623,7 @@ class TestStoreTimezoneHandling:
 
 class TestEnsureCrossTickerData:
     def test_loads_cross_tickers_from_params(self) -> None:
-        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from research.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         _ensure_cross_ticker_data(
             [{"cross_tickers": ["NQ"], "lookback": 20}],
             [TimeFrame.D],
@@ -633,7 +633,7 @@ class TestEnsureCrossTickerData:
 
     def test_skips_already_loaded(self) -> None:
         """Should not re-load if data is already in the store."""
-        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from research.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         store = CrossTickerDataStore.get_instance()
         # Pre-populate with custom data
         custom_df = _make_ohlcv_df(base_close=999.0, n_rows=5)
@@ -649,7 +649,7 @@ class TestEnsureCrossTickerData:
         assert candle.close == 999.0
 
     def test_noop_without_cross_tickers(self) -> None:
-        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from research.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         _ensure_cross_ticker_data(
             [{"lookback": 14}],
             [TimeFrame.D],
@@ -658,7 +658,7 @@ class TestEnsureCrossTickerData:
         assert store.loaded_tickers() == []
 
     def test_handles_unknown_ticker_gracefully(self) -> None:
-        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from research.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         # Should not raise for unknown ticker name
         _ensure_cross_ticker_data(
             [{"cross_tickers": ["INVALID_XYZ"], "lookback": 20}],
@@ -668,7 +668,7 @@ class TestEnsureCrossTickerData:
         assert store.loaded_tickers() == []
 
     def test_loads_multiple_timeframes(self) -> None:
-        from utils.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
+        from research.evaluation.walkforward.portfolio_evaluator import _ensure_cross_ticker_data
         _ensure_cross_ticker_data(
             [{"cross_tickers": ["ES"], "lookback": 20}],
             [TimeFrame.D, TimeFrame.W],
@@ -684,7 +684,7 @@ class TestEnsureCrossTickerData:
 
 class TestUpdateCrossTickerStoreFromShuffledCandles:
     def test_updates_store_from_multi_ticker_df(self) -> None:
-        from feature_selection.validation.permutation_tests import (
+        from features.validation.permutation_tests import (
             _update_cross_ticker_store_from_shuffled_candles,
         )
         shuffled = pd.DataFrame({
@@ -703,7 +703,7 @@ class TestUpdateCrossTickerStoreFromShuffledCandles:
         assert store.is_loaded(Ticker.NQ, TimeFrame.D)
 
     def test_noop_without_ticker_column(self) -> None:
-        from feature_selection.validation.permutation_tests import (
+        from features.validation.permutation_tests import (
             _update_cross_ticker_store_from_shuffled_candles,
         )
         shuffled = pd.DataFrame({
@@ -715,7 +715,7 @@ class TestUpdateCrossTickerStoreFromShuffledCandles:
         assert store.loaded_tickers() == []
 
     def test_skips_unknown_ticker_names(self) -> None:
-        from feature_selection.validation.permutation_tests import (
+        from features.validation.permutation_tests import (
             _update_cross_ticker_store_from_shuffled_candles,
         )
         shuffled = pd.DataFrame({
@@ -729,7 +729,7 @@ class TestUpdateCrossTickerStoreFromShuffledCandles:
         assert store.loaded_tickers() == []
 
     def test_uses_explicit_timeframes(self) -> None:
-        from feature_selection.validation.permutation_tests import (
+        from features.validation.permutation_tests import (
             _update_cross_ticker_store_from_shuffled_candles,
         )
         shuffled = pd.DataFrame({
@@ -747,7 +747,7 @@ class TestUpdateCrossTickerStoreFromShuffledCandles:
 
     def test_overwrites_existing_store_data(self) -> None:
         """Shuffled candles should replace whatever was in the store."""
-        from feature_selection.validation.permutation_tests import (
+        from features.validation.permutation_tests import (
             _update_cross_ticker_store_from_shuffled_candles,
         )
         store = CrossTickerDataStore.get_instance()
@@ -769,7 +769,7 @@ class TestUpdateCrossTickerStoreFromShuffledCandles:
 
     def test_never_raises_on_malformed_data(self) -> None:
         """The helper must never crash the permutation loop."""
-        from feature_selection.validation.permutation_tests import (
+        from features.validation.permutation_tests import (
             _update_cross_ticker_store_from_shuffled_candles,
         )
         # Completely malformed — should silently pass

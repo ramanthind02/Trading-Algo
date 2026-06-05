@@ -7,11 +7,11 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from feature_research.config import EvaluationDefaultsCatalog, EvaluationPhaseDefaultsConfig, ResearchWindowConfig, load_config
-from feature_research._internal.core_helpers import combo_key
-from feature_research.filter_research_labels import research_display_label
-from feature_research.in_sample.data_loader import enrich_param_combo_with_module, expand_bias_specs
-from feature_research.validation.robustness_runner import (
+from research.feature.config import EvaluationDefaultsCatalog, EvaluationPhaseDefaultsConfig, ResearchWindowConfig, load_config
+from research.feature._internal.core_helpers import combo_key
+from research.feature.filter_research_labels import research_display_label
+from research.feature.in_sample.data_loader import enrich_param_combo_with_module, expand_bias_specs
+from research.feature.validation.robustness_runner import (
     _params_match,
     _rank_scatter_chosen_params,
     _resolve_chosen_params,
@@ -128,18 +128,18 @@ def test_run_validation_robustness_pipeline_builds_core_report(
     }
 
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.populate_cache_if_needed",
+        "research.feature.validation.robustness_runner.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.expand_bias_specs",
+        "research.feature.validation.robustness_runner.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": ["D"], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.load_signed_signal_research_data",
+        "research.feature.validation.robustness_runner.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=enriched_combo_params,
@@ -148,7 +148,7 @@ def test_run_validation_robustness_pipeline_builds_core_report(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner._load_is_metrics_from_csv",
+        "research.feature.validation.robustness_runner._load_is_metrics_from_csv",
         lambda _config, _metric_column: None,
     )
 
@@ -190,18 +190,18 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_two_combo
     }
 
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.populate_cache_if_needed",
+        "research.feature.validation.robustness_runner.populate_cache_if_needed",
         lambda *_a, **_k: None,
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.expand_bias_specs",
+        "research.feature.validation.robustness_runner.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "seasonal_indices_eof", "timeframes": ["D"], "params": p}
             for p in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.load_signed_signal_research_data",
+        "research.feature.validation.robustness_runner.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=enriched,
@@ -210,7 +210,7 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_two_combo
         ),
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner._load_is_metrics_from_csv",
+        "research.feature.validation.robustness_runner._load_is_metrics_from_csv",
         lambda _config, _metric_column: None,
     )
 
@@ -269,18 +269,18 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_single_co
     }
 
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.populate_cache_if_needed",
+        "research.feature.validation.robustness_runner.populate_cache_if_needed",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.expand_bias_specs",
+        "research.feature.validation.robustness_runner.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "turnaroundtuesday", "timeframes": ["D"], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.load_signed_signal_research_data",
+        "research.feature.validation.robustness_runner.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=enriched_combo_params,
@@ -289,7 +289,7 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_single_co
         ),
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner._load_is_metrics_from_csv",
+        "research.feature.validation.robustness_runner._load_is_metrics_from_csv",
         lambda _config, _metric_column: None,
     )
 
@@ -339,18 +339,18 @@ def test_write_validation_robustness_summary_persists_artifacts(
     }
 
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.populate_cache_if_needed",
+        "research.feature.validation.robustness_runner.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.expand_bias_specs",
+        "research.feature.validation.robustness_runner.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": ["D"], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.load_signed_signal_research_data",
+        "research.feature.validation.robustness_runner.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=enriched_combo_params,
@@ -359,7 +359,7 @@ def test_write_validation_robustness_summary_persists_artifacts(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner._load_is_metrics_from_csv",
+        "research.feature.validation.robustness_runner._load_is_metrics_from_csv",
         lambda _config, _metric_column: None,
     )
 
@@ -416,18 +416,18 @@ def test_run_and_write_validation_robustness_writes_plots(
     }
 
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.populate_cache_if_needed",
+        "research.feature.validation.robustness_runner.populate_cache_if_needed",
         lambda _config: None,
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.expand_bias_specs",
+        "research.feature.validation.robustness_runner.expand_bias_specs",
         lambda _bias_spec: [
             {"module_name": "rsisignal", "timeframes": ["D"], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.load_signed_signal_research_data",
+        "research.feature.validation.robustness_runner.load_signed_signal_research_data",
         lambda _config, _expanded, print_loaded=False: SimpleNamespace(
             combo_signal_target=signal_frames,
             successful_param_grid=enriched_combo_params,
@@ -436,7 +436,7 @@ def test_run_and_write_validation_robustness_writes_plots(
         ),
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner._load_is_metrics_from_csv",
+        "research.feature.validation.robustness_runner._load_is_metrics_from_csv",
         lambda _config, _metric_column: None,
     )
 
@@ -556,22 +556,22 @@ def test_run_validation_robustness_reuses_preloaded_eval_data(
         )
 
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.populate_cache_if_needed",
+        "research.feature.validation.robustness_runner.populate_cache_if_needed",
         lambda _config, **kwargs: None,
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.expand_bias_specs",
+        "research.feature.validation.robustness_runner.expand_bias_specs",
         lambda bias_spec: [
             {"module_name": "rsisignal", "timeframes": ["D"], "params": params}
             for params in combo_params
         ],
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner.load_signed_signal_research_data",
+        "research.feature.validation.robustness_runner.load_signed_signal_research_data",
         _mock_load,
     )
     monkeypatch.setattr(
-        "feature_research.validation.robustness_runner._load_is_metrics_from_csv",
+        "research.feature.validation.robustness_runner._load_is_metrics_from_csv",
         lambda _config, _metric_column: None,
     )
 
@@ -589,7 +589,7 @@ def test_run_validation_robustness_reuses_preloaded_eval_data(
 
 
 def test_apply_fast_validation_profile_disables_gate() -> None:
-    from feature_research.config import apply_fast_validation_profile
+    from research.feature.config import apply_fast_validation_profile
 
     fast = apply_fast_validation_profile(load_config())
     assert fast.portfolio_addition_gate.enabled is False

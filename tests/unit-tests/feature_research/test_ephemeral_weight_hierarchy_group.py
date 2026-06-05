@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from feature_research.config import ephemeral_weight_hierarchy_group_for_tickers
-from utils.core.enums import Ticker
+from research.feature.config import ephemeral_weight_hierarchy_group_for_tickers
+from lib.core.enums import Ticker
 
 
 def test_cl_only_tickers_default_to_crude_oil_mr() -> None:

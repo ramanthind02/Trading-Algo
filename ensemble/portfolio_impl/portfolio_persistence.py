@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from utils.cache.runtime.central_cache_models import ArtifactScope
+from lib.cache.runtime.central_cache_models import ArtifactScope
 
 
 def materialize_global_portfolio_predictions(
@@ -18,7 +18,7 @@ def materialize_global_portfolio_predictions(
     ensemble_dirs: Optional[Iterable[str]] = None,
 ):
     """Materialize portfolio/base-model predictions into the dedicated cache tree."""
-    from utils.cache.runtime.portfolio_materialization import (
+    from lib.cache.runtime.portfolio_materialization import (
         materialize_global_portfolio_predictions as _materialize_predictions,
     )
 
@@ -43,7 +43,7 @@ def prune_inactive_base_model_materializations(
     cache_root: Optional[str] = None,
 ):
     """Delete base-model materializations whose identities are no longer active."""
-    from utils.cache.runtime.portfolio_materialization import (
+    from lib.cache.runtime.portfolio_materialization import (
         prune_inactive_base_model_materializations as _prune_materializations,
     )
 

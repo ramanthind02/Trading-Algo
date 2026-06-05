@@ -1,12 +1,12 @@
 import math
 from typing import ClassVar, List
 import numpy as np
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 try:
-    from utils.compute.fast_nodes import (
+    from lib.compute.fast_nodes import (
         CYTHON_NODES_AVAILABLE,
         compute_sma_fast,
         compute_atr_from_slice_fast,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from feature_research.exploration.filter_gate_catalog import (
+from research.feature.exploration.filter_gate_catalog import (
     ExplorationFilterGatesConfig,
     atr_rank_fraction_grid,
     build_exploration_catalog_with_filter_gates,
@@ -11,8 +11,8 @@ from feature_research.exploration.filter_gate_catalog import (
     exploration_pass1_vol_regime_enabled,
     resolved_exploration_bias_spec,
 )
-from feature_research.in_sample.data_loader import expand_bias_specs
-from utils.core.enums import TimeFrame
+from research.feature.in_sample.data_loader import expand_bias_specs
+from lib.core.enums import TimeFrame
 
 
 def _signal_spec() -> dict[str, object]:
@@ -78,7 +78,7 @@ def test_build_exploration_catalog_rejects_filter_gate_input() -> None:
 def test_resolved_exploration_bias_spec_on_minimal_config() -> None:
     from datetime import datetime
 
-    from feature_research.config import (
+    from research.feature.config import (
         BinningAnalysisConfig,
         ExplorationFilterGatesConfig,
         InSampleDefaultsCatalog,
@@ -86,10 +86,10 @@ def test_resolved_exploration_bias_spec_on_minimal_config() -> None:
         PermutationResearchConfig,
         ResearchConfig,
     )
-    from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
+    from features.validation.objective_metrics import ObjectiveMetricSpec
     from pathlib import Path
-    from feature_research.config import FeatureType
-    from utils.core.enums import Direction, Ticker
+    from research.feature.config import FeatureType
+    from lib.core.enums import Direction, Ticker
 
     spec = _signal_spec()
     in_sample = InSampleDefaultsCatalog(
@@ -131,17 +131,17 @@ def test_resolved_exploration_bias_spec_respects_disabled_gates() -> None:
     from datetime import datetime
     from pathlib import Path
 
-    from feature_research.config import (
+    from research.feature.config import (
         BinningAnalysisConfig,
         InSampleDefaultsCatalog,
         InSamplePhaseDefaultsConfig,
         PermutationResearchConfig,
         ResearchConfig,
     )
-    from feature_research.exploration.filter_gate_catalog import ExplorationFilterGatesConfig
-    from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-    from feature_research.config import FeatureType
-    from utils.core.enums import Direction, Ticker
+    from research.feature.exploration.filter_gate_catalog import ExplorationFilterGatesConfig
+    from features.validation.objective_metrics import ObjectiveMetricSpec
+    from research.feature.config import FeatureType
+    from lib.core.enums import Direction, Ticker
 
     spec = _signal_spec()
     in_sample = InSampleDefaultsCatalog(
@@ -179,7 +179,7 @@ def test_resolve_exploration_winner_params_single_combo_grid() -> None:
     from datetime import datetime
     from pathlib import Path
 
-    from feature_research.config import (
+    from research.feature.config import (
         BinningAnalysisConfig,
         FeatureType,
         InSampleDefaultsCatalog,
@@ -187,11 +187,11 @@ def test_resolve_exploration_winner_params_single_combo_grid() -> None:
         PermutationResearchConfig,
         ResearchConfig,
     )
-    from feature_research.exploration.filter_gate_catalog import (
+    from research.feature.exploration.filter_gate_catalog import (
         resolve_exploration_winner_params,
     )
-    from feature_selection.validation.objective_metrics import ObjectiveMetricSpec
-    from utils.core.enums import Direction, Ticker, TimeFrame
+    from features.validation.objective_metrics import ObjectiveMetricSpec
+    from lib.core.enums import Direction, Ticker, TimeFrame
 
     spec = {
         "module_name": "close_breakout",

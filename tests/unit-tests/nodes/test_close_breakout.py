@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from nodes.close_breakout import CloseBreakout
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def candle(

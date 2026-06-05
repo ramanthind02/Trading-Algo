@@ -10,8 +10,8 @@ Output: Continuous roughly -50 to +50 (RSI of cyclical component, centered at 0)
 from typing import ClassVar, List
 import numpy as np
 from collections import deque
-from utils.core.models import Candle
-from utils.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
 from nodes import BiasNode
 
 

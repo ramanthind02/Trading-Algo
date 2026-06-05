@@ -2,8 +2,8 @@ import collections
 from typing import ClassVar, List
 
 from nodes import BiasNode
-from utils.core.enums import TimeFrame, Ticker
-from utils.core.models import Candle
+from lib.core.enums import TimeFrame, Ticker
+from lib.core.models import Candle
 
 
 _VALID_DIRECTIONS = ("long", "short", "long_short")

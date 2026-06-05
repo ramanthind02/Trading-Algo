@@ -10,13 +10,13 @@ from quantfoundry_core.prop_firm import PortfolioSimulationConfig, ReturnEngineC
 
 from dataclasses import replace
 
-from portfolio_research.config import (
+from research.portfolio.config import (
     UNLIMITED_FUNDED_ACCOUNT_CAP,
     PropFirmReportConfig,
     load_config,
 )
-from portfolio_research.pipelines.portfolio_test import PhaseResult
-from portfolio_research.prop_firm_bridge import (
+from research.portfolio.pipelines.portfolio_test import PhaseResult
+from research.portfolio.prop_firm_bridge import (
     align_portfolio_returns_with_report_engine,
     build_prop_firm_returns,
     create_prop_firm_portfolio_simulator,
@@ -80,7 +80,7 @@ def test_return_engine_for_research_uses_train_through_test() -> None:
 def test_align_portfolio_returns_with_report_engine_date_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import portfolio_research.prop_firm_bridge as mod
+    import research.portfolio.prop_firm_bridge as mod
 
     raw = pd.Series(
         [0.01, 0.02, 0.03],

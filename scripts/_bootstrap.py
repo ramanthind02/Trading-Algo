@@ -49,7 +49,7 @@ def _load_env_file() -> None:
 
 _load_env_file()
 
-from utils.repo_bootstrap import ensure_repo_root_on_syspath
+from lib.core.repo_bootstrap import ensure_repo_root_on_syspath
 
 
 def ensure_project_root_on_path() -> Path:

@@ -25,7 +25,7 @@ from data_platform.events.diagnostics import (  # noqa: E402
     vol_scaled_portfolio_returns,
 )
 from data_platform.events.trading_day_index import TradingDayIndex, load_es_trading_sessions
-from utils.core.enums import Ticker
+from lib.core.enums import Ticker
 
 _OUTPUT_DIR = (
     Path("feature_research/in_sample/results/calendar_ensemble/diagnostics")

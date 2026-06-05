@@ -17,8 +17,8 @@ from nodes.seasonal.calendar._event_signal import (
 )
 from data_platform.events.calendar_loader import HolidayAssetBucket
 from data_platform.events.trading_day_index import TradingDayIndex, load_es_trading_sessions
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 _DEFAULT_ENTRY = -4
 _DEFAULT_EXIT = 0

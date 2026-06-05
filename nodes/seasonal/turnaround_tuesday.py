@@ -15,8 +15,8 @@ from enum import Enum
 from typing import ClassVar, List, Tuple
 
 from nodes import BiasNode
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 # datetime.weekday(): Monday=0, Tuesday=1, Wednesday=2

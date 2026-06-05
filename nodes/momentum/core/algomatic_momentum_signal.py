@@ -14,10 +14,10 @@ from typing import ClassVar, List, Optional
 import numpy as np
 
 from nodes import BiasNode
-from utils.compute.fast_nodes import compute_momentum_fast
-from utils.compute.rsi_helpers import compute_rsi_initial, update_rsi
-from utils.core.enums import Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.compute.fast_nodes import compute_momentum_fast
+from lib.compute.rsi_helpers import compute_rsi_initial, update_rsi
+from lib.core.enums import Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 class AlgomaticMomentumSignal(BiasNode):

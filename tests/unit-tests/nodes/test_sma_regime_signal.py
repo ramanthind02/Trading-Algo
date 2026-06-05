@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from nodes.regime.sma.sma_regime_signal import SmaRegimeSignalNode
-from utils.core.enums import PositionMode, Ticker, TimeFrame
-from utils.core.models import Candle
+from lib.core.enums import PositionMode, Ticker, TimeFrame
+from lib.core.models import Candle
 
 
 def _candle(close: float, day: int) -> Candle:

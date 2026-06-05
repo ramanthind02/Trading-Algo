@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from utils.core.enums import TimeFrame
-from feature_research._internal.bias_spec_catalog import first_bias_spec
-from feature_research.in_sample.data_loader import (
+from lib.core.enums import TimeFrame
+from research.feature._internal.bias_spec_catalog import first_bias_spec
+from research.feature.in_sample.data_loader import (
     expand_bias_specs,
     expanded_combo_param_value,
     expanded_spec_combo_label,

@@ -56,7 +56,7 @@ if str(_REPO_ROOT) not in sys.path:
 import scripts._bootstrap  # noqa: F401
 
 import MetaTrader5 as mt5
-from utils.core.logger import get_logger
+from lib.core.logger import get_logger
 
 logger = get_logger(__name__)
 

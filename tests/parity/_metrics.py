@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from feature_selection.validation.objective_metrics import (
+from features.validation.objective_metrics import (
     metric_calmar,
     metric_sharpe,
     metric_sortino,

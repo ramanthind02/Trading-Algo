@@ -18,8 +18,8 @@ except ImportError:
 
 ensure_project_root_on_path()
 
-from utils.core.logger import get_logger
-from utils.core.enums import TimeFrame
+from lib.core.logger import get_logger
+from lib.core.enums import TimeFrame
 
 logger = get_logger(__name__)
 

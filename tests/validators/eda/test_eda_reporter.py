@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.eda.eda_dataclasses import (
+from features.eda.eda_dataclasses import (
     BootstrapCI,
     BootstrapCIResults,
     CommonEDAStats,
@@ -28,7 +28,7 @@ from feature_selection.eda.eda_dataclasses import (
     RuleBasedEDAReport,
     RuleBasedEDAStats,
 )
-from feature_selection.eda.eda_reporter import (
+from features.eda.eda_reporter import (
     _param_combo_hash,
     compute_diagnostic_flags,
     load_eda_report,
@@ -36,8 +36,8 @@ from feature_selection.eda.eda_reporter import (
     run_eda_for_rule_based_feature,
     save_eda_report,
 )
-from feature_selection.eda.rule_based_eda import compute_per_level_stats
-from utils.core.enums import PositionMode, Ticker, TimeFrame
+from features.eda.rule_based_eda import compute_per_level_stats
+from lib.core.enums import PositionMode, Ticker, TimeFrame
 
 
 def _metadata(feature_name: str = "feat") -> EDAMetadata:

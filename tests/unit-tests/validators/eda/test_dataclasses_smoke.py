@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from feature_selection.eda.eda_dataclasses import (
+from features.eda.eda_dataclasses import (
     DescriptiveStats,
     CorrelationAnalysis,
     CommonEDAStats,
