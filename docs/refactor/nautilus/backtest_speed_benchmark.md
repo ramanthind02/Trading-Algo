@@ -94,9 +94,28 @@ across multiple instruments and years, validated under ≥2 fill models.**
   1M→4M step) and a ~23 h CFD session calendar. Per-instrument tick density varies (index CFDs are
   denser than the rollover window assumes; the hybrid figure is conservative).
 
-## Next step (not yet built)
+## Hybrid lane — built & measured
 
-The hybrid lane needs **windowed-tick ingest**: ingest 1-min bars across the day but quote ticks only
-within `[rollover − Δ, rollover + Δ]`. The current `ingest_mt5_intraday(..., max_ticks=N)` takes the
-*head* of the tick stream, not a daily window — so the hybrid figure above is a projection from the
-measured per-event rates, not yet a measured lane.
+The hybrid is implemented entirely on the **existing** Nautilus engine (no bespoke harness):
+
+- **Windowed-tick ingest:** `data_platform.nautilus.ingest.ingest_mt5_intraday_windowed(symbol,
+  catalog, *, rollover, half_width_minutes, tz)` — ingests full 1-min bars + quote ticks **only**
+  within `[rollover − Δ, rollover + Δ]` daily (a recurring-window mask; Nautilus' catalog filters one
+  contiguous range, so the recurring selection is ours — ~15 lines of pandas).
+- **Strategy:** a third `ExecutionWindowPolicy.ROLLOVER_FLATTEN_REENTER` on the existing
+  `TargetRebalanceStrategy` (`research/portfolio/pnl/nautilus_engine.py`) — flatten to flat just before
+  the rollover, restore the daily target just after, reusing the validated `_limit_price` passive
+  anchoring. Run via `NautilusPnLEngine(window_policy=ROLLOVER_FLATTEN_REENTER,
+  execution_policy=LIMIT_AT_TOUCH, rollover_minute=…, rollover_half_width_min=…)`.
+- **Runner:** `scripts/dev/run_hybrid_rollover.py`.
+
+**Measured (NDX, rollover 21:00 UTC ± 20m):** 100,033 bars + **2,116,943 window quotes (3.91% of all
+ticks, 26× fewer)**; `run_with_diagnostics` in **22.4 s** incl. load → consistent with **~1 min /
+instrument-year**. The flatten/re-enter legs filled **140/140 as MAKER**, **+61.45 price-units of
+half-spread captured**, 0 missed-fill rejects, finite returns.
+
+> ⚠️ That all-maker result is the **optimistic** fill case (`BestPriceFillModel` + `post_only` fills
+> whenever the bar/quote touches the resting price). Before trusting any swap-avoidance edge, re-run
+> under a **trade-through-required** fill model (and measure the missed-fill / carried-overnight tail),
+> per the significance section above. The plumbing + speed are proven; the *economics* still need the
+> adversarial fill assumption.

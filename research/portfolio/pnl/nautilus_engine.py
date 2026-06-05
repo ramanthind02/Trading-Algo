@@ -65,10 +65,18 @@ class ExecutionWindowPolicy(Enum):
       economics as closely as Nautilus allows (open/close are distinct bars).
     * ``CLOSE_TO_CLOSE`` — enter and hold across session boundaries
       (overnight-inclusive). Used for the frictionless ``log`` reconciliation.
+    * ``ROLLOVER_FLATTEN_REENTER`` — hold the daily target across sessions, but
+      each day flatten just *before* the financing rollover and re-enter just
+      *after* (both via the same passive-limit anchoring as the open path). Models
+      the swap-avoidance overlay; pairs with a windowed-tick catalog (quotes only
+      around the rollover) — see ``data_platform.nautilus.ingest
+      .ingest_mt5_intraday_windowed`` and ``docs/refactor/nautilus/
+      backtest_speed_benchmark.md``.
     """
 
     INTRADAY_OPEN_TO_CLOSE = "intraday_open_to_close"
     CLOSE_TO_CLOSE = "close_to_close"
+    ROLLOVER_FLATTEN_REENTER = "rollover_flatten_reenter"
 
 
 class ExecutionPolicy(Enum):
@@ -121,6 +129,9 @@ class _SessionState:
 
     current_date: date | None = None
     entered_today: bool = False
+    # Rollover-policy per-day legs (flatten before the rollover, re-enter after).
+    exited_today: bool = False
+    reentered_today: bool = False
     # ns of the open and close bar of the *current* session — used to map the
     # CROSS_AFTER cutoff onto wall-clock time within the session.
     session_open_ns: int | None = None
@@ -214,6 +225,8 @@ class TargetRebalanceStrategy(Strategy):
         improve_ticks: int = 1,
         cross_after: CrossAfterPolicy | None = None,
         subscribe_quotes: bool = False,
+        rollover_minute: int | None = None,
+        rollover_half_width: int = 20,
     ) -> None:
         super().__init__()
         self._instrument = instrument
@@ -232,6 +245,10 @@ class TargetRebalanceStrategy(Strategy):
         self._tick_size = float(instrument.price_increment)
         self._improve_ticks = int(improve_ticks)
         self._cross_after = cross_after or CrossAfterPolicy()
+        # Rollover policy: daily minute-of-day (UTC) of the financing rollover and
+        # the ± window (minutes) in which the flatten/re-enter legs are worked.
+        self._rollover_minute = rollover_minute
+        self._rollover_half = int(rollover_half_width)
         self._uses_limit = execution_policy in (
             ExecutionPolicy.LIMIT_AT_TOUCH,
             ExecutionPolicy.LIMIT_IMPROVE,
@@ -296,7 +313,17 @@ class TargetRebalanceStrategy(Strategy):
         if is_new_session:
             self._session.current_date = session_date
             self._session.entered_today = False
+            self._session.exited_today = False
+            self._session.reentered_today = False
             self._roll_session(session_date)
+
+        # Rollover policy has its own (flatten-before / re-enter-after) control
+        # flow; it still records equity + the position trace like the open path.
+        if self._window_policy is ExecutionWindowPolicy.ROLLOVER_FLATTEN_REENTER:
+            self._on_bar_rollover(bar, session_date)
+            self._record_equity(bar.ts_event)
+            self.position_trace.append((bar.ts_event, self._net_signed_qty()))
+            return
 
         is_intraday = (
             self._window_policy is ExecutionWindowPolicy.INTRADAY_OPEN_TO_CLOSE
@@ -391,7 +418,48 @@ class TargetRebalanceStrategy(Strategy):
         return int(sized.iloc[0]["contracts"])
 
     def _enter_for_session(self, session_date: date, price: float) -> None:
-        target = self._target_contracts(session_date, price)
+        """Open path: rebalance to the session's daily target at the open bar."""
+        self._rebalance_to_target(self._target_contracts(session_date, price), price)
+
+    def _on_bar_rollover(self, bar: Bar, session_date: date) -> None:
+        """Rollover policy: flatten to flat just *before* the financing rollover
+        and restore the daily target just *after* — both via the shared passive
+        limit anchoring (:meth:`_rebalance_to_target`).
+
+        A leg whose resting limit never fills (no in-window quote trades to the
+        touch) simply carries the position into the next leg/day — the realistic
+        "missed the fill / paid the swap" outcome, which the next rebalance sees
+        as the new delta.
+        """
+        if self._rollover_minute is None:
+            return
+        mod = self._minute_of_day(bar.ts_event)
+        ref = float(bar.close)
+        center, half = self._rollover_minute, self._rollover_half
+        # EXIT leg: flatten to flat in [center - half, center).
+        if (center - half) <= mod < center and not self._session.exited_today:
+            self._cancel_working_entry()
+            self._rebalance_to_target(0, ref)
+            self._session.exited_today = True
+        # RE-ENTER leg: restore the daily target in (center, center + half].
+        if center < mod <= (center + half) and not self._session.reentered_today:
+            self._cancel_working_entry()
+            self._rebalance_to_target(self._target_contracts(session_date, ref), ref)
+            self._session.reentered_today = True
+
+    @staticmethod
+    def _minute_of_day(ts_ns: int) -> int:
+        t = pd.Timestamp(ts_ns, tz="UTC")
+        return t.hour * 60 + t.minute
+
+    def _rebalance_to_target(self, target: int, price: float) -> None:
+        """Submit the order(s) to move the net position to ``target`` contracts.
+
+        Shared by the open path and the rollover legs. Works a passive limit
+        (``_limit_price`` anchoring) when the execution policy uses limits, else a
+        market cross; falls back to market if no quote has arrived yet so the
+        target is still reached deterministically.
+        """
         current = self._net_signed_qty()
         delta = target - current
         if delta == 0:
@@ -594,6 +662,10 @@ class NautilusPnLEngine:
     random_seed: int = 42
     max_ticks: int | None = 0  # 0 → ingest no ticks (bars only) for speed
     catalog_path: str | None = None
+    # Rollover policy (only used when window_policy is ROLLOVER_FLATTEN_REENTER):
+    # daily minute-of-day (UTC) of the financing rollover and the ± window width.
+    rollover_minute: int | None = None
+    rollover_half_width_min: int = 20
 
     def _needs_quotes(self) -> bool:
         return self.measure_spread or self.execution_policy in (
@@ -755,6 +827,8 @@ class NautilusPnLEngine:
             improve_ticks=self.improve_ticks,
             cross_after=self.cross_after,
             subscribe_quotes=self._needs_quotes(),
+            rollover_minute=self.rollover_minute,
+            rollover_half_width=self.rollover_half_width_min,
         )
         engine.add_strategy(strategy)
 

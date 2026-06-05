@@ -18,6 +18,7 @@ the 1-minute bars. Ticks carry their own ``time`` (already an event time) so
 """
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -149,6 +150,83 @@ def ingest_mt5_intraday(
     ticks_df = _read_partitions(sym_root / "ticks")
     if max_ticks is not None and not ticks_df.empty:
         ticks_df = ticks_df.head(max_ticks)
+
+    bars = _build_bars(bars_df, bar_type, price_precision) if not bars_df.empty else []
+    quotes = (
+        _build_quotes(ticks_df, instrument_id, price_precision)
+        if not ticks_df.empty
+        else []
+    )
+
+    if bars:
+        catalog.write_data(bars)
+    if quotes:
+        catalog.write_data(quotes)
+
+    return IngestResult(
+        symbol=symbol,
+        instrument_id=str(inst.id),
+        bars_written=len(bars),
+        quotes_written=len(quotes),
+    )
+
+
+def _daily_window_mask(
+    times_utc: pd.Series, center: _dt.time, half_width_minutes: int, tz: str
+) -> pd.Series:
+    """Boolean mask: tick times within ±``half_width_minutes`` of ``center`` daily.
+
+    ``center`` is a wall-clock time-of-day in timezone ``tz`` (e.g. 17:00
+    ``America/New_York`` for the FX/CFD financing rollover). ``times_utc`` is a
+    tz-aware UTC datetime Series. The comparison is done on minute-of-day with a
+    signed modular distance so a window that straddles midnight still works.
+    """
+    local = times_utc.dt.tz_convert(tz)
+    minute_of_day = local.dt.hour * 60 + local.dt.minute
+    center_min = center.hour * 60 + center.minute
+    # signed distance from center in [-720, 720) minutes (handles midnight wrap)
+    signed = (minute_of_day - center_min + 720) % 1440 - 720
+    return signed.abs() <= half_width_minutes
+
+
+def ingest_mt5_intraday_windowed(
+    symbol: str,
+    catalog: ParquetDataCatalog,
+    *,
+    rollover: _dt.time,
+    half_width_minutes: int,
+    tz: str = "UTC",
+) -> IngestResult:
+    """Hybrid ingest: FULL M1 bars + quote ticks ONLY in a daily rollover window.
+
+    This is the data-curation half of the "tick only around entries/exits"
+    backtest (see ``docs/refactor/nautilus/backtest_speed_benchmark.md``). Nautilus
+    merges bars + quotes into one time-ordered stream, so loading 1-minute bars
+    across the whole holding period but quote ticks only within
+    ``[rollover − Δ, rollover + Δ]`` gives coarse (bar) marking outside the window
+    and full bid/ask fill realism inside it — at a fraction of the tick volume.
+
+    Parameters
+    ----------
+    rollover : datetime.time
+        Wall-clock time-of-day of the financing rollover, in ``tz``.
+    half_width_minutes : int
+        Δ — keep ticks within this many minutes either side of ``rollover``.
+    tz : str
+        Timezone of ``rollover`` (default ``"UTC"``; e.g. ``"America/New_York"``).
+    """
+    inst = _resolve_instrument(symbol)
+    instrument_id = NTInstrumentId.from_str(str(inst.id))
+    price_precision = inst.price_precision
+    bar_type = BarType.from_str(f"{inst.id}-1-MINUTE-LAST-EXTERNAL")
+
+    sym_root = mt5_data_root() / symbol
+    bars_df = _read_partitions(sym_root / "bars_M1")
+    ticks_df = _read_partitions(sym_root / "ticks")
+
+    if not ticks_df.empty:
+        times = pd.to_datetime(ticks_df["time"], utc=True)
+        ticks_df = ticks_df[_daily_window_mask(times, rollover, half_width_minutes, tz).values]
 
     bars = _build_bars(bars_df, bar_type, price_precision) if not bars_df.empty else []
     quotes = (
