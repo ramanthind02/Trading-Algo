@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lib.cache.runtime.bias_node_cache import BiasNodeCache, CacheMissError
-from lib.cache.runtime.cache_paths import default_live_artifact_cache_dir
+from cache.runtime.bias_node_cache import BiasNodeCache, CacheMissError
+from cache.runtime.cache_paths import default_live_artifact_cache_dir
 from lib.core.enums import PositionMode, Ticker, TimeFrame
 
 

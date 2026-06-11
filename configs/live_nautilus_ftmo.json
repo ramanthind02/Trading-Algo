@@ -1,0 +1,52 @@
+{
+  "_comment": "Live Nautilus + vault runtime config (FTMO sandbox tier). The signal is broker-agnostic: it comes from the central cache populated by the Darwinex MT5 scraper, so every broker trades one identical forecast. This file drives deployment.live.run_vault_sandbox, which pairs the vendored MT5 live DATA client (real FTMO quotes) with Nautilus's SandboxExecutionClient (local virtual fills, NETTING) -- orders NEVER reach the broker. FTMO demo creds are read from .env (FTMO_DEMO_SERVER/LOGIN/PASSWORD).",
+
+  "broker": "ftmo",
+  "venue": "MT5",
+
+  "_comment_signal_broker": "Signal source of truth. Every execution broker generates signals from this single feed (Darwinex), read from the shared cache data/broker_cache/darwinex/. Execution (quotes, orders, sizing) stays keyed on 'broker' above.",
+  "signal_broker": "darwinex",
+
+  "_comment_vault": "vault_root defaults to 'vault' (the fitted prop vault present on disk). The 'vault_cfd_prop' profile resolves to a directory not materialised in this repo; point this at a dedicated CFD vault once one exists.",
+  "vault_root": "vault",
+
+  "_comment_tickers": "Repo-canonical tickers to trade. Targets are filtered to those the vault forecasts AND the broker can resolve via configs/mt5_brokers.yaml (e.g. TLT has no FTMO CFD and is skipped automatically).",
+  "tickers": ["ES", "NQ", "GC", "CL", "SI"],
+
+  "target_volatility": 0.15,
+  "max_position_pct": 2.5,
+  "idm_max": 2.5,
+
+  "_comment_warmup": "Bias nodes need a long daily history before forecasts are valid; the strategy stays flat until every required ticker has >= warmup_min_bars daily bars in the cache. prediction_daily_max_bars MUST stay > warmup_min_bars (equal values cause a 1-bar off-by-one where a ticker with a slightly different calendar fails the >= gate).",
+  "warmup_min_bars": 500,
+  "prediction_daily_max_bars": 750,
+
+  "_comment_rollover": "Rollover-aligned execution (broker wall-clock, from a fresh tick). EXIT at exit_lead_min before the 00:00-broker financing rollover: flatten only the swap-negative legs whose round-trip half-spread < cross_margin*|swap| (positive-carry legs are held to collect swap). ENTRY at each symbol's reopen + settle (metals wait entry_settle_metal_min for the spike to decay) on today's fresh daily bar. poll_interval_secs is the live timer cadence; quote_window_timeout_secs bounds the quote wait before executing with whatever arrived.",
+  "poll_interval_secs": 20,
+  "quote_window_timeout_secs": 90,
+  "exit_lead_min": 15,
+  "entry_settle_min": 0,
+  "entry_settle_metal_min": 5,
+  "cross_margin": 1.0,
+
+  "_comment_sizing": "sizing_basis_usd=0 reads account equity from the sandbox account (sandbox_starting_balance below). Set a positive value to pin the sizing capital instead. Dead-band mirrors the legacy CFD path.",
+  "sizing_basis_usd": 0.0,
+  "account_currency": "USD",
+  "lot_size_ceiling": 100.0,
+  "min_rebalance_lots": 0.01,
+  "min_rebalance_notional_usd": 50.0,
+
+  "sandbox_starting_balance": 100000.0,
+  "heartbeat_secs": 300,
+  "log_level": "INFO",
+
+  "_comment_exec_tier": "Execution tier: 'sandbox' (local simulated fills, zero broker risk, default) | 'demo' (REAL orders to the FTMO demo account) | 'live' (REAL orders to a funded account). demo/live also require the --live CLI flag to arm.",
+  "exec_tier": "sandbox",
+
+  "_comment_robustness": "startup_grace_secs withholds the first decision after (re)start so broker position/account reconciliation populates first (a crash+restart never trades against a phantom-flat book). max_quote_age_secs defers a symbol whose latest quote is older than this (don't fill into a closed/dead book).",
+  "startup_grace_secs": 60,
+  "max_quote_age_secs": 600.0,
+
+  "_comment_signal_refresh": "Before arming, the shared Darwinex signal cache is rebuilt from the scraped data/mt5_data series (no MT5 connection -- Darwinex is do-not-disturb). Each broker process logs to {log_directory}/{broker}_*.log. Signal freshness depends on the daily Darwinex scraper having run.",
+  "log_directory": "logs/live_nautilus"
+}

@@ -49,7 +49,10 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-import norgatedata
+try:
+    import norgatedata
+except ImportError:
+    norgatedata = None  # type: ignore[assignment]
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq

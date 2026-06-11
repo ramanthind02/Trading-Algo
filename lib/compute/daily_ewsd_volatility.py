@@ -38,6 +38,78 @@ class EWSDVolatilityConfig:
     default_annual_vol: float = DEFAULT_ANNUAL_VOL
 
 
+# Process-global EWSD blend override. Mirrors ``lib.core.research_feed``'s set-at-entry
+# pattern: defaults to Carver's 70/30 and is only changed by an explicit
+# ``set_ewsd_blend_weights()`` at pipeline entry (e.g. the agent-research run honoring
+# ``StrategySpec.vol_scaling=LONG_ONLY`` → 0.0/1.0). Default-unchanged, so existing behavior
+# and the byte-identical parity gates are unaffected unless a caller opts in.
+_BLEND_OVERRIDE: dict[str, Optional[float]] = {"short": None, "long": None}
+
+# When True the F = tau/sigma forecast-scaling formula is bypassed; the raw signal
+# (in [-1, 1]) is passed through as-is. Set by apply_vol_scaling(VolScaling.OFF).
+_VOL_SCALING_OFF: bool = False
+
+
+def set_vol_scaling_off(disabled: bool) -> None:
+    """Enable or disable the vol-scaling bypass. Call once at pipeline entry."""
+    import os
+
+    global _VOL_SCALING_OFF
+    _VOL_SCALING_OFF = disabled
+    if disabled:
+        os.environ["VOL_SCALING_OFF"] = "1"
+    else:
+        os.environ.pop("VOL_SCALING_OFF", None)
+
+
+def is_vol_scaling_off() -> bool:
+    """Return True when vol scaling has been disabled for this process."""
+    import os
+
+    return _VOL_SCALING_OFF or os.environ.get("VOL_SCALING_OFF") == "1"
+
+
+def set_ewsd_blend_weights(short_weight: float, long_weight: float) -> None:
+    """Override the process-global EWSD short/long blend (call once at pipeline entry).
+
+    Also stamps ``EWSD_BLEND_WEIGHTS`` as ``"short,long"`` so loky worker processes
+    inherit the correct blend via the env-var fallback in :func:`_default_ewsd_config`.
+    """
+    import os
+
+    _BLEND_OVERRIDE["short"] = float(short_weight)
+    _BLEND_OVERRIDE["long"] = float(long_weight)
+    os.environ["EWSD_BLEND_WEIGHTS"] = f"{short_weight},{long_weight}"
+
+
+def reset_ewsd_blend_weights() -> None:
+    """Restore the default 70/30 blend (clears any override)."""
+    import os
+
+    _BLEND_OVERRIDE["short"] = None
+    _BLEND_OVERRIDE["long"] = None
+    os.environ.pop("EWSD_BLEND_WEIGHTS", None)
+
+
+def _default_ewsd_config() -> EWSDVolatilityConfig:
+    """An :class:`EWSDVolatilityConfig` honouring any active blend override."""
+    import os
+
+    short, long = _BLEND_OVERRIDE["short"], _BLEND_OVERRIDE["long"]
+    if short is None or long is None:
+        # Fallback: read from env so loky worker processes see the correct blend.
+        raw = os.environ.get("EWSD_BLEND_WEIGHTS", "")
+        if raw:
+            try:
+                s, l = raw.split(",", 1)
+                short, long = float(s), float(l)
+            except (ValueError, TypeError):
+                pass
+    if short is None or long is None:
+        return EWSDVolatilityConfig()
+    return EWSDVolatilityConfig(blend_short_weight=short, blend_long_weight=long)
+
+
 @dataclass
 class _TickerState:
     """Mutable incremental EWSD state for a single ticker."""
@@ -60,7 +132,7 @@ class DailyEWSDVolatilityService:
         config: Optional[EWSDVolatilityConfig] = None,
         store_dir: Optional[str] = None,
     ) -> None:
-        self.config = config or EWSDVolatilityConfig()
+        self.config = config or _default_ewsd_config()
         self.store_dir = Path(store_dir) if store_dir is not None else None
         self._state_path = self.store_dir / "ewsd_state.json" if self.store_dir else None
         self._history_path = self.store_dir / "daily_ewsd_volatility.parquet" if self.store_dir else None

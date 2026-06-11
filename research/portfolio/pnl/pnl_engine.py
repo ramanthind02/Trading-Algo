@@ -53,23 +53,40 @@ class VectorizedPnLEngine:
         )
 
 
-def make_pnl_engine(kind: str) -> PnLEngine:
+def make_pnl_engine(
+    kind: str,
+    *,
+    multi_ticker: bool = False,
+    **engine_kwargs: object,
+) -> PnLEngine:
     """Build the P&L engine selected by ``kind``.
 
     Parameters
     ----------
     kind : {"vectorized", "nautilus"}
         ``"vectorized"`` returns the frozen-baseline wrapper (default research
-        path). ``"nautilus"`` is not yet implemented.
+        path). ``"nautilus"`` returns the realistic ``BacktestEngine`` lane.
+    multi_ticker : bool
+        For ``"nautilus"``: wrap the single-instrument lane in
+        :class:`MultiTickerNautilusPnLEngine` so a multi-ticker ``position_fraction``
+        frame (the portfolio pipeline's combined positions) is handled per
+        instrument and combined. The vectorized lane is multi-ticker natively.
+    **engine_kwargs
+        Forwarded to ``NautilusPnLEngine`` (e.g. ``window_policy``,
+        ``execution_policy``, ``rollover_minute``, ``measure_spread``).
     """
     if kind == "vectorized":
         return VectorizedPnLEngine()
     if kind == "nautilus":
         # Imported lazily so the default (vectorized) path never pays the
         # Nautilus import cost, and the parity baseline stays decoupled.
-        from research.portfolio.pnl.nautilus_engine import NautilusPnLEngine
+        from research.portfolio.pnl.nautilus_engine import (
+            MultiTickerNautilusPnLEngine,
+            NautilusPnLEngine,
+        )
 
-        return NautilusPnLEngine()
+        base = NautilusPnLEngine(**engine_kwargs)  # type: ignore[arg-type]
+        return MultiTickerNautilusPnLEngine(base=base) if multi_ticker else base
     raise ValueError(
         f"Unknown pnl_engine kind {kind!r}; expected 'vectorized' or 'nautilus'."
     )

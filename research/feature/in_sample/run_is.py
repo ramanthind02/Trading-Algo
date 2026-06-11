@@ -59,6 +59,7 @@ from lib.core.repo_bootstrap import ensure_repo_root_on_syspath
 
 ensure_repo_root_on_syspath(Path(__file__).resolve())
 
+from lib.core.research_feed import set_research_feed
 from research.feature.config import load_config
 from research.feature.exploration import execute_exploration_phase, exploration_permutation_enabled
 from research.feature.research_table_exports import canonical_in_sample_visualization_dir
@@ -66,6 +67,14 @@ from research.feature.research_table_exports import canonical_in_sample_visualiz
 
 def main() -> None:
     config = load_config()
+
+    # Exploration stays frictionless/vectorized (no cost lane). It may use the
+    # longer FUTURES history for stock-index tickers via the per-ticker override
+    # while everything else uses the configured feed (CFD by default).
+    set_research_feed(
+        config.data_feed,
+        futures_tickers=config.exploration_futures_index_tickers,
+    )
 
     print(f"\nRobustness enabled: {config.robustness.enabled}")
     print(f"Full-grid permutation: {config.robustness.run_full_grid_permutation}")

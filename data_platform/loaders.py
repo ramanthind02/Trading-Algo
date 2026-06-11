@@ -7,8 +7,9 @@ Single home for the read-side of the canonical stores:
 
 Both stores return a DataFrame indexed by unix timestamp (int64) with a
 ``datetime`` column; float32/int32 on disk are upcast to float64/int64 for
-pipeline compatibility, and both the legacy (``datetime`` column) and current
-(``date`` index) parquet schemas are accepted.
+pipeline compatibility. Accepted on-disk schemas: a plain ``date`` column, or
+a ``date``/``datetime``-named index (DatetimeIndex or string-named). The legacy
+``datetime``-column schema has been removed (no production file uses it).
 
 ``utils.core.helpers`` and ``utils.core.stock_helpers`` re-export these so existing
 imports keep working; new code should import from ``data_platform.loaders``.
@@ -68,11 +69,13 @@ def _nautilus_research_candles_enabled() -> bool:
 
 def _normalize_loaded_frame(df: pd.DataFrame, start: datetime, end: datetime) -> pd.DataFrame:
     """Shared schema handling for both the futures and stock stores."""
-    if "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"])
-    elif "date" in df.columns:
-        df["datetime"] = pd.to_datetime(df["date"])
-        df = df.drop(columns=["date"])
+    if "date" in df.columns:
+        # Insert at position 0 to match the index-restoring branch below, so
+        # date32-contract files (plain 'date' column) and legacy files (date as
+        # pandas index) produce identical column order.
+        datetimes = pd.to_datetime(df["date"])
+        df = df.drop(columns=["date"]).copy()
+        df.insert(0, "datetime", datetimes)
     elif isinstance(df.index, pd.DatetimeIndex) or (
         hasattr(df.index, "name") and df.index.name in ("date", "datetime")
     ):
@@ -88,7 +91,7 @@ def _normalize_loaded_frame(df: pd.DataFrame, start: datetime, end: datetime) ->
         df["volume"] = df["volume"].astype("int64")
 
     mask = (df["datetime"] >= start) & (df["datetime"] <= end)
-    df = df[mask]
+    df = df[mask].copy()
 
     df["timestamp"] = df["datetime"].astype("int64") // 10**9
     return df.set_index("timestamp").sort_index()
@@ -108,6 +111,18 @@ def load_data(
     Raises:
         FileNotFoundError: If the parquet file does not exist.
     """
+    from lib.core.research_feed import LEGACY_FEED, feed_for_ticker
+
+    _feed = feed_for_ticker(ticker)
+    if _feed != LEGACY_FEED:
+        # Non-futures research feed (cfd / spliced). Reuse _normalize_loaded_frame
+        # for an output shape identical to the futures path (timestamp index,
+        # float64 OHLC, int64 volume, start/end filtered).
+        from data_platform.providers.mt5.cfd_candles import load_research_candles_raw
+
+        raw = load_research_candles_raw(ticker, timeframe, _feed)
+        return _normalize_loaded_frame(raw, start, end)
+
     if _nautilus_research_candles_enabled():
         from data_platform.nautilus.candles import load_data_nautilus
 
@@ -123,7 +138,7 @@ def load_data(
     if cached is not None:
         return cached.copy()
 
-    df = pd.read_parquet(file_path, engine="fastparquet")
+    df = pd.read_parquet(file_path, engine="pyarrow")
     df = _normalize_loaded_frame(df, start, end)
 
     _LOAD_DATA_CACHE[cache_key] = df.copy()

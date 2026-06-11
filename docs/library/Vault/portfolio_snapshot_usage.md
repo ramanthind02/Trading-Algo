@@ -35,7 +35,7 @@ from ensemble.portfolio import (
     materialize_global_portfolio_predictions,
 )
 from ensemble.vault_manager import ensure_vault_cache_coverage
-from lib.cache import ArtifactScope
+from cache import ArtifactScope
 from lib.core.enums import TimeFrame
 
 ensemble_dirs = ("vault/M/buy_hold/buy_hold_long",)
@@ -50,7 +50,10 @@ ensure_vault_cache_coverage(
 # Assemble a GlobalPortfolio from the working-vault ensemble directories.
 global_portfolio = build_global_portfolio_from_ensemble_dirs(
     ensemble_dirs,
+    active_timeframes=(TimeFrame.M,),
+    target_volatility=0.25,
     max_position_pct=3.5,
+    idm_max=2.5,
 )
 
 train_query = PortfolioCacheQuery(
@@ -132,7 +135,7 @@ Use `prune_inactive_base_model_materializations(...)` when you want the base-mod
 
 ```python
 from ensemble.portfolio import prune_inactive_base_model_materializations
-from lib.cache import ArtifactScope
+from cache import ArtifactScope
 
 cleanup = prune_inactive_base_model_materializations(
     vault_root="vault",
@@ -160,4 +163,4 @@ Rules:
 - Do not use raw strings like `"validation"` for `world`; use `PortfolioWorld.VAL` or the exact stored value `val`.
 - Do not expect cleanup to delete historical portfolio parquet files. Cleanup only targets stale base-model materializations.
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

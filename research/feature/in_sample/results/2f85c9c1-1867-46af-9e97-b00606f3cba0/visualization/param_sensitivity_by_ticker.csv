@@ -1,0 +1,16 @@
+param_sensitivity_by_ticker_key,param_combo_label,feature_name,ticker,n_observations,n_nonzero_signal,sharpe,t_stat,sortino
+tanh_z_mr__k1.5__lb50__AUDNZD,tanh_z_mr__k1.5__lb50,tanh_z_mr_signal_D_k_1.5_lookback_50,AUDNZD,4669,4669,-0.5213403306823781,-2.244052378845885,-0.6864481921150632
+tanh_z_mr__k2__lb50__AUDNZD,tanh_z_mr__k2__lb50,tanh_z_mr_signal_D_k_2_lookback_50,AUDNZD,4669,4669,-0.5048523792823917,-2.173081797089806,-0.665374121423938
+tanh_z_mr__k2.5__lb50__AUDNZD,tanh_z_mr__k2.5__lb50,tanh_z_mr_signal_D_k_2.5_lookback_50,AUDNZD,4669,4669,-0.4917810660545361,-2.1168177603036713,-0.6488078147893626
+tanh_z_mr__k1.5__lb100__AUDNZD,tanh_z_mr__k1.5__lb100,tanh_z_mr_signal_D_k_1.5_lookback_100,AUDNZD,4669,4669,-0.33308387781437165,-1.4337230871553934,-0.45395509779803483
+tanh_z_mr__k2__lb100__AUDNZD,tanh_z_mr__k2__lb100,tanh_z_mr_signal_D_k_2_lookback_100,AUDNZD,4669,4669,-0.3277710624281517,-1.410854654954472,-0.4467884171344593
+tanh_z_mr__k2.5__lb100__AUDNZD,tanh_z_mr__k2.5__lb100,tanh_z_mr_signal_D_k_2.5_lookback_100,AUDNZD,4669,4669,-0.32296319804237866,-1.3901597290546464,-0.4402275800367602
+tanh_z_mr__k1.5__lb150__AUDNZD,tanh_z_mr__k1.5__lb150,tanh_z_mr_signal_D_k_1.5_lookback_150,AUDNZD,4669,4669,-0.19470287193547434,-0.8380771968342471,-0.26968544449284876
+tanh_z_mr__k2__lb150__AUDNZD,tanh_z_mr__k2__lb150,tanh_z_mr_signal_D_k_2_lookback_150,AUDNZD,4669,4669,-0.2036823764305663,-0.8767284908875839,-0.2821366836262412
+tanh_z_mr__k2.5__lb150__AUDNZD,tanh_z_mr__k2.5__lb150,tanh_z_mr_signal_D_k_2.5_lookback_150,AUDNZD,4669,4669,-0.21283574851511453,-0.9161281789452994,-0.29468995355079913
+tanh_z_mr__k1.5__lb200__AUDNZD,tanh_z_mr__k1.5__lb200,tanh_z_mr_signal_D_k_1.5_lookback_200,AUDNZD,4669,4669,-0.1775484259534801,-0.7642377621154888,-0.2476904086780658
+tanh_z_mr__k2__lb200__AUDNZD,tanh_z_mr__k2__lb200,tanh_z_mr_signal_D_k_2_lookback_200,AUDNZD,4669,4669,-0.19816105071920082,-0.8529625488190788,-0.27658939477082484
+tanh_z_mr__k2.5__lb200__AUDNZD,tanh_z_mr__k2.5__lb200,tanh_z_mr_signal_D_k_2.5_lookback_200,AUDNZD,4669,4669,-0.21537003267245455,-0.9270367276557101,-0.30043055554335696
+tanh_z_mr__k1.5__lb252__AUDNZD,tanh_z_mr__k1.5__lb252,tanh_z_mr_signal_D_k_1.5_lookback_252,AUDNZD,4669,4669,-0.1416556164118172,-0.6097410928668124,-0.19729748682607873
+tanh_z_mr__k2__lb252__AUDNZD,tanh_z_mr__k2__lb252,tanh_z_mr_signal_D_k_2_lookback_252,AUDNZD,4669,4669,-0.1584250214179224,-0.6819231608578404,-0.22105930544608873
+tanh_z_mr__k2.5__lb252__AUDNZD,tanh_z_mr__k2.5__lb252,tanh_z_mr_signal_D_k_2.5_lookback_252,AUDNZD,4669,4669,-0.17219885738424778,-0.7412111298619048,-0.24044731317141607

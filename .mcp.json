@@ -1,0 +1,9 @@
+{
+  "_comment": "Versions the agent tooling contract — this file pins the codegraph MCP server used by all agents (subagents, worktrees, CI) to the same binary as the user-level config. Update command path if codegraph is reinstalled to a different location.",
+  "mcpServers": {
+    "codegraph": {
+      "command": "C:\\Users\\raman\\AppData\\Local\\codegraph\\current\\bin\\codegraph.cmd",
+      "args": []
+    }
+  }
+}

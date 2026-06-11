@@ -48,7 +48,8 @@ from features.validation.stability_analysis import (
     _param_combo_name,
     run_walkforward_stability,
 )
-from lib.cache.runtime.cache_manager import CacheManager
+from cache.runtime.bootstrap_source_candles import bootstrap_source_candles
+from cache.runtime.cache_manager import CacheManager
 from lib.core.enums import Ticker, TimeFrame
 from research.evaluation.permutation_test.candle_shuffle import CandleShuffler
 from ._support import project_root as _project_root
@@ -105,14 +106,15 @@ def _load_features(
     }
 
     if populate_cache:
-        manager = CacheManager(candle_dir=str(candle_dir))
-        manager.populate_cache(
+        # Seed the central cache the way production does (replaces the retired
+        # CacheManager.populate_cache): bootstrap full candle history so indicators
+        # warm up, then build the bias artifacts for the requested window.
+        bootstrap_source_candles(tickers=[ticker], timeframes=[timeframe], end_date=end)
+        CacheManager().ensure_bias_cache_coverage(
             bias_node_specs=[bias_spec],
             tickers=[ticker],
             start_date=start,
             end_date=end,
-            show_progress=False,
-            overwrite_existing=False,
         )
 
     try:
@@ -125,10 +127,10 @@ def _load_features(
             use_cache=True,
         )
     except Exception as e:
-        pytest.skip(f'Cache not populated: {e}. Run CacheManager.populate_cache() first.')
+        pytest.skip(f'Cache not populated: {e}. Pass populate_cache=True or seed the central cache first.')
 
     if features_df is None or len(features_df) == 0:
-        pytest.skip('Cache not populated. Run CacheManager.populate_cache() first.')
+        pytest.skip('Cache not populated. Pass populate_cache=True or seed the central cache first.')
 
     feature_col = f'{bias_module}_signal_{timeframe.value}_{param_name}_{param_value}'
     if feature_col not in features_df.columns:

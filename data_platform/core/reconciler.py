@@ -3,16 +3,9 @@
 Given the canonical existing daily frame for an instrument and incoming batches
 keyed by source, the reconciler:
   1. asks SourcePriorityConfig which source wins for (instrument_class, resolution),
-  2. for the IB case, applies the existing append-only + junction-ratio splice
-     (``prepare_ib_rows_for_central_cache_append`` in utils/cache/runtime — the
-     runtime/engine layer, which this layer calls but does not own),
-  3. for the Norgate/MT5 case, passes rows through append-only,
-  4. flags overlap conflicts (close deviation above threshold),
-  5. returns the merged frame + provenance records.
-
-This generalises the ad-hoc ``upsert_tws_candles`` direct-call pattern. It does
-not modify the existing live path; ``upsert_tws_candles`` can be refactored to
-call ``reconcile_daily_batch`` with no behaviour change.
+  2. passes rows through append-only (no junction-ratio scaling),
+  3. flags overlap conflicts (close deviation above threshold),
+  4. returns the merged frame + provenance records.
 
 See docs/library/Data/multi_source_update_architecture.md §7.3.
 """
@@ -23,7 +16,7 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from lib.cache.runtime.ib_candle_ratio_align import (
+from cache.runtime.ib_candle_ratio_align import (
     prepare_ib_rows_for_central_cache_append,
 )
 
@@ -109,21 +102,13 @@ class SourcePriorityReconciler:
         incoming = incoming_batches[active]
         conflicts = self._detect_conflicts(str(inst.id), existing_df, incoming)
 
-        if active == "ib":
-            result = prepare_ib_rows_for_central_cache_append(
-                existing_df, incoming, apply_junction_ratio=True,
-            )
-            kept = result.candles_df
-            ratio_applied, ratio_value = result.applied_ratio, result.ratio
-            skip_reason = result.skip_reason
-        else:
-            # Norgate / MT5: append-only (no junction ratio), no scaling.
-            result = prepare_ib_rows_for_central_cache_append(
-                existing_df, incoming, apply_junction_ratio=False,
-            )
-            kept = result.candles_df
-            ratio_applied, ratio_value = False, None
-            skip_reason = result.skip_reason
+        # Norgate / MT5: append-only (no junction ratio), no scaling.
+        result = prepare_ib_rows_for_central_cache_append(
+            existing_df, incoming, apply_junction_ratio=False,
+        )
+        kept = result.candles_df
+        ratio_applied, ratio_value = False, None
+        skip_reason = result.skip_reason
 
         merged = _append(existing_df, kept)
         prov = ProvenanceRecord(

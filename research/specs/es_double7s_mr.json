@@ -1,0 +1,52 @@
+{
+  "spec_version": "1.0",
+  "name": "es_double7s_mr",
+  "hypothesis": "Connors' Double 7s: equity indices that close at a 7-day low while still above their long-run trend tend to mean-revert upward over the next few sessions. Parsimonious mean-reversion-with-trend-filter; short_period is the only swept parameter.",
+  "author": "raman",
+  "created": "2026-06-07T00:00:00",
+  "tickers": [
+    "ES",
+    "NQ"
+  ],
+  "data_feed": "norgate_futures",
+  "mode": "daily",
+  "timeframe": "D",
+  "windows": null,
+  "signal": {
+    "module_name": "double7s",
+    "param_grid": {
+      "short_period": [
+        5,
+        7,
+        9
+      ],
+      "ma_period": [
+        200
+      ]
+    }
+  },
+  "direction": "long",
+  "vol_scaling": "blended",
+  "vol_scaling_model": "inherit_daily",
+  "risk": {
+    "target_vol": 0.15,
+    "forecast_cap": 2.0,
+    "max_position_pct": 3.5,
+    "buffer_fraction": 0.0
+  },
+  "account": {
+    "capital": 50000.0,
+    "prop_constraints": null
+  },
+  "execution": {
+    "entry_policy": "market_on_open",
+    "exit_policy": "market_on_open",
+    "unfilled_limit": "cross_after",
+    "holding": "overnight",
+    "fill_feed": "derived"
+  },
+  "vault": {
+    "weight_hierarchy_group": "mean_reversion_indices",
+    "ensemble_name": "es_double7s_mr"
+  }
+}

@@ -18,7 +18,7 @@ import pandas as pd
 
 from ensemble.vault import feature_files as _vault_feature_files
 from research.feature.config import OOSWindowConfig, ResearchWindowConfig
-from lib.cache import extract_cross_ticker_names
+from cache import extract_cross_ticker_names
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.futures_micro_specs import canonical_listed_micro_futures
 from lib.core.vault_paths import (
@@ -355,6 +355,24 @@ class PortfolioResearchConfig:
     # baseline path; "nautilus" routes positions into the realistic BacktestEngine
     # lane (WP-3 Unit 2, not yet implemented).
     pnl_engine: Literal["vectorized", "nautilus"] = "vectorized"
+    # Research price feed (alpha + costs). Default "cfd" — research models what we
+    # actually trade (Darwinex CFDs). "futures" restores the Norgate path (and is
+    # what the parity harness pins for its byte-identical gate). Applied at pipeline
+    # entry via lib.core.research_feed.set_research_feed.
+    data_feed: Literal["cfd", "futures"] = "cfd"
+    # Phases whose scored returns use the realistic Nautilus fill lane (spread +
+    # rollover overlay); all other phases use the fast vectorized lane. Default:
+    # realistic on the OOS test/holdout only (train/val stay vectorized for speed).
+    # "test" = SINGLE_FIT scored fold; "holdout_test" = the ROLLING_HOLDOUT scored
+    # fold (HoldoutFoldRole.HOLDOUT_TEST.value) — the default fit mode. The validation
+    # fold ("validation") deliberately stays vectorized. The parity harness and
+    # feed-comparison baselines set this to () (vectorized).
+    realistic_phases: tuple[str, ...] = ("test", "holdout_test")
+    # Rollover swap-avoidance overlay (the live execution algo): flatten just before
+    # the 00:00-broker financing rollover and re-enter just after, with MARKET orders.
+    # rollover_minute=0 == 00:00 broker time (MT5 timestamps are broker mislabelled-UTC).
+    rollover_minute: int = 0
+    rollover_half_width_min: int = 15
     futures_sim: FuturesSimConfig = field(default_factory=FuturesSimConfig)
     prop_firm_report: PropFirmReportConfig = field(default_factory=PropFirmReportConfig)
     portfolio_fit_mode: PortfolioFitMode = PortfolioFitMode.ROLLING_HOLDOUT
@@ -750,11 +768,12 @@ def load_config() -> PortfolioResearchConfig:
         Ticker.NQ,
         Ticker.GC,
         Ticker.CL,
+        Ticker.SI,
     ]
     timeframe = TimeFrame.D
     start = datetime(2000, 1, 1)
-    # Latest daily OHLC in data/ohlc_data for ES, NQ, GC, CL (D_* parquet).
-    end = datetime(2026, 5, 13)
+    # Latest daily OHLC in data/ohlc_data for ES, NQ, GC, CL, SI (D_* parquet).
+    end = datetime(2026, 6, 2)
     use_cache = True
     populate_cache = True
 
@@ -781,7 +800,7 @@ def load_config() -> PortfolioResearchConfig:
         train_start=datetime(2007, 1, 1),
         train_end=datetime(2023, 12, 30),
         val_start=datetime(2024, 1, 1),
-        val_end=datetime(2026, 5, 13),
+        val_end=datetime(2026, 6, 2),
     )
 
     # Daily + monthly + weekly (Williams %R) ensembles from the prop vault.
@@ -917,8 +936,12 @@ def load_prop_firm_portfolio_research_config(
         emit_diagnostics_csv=True,
     )
     oos = base.oos_window
+    # ``OOSWindowConfig`` (alias of ResearchWindowConfig) exposes ``test_end`` as
+    # a read-only property aliasing ``val_end`` — it is NOT a dataclass field, so
+    # ``replace(oos, test_end=...)`` raises TypeError. The holdout test slice end
+    # is ``val_end``; update that field directly.
     oos_new = (
-        replace(oos, test_end=end_dt)
+        replace(oos, val_end=end_dt)
         if oos is not None
         else None
     )

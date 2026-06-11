@@ -1,30 +1,35 @@
 ## How the Live Trading Script Works
 
-> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+> **Status:** `scripts/enigma_live_forecast.py` is the legacy daily-rebalance chain. It still runs in production for the `futures_prop` and `personal` profiles (IB-connected). The new Nautilus vault runtime (`deployment/live/run_vault_sandbox.py`) supersedes it for the `cfd_prop` (MT5/CFD) path. IB (`data_platform/providers/ib/`) has been removed; the `futures_prop` and `personal` profiles that connect to TWS remain intact in `scripts/enigma_live_forecast.py`. See [deployment/live/README.md](../../../deployment/live/README.md) for the MT5/Nautilus path.
 
-  The pipeline is driven by `scripts/enigma_live_forecast.py`. It supports two
-  profiles, each with a thin wrapper entrypoint:
+  The pipeline is driven by `scripts/enigma_live_forecast.py`. It supports
+  three profiles, each with a thin wrapper entrypoint:
 
   | Profile | Wrapper | Vault | Instruments | Telegram channel | Runs at (ET) |
   |---------|---------|-------|-------------|------------------|--------------|
-  | `prop` | `scripts/enigma_prop_forecast.py` | `vault/` | Micro futures (MES/MNQ/MGC/M2K/MYM, ZN for TLT) | Enigma Signals - Prop Firms | 6:00 PM |
+  | `futures_prop` | `scripts/enigma_futures_prop_forecast.py` | `vault/` | Micro futures (MES/MNQ/MGC/M2K/MYM, ZN for TLT) | Enigma Signals - Prop Firms | 6:00 PM |
   | `personal` | `scripts/enigma_personal_forecast.py` | `vault_personal/` | ETF fractional shares (SPY/QQQ/GLD/IWM/DIA/TLT) | Enigma Signals - Personal Account | 3:45 PM |
+  | `cfd_prop` | `scripts/enigma_cfd_prop_forecast.py` | `vault_cfd_prop/` | CFD lots (MT5 per-account sizing) | Prop Firms (CFDs via MT5) | — |
+
+  > Note: `scripts/enigma_prop_forecast.py` is a **deprecated shim** that
+  > delegates to `enigma_futures_prop_forecast.py`. Update any cron jobs to
+  > call `enigma_futures_prop_forecast.py` directly.
 
   ### Testing (no Telegram sent)
   ```bash
-  python scripts/enigma_prop_forecast.py     --dry-run --port 7497
-  python scripts/enigma_personal_forecast.py --dry-run --port 7497
+  python scripts/enigma_futures_prop_forecast.py --dry-run --port 7497
+  python scripts/enigma_personal_forecast.py     --dry-run --port 7497
   ```
 
   ### Production (sends Telegram)
   ```bash
-  python scripts/enigma_prop_forecast.py     --port 7497
-  python scripts/enigma_personal_forecast.py --port 7497
+  python scripts/enigma_futures_prop_forecast.py --port 7497
+  python scripts/enigma_personal_forecast.py     --port 7497
   ```
 
   ### Override capital
   ```bash
-  python scripts/enigma_prop_forecast.py --dry-run --port 7497 --capital 5000
+  python scripts/enigma_futures_prop_forecast.py --dry-run --port 7497 --capital 5000
   ```
 
   - `--port 7497` = paper trading, `--port 7496` = live trading
@@ -33,7 +38,7 @@
 
   ### Key differences between profiles
 
-  **Prop profile** (runs *after* the daily candle closes at 5:00 PM ET):
+  **Futures-prop profile** (`futures_prop`) (runs *after* the daily candle closes at 5:00 PM ET):
   - Uses IB's official daily bars (no partial-candle synthesis)
   - Sizes micro futures contracts -- `notional_per_contract = price * point_value`
   - Reads from `vault/` (the prop-firm portfolio)
@@ -108,7 +113,7 @@
   before upsert so incomplete IB dailies are not cached). Session-only partial
   rows for the current run are merged in memory via `PortfolioCacheQuery.daily_candle_overlay`.
 
-  1. Daily candles: `upsert_tws_candles()` first calls `prepare_ib_rows_for_central_cache_append()` (`lib/cache/runtime/ib_candle_ratio_align.py`): **append-only** rows (strictly after the cache’s last session), then a **junction ratio** on OHLC for `CONTFUT` so the new tail matches the last Norgate-backed close. Then `CentralCacheStore.upsert_candles()` merges (deduplicates by date, keeps latest). The merged result is written to `.cache/.../candles/{ticker}/D.parquet`.
+  1. Daily candles: `upsert_tws_candles()` first calls `prepare_ib_rows_for_central_cache_append()` (`cache/runtime/ib_candle_ratio_align.py`): **append-only** rows (strictly after the cache’s last session), then a **junction ratio** on OHLC for `CONTFUT` so the new tail matches the last Norgate-backed close. Then `CentralCacheStore.upsert_candles()` merges (deduplicates by date, keeps latest). The merged result is written to `.cache/.../candles/{ticker}/D.parquet`.
   1. Monthly candles: Reads the full cached daily series back from the cache, resamples to monthly (OHLCV aggregation), and upserts the      
   monthly candles. This ensures monthly bars are always derived from the **cached** complete history, not from session-only partials.
 
@@ -134,7 +139,7 @@
   - `artifacts/live/ewsd/ES_D_long_run_window_2520.parquet` -- daily volatility for ES
   - ...etc for each (bias_node, ticker, timeframe) combination
 
-  These cached artifacts are what enable fast vectorized backtests later -- the bias nodes don't need to be recomputed from raw candles every time.
+  These cached artifacts enable fast vectorized backtests later -- the bias nodes don't need to be recomputed from raw candles every time.
 
   **Step 7 -- Fit the portfolio**
 
@@ -200,11 +205,11 @@ The script is meant to run once per day after market close. Futures settle at 5:
 
 ### Windows (Task Scheduler)
 
-1. Run `deploy/setup_scheduled_task.bat` as Administrator (one-time setup)
+1. Run `deployment/ops/setup_scheduled_task.bat` (or the PowerShell equivalent `deployment/ops/setup_scheduled_task.ps1`) as Administrator (one-time setup)
 2. Two scheduled tasks are created under `TradingAlgo\`:
-   - `TradingAlgo\PropForecast` -- runs `deploy/run_prop_forecast.bat` at 3:00 PM PT (6:00 PM ET)
-   - `TradingAlgo\PersonalForecast` -- runs `deploy/run_personal_forecast.bat` at 12:45 PM PT (3:45 PM ET)
-3. Output is logged to `deploy/forecast.log`
+   - `TradingAlgo\PropForecast` -- runs `deployment/ops/run_prop_forecast.bat` at 3:00 PM PT (6:00 PM ET)
+   - `TradingAlgo\PersonalForecast` -- runs `deployment/ops/run_personal_forecast.bat` at 12:45 PM PT (3:45 PM ET)
+3. Output is logged to `logs/forecast.log`
 
 ```bat
 REM Verify the tasks exist
@@ -219,8 +224,9 @@ REM Remove a task
 schtasks /delete /tn "TradingAlgo\PropForecast" /f
 ```
 
-If you're not in Pacific Time, edit the `/st` values in `setup_scheduled_task.bat`
-to match your local timezone before running it.
+If you're not in Pacific Time, edit the `/st` values in `deployment/ops/setup_scheduled_task.bat`
+(or the `$startTime` values in `deployment/ops/setup_scheduled_task.ps1`) to match your local
+timezone before running it.
 
 ### Linux (cron)
 
@@ -231,8 +237,8 @@ crontab -e
 # Personal forecast: 3:45 PM ET = 19:45 UTC (EST) / 20:45 UTC (EDT)
 # Prop forecast:     6:00 PM ET = 22:00 UTC (EST) / 23:00 UTC (EDT)
 # Example assumes the server is set to US/Eastern timezone.
-45 15 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/enigma_personal_forecast.py --port 7497 >> deploy/forecast.log 2>&1
-0 18 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/enigma_prop_forecast.py --port 7497 >> deploy/forecast.log 2>&1
+45 15 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/enigma_personal_forecast.py --port 7497 >> logs/forecast.log 2>&1
+0 18 * * 1-5 cd /home/raman/repos/Trading-Algo && source venv/bin/activate && python scripts/enigma_prop_forecast.py --port 7497 >> logs/forecast.log 2>&1
 ```
 
 Notes for Linux:
@@ -240,4 +246,4 @@ Notes for Linux:
 - TWS/IB Gateway must be running -- you can use `tmux` or `screen` to keep it alive, or run IB Gateway in headless mode
 - The shared venv is at `/home/raman/repos/Trading-Algo/venv/` per CLAUDE.md
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against the working tree on 2026-06-10._

@@ -32,6 +32,7 @@ Test groups:
 import asyncio
 import pytest
 from unittest.mock import MagicMock, call, patch
+from mt5connect.config import MT5Config
 from mt5connect.connection import MT5Connection, ConnectionState, AccountSnapshot
 from mt5connect.errors import MT5ConnectionError, MT5LoginError
 
@@ -688,3 +689,69 @@ class TestAccountSnapshot:
         assert "10000.00" in s
         assert "USD" in s
         assert "2000" in s
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 21. Terminal path binding (multi-terminal determinism)
+#
+# On a machine with more than one MT5 terminal install, a bare mt5.initialize()
+# attaches non-deterministically. MT5Config.path lets the caller pin the exact
+# terminal; _initialize() must forward it as mt5.initialize(path=...).
+# ═════════════════════════════════════════════════════════════════════════════
+
+_FTMO_PATH = r"C:\Program Files\FTMO Global Markets MT5 Terminal\terminal64.exe"
+
+
+def _config_with_path(path):
+    """A valid MT5Config carrying an explicit terminal path."""
+    return MT5Config(
+        account=1513568029,
+        password="test_password",
+        server="FTMO-Demo",
+        symbols=["EURUSD"],
+        reconnect_initial_delay_s=0.01,
+        reconnect_max_delay_s=0.05,
+        reconnect_max_attempts=3,
+        timeout_s=5.0,
+        path=path,
+    )
+
+
+class TestTerminalPath:
+
+    def test_path_defaults_to_none(self, config):
+        assert config.path is None
+
+    def test_path_field_is_stored(self):
+        cfg = _config_with_path(_FTMO_PATH)
+        assert cfg.path == _FTMO_PATH
+
+    def test_initialize_forwards_path_when_set(self, mock_mt5):
+        conn = MT5Connection(_config_with_path(_FTMO_PATH))
+        conn.connect()
+        mock_mt5.initialize.assert_called_once_with(path=_FTMO_PATH)
+
+    def test_initialize_bare_when_path_none(self, config, mock_mt5):
+        """No path → bare initialize() with NO path kwarg (single-terminal machines)."""
+        conn = MT5Connection(config)
+        conn.connect()
+        mock_mt5.initialize.assert_called_once_with()
+        # belt-and-braces: the call carried no `path` keyword
+        _, kwargs = mock_mt5.initialize.call_args
+        assert "path" not in kwargs
+
+    def test_login_still_uses_account_server(self, mock_mt5):
+        """Path binding must not disturb the login credentials."""
+        conn = MT5Connection(_config_with_path(_FTMO_PATH))
+        conn.connect()
+        mock_mt5.login.assert_called_once_with(
+            login=1513568029,
+            password="test_password",
+            server="FTMO-Demo",
+            timeout=5000,
+        )
+
+    def test_connect_succeeds_with_path(self, mock_mt5):
+        conn = MT5Connection(_config_with_path(_FTMO_PATH))
+        conn.connect()
+        assert conn.state == ConnectionState.CONNECTED

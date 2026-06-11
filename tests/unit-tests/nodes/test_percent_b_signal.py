@@ -43,11 +43,15 @@ def test_create_fresh_bias_node_resolves() -> None:
     assert type(node).__name__ == "PercentBSignal"
 
 
-def test_long_exits_on_cross_above_upper_band() -> None:
+def test_long_enters_on_dip_then_exits_on_cross_above_upper_band() -> None:
+    # Long mean reversion: a sharp DIP crosses %B below the lower band (enter long),
+    # then a sharp RALLY crosses %B above the upper band (exit). period=20 so a single
+    # outlier bar is a genuine band breach (with period=5 one bar dominates sigma and
+    # %B can never cross past 0/1).
     node = PercentBSignal(
         Ticker.ES,
         TimeFrame.D,
-        period=5,
+        period=20,
         std_dev=2.0,
         lower_threshold=0.0,
         upper_threshold=1.0,
@@ -56,21 +60,16 @@ def test_long_exits_on_cross_above_upper_band() -> None:
         exit_bars=5,
     )
     base = 100.0
-    for i in range(30):
-        node.add_candle(_candle(i, base))
+    for i in range(20):
+        node.add_candle(_candle(i, base))  # flat warmup
 
-    # Sharp rally should eventually cross %B above 1 and flatten a long.
-    long_seen = False
-    flat_after_long = False
-    for i in range(30, 120):
-        out = node.add_candle(_candle(i, base + (i - 30) * 2.0))[0]
-        if out == 1.0:
-            long_seen = True
-        if long_seen and out == 0.0:
-            flat_after_long = True
-            break
-    assert long_seen
-    assert flat_after_long
+    # Sharp dip -> %B crosses below the lower band -> enter long.
+    enter = node.add_candle(_candle(20, base - 10.0))[0]
+    # Sharp rally -> %B crosses above the upper band -> exit the long.
+    exit_sig = node.add_candle(_candle(21, base + 10.0))[0]
+
+    assert enter == 1.0
+    assert exit_sig == 0.0
 
 
 def test_invalid_thresholds_raise() -> None:

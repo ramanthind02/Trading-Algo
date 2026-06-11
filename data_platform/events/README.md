@@ -53,3 +53,5 @@ cpi = load_econ_series("CPISA")          # one econ series by safe symbol
 
 This was `utils/calendar/` before the data-platform consolidation. The economic-release
 scraper and the `data/events/` data layout were added in the same pass.
+
+> _Verified against current code via CodeGraph on 2026-06-07._

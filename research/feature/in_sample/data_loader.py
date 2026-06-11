@@ -39,15 +39,15 @@ class SupportsBiasCachePopulation(Protocol):
 from features.extraction.feature_extractor import extract_features_for_bias_node
 from research.feature._internal.bootstrap import find_repo_root
 from research.feature.config import CachePopulationMode, FeatureType, RAW_TARGET_COLS
-from lib.cache import ArtifactScope
-from lib.cache.runtime.cache_manager import CacheManager
+from cache import ArtifactScope
+from cache.runtime.cache_manager import CacheManager
 from lib.core.enums import Ticker, TimeFrame
-from lib.core.helpers import load_data_multi_ticker
-from lib.cache.runtime.feature_pipeline_support import (
+from data_platform.loaders import load_data_multi_ticker
+from cache.runtime.feature_pipeline_support import (
     NESTED_GRID_PARAM_KEYS,
     expand_param_grid as _expand_bias_param_grid,
 )
-from utils.data.cross_ticker_store import extract_cross_ticker_names
+from cache.runtime.cross_ticker_store import extract_cross_ticker_names
 
 
 def _resolve_project_root() -> Path | None:

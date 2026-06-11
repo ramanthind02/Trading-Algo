@@ -29,7 +29,6 @@ from features.validation.reports import (
 )
 from features.validation.stability_analysis import _param_combo_name
 from lib.core.signal_alignment import align_signal_to_target
-from research.evaluation.permutation_test.permutation_nulls import _joblib_tqdm
 
 
 def _derive_combo_seeds(base_seed: int | None, n: int) -> list[int | None]:
@@ -192,6 +191,9 @@ def run_permutation_test_suite(
                 cpu_count() if config.n_jobs_combos == -1 else min(config.n_jobs_combos, cpu_count())
             )
             print(f"Vector shuffle: parallel ({n_actual} workers)")
+            # Lazy import: _joblib_tqdm lives in research/ (a higher layer). Importing it
+            # here at call time keeps features/ free of an import-time research dependency.
+            from research.evaluation.permutation_test.permutation_nulls import _joblib_tqdm
             with _joblib_tqdm(len(param_grid), desc="Vector shuffle", unit="combo"):
                 results = Parallel(n_jobs=n_actual, backend="loky")(
                     delayed(_run_combo_vector_shuffle)(

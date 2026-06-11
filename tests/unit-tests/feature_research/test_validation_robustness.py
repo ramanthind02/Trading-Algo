@@ -182,7 +182,7 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_two_combo
     )
     combo_params = [{"sma_period": 200}, {"sma_period": 252}]
     enriched = [
-        enrich_param_combo_with_module(p, "seasonalindiceseof") for p in combo_params
+        enrich_param_combo_with_module(p, "smaregimesignal") for p in combo_params
     ]
     signal_frames = {
         combo_key(p): _build_combo_frame(index, target, 1.0, signal_name="signal")
@@ -196,7 +196,7 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_two_combo
     monkeypatch.setattr(
         "research.feature.validation.robustness_runner.expand_bias_specs",
         lambda _bias_spec: [
-            {"module_name": "seasonal_indices_eof", "timeframes": ["D"], "params": p}
+            {"module_name": "sma_regime_signal", "timeframes": ["D"], "params": p}
             for p in combo_params
         ],
     )
@@ -224,14 +224,14 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_two_combo
         evaluation_defaults=EvaluationDefaultsCatalog(
             continuous=EvaluationPhaseDefaultsConfig(
                 bias_spec={
-                    "module_name": "seasonal_indices_eof",
+                    "module_name": "sma_regime_signal",
                     "timeframes": ["D"],
                     "params": {"sma_period": 200},
                 }
             ),
             signed_signal=EvaluationPhaseDefaultsConfig(
                 bias_spec={
-                    "module_name": "seasonal_indices_eof",
+                    "module_name": "sma_regime_signal",
                     "timeframes": ["D"],
                     "params": {"sma_period": 200},
                 }
@@ -246,7 +246,7 @@ def test_run_validation_robustness_pipeline_skips_rank_correlation_for_two_combo
 def test_run_validation_robustness_pipeline_skips_rank_correlation_for_single_combo(
     monkeypatch,
 ) -> None:
-    """Rule-based specs with no param grid (e.g. eoy_sp500) must not require rank correlation."""
+    """Rule-based specs with no param grid (e.g. turnaround_tuesday) must not require rank correlation."""
     index = pd.date_range("2020-01-01", periods=200, freq="D")
     target = pd.Series(
         [0.01 if position % 5 else -0.005 for position in range(len(index))],

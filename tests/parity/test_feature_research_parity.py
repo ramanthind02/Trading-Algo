@@ -60,7 +60,18 @@ def _run_report(pipe: PipelineImports):
     assert pipe.run_oos_pipeline is not None
     config = pipe.feature_load_config()
     tmp_root = Path(tempfile.mkdtemp(prefix="parity_feature_research_"))
-    config = replace(config, output_root=tmp_root)
+    config = replace(
+        config,
+        output_root=tmp_root,
+        # Pin the Norgate futures feed: this gate guards byte-identical refactor
+        # parity against the pre-migration snapshot. The CFD feed is a deliberate
+        # numbers change verified by the separate similarity gate, not here.
+        data_feed="futures",
+        # Force the vectorized lane on the OOS phase: the snapshot is the
+        # frictionless OOS result. The realistic Nautilus lane is checked
+        # separately. Mirrors tests/parity/test_portfolio_research_parity.py.
+        realistic_phases=(),
+    )
     return pipe.run_oos_pipeline(config)
 
 

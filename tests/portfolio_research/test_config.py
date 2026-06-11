@@ -239,28 +239,28 @@ def test_filter_drops_single_instrument_feature_without_that_ticker(
 
     monkeypatch.setattr(cfg, "_PORTFOLIO_RESEARCH_DIR", tmp_path / "research.portfolio")
     for rel in (
-        "vault/D/seasonal/seasonal_bonds_long_short/features",
+        "vault/D/es_tlt/es_tlt_bonds_long/features",
         "vault/D/mean_reversion_indices/mr_indices_long/features",
     ):
         (tmp_path / Path(rel)).mkdir(parents=True, exist_ok=True)
 
     def _iter(features_dir: Path):
         path_s = str(features_dir).replace("\\", "/")
-        if "seasonal_bonds" in path_s:
+        if "es_tlt_bonds" in path_s:
             yield Path("x.json"), {
-                "bias_node_spec": {"module_name": "seasonal_bonds_month", "params": {}},
+                "bias_node_spec": {"module_name": "ibs_lower_band", "params": {}},
                 "tickers": ["TLT"],
             }
         else:
             yield Path("y.json"), {
-                "bias_node_spec": {"module_name": "turnaround", "params": {}},
+                "bias_node_spec": {"module_name": "turnaround_tuesday", "params": {}},
                 "tickers": ["ES"],
             }
 
     _patch_feature_iter(monkeypatch, _iter)
     out = filter_ensemble_dirs_for_portfolio_tickers(
         {
-            "bonds": "vault/D/seasonal/seasonal_bonds_long_short",
+            "bonds": "vault/D/es_tlt/es_tlt_bonds_long",
             "es_feat": "vault/D/mean_reversion_indices/mr_indices_long",
         },
         [Ticker.ES],

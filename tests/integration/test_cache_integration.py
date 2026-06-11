@@ -17,8 +17,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lib.cache.runtime.bias_node_cache import BiasNodeCache
-from lib.cache.runtime.cache_manager import CacheManager
+from cache.runtime.bias_node_cache import BiasNodeCache
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.models import Candle
 from nodes.rsi import RSI
@@ -443,62 +442,6 @@ class TestEndToEnd:
         """Retired: legacy RSI + learned binning BaseModel path."""
         del sample_candles_df, temp_cache_dir
         pytest.skip("Legacy RSI + binning BaseModel path removed.")
-
-
-class TestCacheManagerIntegration:
-    """Integration tests for CacheManager with bias nodes."""
-
-    def test_populate_and_use_cache(self, sample_candles_df, temp_cache_dir):
-        """Test populating cache via CacheManager and using it."""
-        # Create temp candles directory
-        candles_dir = os.path.join(temp_cache_dir, 'candles')
-        os.makedirs(candles_dir, exist_ok=True)
-
-        # Save candles
-        ticker_dir = os.path.join(candles_dir, 'ES')
-        os.makedirs(ticker_dir, exist_ok=True)
-        sample_candles_df.to_parquet(os.path.join(ticker_dir, 'D.parquet'))
-
-        # Create CacheManager
-        manager = CacheManager(
-            cache_dir=os.path.join(temp_cache_dir, 'cache'),
-            candle_dir=candles_dir  # Fixed: use candle_dir not candles_dir
-        )
-
-        # Populate cache
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        result = manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 10, 27),
-            show_progress=False
-        )
-
-        # 1 user spec + 1 auxiliary (ewsd) = 2 total
-        assert result['success'] == 2
-
-        # Verify cache can be loaded
-        cache = BiasNodeCache(
-            module_name='rsi',
-            params={'lookback': 14},
-            ticker=Ticker.ES,
-            tf=TimeFrame.D,
-            cache_dir=os.path.join(temp_cache_dir, 'cache')
-        )
-
-        assert cache.exists()
-        values = cache.get_values(
-            datetime(2020, 1, 1),
-            datetime(2020, 10, 27)
-        )
-        assert values is not None
-        assert len(values) > 0
 
 
 if __name__ == '__main__':

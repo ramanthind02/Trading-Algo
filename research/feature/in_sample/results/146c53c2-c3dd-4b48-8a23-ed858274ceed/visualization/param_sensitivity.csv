@@ -1,0 +1,3 @@
+param_combo_label,feature_name,n_observations,n_nonzero_signal,sharpe,t_stat,sortino
+linear_z_mr__cap2__lb150__scale1,linear_z_mr_signal_D_cap_2_lookback_150_rocThreshold_None_scale_1,4669,4669,-0.19664686877957982,-0.8464449184274986,-0.26998368865714806
+linear_z_mr__cap2__lb200__scale1,linear_z_mr_signal_D_cap_2_lookback_200_rocThreshold_None_scale_1,4669,4669,-0.17321150509192018,-0.7455699610583341,-0.2362171483881233

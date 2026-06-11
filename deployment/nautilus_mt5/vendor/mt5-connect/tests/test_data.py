@@ -15,7 +15,7 @@ Tests are split into:
   9.  _request_quote_ticks() — historical tick delivery
   10. _request_bars() — historical bar delivery
   11. No-op methods — don't raise
-  12. Properties — subscribed_quote_ticks, is_polling
+  12. Properties — subscribed_tick_symbols, is_polling
 """
 
 import asyncio
@@ -284,7 +284,7 @@ class TestInitialState:
         assert client.id == ClientId("MT5")
 
     def test_no_subscribed_ticks_initially(self, client):
-        assert client.subscribed_quote_ticks == []
+        assert client.subscribed_tick_symbols == []
 
     def test_not_polling_initially(self, client):
         assert client.is_polling is False
@@ -434,12 +434,12 @@ class TestSubscribeQuoteTicks:
         await client._unsubscribe_quote_ticks(cmd)  # must not raise
 
     @pytest.mark.asyncio
-    async def test_subscribed_quote_ticks_sorted(self, client):
+    async def test_subscribed_tick_symbols_sorted(self, client):
         for sym in ["ZZZUSDm", "AAAUSDm", "MMMusd"]:
             cmd = MagicMock()
             cmd.instrument_id.symbol.value = sym
             await client._subscribe_quote_ticks(cmd)
-        result = client.subscribed_quote_ticks
+        result = client.subscribed_tick_symbols
         assert result == sorted(result)
 # ═════════════════════════════════════════════════════════════════════════════
 # 6. Subscribe / unsubscribe bars
@@ -789,15 +789,15 @@ class TestNoOpMethods:
 
 class TestProperties:
 
-    def test_subscribed_quote_ticks_empty_initially(self, client):
-        assert client.subscribed_quote_ticks == []
+    def test_subscribed_tick_symbols_empty_initially(self, client):
+        assert client.subscribed_tick_symbols == []
 
     @pytest.mark.asyncio
-    async def test_subscribed_quote_ticks_after_subscribe(self, client):
+    async def test_subscribed_tick_symbols_after_subscribe(self, client):
         cmd = MagicMock()
         cmd.instrument_id.symbol.value = "EURUSDm"
         await client._subscribe_quote_ticks(cmd)
-        assert "EURUSDm" in client.subscribed_quote_ticks
+        assert "EURUSDm" in client.subscribed_tick_symbols
 
     def test_is_polling_false_initially(self, client):
         assert client.is_polling is False

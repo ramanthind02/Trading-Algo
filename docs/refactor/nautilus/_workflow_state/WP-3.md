@@ -34,4 +34,14 @@ byte-identical. Lane 2 (nautilus) = additive, never overwrites the parity baseli
 |----|-------|------|--------|--------|-----------------|----------|-------|
 | p1 | 1 | discovery | done | — | no | manifest | drift resolved; freeze-violation in doc target found |
 | p2 | 2 | unit1 scaffold | done | 2 passed/2 passed | no | committed | vectorized default = byte-identical |
-| -- | 2 | unit2 nautilus lane | blocked | — | — | — | depends on WP-2 Unit-2 fork |
+| p3 | 2 | unit2 nautilus lane | DONE | 5/5 lane tests + parity 2/2 | no | tests/research/test_nautilus_pnl_lane.py | NautilusPnLEngine + MultiTickerNautilusPnLEngine; frictionless CLOSE_TO_CLOSE≈vectorized log (corr≥0.99) reconciliation GREEN |
+| p4 | 2 | CFD realism default | DONE | parity green (vectorized pinned) | no | scripts/capture_baselines.py | CFD feed (data_feed default), realistic Nautilus on TEST phase (realistic_phases). Test: futures 1.01 → CFD-frictionless 1.78 → CFD-realistic 2.27 Sharpe. Rollover overlay T-15 exit / post-deadzone reopen, MARKET, synth M1-spread quotes, windowed ephemeral catalog |
+
+## Outcome (CFD + Nautilus migration, this session)
+
+The opt-in lane is now the **default for the portfolio test/holdout phase** and the feature-research
+validation + portfolio-addition phases (exploration stays frictionless). Data feed default = Darwinex
+**CFD** (faithful %-returns; no additive back-adjustment distortion) — see the lead plan
+`~/.claude/plans/keen-drifting-hejlsberg.md` and `tests/parity/snapshots/feed_comparison.md`
+(futures↔CFD portfolio return corr 0.894; CFD better on nearly every sleeve). Gates: `pytest tests/parity`
+(byte-identical, pinned to futures+vectorized) + `scripts/compare_feeds.py` (CFD similarity).

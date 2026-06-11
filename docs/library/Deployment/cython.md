@@ -1,7 +1,5 @@
 # Cython & Portfolio Backtest
 
-> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
-
 > [!summary] Overview
 > Cython extensions accelerate inner math kernels for feature extraction and base-model fitting.
 > The portfolio backtest API uses `Portfolio` + `PortfolioTester`: fit → predict → strategy returns.
@@ -12,8 +10,13 @@
 ## Building Cython Extensions
 
 ```bash
+# Linux/macOS
 source /home/raman/repos/Trading-Algo/venv/bin/activate
 python lib/compute/cython/setup_cython.py build_ext --inplace
+
+# Windows PowerShell (use whichever venv folder exists at repo root)
+.\.venv\Scripts\python.exe lib/compute/cython/setup_cython.py build_ext --inplace
+# or: .\venv\Scripts\python.exe lib/compute/cython/setup_cython.py build_ext --inplace
 ```
 
 Compiles two modules:
@@ -44,7 +47,7 @@ portfolio = Portfolio(
 tester = PortfolioTester(portfolio=portfolio, baseline_mode="equal_weight")
 
 tester.fit(candles_df)                          # fits portfolio + all ensembles; target = log returns
-tester.predict(candles_df)                      # returns positions: ticker, datetime, position_fraction
+tester.predict(candles_df, daily_volatility_df)  # returns positions: ticker, datetime, position_fraction
 tester.calculate_strategy_returns(candles_df)   # strategy P&L from positions
 tester.calculate_baseline_returns(candles_df)   # equal-weight baseline
 ```
@@ -53,19 +56,11 @@ Candles DataFrame columns: `datetime`, `open`, `high`, `low`, `close`, `volume`,
 
 ### Benchmark Script (Real Data)
 
-```bash
-python scripts/benchmark_portfolio_backtest.py [--warmup 1] [--runs 2]
-```
-
-Uses the same config as `research/portfolio/run_portfolio_test.py`: tickers, ensemble list, and train/test dates come from `research.portfolio.config.load_config()`.
+> [!note] `scripts/benchmark_portfolio_backtest.py` is not present in the current repository. Use `research/portfolio/run_portfolio_test.py` directly to exercise the full pipeline with real data; tickers, ensemble list, and train/test dates come from `research.portfolio.config.load_config()`.
 
 ### Profiling Script (Synthetic Data)
 
-```bash
-python scripts/profile_portfolio_pipeline.py
-```
-
-Uses mock ensembles and synthetic candles. Writes `profile_portfolio_pipeline.prof`.
+> [!note] `scripts/profile_portfolio_pipeline.py` is not present in the current repository. Profile the pipeline manually by running `research/portfolio/run_portfolio_test.py` under a profiler (e.g. `python -m cProfile -o out.prof research/portfolio/run_portfolio_test.py`).
 
 ---
 
@@ -129,4 +124,4 @@ Until then, Cython's contribution is within run-to-run noise.
 
 - [[portfolio]] — Portfolio and PortfolioTester architecture
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

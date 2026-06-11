@@ -4,8 +4,12 @@
 > the target architecture for turning `Trading-Algo` into the hosted QuantFoundry
 > SaaS platform. The repositories (`QuantFoundry-Core`/`-API`/`-Worker`/`-Web`),
 > Azure infrastructure, PostgreSQL product entities, queue/worker orchestration,
-> Signal API, and billing models below **do not exist yet**. The repo today is
-> the `Trading-Algo` research workbench plus a local Flask UI (`ui_ux.md`). Read
+> Signal API, and billing models below **do not exist yet**. (A shared
+> `quantfoundry_core` Python library *has* since been extracted and is imported by
+> the research code — e.g. `quantfoundry_core.metrics`, `quantfoundry_core.prop_firm` —
+> but the hosted `-API`/`-Worker`/`-Web` services and infrastructure remain unbuilt.)
+> The repo today is the `Trading-Algo` research workbench plus a local React/Vite UI
+> (`frontend/web/`) served by FastAPI (`frontend/api/`; see `ui_ux.md`). Read
 > this as the migration plan, not a description of current code.
 
 ## 1. Purpose
@@ -973,7 +977,7 @@ The initial implementation can choose between two orchestration styles:
 | Style                       | Flow                                                                                                           | Pros                                                                                  | Cons                                                                             |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | API starts ACA Job directly | API validates, writes run row, calls Azure to start an ACA Job.                                                | Fewer moving pieces for first prototype.                                              | API is coupled to Azure job API; burst handling/retries/backpressure are weaker. |
-| Queue-first controller      | API validates, writes run row, sends Service Bus message; a small controller or event process starts ACA Jobs. | Better backpressure, retries, auditability, burst absorption, and future portability. | One extra component to deploy/observe.                                           |
+| Queue-first controller      | API validates, writes run row, sends Service Bus message; a small controller or event process starts ACA Jobs. | Better backpressure, retries, auditability, burst absorption, and future portability. | One extra component to deployment/ops/observe.                                           |
 
 
 Recommendation: prototype direct ACA Job start if it materially speeds up the first working path, but design the data model around queue-first semantics (`queued`, `running`, `attempts`, idempotency keys). Move to Service Bus/controller before private beta so API requests are decoupled from Azure job startup and bursts do not tie up web requests.

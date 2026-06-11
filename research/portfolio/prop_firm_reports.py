@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from prop_firms.reporting import PropFirmReportArtifacts, generate_portfolio_report
+from research.portfolio.prop_firm_report_builder import PropFirmReportArtifacts, generate_portfolio_report
 
 from research.portfolio.config import PortfolioResearchConfig
 from research.portfolio.pipelines.portfolio_test import PhaseResult

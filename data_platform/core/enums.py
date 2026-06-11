@@ -73,6 +73,7 @@ class PriceAdjustment(Enum):
     TOTAL_RETURN = "TOTAL_RETURN"  # splits + special + ordinary dividends
     CAPITAL = "CAPITAL"           # splits + reconstructions only
     BACK_ADJUSTED = "BACK_ADJUSTED"  # additive continuous-future (futures CCB)
+    RATIO = "RATIO"               # proportional continuous-future (%-return / σ reference)
 
 
 # ── MIC-style venue codes (Norgate exchange name -> MIC) ──────────────────

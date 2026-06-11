@@ -27,7 +27,7 @@ During fit, all forecast streams are resampled to a **daily grid** to ensure equ
 ```python
 from ensemble import GlobalPortfolio, TFPortfolio, WeightLayer
 from ensemble.portfolio import PortfolioCacheQuery
-from utils.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 global_p = GlobalPortfolio(
     tf_portfolios=[
@@ -168,4 +168,4 @@ These are illustrative magnitudes; the actual values come from each node's
 
 **See also:** [Portfolio pipeline](portfolio.md), [Weight layer](weight_layer.md), [Live multi-timeframe](../Deployment/live_multi_timeframe.md), [Cache architecture](../Cache/architecture.md)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._

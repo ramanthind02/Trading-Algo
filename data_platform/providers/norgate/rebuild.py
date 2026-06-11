@@ -29,8 +29,8 @@ from .fetch_contracts import archive_continuous, archive_contracts
 from .fetch_specs import fetch_specs, save as save_specs
 from .migrate import migrate_all
 
-from lib.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
-from lib.cache.runtime.cache_paths import default_runtime_root, project_root
+from cache.runtime.bootstrap_source_candles import bootstrap_source_candles
+from cache.runtime.cache_paths import default_runtime_root
 from lib.core.enums import Ticker, TimeFrame
 
 

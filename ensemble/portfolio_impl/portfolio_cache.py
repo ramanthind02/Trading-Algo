@@ -6,9 +6,9 @@ from typing import Iterable
 
 import pandas as pd
 
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_errors import ArtifactMissingError, CacheCoverageError
-from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_errors import ArtifactMissingError, CacheCoverageError
+from cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
 from lib.core.enums import TimeFrame, Ticker
 
 

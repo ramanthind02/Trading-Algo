@@ -1,33 +1,25 @@
-"""
-Tests for CacheManager - orchestrates cache population.
+"""Tests for CacheManager initialization and default cache/candle directories.
 
-Tests cover:
-- Concurrent population
-- Overwrite behavior
-- Error handling for missing candle files
+The legacy ``populate_cache`` / ``_populate_single_cache`` surface (and its CLI)
+was retired in favour of the central-cache path
+(``bootstrap_source_candles`` + ``ensure_bias_cache_coverage`` /
+``ensure_vault_cache_coverage``); those paths are covered by the integration
+suites ``tests/integration/test_portfolio_cache_cutover.py`` and
+``tests/integration/test_live_cache_refresh.py``.
 """
 
 import os
-import tempfile
 import shutil
-from datetime import datetime
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from lib.cache.runtime.cache_manager import CacheManager, get_auxiliary_specs_for_timeframe
-from lib.cache.runtime.cache_paths import default_source_candle_dir
-from lib.core.enums import Ticker, TimeFrame
-
-
-@pytest.fixture
-def temp_cache_dir():
-    """Create a temporary cache directory."""
-    temp_dir = tempfile.mkdtemp()
-    yield temp_dir
-    shutil.rmtree(temp_dir, ignore_errors=True)
+from cache.runtime.cache_manager import CacheManager
+from cache.runtime.cache_paths import default_source_candle_dir
+from lib.core.enums import Ticker
 
 
 @pytest.fixture
@@ -35,7 +27,6 @@ def temp_candle_dir():
     """Create a temporary candles directory with sample data."""
     temp_dir = tempfile.mkdtemp()
 
-    # Create sample candles files
     dates = pd.date_range('2020-01-01', periods=500, freq='D')
     for ticker in [Ticker.ES, Ticker.NQ]:
         ticker_dir = os.path.join(temp_dir, ticker.name)
@@ -58,15 +49,6 @@ def temp_candle_dir():
     shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-@pytest.fixture
-def cache_manager(temp_cache_dir, temp_candle_dir):
-    """Create a CacheManager instance."""
-    return CacheManager(
-        cache_dir=temp_cache_dir,
-        candle_dir=temp_candle_dir  # Fixed: use candle_dir not candles_dir
-    )
-
-
 class TestCacheManagerInit:
     """Tests for CacheManager initialization."""
 
@@ -76,7 +58,7 @@ class TestCacheManagerInit:
         try:
             manager = CacheManager(
                 cache_dir=cache_dir,
-                candle_dir=temp_candle_dir  # Fixed
+                candle_dir=temp_candle_dir,
             )
             # Directory should be created during init
             assert manager.cache_dir == cache_dir
@@ -93,11 +75,11 @@ class TestCacheManagerInit:
         expected_cache_dir = tmp_path / ".cache" / "trading_algo" / "central_cache" / "artifacts" / "live"
         expected_candle_dir = tmp_path / "data" / "ohlc_data"
         monkeypatch.setattr(
-            "lib.cache.runtime.cache_manager.default_live_artifact_cache_dir",
+            "cache.runtime.cache_manager.default_live_artifact_cache_dir",
             lambda: expected_cache_dir,
         )
         monkeypatch.setattr(
-            "lib.cache.runtime.cache_manager.default_source_candle_dir",
+            "cache.runtime.cache_manager.default_source_candle_dir",
             lambda: expected_candle_dir,
         )
 
@@ -107,357 +89,6 @@ class TestCacheManagerInit:
         assert Path(manager.candle_dir) == expected_candle_dir
         assert Path(manager.cache_dir) != default_source_candle_dir()
         assert Path(manager.cache_dir).is_relative_to(tmp_path)
-
-
-class TestPopulateSingleCache:
-    """Tests for single cache population."""
-
-    def test_populate_single_cache(self, cache_manager, temp_cache_dir):
-        """Test populating a single cache."""
-        result = cache_manager._populate_single_cache(
-            module_name='rsi',
-            params={'lookback': 14},
-            ticker=Ticker.ES,
-            tf=TimeFrame.D,
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31)
-        )
-
-        assert result['status'] == 'success'
-        assert result['module_name'] == 'rsi'
-        assert result['ticker'] == 'ES'
-        assert result['row_count'] > 0
-
-        # Verify cache file exists
-        cache_path = result['cache_path']
-        assert os.path.exists(cache_path)
-
-    def test_populate_single_cache_with_complex_params(self, cache_manager):
-        """Test populating cache with complex params."""
-        result = cache_manager._populate_single_cache(
-            module_name='ewmac',
-            params={'spanFast': 16, 'spanSlow': 64},
-            ticker=Ticker.NQ,
-            tf=TimeFrame.D,
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 6, 30)
-        )
-
-        assert result['status'] == 'success'
-        assert result['row_count'] > 0
-
-    def test_populate_single_cache_ewsd_preserves_requested_descriptor(self, cache_manager):
-        """Auxiliary EWSD nodes should keep a valid module/params descriptor."""
-        result = cache_manager._populate_single_cache(
-            module_name='ewsd',
-            params={'long_run_window': 2520},
-            ticker=Ticker.ES,
-            tf=TimeFrame.D,
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 6, 30),
-        )
-
-        assert result['status'] == 'success'
-        assert result['module_name'] == 'ewsd'
-        assert result['params'] == {'long_run_window': 2520}
-        assert result['row_count'] > 0
-
-
-class TestPopulateCache:
-    """Tests for bulk cache population."""
-
-    def test_get_auxiliary_specs_for_timeframe_weekly(self):
-        """Auxiliary EWSD spec should always use daily long-run window."""
-        specs = get_auxiliary_specs_for_timeframe(TimeFrame.W)
-        assert specs == [
-            {"module_name": "ewsd", "params": {"long_run_window": 2520}},
-        ]
-
-    def test_populate_cache_single_spec(self, cache_manager):
-        """Test populating cache for single spec.
-
-        Note: populate_cache auto-adds the required EWSD auxiliary spec,
-        so 1 user spec + 1 aux = 2 total.
-        """
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        result = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            show_progress=False
-        )
-
-        assert result['total'] == 2
-        assert result['success'] == 2
-        assert result['failed'] == 0
-
-    def test_populate_cache_multiple_tickers(self, cache_manager):
-        """Test populating cache for multiple tickers.
-
-        Note: populate_cache auto-adds the required EWSD auxiliary spec.
-        1 user spec + 1 aux = 2 specs, each for 2 tickers = 4 total.
-        """
-        specs = [{
-            'module_name': 'momentum',
-            'params': {'lookback': 20},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        result = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES, Ticker.NQ],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            show_progress=False
-        )
-
-        assert result['total'] == 4
-        assert result['success'] == 4
-
-    def test_populate_cache_multiple_specs(self, cache_manager):
-        """Test populating cache for multiple specs.
-
-        Note: populate_cache auto-adds the required EWSD auxiliary spec.
-        2 user specs + 1 aux = 3 specs, each for 1 ticker = 3 total.
-        """
-        specs = [
-            {'module_name': 'rsi', 'params': {'lookback': 14}, 'timeframes': [TimeFrame.D]},
-            {'module_name': 'rsi', 'params': {'lookback': 21}, 'timeframes': [TimeFrame.D]},
-        ]
-
-        result = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            show_progress=False
-        )
-
-        assert result['total'] == 3
-        assert result['success'] == 3
-
-    def test_populate_cache_overwrite_existing(self, cache_manager):
-        """Test overwriting existing cache."""
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        # First population
-        result1 = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            overwrite_existing=True,
-            show_progress=False
-        )
-
-        # Second population (overwrite)
-        result2 = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            overwrite_existing=True,
-            show_progress=False
-        )
-
-        assert result1['success'] == 2
-        assert result2['success'] == 2
-
-    def test_populate_cache_skip_existing(self, cache_manager):
-        """Test skipping existing cache when overwrite_existing=False."""
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        # First population
-        cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            overwrite_existing=True,
-            show_progress=False
-        )
-
-        # Second population (should skip)
-        result = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            overwrite_existing=False,
-            show_progress=False
-        )
-
-        assert result['skipped'] == 2
-
-    def test_populate_cache_uses_timeframe_scaled_aux_specs(self, cache_manager, monkeypatch):
-        """EWSD auxiliary params are fixed to daily settings regardless timeframe arg."""
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        def _fake_populate_single_cache(
-            module_name: str,
-            params: dict,
-            ticker: Ticker,
-            tf: TimeFrame,
-            start_date: datetime,
-            end_date: datetime,
-            overwrite_existing: bool,
-        ) -> dict:
-            _ = start_date
-            _ = end_date
-            _ = overwrite_existing
-            return {
-                "module_name": module_name,
-                "params": params,
-                "ticker": ticker.name,
-                "tf": tf.name,
-                "status": "success",
-            }
-
-        monkeypatch.setattr(cache_manager, "_populate_single_cache", _fake_populate_single_cache)
-
-        result = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            timeframe=TimeFrame.H4,
-            max_workers=1,
-            show_progress=False
-        )
-
-        assert any(
-            d["module_name"] == "ewsd"
-            and d["params"] == {"long_run_window": 2520}
-            and d["tf"] == TimeFrame.D.name
-            for d in result["details"]
-        )
-
-
-class TestCacheManagement:
-    """Tests for cache management utilities."""
-
-    def test_list_caches(self, cache_manager):
-        """Test listing cached files."""
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            show_progress=False
-        )
-
-        caches = cache_manager.list_caches()
-        assert len(caches) > 0
-        # list_caches returns list of dicts
-        assert any(c['module_name'] == 'rsi' for c in caches)
-
-    def test_clear_caches(self, cache_manager, temp_cache_dir):
-        """Test clearing all caches."""
-        specs = [{
-            'module_name': 'rsi',
-            'params': {'lookback': 14},
-            'timeframes': [TimeFrame.D]
-        }]
-
-        cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            show_progress=False
-        )
-
-        # Verify cache exists
-        caches_before = cache_manager.list_caches()
-        assert len(caches_before) > 0
-
-        # Clear caches (must pass confirm=True)
-        deleted = cache_manager.clear_caches(confirm=True)
-
-        # Verify caches are cleared
-        caches_after = cache_manager.list_caches()
-        assert len(caches_after) == 0
-        assert deleted > 0
-
-
-class TestErrorHandling:
-    """Tests for error handling."""
-
-    def test_missing_candle_file(self, cache_manager):
-        """Test handling of missing candle files."""
-        # Try to populate for a ticker without candle data
-        result = cache_manager._populate_single_cache(
-            module_name='rsi',
-            params={'lookback': 14},
-            ticker=Ticker.CL,  # Not in our test candles
-            tf=TimeFrame.D,
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31)
-        )
-
-        assert result['status'] == 'failed'
-        assert result.get('message') is not None
-
-    def test_invalid_bias_node_spec(self, cache_manager):
-        """Test handling of invalid bias node spec."""
-        result = cache_manager._populate_single_cache(
-            module_name='nonexistent_module',
-            params={},
-            ticker=Ticker.ES,
-            tf=TimeFrame.D,
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31)
-        )
-
-        assert result['status'] == 'failed'
-
-
-class TestConcurrency:
-    """Tests for concurrent cache population."""
-
-    def test_concurrent_population(self, cache_manager):
-        """Test that concurrent population works correctly."""
-        specs = [
-            {'module_name': 'rsi', 'params': {'lookback': 14}, 'timeframes': [TimeFrame.D]},
-            {'module_name': 'momentum', 'params': {'lookback': 20}, 'timeframes': [TimeFrame.D]},
-        ]
-
-        result = cache_manager.populate_cache(
-            bias_node_specs=specs,
-            tickers=[Ticker.ES, Ticker.NQ],
-            start_date=datetime(2020, 1, 1),
-            end_date=datetime(2020, 12, 31),
-            max_workers=2,
-            show_progress=False
-        )
-
-        # Should populate (2 requested + 1 EWSD auxiliary) x 2 tickers = 6 caches
-        assert result['total'] == 6
-        assert result['success'] == 6
 
 
 if __name__ == '__main__':

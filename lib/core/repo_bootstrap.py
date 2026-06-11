@@ -43,3 +43,24 @@ def resolve_repo_path(path: Path | str, *, repo_root: Path | None = None) -> Pat
         return candidate
     root = repo_root or require_repo_root()
     return root / candidate
+
+
+def project_root() -> Path:
+    """Repository root anchored at this module's location (stable regardless of cwd).
+
+    Walks upward from this file for a repo marker (``.git`` / ``pyproject.toml`` /
+    ``AGENTS.md``); falls back to the known depth of this module in the package tree.
+    Lives in ``lib.core`` so foundation modules (e.g. ``vault_paths``) and the cache
+    layer can both depend on it without a layering cycle.
+    """
+    resolved = Path(__file__).resolve()
+    return next(
+        (
+            parent
+            for parent in resolved.parents
+            if (parent / ".git").exists()
+            or (parent / "pyproject.toml").exists()
+            or (parent / "AGENTS.md").exists()
+        ),
+        resolved.parents[2],
+    )

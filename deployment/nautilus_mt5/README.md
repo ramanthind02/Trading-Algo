@@ -77,23 +77,57 @@ semantics exactly. A missing item is a release blocker.
 - [ ] **Hedging vs netting OMS**: confirm the adapter/instrument config we use
       matches FTMO's account mode; reproduce per-ticket closes in the sandbox
       before any demo order.
-- [ ] **Adapter unit tests**: `vendor/mt5-connect/tests/` import-only + any
-      offline-safe tests pass under our venv (do NOT run terminal-dependent tests
-      against the live Darwinex terminal).
-- [ ] **Import smoke** (offline, no terminal):
+- [x] **Adapter unit tests**: `vendor/mt5-connect/tests/` pass under our venv —
+      **604 pass** (2026-06-06, incl. the new `TestTerminalPath` coverage for the
+      `path` fix). Run: `python -m pytest deployment/nautilus_mt5/vendor/mt5-connect/tests -q`.
+- [x] **Import smoke** (offline, no terminal):
       `python -c "import sys; sys.path.insert(0, r'deployment/nautilus_mt5/vendor/mt5-connect'); import mt5connect"`
       — note: importing pulls in `MetaTrader5`, which is Windows-only and may
       require the package installed; this only confirms the source is importable,
       it does NOT connect.
 
+### Validation status (2026-06-06)
+
+The **`MT5Config.path` gap is CLOSED** — `MT5Connection` now binds deterministically
+to a named terminal, so the adapter cannot attach to the wrong broker on this
+multi-terminal machine (unit-covered by `TestTerminalPath`; live-proven by the
+suite below).
+
+The live pytest suite [`tests/live_mt5/`](../../tests/live_mt5/) (see its
+[`README`](../../tests/live_mt5/README.md)) drives the real adapter against the
+FTMO demo. As of 2026-06-06 it **PASSES**: connection lifecycle, instrument
+parsing, live tick/bar parsing, data-client construction, the live order **reject**
+path, and a full `TradingNode` build/connect/stop. **Still pending an open-market
+run** (the order tiers self-skip on weekends): the open→fill→close round-trip
+through `_submit_order`/`_cancel_order` — i.e. the **CRITICAL per-ticket close**
+and **hedging-vs-netting** audit items above are not yet live-validated. Re-run
+`deployment\ops\run_mt5_ftmo_tests.bat orders` during market hours to complete them.
+
 ## Connecting + testing against a broker terminal
 
 See **[`CONNECTION_TEST.md`](CONNECTION_TEST.md)** — the operator runbook for connecting the
-adapter to a prop-firm **demo** and validating it end-to-end (`scripts/dev/mt5_adapter_test.py`).
-Covers the **one-terminal-install-per-broker** rule (and the `-10005 IPC timeout` you hit
-otherwise), the `--path` terminal binding, Algo-Trading / market-execution gotchas, the hard DEMO
-guard, the `MT5Config` `path` gap, and the confirmed broker symbol mappings. First validated on
-FTMO-Demo 2026-06-05 (round-trip order passed).
+adapter to a prop-firm **demo** and validating it end-to-end. Covers the
+**one-terminal-install-per-broker** rule (and the `-10005 IPC timeout` you hit otherwise), the
+`path` terminal binding, Algo-Trading / market-execution gotchas, the hard DEMO guard, and the
+confirmed broker symbol mappings.
+
+Two ways to validate:
+
+- **Automated (preferred):** the live pytest suite **[`tests/live_mt5/`](../../tests/live_mt5/)**
+  ([README](../../tests/live_mt5/README.md)) drives the *real* adapter classes + a real
+  `TradingNode` against the FTMO demo, gated behind `MT5_LIVE_TESTS=1` /`MT5_LIVE_ORDERS=1` and a
+  hard DEMO guard. Runner: `deployment\ops\run_mt5_ftmo_tests.bat`.
+- **One-shot smoke:** `scripts/dev/mt5_adapter_test.py` (print-based). First validated on
+  FTMO-Demo 2026-06-05 (round-trip order passed).
+
+## Per-broker configuration
+
+Broker-specific facts — symbol names, timezone, asset classes, **market hours/sessions**, and
+**rules** (filling/hedging/lots; prop-firm daily/total-loss + profit-target) — are declared in
+[`configs/mt5_brokers.yaml`](../../configs/mt5_brokers.yaml) and read via
+[`data_platform/providers/mt5/brokers.py`](../../data_platform/providers/mt5/brokers.py). The
+adapter receives the already-resolved native symbol and `terminal_path` from there. Full reference:
+[`docs/library/Data/mt5_broker_config.md`](../../docs/library/Data/mt5_broker_config.md).
 
 ## How the sandbox config consumes this
 
@@ -103,3 +137,5 @@ built-in **`SandboxExecutionClient`** (local virtual fills — orders never leav
 the machine). See that file's docstring for the connection prerequisite (a
 SEPARATE FTMO terminal; the live Darwinex terminal must NOT be used) and the
 explicit "do NOT run yet" gate.
+
+> _Verified against current code via CodeGraph on 2026-06-07._

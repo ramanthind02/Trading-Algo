@@ -15,7 +15,7 @@ import pandas as pd
 from ensemble.ensemble_utils import normalize_ticker_key
 from ensemble.portfolio import PortfolioCacheQuery
 from ensemble.portfolio_impl.tf_portfolio import ensemble_prediction_dict_key
-from lib.plotting.graphing.quantstats_reports import generate_tearsheet
+from analysis.plotting.graphing.quantstats_reports import generate_tearsheet
 
 
 def _empty_returns_series(name: str) -> pd.Series:
@@ -228,6 +228,12 @@ def calculate_strategy_returns_from_positions(
             f"got {instrument_return_kind!r}"
         )
 
+    # No-lookahead holding shift (convention #1 in
+    # ensemble.portfolio_impl.backtest_conventions): a position decided at t is
+    # HELD over the NEXT bar t+1. This lane realizes it via the candle grid
+    # (pos[t] -> candle[t].next_datetime); the Nautilus lane applies the same shift
+    # via backtest_conventions.shift_positions_to_holding. Keep the two in lock-step
+    # (gate: test_nautilus_vs_vectorized_varying_signal_reconciles).
     # For each (ticker, datetime) in candles, compute the datetime of the next bar
     candles_sorted['next_datetime'] = (
         candles_sorted.groupby('ticker')['datetime'].shift(-1)
@@ -280,33 +286,6 @@ def calculate_strategy_returns_from_positions(
     )
 
     strategy_returns.name = 'strategy_return'
-
-    # #region agent log
-    try:
-        _pos_n = len(positions_df)
-        _pos_zero = (positions_df["position_fraction"] == 0).sum() if "position_fraction" in positions_df.columns else 0
-        _ret_n = len(strategy_returns)
-        _ret_zero = (strategy_returns == 0.0).sum()
-        _pct_zero_pos = float(_pos_zero) / _pos_n if _pos_n else 0.0
-        _pct_zero_ret = float(_ret_zero) / _ret_n if _ret_n else 0.0
-        with open("/home/raman/repos/Trading-Algo/.cursor/debug.log", "a") as _f:
-            import json
-            _f.write(
-                json.dumps(
-                    {
-                        "hypothesisId": "B,E",
-                        "location": "portfolio_tester.calculate_strategy_returns_from_positions",
-                        "message": "strategy returns from positions",
-                        "data": {"positions_n": _pos_n, "pct_position_zero": _pct_zero_pos, "returns_n": _ret_n, "pct_returns_zero": _pct_zero_ret},
-                        "timestamp": __import__("time").time() * 1000,
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
-    except Exception:  # noqa: S110
-        pass
-    # #endregion
 
     return strategy_returns
 

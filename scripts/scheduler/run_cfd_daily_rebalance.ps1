@@ -94,25 +94,16 @@ try {
 Write-Host "[$(Get-Date -Format o)] python exit code: $exit"
 
 if ($exit -ne 0) {
-    $token   = [Environment]::GetEnvironmentVariable('TELEGRAM_CFD_PROP_BOT_TOKEN')
-    $chat_id = [Environment]::GetEnvironmentVariable('TELEGRAM_CFD_PROP_CHAT_ID')
-    if ($token -and $chat_id) {
-        $tail = (Get-Content -Path $logFile -Tail 20 -ErrorAction SilentlyContinue) -join "`n"
-        $bt = [char]0x60
-        $fence = "$bt$bt$bt"
-        $msg = "ALERT: CFD PROP DAILY REBALANCE FAILED`nexit code: $exit`nlog: $bt$logFile$bt`n$fence`n$tail`n$fence"
-        try {
-            Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$token/sendMessage" -Body @{
-                chat_id = $chat_id
-                text = $msg
-                parse_mode = 'Markdown'
-            } | Out-Null
-            Write-Host "[$(Get-Date -Format o)] failure alert sent to Telegram chat $chat_id"
-        } catch {
-            Write-Warning "Failed to post Telegram alert: $_"
-        }
-    } else {
-        Write-Warning "TELEGRAM_CFD_PROP_BOT_TOKEN / CHAT_ID not set; cannot send failure alert."
+    $tail = (Get-Content -Path $logFile -Tail 20 -ErrorAction SilentlyContinue) -join "`n"
+    $msg = "ALERT: CFD PROP DAILY REBALANCE FAILED`nexit code: $exit`nlog: $logFile`n$tail"
+    Push-Location $RepoRoot
+    try {
+        & $PythonExe -m lib.core.notify --channel cfd_prop --message $msg
+        Write-Host "[$(Get-Date -Format o)] failure alert dispatched via lib.core.notify (exit $LASTEXITCODE)"
+    } catch {
+        Write-Warning "Failed to invoke lib.core.notify for failure alert: $_"
+    } finally {
+        Pop-Location
     }
 }
 

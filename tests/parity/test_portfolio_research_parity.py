@@ -67,6 +67,13 @@ def _run_phase(pipe: PipelineImports):
     config = replace(
         config,
         output_root=tmp_root,
+        # Pin the Norgate futures feed: this gate guards byte-identical refactor
+        # parity against the pre-migration snapshots. The CFD feed is a deliberate
+        # numbers change verified by the separate similarity gate, not here.
+        data_feed="futures",
+        # Force the vectorized lane on every phase: the snapshot is the vectorized
+        # test-phase result. The realistic Nautilus lane is checked separately.
+        realistic_phases=(),
         export_per_timeframe_tearsheets=False,
         export_per_ensemble_tearsheets=False,
         prop_firm_report=replace(config.prop_firm_report, enabled=False),

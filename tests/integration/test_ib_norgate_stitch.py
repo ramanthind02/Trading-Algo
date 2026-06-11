@@ -187,7 +187,7 @@ def _stitch_and_check(ticker: str, ib_df: pd.DataFrame) -> dict:
 
 # ── pytest entry ────────────────────────────────────────────────────────────
 
-@pytest.mark.skipif(not _ib_available(), reason="IB/TWS not reachable on 127.0.0.1:7497")
+@pytest.mark.skip(reason="IB data pipeline retired — data_platform/providers/ib/ deleted")
 @pytest.mark.parametrize("ticker", DEFAULT_TICKERS)
 def test_ib_norgate_stitch_is_gap_free(ticker: str) -> None:
     client = _make_ib_client("127.0.0.1", DEFAULT_PORT, client_id=77)

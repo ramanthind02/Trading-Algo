@@ -16,33 +16,35 @@ It does **not** replace the repository source dataset in `data/ohlc_data`. That 
 
 ## Canonical Ownership
 
-All cache-owned logic lives under `lib/cache/runtime/` (implementation). The package's
-public surface is re-exported from `lib/cache/__init__.py`, so prefer
-`from lib.cache import …` for public symbols and `lib.cache.runtime.<module>` when you
+All cache-owned logic lives under `cache/runtime/` (implementation). The package's
+public surface is re-exported from `cache/__init__.py`, so prefer
+`from cache import …` for public symbols and `cache.runtime.<module>` when you
 need a module-internal helper directly.
 
 | Area | Canonical location | Responsibility |
 |---|---|---|
-| Cache facade | `lib/cache/runtime/central_cache.py` | Public read/write/query service (`CentralCacheStore`) |
-| Request and metadata models | `lib/cache/runtime/central_cache_models.py` | Descriptors, scopes, lookup modes, coverage records |
-| Error contracts | `lib/cache/runtime/central_cache_errors.py` | Typed miss, coverage, lifecycle, and revision errors |
-| Cross-ticker adapter | `lib/cache/runtime/cross_ticker_store.py` | Cache-backed candle lookups for bias nodes and helpers (`CrossTickerDataStore`) |
-| Feature helpers | `lib/cache/runtime/feature_pipeline_support.py` | Shared cache helpers extracted from feature extraction |
-| Per-node bias cache | `lib/cache/runtime/bias_node_cache.py` | `BiasNodeCache` parquet read/write for a single bias-node series |
-| Cache orchestration | `lib/cache/runtime/cache_manager.py` and `lib/cache/runtime/bootstrap_source_candles.py` | `CacheManager`, explicit bootstrap, and vault artifact preflight |
-| Portfolio materialization | `lib/cache/runtime/portfolio_materialization.py` | Portfolio/base-model prediction parquet writes and cleanup |
-| Live refresh orchestration | `lib/cache/runtime/live_cache_refresh.py` | Async LIVE candle-write fanout into bias refresh and portfolio/base-model materialization |
-| Public exports | `lib/cache/__init__.py` | Stable import surface |
+| Cache facade | `cache/runtime/central_cache.py` | Public read/write/query service (`CentralCacheStore`) |
+| Request and metadata models | `cache/runtime/central_cache_models.py` | Descriptors, scopes, lookup modes, coverage records |
+| Error contracts | `cache/runtime/central_cache_errors.py` | Typed miss, coverage, lifecycle, and revision errors |
+| Cross-ticker adapter | `cache/runtime/cross_ticker_store.py` | Cache-backed candle lookups for bias nodes and helpers (`CrossTickerDataStore`) |
+| Feature helpers | `cache/runtime/feature_pipeline_support.py` | Shared cache helpers extracted from feature extraction |
+| Per-node bias cache | `cache/runtime/bias_node_cache.py` | `BiasNodeCache` parquet read/write for a single bias-node series |
+| Cache orchestration | `cache/runtime/cache_manager.py` and `cache/runtime/bootstrap_source_candles.py` | `CacheManager`, explicit bootstrap, and vault artifact preflight |
+| Portfolio materialization | `cache/runtime/portfolio_materialization.py` | Portfolio/base-model prediction parquet writes and cleanup |
+| Live refresh orchestration | `cache/runtime/live_cache_refresh.py` | Async LIVE candle-write fanout into bias refresh and portfolio/base-model materialization |
+| IB candle alignment | `cache/runtime/ib_candle_ratio_align.py` | Junction-ratio alignment for Interactive Brokers candle appends (`prepare_ib_rows_for_central_cache_append`) |
+| Public exports | `cache/__init__.py` | Stable import surface |
 
 > [!note] Import-path reality
-> `lib/cache/` contains **only** `__init__.py` and the `runtime/` subpackage today — there
-> are no top-level `lib/cache/<module>.py` shim files. A compatibility wrapper for the
-> cross-ticker store does exist, but at `utils/data/cross_ticker_store.py`, which re-exports
-> the canonical `lib.cache.runtime.cross_ticker_store` symbols.
+> `cache/` contains only `__init__.py` and the `runtime/` subpackage — there are no
+> top-level shim files. `cache/__init__.py` is the sole re-export surface; import public
+> symbols from there. The former `utils/data/cross_ticker_store.py` compatibility shim has
+> been deleted; all callers must use `cache.runtime.cross_ticker_store` directly or the
+> `CrossTickerDataStore` re-export from `cache`.
 
 ## Code vs on-disk cache
 
-The `lib/cache/` tree is **only** Python: `runtime/` holds the real modules and
+The `cache/` tree is **only** Python: `runtime/` holds the real modules and
 `__init__.py` is the public re-export surface. **Do not** write parquet, bias-node module
 folders, or other cache data here—those belong under **`.cache/trading_algo/central_cache/`**
 (see Storage Boundary below). That keeps source separate from mutable runtime state under
@@ -170,14 +172,14 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 
 ### Cross-ticker nodes
 
-- `lib/cache/runtime/cross_ticker_store.py` is the canonical adapter (`CrossTickerDataStore`); `utils/data/cross_ticker_store.py` is a compatibility re-export
+- `cache/runtime/cross_ticker_store.py` is the canonical adapter (`CrossTickerDataStore`); the former `utils/data/cross_ticker_store.py` compatibility shim has been deleted
 - same-timeframe lookups should use exact timestamps
 - causal cross-timeframe reads should use as-of semantics
 
 ### Feature extraction
 
 - `features/extraction/feature_extractor.py` remains the entrypoint (`extract_features_for_bias_node`)
-- cache-specific helper logic lives in `lib/cache/runtime/feature_pipeline_support.py` (the feature extractor binds its `_build_bias_node_descriptor` / `_preload_cross_ticker_data` to those helpers)
+- cache-specific helper logic lives in `cache/runtime/feature_pipeline_support.py` (the feature extractor binds its `_build_bias_node_descriptor` / `_preload_cross_ticker_data` to those helpers)
 - cache reads should not silently downgrade into an uncached recomputation path
 - **`research.feature`:** `populate_cache_if_needed` (`research/feature/in_sample/data_loader.py`) always runs before cache-backed extraction; `ResearchConfig` has no opt-out flags for central-cache usage
 
@@ -193,7 +195,7 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 
 ### Vault cache preflight
 
-- `CacheManager.bootstrap_source_candles(...)` (in `lib/cache/runtime/cache_manager.py`) is the canonical bootstrap entrypoint; `bootstrap_source_candles(...)` exported from `lib.cache` is a thin module-level wrapper around it
+- `CacheManager.bootstrap_source_candles(...)` (in `cache/runtime/cache_manager.py`) is the canonical bootstrap entrypoint; `bootstrap_source_candles(...)` exported from `cache` is a thin module-level wrapper around it
 - there is **no** `ingest_source_candles` symbol in the current code
 - `CacheManager.ensure_vault_cache_coverage(...)` is the canonical refresh entrypoint; internally it delegates to `CacheManager.ensure_bias_cache_coverage(...)`
 - `ensemble.vault_manager.ensure_vault_cache_coverage(...)` is a thin wrapper for ensemble-oriented callers (`ensemble/vault_manager.py` is itself a `__getattr__` shim over `ensemble.vault.manager`)
@@ -223,7 +225,7 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 
 ## Maintenance Rules
 
-- New cache-related runtime logic belongs under `lib/cache/runtime/`; expose new public symbols by adding them to `lib/cache/__init__.py`.
+- New cache-related runtime logic belongs under `cache/runtime/`; expose new public symbols by adding them to `cache/__init__.py`.
 - Any compatibility re-exports should stay thin and compatibility-focused.
 - Do not write runtime cache files into `data/`.
 - Prefer `ArtifactDescriptor` plus typed requests/errors over ad hoc path conventions.
@@ -240,6 +242,6 @@ When **live** trading ingests a new or corrected bar, you need an up-to-date **f
 - [[portfolio]] — cache-native portfolio entrypoints
 - [[multi_timeframe]] — forecast alignment across timeframes
 - [[live_multi_timeframe]] — live orchestration with cache-native queries
-- [[pipeline]] — feature extraction and research workflow context
+- [[SaaS/robustness_tests/index]] — feature research and robustness workflow context
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

@@ -94,7 +94,7 @@ All files written by this adapter use the same canonical schema:
 
 **Compression:** zstd level 3 (~27% smaller than snappy, negligible read overhead).
 
-`load_data()` in `utils/core/helpers.py` handles both this schema and the legacy
+`load_data()` in `data_platform/loaders.py` handles both this schema and the legacy
 schema (`datetime` string column, `float64` OHLC, `int64` volume + timestamp).
 
 ---
@@ -233,7 +233,7 @@ from data_platform.providers.norgate import migrate_all
 migrate_all()
 ```
 
-IB CONTFUT appends (via `utils/cache/runtime/ib_candle_ratio_align.py`) then
+IB CONTFUT appends (via `cache/runtime/ib_candle_ratio_align.py`) then
 extend ohlc_data forward with ratio-splice continuity.
 
 ---
@@ -244,5 +244,7 @@ extend ohlc_data forward with ratio-splice continuity.
    - `TICKER_TO_CCB`: `"XX": "&XX_CCB"`
    - `TICKER_TO_RAW`: auto-derived
    - `TICKER_TO_CONTRACT_PREFIX`: `"XX": "XX"` (Norgate Futures DB prefix)
-2. Add the ticker to `utils/core/enums.py` `Ticker` enum.
+2. Add the ticker to `lib/core/enums.py` `Ticker` enum.
 3. Run `rebuild.py` or the individual fetch/migrate steps.
+
+> _Verified against current code via CodeGraph on 2026-06-07._

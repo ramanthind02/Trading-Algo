@@ -32,7 +32,10 @@ import argparse
 from dataclasses import dataclass
 from datetime import date
 
-import norgatedata
+try:
+    import norgatedata
+except ImportError:
+    norgatedata = None  # type: ignore[assignment]
 
 from data_platform.core import (
     AssetClass,

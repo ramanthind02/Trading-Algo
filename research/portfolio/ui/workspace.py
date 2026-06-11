@@ -21,8 +21,8 @@ from research.portfolio.ui.monitoring_dashboard import (
 )
 from research.portfolio.ui.contracts import PortfolioResearchUiRequest
 from research.portfolio.ui.planner import apply_ui_request
-from tools.research_workspace.preview import load_artifact_preview as _load_preview
-from tools.research_workspace.preview import resolve_artifact_path
+from research.workspace.preview import load_artifact_preview as _load_preview
+from research.workspace.preview import resolve_artifact_path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ensemble.vault.constants import VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES
 from ensemble.vault_manager import load_ensemble_from_vault
-from lib.cache.runtime.cache_paths import project_root
+from cache.runtime.cache_paths import project_root
 from lib.core.enums import TimeFrame
 from lib.core.vault_paths import resolve_vault_root
 

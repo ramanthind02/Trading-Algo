@@ -1,0 +1,122 @@
+{
+  "algomatic_momentum_signal_long_defaults_long": {
+    "calmar": 0.1859956858876894,
+    "max_drawdown": -0.017363088379918065,
+    "mean_return": 1.2991092179618967e-05,
+    "n_obs": 868.0,
+    "sharpe": 0.3290242198804507,
+    "sortino": 0.4425262956840502,
+    "std_return": 0.0006267842381732828,
+    "total_return": 0.011167668764371022
+  },
+  "buy_hold_long": {
+    "calmar": 95.38687096891695,
+    "max_drawdown": -0.04539049539808459,
+    "mean_return": 0.006764284118949334,
+    "n_obs": 39.0,
+    "sharpe": 7.413002017427349,
+    "sortino": 13.336336861771446,
+    "std_return": 0.014485316637483824,
+    "total_return": 0.2955833730088172
+  },
+  "calendar_ensemble_long": {
+    "calmar": 0.36106015823215415,
+    "max_drawdown": -0.023136929561904853,
+    "mean_return": 3.367174571150233e-05,
+    "n_obs": 868.0,
+    "sharpe": 0.46599546767848765,
+    "sortino": 0.6102749880505897,
+    "std_return": 0.001147054916295961,
+    "total_return": 0.02906925554292008
+  },
+  "double7s_long": {
+    "calmar": 0.7548434618847263,
+    "max_drawdown": -0.02779202935565137,
+    "mean_return": 8.382314055983722e-05,
+    "n_obs": 868.0,
+    "sharpe": 0.785909463121379,
+    "sortino": 1.1157207097308361,
+    "std_return": 0.0016931353630958046,
+    "total_return": 0.07413126859802453
+  },
+  "mr_indices_long": {
+    "calmar": 0.32208867504019206,
+    "max_drawdown": -0.027514331741357263,
+    "mean_return": 3.570060905563373e-05,
+    "n_obs": 868.0,
+    "sharpe": 0.4829283080592644,
+    "sortino": 0.6863854049348976,
+    "std_return": 0.0011735273949170435,
+    "total_return": 0.030856893985935153
+  },
+  "mr_indices_long_long": {
+    "calmar": 1.1865083669338723,
+    "max_drawdown": -0.009902197914606304,
+    "mean_return": 4.653285916285363e-05,
+    "n_obs": 868.0,
+    "sharpe": 1.2287305870679344,
+    "sortino": 2.082130128148894,
+    "std_return": 0.0006011783596833201,
+    "total_return": 0.04105334077610246
+  },
+  "rebalancing_es_tlt_long": {
+    "calmar": 1.1034129142024582,
+    "max_drawdown": -0.011250005777499145,
+    "mean_return": 4.923371158003022e-05,
+    "n_obs": 868.0,
+    "sharpe": 1.0509383590901136,
+    "sortino": 1.5666065358850991,
+    "std_return": 0.0007436791463633593,
+    "total_return": 0.04340986552508785
+  },
+  "rebalancing_es_tlt_long_short": {
+    "calmar": 0.4982218252323881,
+    "max_drawdown": -0.020783766275325383,
+    "mean_return": 4.1373196843532094e-05,
+    "n_obs": 868.0,
+    "sharpe": 0.6612577552353025,
+    "sortino": 0.9660838143004311,
+    "std_return": 0.0009932271244464145,
+    "total_return": 0.03612062224219533
+  },
+  "regime_lrsi_signal_long_short": {
+    "calmar": 0.6273530286638133,
+    "max_drawdown": -0.009064713570389755,
+    "mean_return": 2.260639483268913e-05,
+    "n_obs": 868.0,
+    "sharpe": 0.7881663270491307,
+    "sortino": 1.2639648593025279,
+    "std_return": 0.00045531682880410124,
+    "total_return": 0.01972430027878299
+  },
+  "robust_trend_breakout_cl_long_short": {
+    "calmar": 0.2804873040541512,
+    "max_drawdown": -0.011470720806422278,
+    "mean_return": 1.290225962389927e-05,
+    "n_obs": 868.0,
+    "sharpe": 0.36731941451574407,
+    "sortino": 0.5602438977134503,
+    "std_return": 0.0005575992278104442,
+    "total_return": 0.011125772992102056
+  },
+  "robust_trend_breakout_gc_long": {
+    "calmar": 2.3257513353609736,
+    "max_drawdown": -0.012350935532236904,
+    "mean_return": 0.00011289176558297682,
+    "n_obs": 868.0,
+    "sharpe": 1.7846133116060796,
+    "sortino": 3.183261155972431,
+    "std_return": 0.0010041958160586205,
+    "total_return": 0.10246429542735544
+  },
+  "sma_regime_long_short_long_short": {
+    "calmar": 0.7640605559200406,
+    "max_drawdown": -0.07157480876801824,
+    "mean_return": 0.00021768086721738033,
+    "n_obs": 868.0,
+    "sharpe": 0.9681193565258158,
+    "sortino": 1.3440249369611177,
+    "std_return": 0.0035693704662666977,
+    "total_return": 0.20129210733444747
+  }
+}

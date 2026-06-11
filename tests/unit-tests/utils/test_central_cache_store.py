@@ -7,13 +7,13 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import lib.cache.runtime.central_cache as central_cache_module
-from lib.cache.runtime.central_cache import CentralCacheStore, _candle_frame_semantically_equal
-from lib.cache.runtime.central_cache_errors import (
+import cache.runtime.central_cache as central_cache_module
+from cache.runtime.central_cache import CentralCacheStore, _candle_frame_semantically_equal
+from cache.runtime.central_cache_errors import (
     ArtifactMissingError,
     CacheCoverageError,
 )
-from lib.cache.runtime.central_cache_models import (
+from cache.runtime.central_cache_models import (
     ArtifactDescriptor,
     ArtifactRecord,
     ArtifactScope,

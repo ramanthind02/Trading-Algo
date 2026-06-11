@@ -38,7 +38,7 @@ This will:
 ```powershell
 .\.venv\Scripts\python.exe -m data_platform.providers.norgate.fetch_continuous
 .\.venv\Scripts\python.exe -m data_platform.providers.norgate.migrate
-.\.venv\Scripts\python.exe -m lib.cache.runtime.bootstrap_source_candles --reset-existing
+.\.venv\Scripts\python.exe -m cache.runtime.bootstrap_source_candles --reset-existing
 ```
 
 ### IBKR append policy (live)
@@ -51,5 +51,5 @@ When appending IBKR daily bars to central cache:
 
 See:
 
-- `lib/cache/runtime/ib_candle_ratio_align.py`
+- `cache/runtime/ib_candle_ratio_align.py`
 - `scripts/enigma_live_forecast.py`

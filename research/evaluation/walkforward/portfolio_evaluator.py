@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from research.portfolio.pnl.pnl_engine import PnLEngine
 
 from research.feature._internal.core_helpers import combo_key
 from features.validation.objective_metrics import (
@@ -133,6 +136,7 @@ def _vol_scaled_portfolio_returns(
     timeframe: TimeFrame,
     module_name: str,
     instrument_return_kind: str = "log_intraday",
+    pnl_engine: "PnLEngine | None" = None,
 ) -> pd.Series:
     """Compute production-equivalent OOS returns for the tearsheet.
 
@@ -146,13 +150,20 @@ def _vol_scaled_portfolio_returns(
 
     Returns the mean return series across combos, reindexed to test dates.
     Falls back to an empty Series if real-candle data is unavailable.
+
+    ``pnl_engine`` selects the P&L lane. ``None`` (the default) preserves the
+    frozen vectorized path (frictionless, exploration-identical numbers); a
+    realistic :class:`~research.portfolio.pnl.pnl_engine.PnLEngine` (the
+    multi-ticker Nautilus lane) routes each combo's positions through realistic
+    fills + the rollover overlay for validation / portfolio-addition.
     """
     from ensemble.portfolio_impl.portfolio_returns import calculate_returns_from_candles
     from ensemble.portfolio_impl.portfolio_tester import calculate_strategy_returns_from_positions
     from ensemble.portfolio_impl.tf_portfolio import TFPortfolio
-    from lib.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
+    from lib.compute.daily_ewsd_volatility import DailyEWSDVolatilityService, is_vol_scaling_off
     from lib.core.ticker_key import normalize_ticker_key
 
+    vol_off = is_vol_scaling_off()
     svc = DailyEWSDVolatilityService()
     # Deduplicate before computing EWSD: when the train tearsheet is generated the
     # runner passes test_candles=train_candles, so naively concatenating would double
@@ -219,7 +230,11 @@ def _vol_scaled_portfolio_returns(
         ewsd_arr = vol_lookup.reindex(mi).fillna(target_volatility).to_numpy(dtype=float)
         ewsd_arr = np.maximum(ewsd_arr, 1e-6)
 
-        forecast_vals = np.minimum(target_volatility / ewsd_arr, _FORECAST_CAP) * signal.to_numpy(dtype=float)
+        forecast_vals = (
+            signal.to_numpy(dtype=float)
+            if vol_off
+            else np.minimum(target_volatility / ewsd_arr, _FORECAST_CAP) * signal.to_numpy(dtype=float)
+        )
         forecasts_df = pd.DataFrame(
             {"ticker": ticker.values, "forecast_score": forecast_vals},
             index=pd.to_datetime(signal.index),
@@ -233,10 +248,16 @@ def _vol_scaled_portfolio_returns(
             }
         )
 
-        returns = calculate_strategy_returns_from_positions(
-            positions_df, test_candles,
-            instrument_return_kind=instrument_return_kind,
-        )
+        if pnl_engine is None:
+            returns = calculate_strategy_returns_from_positions(
+                positions_df, test_candles,
+                instrument_return_kind=instrument_return_kind,
+            )
+        else:
+            # Realistic lane: route this combo's positions through the supplied
+            # PnLEngine (the multi-ticker Nautilus lane — spread + rollover
+            # overlay). The vectorized baseline above is left untouched.
+            returns = pnl_engine.returns_from_positions(positions_df, test_candles)
         if returns.empty:
             continue
         if getattr(returns.index, "tz", None) is not None:
@@ -267,6 +288,7 @@ def evaluate_fold_portfolio(
     feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
     feature_type: object = None,
     instrument_return_kind: str = "log_intraday",
+    pnl_engine: "PnLEngine | None" = None,
 ) -> FoldPortfolioResult:
     _ = (binning_config, module_name, weight_layer_config, member_prediction_mode, feature_type)
     timeframe = _normalize_timeframe(trading_timeframe)
@@ -325,6 +347,7 @@ def evaluate_fold_portfolio(
                 timeframe=timeframe,
                 module_name=module_name,
                 instrument_return_kind=instrument_return_kind,
+                pnl_engine=pnl_engine,
             )
             if combined.empty:
                 raise ValueError("vol-scaled path returned empty series")

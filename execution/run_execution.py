@@ -27,7 +27,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from deployment.telegram_notifier import TelegramNotifier
+from lib.core.notify import TelegramNotifier
 from execution.approval_flow import ApprovalDecision, new_run_id, request_approval
 from execution.audit_log import AuditLog, write_closing_positions
 from execution.ib_trade_executor import IBTradeClient

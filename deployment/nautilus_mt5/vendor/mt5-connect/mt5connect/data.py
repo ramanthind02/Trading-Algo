@@ -127,6 +127,12 @@ class MT5DataClient(LiveMarketDataClient):
         # (MT5 returns the same tick if price hasn't moved)
         self._last_tick_time: dict[str, int] = {}
 
+        # Broker-server -> UTC offset (seconds), computed at connect. MT5
+        # symbol_info_tick().time is in the broker's server timezone, NOT UTC;
+        # this is added to every tick's ts_event so Nautilus (UTC) freshness
+        # checks are correct. 0 until _connect computes it.
+        self._utc_offset_s: int = 0
+
     # ── Required: connect / disconnect ───────────────────────────────────────
 
     async def _connect(self) -> None:
@@ -152,11 +158,42 @@ class MT5DataClient(LiveMarketDataClient):
             except Exception as exc:
                 self._log.error(f"MT5DataClient: failed to load {symbol}: {exc}")
 
+        # MT5 tick.time is in the broker server's timezone — compute the offset to
+        # UTC once (from a fresh liquid tick) so live quotes carry a correct UTC
+        # ts_event and don't look hours-stale (which would defer every order).
+        self._utc_offset_s = self._compute_utc_offset()
+
         # Start the async polling loop — use running loop to avoid cross-loop issues
         self._poll_task = asyncio.get_event_loop().create_task(
             self._poll_loop(),
             name="MT5DataClient._poll_loop",
         )
+
+    def _compute_utc_offset(self) -> int:
+        """Broker-server-time → UTC offset (seconds) from a fresh reference tick.
+
+        During market hours a liquid symbol's last tick is ~now, so the offset is
+        ``round(utc_now - tick.time)`` snapped to the nearest half-hour (covers
+        whole- and half-hour broker zones, incl. DST). Tries EURUSD first (liquid
+        24/5), then the configured symbols. Returns 0 if no reference tick exists.
+        """
+        utc_now = self._clock.timestamp()
+        for ref in ("EURUSD", *self._config.symbols):
+            try:
+                mt5.symbol_select(ref, True)
+                tick = mt5.symbol_info_tick(ref)
+            except Exception:
+                continue
+            if tick is not None and getattr(tick, "time", 0) > 0:
+                raw = utc_now - float(tick.time)
+                offset = int(round(raw / 1800.0) * 1800)
+                self._log.info(
+                    f"MT5DataClient: broker→UTC tick offset = {offset}s "
+                    f"({offset / 3600:.2f}h) from {ref} (raw {raw:.0f}s)"
+                )
+                return offset
+        self._log.warning("MT5DataClient: no reference tick for UTC offset; using 0")
+        return 0
         self._log.info(
             f"MT5DataClient: connected — polling every {self._config.poll_interval_ms}ms "
             f"for {len(self._config.symbols)} symbols"
@@ -437,7 +474,7 @@ class MT5DataClient(LiveMarketDataClient):
                 if instrument is None:
                     continue
 
-                tick = parse_quote_tick(raw_tick, instrument)
+                tick = parse_quote_tick(raw_tick, instrument, utc_offset_s=self._utc_offset_s)
                 self._handle_data(tick)
 
             except Exception as exc:
@@ -446,8 +483,15 @@ class MT5DataClient(LiveMarketDataClient):
     # ── Properties ────────────────────────────────────────────────────────────
 
     @property
-    def subscribed_quote_ticks(self) -> list[str]:
-        """Currently subscribed symbols."""
+    def subscribed_tick_symbols(self) -> list[str]:
+        """Currently subscribed MT5 symbols (convenience accessor).
+
+        Deliberately NOT named ``subscribed_quote_ticks``: that name is a callable
+        METHOD on Nautilus's ``MarketDataClient`` base (the live ``DataEngine``
+        invokes ``client.subscribed_quote_ticks()`` for subscription dedup).
+        Shadowing it with a property made the engine call a list, crashing live
+        subscription with ``TypeError("'list' object is not callable")``.
+        """
         return sorted(self._subscribed_ticks)
 
     @property

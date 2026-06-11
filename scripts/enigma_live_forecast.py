@@ -54,13 +54,13 @@ PROJECT_ROOT = ensure_project_root_on_path()
 from ibapi.contract import Contract
 
 # Project imports
-from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
+from execution.ib_data_client import IBDataClient, IBConfig
 from ensemble.portfolio import (
     GlobalPortfolio,
     build_global_portfolio_from_ensemble_dirs,
     discover_ensemble_dirs_in_vault,
 )
-from deployment.telegram_notifier import TelegramNotifier
+from lib.core.notify import TelegramNotifier
 from lib.core.enums import TimeFrame, Ticker
 from lib.core.futures_micro_specs import (
     listed_micro_futures_row,
@@ -396,7 +396,7 @@ def build_portfolio(config: Dict) -> GlobalPortfolio:
 
 def discover_required_tickers(portfolio: GlobalPortfolio) -> Set[str]:
     """Discover all tickers needed by the portfolio (primary + cross-tickers)."""
-    from utils.data.cross_ticker_store import extract_cross_ticker_names
+    from cache.runtime.cross_ticker_store import extract_cross_ticker_names
 
     required: Set[str] = set()
     for tf_p in portfolio.tf_portfolios:
@@ -417,8 +417,8 @@ def ensure_cache_ready(required_tickers: Set[str]) -> Dict[str, Any]:
 
     Returns dict with 'bootstrapped' bool and coverage info per ticker.
     """
-    from lib.cache.runtime.central_cache import CentralCacheStore
-    from lib.cache.runtime.cache_manager import CacheManager
+    from cache.runtime.central_cache import CentralCacheStore
+    from cache.runtime.cache_manager import CacheManager
 
     store = CentralCacheStore.get_instance()
     manager = CacheManager()
@@ -483,9 +483,9 @@ def upsert_tws_candles(
         junction ratio alignment and append-only filtering (all IB appends) via
         :func:`prepare_ib_rows_for_central_cache_append`.
     """
-    from lib.cache.runtime.central_cache import CentralCacheStore
-    from lib.cache.runtime.central_cache_errors import ArtifactMissingError
-    from lib.cache.runtime.ib_candle_ratio_align import (
+    from cache.runtime.central_cache import CentralCacheStore
+    from cache.runtime.central_cache_errors import ArtifactMissingError
+    from cache.runtime.ib_candle_ratio_align import (
         prepare_ib_rows_for_central_cache_append,
     )
 
@@ -574,7 +574,7 @@ def sync_ib_fetched_dailies_into_central_cache(
     forecast pipeline). Session-only partial dailies are built only for the
     ``personal`` profile and are **not** written to cache (overlay only).
     """
-    from utils.data.cross_ticker_store import CrossTickerDataStore
+    from cache.runtime.cross_ticker_store import CrossTickerDataStore
 
     print("\n4. Fetching historical data...")
     instruments = config["instruments"]
@@ -676,8 +676,8 @@ def refresh_bias_caches(
 
     Returns the summary dict from ensure_vault_cache_coverage.
     """
-    from lib.cache.runtime.central_cache import CentralCacheStore
-    from lib.cache.runtime.cache_manager import CacheManager
+    from cache.runtime.central_cache import CentralCacheStore
+    from cache.runtime.cache_manager import CacheManager
 
     store = CentralCacheStore.get_instance()
     manager = CacheManager()
@@ -773,8 +773,8 @@ def build_cache_query(
     limits the **daily** candle history passed into fit/predict; monthly
     candles still use the full ``start``/``end`` window.
     """
-    from lib.cache.runtime.central_cache import CentralCacheStore
-    from lib.cache.runtime.central_cache_models import ArtifactScope
+    from cache.runtime.central_cache import CentralCacheStore
+    from cache.runtime.central_cache_models import ArtifactScope
     from ensemble.portfolio import PortfolioCacheQuery
     from ensemble.portfolio_impl.portfolio_cache import _query_candles_from_cache
 
@@ -845,7 +845,7 @@ def compute_fetch_lookback(
     If cache has recent data, only fetch the gap. If cache is empty or stale,
     fetch max_lookback.
     """
-    from lib.cache.runtime.central_cache import CentralCacheStore
+    from cache.runtime.central_cache import CentralCacheStore
 
     store = CentralCacheStore.get_instance()
     try:

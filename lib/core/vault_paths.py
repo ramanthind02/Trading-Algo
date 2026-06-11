@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from lib.cache.runtime.cache_paths import project_root
+from lib.core.repo_bootstrap import project_root
 
 _VAULT_ROOT_ENV_VAR = "TRADING_ALGO_VAULT_ROOT"
 _VAULT_PROP_ENV_VAR = "TRADING_ALGO_VAULT_PROP"

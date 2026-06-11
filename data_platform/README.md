@@ -27,7 +27,6 @@ data_platform/
       backadjust/           roll detection + additive back-adjustment
     yahoo/                TLT ETF scraper
     mt5/                  Darwinex CFD scraper + probes
-    ib/                   placeholder (live IB code stays in scripts/ + utils/cache)
 
   events/               market calendar + economic releases (see events/README.md)
     calendar_loader.py, nyse_holidays.py, fed_fomc.py, trading_day_index.py
@@ -49,7 +48,7 @@ data/
     bars_D1/part.parquet             full-history daily bars (daily_scraper)
   ib/contracts/{TICKER}/         per-expiry daily OHLCV from TWS API (~2yr forward)
   events/calendar|econ/          holiday/FOMC JSON + econ series parquet
-  instruments/catalog.parquet    InstrumentCatalog (53 instruments seeded)
+  instruments/catalog.parquet    InstrumentCatalog (69 instruments seeded)
   provenance/{INSTRUMENT}/       per-bar source provenance + conflict logs
   raw_data/                      staging CSVs (TLT Yahoo + prop-firm ES.txt)
 ```
@@ -62,16 +61,29 @@ from data_platform.core import load_catalog, source_symbol
 from data_platform.events import load_calendar_bundle, load_econ_series
 ```
 
-Back-compat: `utils.core.helpers.load_data` and `utils.core.stock_helpers.load_stock_data`
-re-export the loaders, so existing imports keep working.
+Back-compat: `lib.core.helpers` exposes `load_data` and `load_data_multi_ticker` via a lazy
+module `__getattr__` (PEP 562), so existing imports keep working without an eager data-platform
+import.
 
 ## Layer boundary (Nautilus mapping)
 
 `data_platform` is the **model + ingestion** layer (Nautilus `model` crate + the
 bronze→silver→gold pipeline). The **runtime/engine** layer
-(`utils/cache/runtime/` — central cache, IB ratio-splice) maps to Nautilus's
+(`cache/runtime/` — central cache, IB ratio-splice) maps to Nautilus's
 DataEngine/Cache and stays where it is; the reconciler *calls* it. Live trading
 (`scripts/enigma_live_forecast.py`) is untouched.
+
+## Metadata & registry
+
+Two companion packages were added alongside the providers:
+
+- **`data_platform/storage/`** — PyArrow schema contracts and single-writer helpers (bronze → silver
+  schema enforcement at ingest time).
+- **`data_platform/registry/`** — `data/registry.db`: a SQLite metadata index (instruments,
+  source symbols, blob manifest, lineage FKs, live-trading accounts + command queue). Price rows
+  never live in the DB — it is a rebuildable index on top of the parquet stores. CLI:
+  `python -m data_platform.registry [rebuild|backup|ingest|accounts|coverage|freshness|runs|lineage|fills|report|costs]`.
+  Full operational reference: [docs/library/Data/data_platform_migration_plan.md](../docs/library/Data/data_platform_migration_plan.md).
 
 ## Docs
 
@@ -79,6 +91,7 @@ DataEngine/Cache and stays where it is; the reconciler *calls* it. Live trading
 - [providers/norgate/README.md](providers/norgate/README.md) — Norgate adapter
 - [providers/mt5/README.md](providers/mt5/README.md) — MT5 scraper
 - [events/README.md](events/README.md) — calendar + econ
-- [docs/library/Data/multi_source_update_architecture.md](../docs/library/Data/multi_source_update_architecture.md) — source priority + Norgate→IB handover
-- [docs/library/Data/futures_backtesting_data_guide.md](../docs/library/Data/futures_backtesting_data_guide.md) — which series to use when
-```
+- [docs/library/Data/futures_research_data.md](../docs/library/Data/futures_research_data.md) — which series to use when (three-series rule, additive distortion, ratio fix, Norgate→IB handover)
+- [docs/library/Data/data_platform_migration_plan.md](../docs/library/Data/data_platform_migration_plan.md) — full migration plan (storage, registry, live ingest)
+
+> _Verified against the working tree on 2026-06-10._

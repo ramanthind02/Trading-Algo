@@ -1,7 +1,7 @@
 """Cross-source symbol resolution over the InstrumentCatalog.
 
 The same economic instrument has different native symbols per source:
-  ES.XCME  ->  norgate &ES_CCB, ib CONTFUT "ES"@CME, mt5 "US500.cash"
+  ES.XCME  ->  norgate &ES_CCB, mt5 "US500.cash"
 
 Canonical identity is the catalog ``InstrumentId``; each instrument carries an
 ``info["source_symbols"]`` dict (populated by the catalog seeders). These helpers
@@ -19,7 +19,7 @@ def source_symbol(
     source: str,
 ) -> str | None:
     """Native symbol for ``instrument_id`` at ``source`` (e.g. 'norgate_adj',
-    'ib_contfut', 'mt5'), or None if the instrument or key is absent."""
+    'etf_proxy', 'mt5'), or None if the instrument or key is absent."""
     inst = catalog.find(instrument_id)
     if inst is None:
         return None

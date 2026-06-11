@@ -1,0 +1,122 @@
+{
+  "algomatic_momentum_signal_long_defaults_long": {
+    "calmar": 1.1301644511131155,
+    "max_drawdown": -0.011057199152357257,
+    "mean_return": 4.945317944853579e-05,
+    "n_obs": 1007.0,
+    "sharpe": 1.3447376138122356,
+    "sortino": 2.300899447975155,
+    "std_return": 0.0005837903826815031,
+    "total_return": 0.050878821477967996
+  },
+  "buy_hold_long": {
+    "calmar": 12.164304391388495,
+    "max_drawdown": -0.09086003742252376,
+    "mean_return": 0.003118498568777482,
+    "n_obs": 47.0,
+    "sharpe": 2.7479675882315195,
+    "sortino": 3.848754978702869,
+    "std_return": 0.018014997801788342,
+    "total_return": 0.14894349033435225
+  },
+  "calendar_ensemble_long": {
+    "calmar": 0.35615794747880347,
+    "max_drawdown": -0.029848954427880003,
+    "mean_return": 4.246189830816922e-05,
+    "n_obs": 1007.0,
+    "sharpe": 0.6756184706353532,
+    "sortino": 0.9571243052056477,
+    "std_return": 0.000997695841679537,
+    "total_return": 0.04316291385695046
+  },
+  "double7s_long": {
+    "calmar": 0.30836675962809745,
+    "max_drawdown": -0.028861485743184756,
+    "mean_return": 3.6534276160297795e-05,
+    "n_obs": 1007.0,
+    "sharpe": 0.35000697514192314,
+    "sortino": 0.4735829936870086,
+    "std_return": 0.0016570059898499301,
+    "total_return": 0.03604134037480091
+  },
+  "mr_indices_long": {
+    "calmar": 1.1575805013352856,
+    "max_drawdown": -0.030203153813290206,
+    "mean_return": 0.00013782462657424815,
+    "n_obs": 1007.0,
+    "sharpe": 1.2858563750765086,
+    "sortino": 2.035659240227927,
+    "std_return": 0.0017015104961505888,
+    "total_return": 0.14720061073859617
+  },
+  "mr_indices_long_long": {
+    "calmar": 0.37434060193750973,
+    "max_drawdown": -0.014797796351836114,
+    "mean_return": 2.2228193114308095e-05,
+    "n_obs": 1007.0,
+    "sharpe": 0.4501946011363383,
+    "sortino": 0.6603594795321331,
+    "std_return": 0.0007837979965952626,
+    "total_return": 0.022320044927548802
+  },
+  "rebalancing_es_tlt_long": {
+    "calmar": 0.4182196543134048,
+    "max_drawdown": -0.026268342052223514,
+    "mean_return": 4.379865866752547e-05,
+    "n_obs": 1007.0,
+    "sharpe": 0.7404216408034848,
+    "sortino": 1.0812675388252735,
+    "std_return": 0.0009390354268958906,
+    "total_return": 0.04462791757674389
+  },
+  "rebalancing_es_tlt_long_short": {
+    "calmar": -0.024625116459125296,
+    "max_drawdown": -0.049388759658716176,
+    "mean_return": -4.072418749092855e-06,
+    "n_obs": 1007.0,
+    "sharpe": -0.05251806596243295,
+    "sortino": -0.07570461942897005,
+    "std_return": 0.0012309600950260085,
+    "total_return": -0.004851142409750165
+  },
+  "regime_lrsi_signal_long_short": {
+    "calmar": -0.08857070688381606,
+    "max_drawdown": -0.06034064954847248,
+    "mean_return": -1.955919373183516e-05,
+    "n_obs": 1007.0,
+    "sharpe": -0.17091401987598182,
+    "sortino": -0.17696872044005438,
+    "std_return": 0.0018166594816593396,
+    "total_return": -0.0211860750348672
+  },
+  "robust_trend_breakout_cl_long_short": {
+    "calmar": 0.01573274608323396,
+    "max_drawdown": -0.14456386776567143,
+    "mean_return": 2.258438157620198e-05,
+    "n_obs": 1007.0,
+    "sharpe": 0.0702797664785297,
+    "sortino": 0.08724237345528373,
+    "std_return": 0.005101268273258165,
+    "total_return": 0.009119533241237978
+  },
+  "robust_trend_breakout_gc_long": {
+    "calmar": -0.10570241603467694,
+    "max_drawdown": -0.029179739324757398,
+    "mean_return": -1.2004642785310246e-05,
+    "n_obs": 1007.0,
+    "sharpe": -0.2675399996209654,
+    "sortino": -0.33246642393296916,
+    "std_return": 0.0007122964663174292,
+    "total_return": -0.012268405065053157
+  },
+  "sma_regime_long_short_long_short": {
+    "calmar": -0.0326673453113636,
+    "max_drawdown": -0.09494938256772673,
+    "mean_return": -6.026529902713881e-06,
+    "n_obs": 1007.0,
+    "sharpe": -0.026953954959810515,
+    "sortino": -0.035758583006590565,
+    "std_return": 0.0035493194408871198,
+    "total_return": -0.012337195963503918
+  }
+}

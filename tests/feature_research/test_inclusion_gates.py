@@ -26,7 +26,7 @@ from research.feature.inclusion_gates import (
 )
 from research.portfolio.pipelines.portfolio_test import PhaseResult
 from research.portfolio.config import EnsembleDirsPolicy, PortfolioResearchConfig, ResearchWindow
-from lib.cache.runtime.cache_paths import win32_extended_path
+from cache.runtime.cache_paths import win32_extended_path
 from lib.core.enums import Ticker, TimeFrame
 
 

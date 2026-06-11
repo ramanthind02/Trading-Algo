@@ -14,8 +14,8 @@ from ensemble.portfolio_impl.global_weight_layer_adapter import (
     decode_global_weight_layer_output,
     encode_forecast_vectors_for_global_weight_layer,
 )
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
 from lib.core.enums import TimeFrame, Ticker
 from ensemble.portfolio import GlobalPortfolio, TFPortfolio, PortfolioCacheQuery
 

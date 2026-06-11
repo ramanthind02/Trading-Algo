@@ -1,0 +1,53 @@
+{
+  "spec_version": "1.0",
+  "name": "AUDNZD linear z MR (best)",
+  "hypothesis": "Best full-history performer from the Robot Wealth/Chan AUD/NZD MR replication: linear -z (no ROC filter). Raw vectorized Sharpe ~0.75 at lookback 200 (150 close behind), uncapped + no vol scaling. NOTE: the pipeline always applies tau/sigma vol scaling and re-caps at forecast_cap, so expect UI Sharpe below the raw number.",
+  "author": "raman",
+  "created": "2026-06-08T00:00:00+00:00",
+  "tickers": [
+    "AUDNZD"
+  ],
+  "data_feed": "darwinex_cfd",
+  "mode": "daily",
+  "timeframe": "D",
+  "windows": null,
+  "signal": {
+    "module_name": "linear_z_mr",
+    "param_grid": {
+      "lookback": [
+        150,
+        200
+      ],
+      "scale": [
+        1
+      ],
+      "cap": [
+        2
+      ]
+    }
+  },
+  "direction": "long_short",
+  "vol_scaling": "off",
+  "vol_scaling_model": "inherit_daily",
+  "risk": {
+    "target_vol": 0.15,
+    "forecast_cap": 4.0,
+    "max_position_pct": 3.5,
+    "buffer_fraction": 0.0
+  },
+  "account": {
+    "capital": 50000.0,
+    "prop_constraints": null
+  },
+  "execution": {
+    "entry_policy": "market_on_open",
+    "exit_policy": "market_on_open",
+    "unfilled_limit": "cross_after",
+    "holding": "intraday",
+    "fill_feed": "derived"
+  },
+  "vault": {
+    "weight_hierarchy_group": "mean_reversion_forex",
+    "ensemble_name": "audnzd_linear_z_mr_best"
+  }
+}

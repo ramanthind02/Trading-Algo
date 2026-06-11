@@ -89,10 +89,19 @@ ensemble/
 ├── portfolio_impl/
 │   ├── tf_portfolio.py            # TFPortfolio (per-TF IDM); Portfolio = backward-compatible alias
 │   ├── global_portfolio_impl.py   # GlobalPortfolio (top-level orchestrator + cross-TF WeightLayer)
+│   ├── global_portfolio_diagnostics.py  # Diagnostics helpers for GlobalPortfolio
+│   ├── global_portfolio_runtime.py      # Runtime helpers (cache-native fit/predict dispatch)
+│   ├── global_weight_layer_adapter.py   # encode/decode synthetic __GLOBAL__ streams
+│   ├── portfolio_allocation.py    # Instrument-weight resolution and sector allocation helpers
 │   ├── portfolio_cache.py         # PortfolioCacheQuery (cache-native request dataclass)
-│   ├── portfolio_returns.py       # calculate_idm_from_returns, return matrices
 │   ├── portfolio_global_streams.py# build_daily_grid, align_forecast_vectors_to_daily_grid, ...
-│   └── global_weight_layer_adapter.py  # encode/decode synthetic __GLOBAL__ streams
+│   ├── portfolio_persistence.py   # Control-file serialization / deserialization helpers
+│   ├── portfolio_postprocessing.py# Post-predict clipping, position constraints
+│   ├── portfolio_result_formatting.py  # Output DataFrame formatting helpers
+│   ├── portfolio_returns.py       # calculate_idm_from_returns, return matrices
+│   ├── portfolio_tester.py        # PortfolioTester (research/backtesting harness)
+│   ├── backtest_conventions.py    # Shared backtest date/window conventions
+│   └── vault_portfolio_loader.py  # Vault-backed ensemble auto-discovery and loading
 └── __init__.py                    # exports DiversifiedEnsemble, GlobalPortfolio, Portfolio,
                                    #   PortfolioWorld, TFPortfolio, WeightLayer, BaseWeightLayer,
                                    #   ClusteredWeightLayer
@@ -187,7 +196,7 @@ contracts = sizer.calculate_positions(positions)
 ```python
 from ensemble import TFPortfolio, GlobalPortfolio, WeightLayer
 from ensemble.portfolio import PortfolioCacheQuery
-from utils.enums import TimeFrame
+from lib.core.enums import TimeFrame
 
 # 1. Build one TFPortfolio per timeframe
 tf_daily = TFPortfolio(trading_timeframe=TimeFrame.D, ...)
@@ -380,4 +389,4 @@ All written to `output_root / {phase} / futures_sim /`:
 
 **See also:** [weight layer](weight_layer.md), [base model](base_model.md), [vault](../Vault/vault.md), [Cache architecture](../Cache/architecture.md), [Cache user guide](../Cache/user_guide.md) (portfolio workflow; portfolio-addition summary cross-linked there)
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

@@ -119,10 +119,10 @@ SaaS mirrors this repository's `data_platform` stack:
 - **Instrument model + catalog**: `data_platform/core/` — `InstrumentId` (`symbol.venue`),
   `Instrument`, `BarType`, `InstrumentCatalog`. Nautilus-aligned (see
   [[data_platform_README]]).
-- **Source adapters**: `data_platform/providers/{norgate,ib,mt5,yahoo}/`.
+- **Source adapters**: `data_platform/providers/{norgate,mt5,yahoo}/` (the `ib` adapter was removed in the Nautilus refactor).
 - **Source-priority reconciliation**: `data_platform/core/{source_priority,reconciler,provenance}.py`
-  + `configs/source_priority.yaml` (see [[multi_source_update_architecture]]).
-- **IB splice primitive** (runtime/engine layer): `lib/cache/runtime/ib_candle_ratio_align.py`.
+  + `configs/source_priority.yaml`.
+- **IB splice primitive** (runtime/engine layer): `cache/runtime/ib_candle_ratio_align.py`.
 - **Live upsert path**: `scripts/enigma_live_forecast.py` (`upsert_tws_candles`).
 
 ## Future state: NautilusTrader

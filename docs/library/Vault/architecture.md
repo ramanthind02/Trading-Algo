@@ -101,4 +101,4 @@ This keeps mutable runtime prediction state out of the working vault. See
 - [[Vault/portfolio_snapshots_and_predictions]]
 - [[Cache/architecture]]
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._

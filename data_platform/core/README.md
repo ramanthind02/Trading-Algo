@@ -7,7 +7,7 @@ is a mechanical mapping rather than a rewrite.
 
 It is the **single source of truth** for: what an instrument is, how it is
 identified, its precision/increments/multiplier, and how a bar series is keyed.
-Every data adapter (Norgate, IB, MT5) targets this model.
+Every data adapter (Norgate, MT5) targets this model.
 
 ---
 
@@ -23,7 +23,7 @@ NautilusTrader separates the **domain model** from the **runtime engines**
 |---|---|---|
 | `model` (InstrumentId, Instrument, BarType) | `data_platform/core/` | ✅ yes |
 | `persistence` (ParquetDataCatalog) | `data/` parquet + `InstrumentCatalog` | partial — our catalog is metadata-only |
-| `data` engine (DataEngine, routing) | `utils/cache/runtime/` | not migrated |
+| `data` engine (DataEngine, routing) | `cache/runtime/` | not migrated |
 | `execution`, `risk`, `portfolio` | `execution/`, `ensemble/` | not migrated |
 
 We are **not** building DataEngine / MessageBus / Cache here — Nautilus provides
@@ -155,8 +155,9 @@ from each catalog row, (3) load bars into a `ParquetDataCatalog`.
 
 ## Related
 
-- [[multi_source_update_architecture]] — continuous Norgate/IB/MT5 update +
-  source-priority reconciliation + Norgate→IB futures stitching
-- [[futures_backtesting_data_guide]] — which adjusted series to use when
-- [[norgate]] — the Norgate adapter
+- [[futures_research_data]] — which adjusted series to use when (three-series
+  rule, ratio fix, Norgate→IB handover plan)
+- `data_platform/providers/norgate/README.md` — the Norgate adapter
 - NautilusTrader docs: Instruments, Continuous Futures, Data, Architecture
+
+> _Verified against the working tree on 2026-06-10._

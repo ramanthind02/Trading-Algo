@@ -36,7 +36,7 @@ from ensemble.vault_manager import (
     load_ensemble_from_vault,
 )
 from ensemble.weight_layer import WeightLayer
-from lib.plotting.graphing.quantstats_reports import generate_tearsheet
+from analysis.plotting.graphing.quantstats_reports import generate_tearsheet
 from research.portfolio.config import rebuild_weight_layer_kwargs
 from research.portfolio.pnl import make_pnl_engine
 from research.portfolio.futures_sim import run_futures_sim
@@ -45,7 +45,7 @@ from research.portfolio.weight_layer_export import (
     write_weight_layer_csv,
 )
 from research.portfolio.weight_layer_report import write_portfolio_weight_layer_report
-from lib.cache import (
+from cache import (
     CentralCacheStore,
     bootstrap_source_candles,
     extract_cross_ticker_names,
@@ -406,14 +406,85 @@ def _format_artifact_failure_lines(cache_preflight: dict[str, Any]) -> list[str]
     return lines
 
 
+def _run_reference_series_preflight(config: Any) -> None:
+    """Validate the %-return / σ reference series the pipeline actually consumes.
+
+    Scoped to ``config.tickers`` (the traded universe) — it audits each consumed
+    instrument's RATIO series (``D_{T}_ratio.parquet``, the EWSD σ and IDM/weight
+    return denominator) for negative prices and additive misclassification. It
+    does NOT run the broad commodity-cash alignment checks (those reference
+    series are not consumed and are expected to fail by construction).
+
+    Policy:
+      * loud WARN by default (missing ratio file -> falls back to unadjusted;
+        a negative inherited from a genuinely negative source print);
+      * hard FAIL only when a *consumed* return/σ series is genuinely broken —
+        negative prices on a positive source, or additive-classified — because
+        that silently corrupts σ and the correlation matrix for sizing.
+
+    A scoped failure raises ``RuntimeError`` regardless of
+    ``strict_cache_preflight`` (a broken σ denominator is never acceptable),
+    while any unexpected validator import/IO error degrades to a WARN so the
+    guardrail can never itself break a run.
+    """
+    # The reference-series validator audits the Norgate futures RATIO σ series. Under
+    # the CFD feed those files are not the consumed σ/return series (σ comes from the
+    # CFD candles), so the check is irrelevant and must not block a CFD run.
+    from lib.core.research_feed import active_research_feed
+
+    if active_research_feed() != "futures":
+        logger.info(
+            "Reference-series preflight skipped (research feed is %s, not futures).",
+            active_research_feed(),
+        )
+        return
+
+    try:
+        from data_platform.data_quality.reference_series import validate_consumed_series
+    except Exception as exc:  # noqa: BLE001 — guardrail must never hard-break preflight
+        logger.warning("Reference-series validator unavailable, skipping: %s", exc)
+        return
+
+    tickers = [getattr(t, "name", str(t)) for t in getattr(config, "tickers", []) or []]
+    if not tickers:
+        return
+    try:
+        findings = validate_consumed_series(tickers)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Reference-series validation errored, continuing: %s", exc)
+        return
+
+    fails = [f for f in findings if f.status == "FAIL"]
+    warns = [f for f in findings if f.status == "WARN"]
+    print(
+        "Reference-series preflight (consumed sigma/return series): "
+        f"{len(fails)} FAIL, {len(warns)} WARN, "
+        f"{sum(1 for f in findings if f.status == 'PASS')} PASS "
+        f"over {sorted(set(tickers))}"
+    )
+    for f in (*fails, *warns):
+        mark = "FAIL" if f.status == "FAIL" else "warn"
+        print(f"  [{mark}] {f.series}: {f.detail}")
+    if fails:
+        raise RuntimeError(
+            "Reference-series preflight FAILED: a consumed σ/return series is "
+            "broken (negative-on-positive-source or additive). Regenerate via "
+            "`python -m data_platform.providers.norgate.backadjust.ratio_driver`. "
+            + "; ".join(f"{f.series}: {f.detail}" for f in fails)
+        )
+
+
 def run_portfolio_research_cache_preflight(config: Any) -> None:
     """Bootstrap source candles and refresh vault-selected bias artifacts.
 
     Candles are bootstrapped from the full available history (start=None) to
     ensure every bias-node cache entry is built with its complete warmup window.
     Artifacts are refreshed through test end.
-    Raises ``RuntimeError`` if bootstrap or artifact refresh reports failures.
+    Raises ``RuntimeError`` if bootstrap or artifact refresh reports failures,
+    or if a *consumed* reference σ/return series is broken (see
+    :func:`_run_reference_series_preflight`).
     """
+    _run_reference_series_preflight(config)
     test_end_ts = pd.Timestamp(config.test_window.end)
     cache_preflight = _preflight_vault_cache(
         config.ensemble_dirs,
@@ -792,7 +863,27 @@ def _evaluate_phase(
             output_dir=phase_out,
         )
 
-    engine = make_pnl_engine(getattr(config, "pnl_engine", "vectorized"))
+    # Phase-scoped engine: the realistic Nautilus lane (spread + rollover overlay)
+    # on the phases listed in config.realistic_phases (default: test/holdout only);
+    # all other phases use the fast vectorized lane. An explicit
+    # pnl_engine="nautilus" forces realism on every phase.
+    phase_key = output_dir_name.strip().lower()
+    realistic_phases = {p.strip().lower() for p in getattr(config, "realistic_phases", ())}
+    force_nautilus = getattr(config, "pnl_engine", "vectorized") == "nautilus"
+    if force_nautilus or phase_key in realistic_phases:
+        from research.portfolio.pnl.nautilus_engine import ExecutionWindowPolicy
+
+        engine = make_pnl_engine(
+            "nautilus",
+            multi_ticker=True,
+            window_policy=ExecutionWindowPolicy.ROLLOVER_FLATTEN_REENTER,
+            rollover_minute=int(getattr(config, "rollover_minute", 0)),
+            rollover_half_width_min=int(getattr(config, "rollover_half_width_min", 15)),
+            measure_spread=True,
+        )
+        print(f"  [{phase_title}] P&L lane: nautilus (realistic fills, rollover overlay)")
+    else:
+        engine = make_pnl_engine("vectorized")
     combined_strategy_returns = engine.returns_from_positions(
         combined_positions,
         filter_candles_to_position_tickers(combined_positions, daily_test_candles),
@@ -897,6 +988,9 @@ def _run_composite_futures_sim(
 
 def run_portfolio_test_pipeline(config: Any) -> None:
     """Load ensembles, fit portfolios by timeframe, run tearsheets for windows."""
+    from lib.core.research_feed import set_research_feed
+
+    set_research_feed(getattr(config, "data_feed", "cfd"))
     train_window = config.train_window
     validation_window = config.validation_window
     test_window = config.test_window
@@ -1070,6 +1164,9 @@ def run_single_phase_for_prop_firm(
     CSV writes, and avoids TF-level ensemble/base-model predictions unless tearsheets need them.
     Use for ablation batching where only combined returns are required.
     """
+    from lib.core.research_feed import set_research_feed
+
+    set_research_feed(getattr(config, "data_feed", "cfd"))
     if run_preflight:
         run_portfolio_research_cache_preflight(config)
     named_ensembles = [

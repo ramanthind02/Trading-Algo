@@ -1,7 +1,7 @@
 # Composed bias nodes — confirmation gates
 
 > [!summary]
-> **Composite nodes** (`DualSignalNode`, **`FilterGateNode`**, **`FilterAndSignalNode`**) let you build **new features from existing bias nodes** without writing a new indicator from scratch. They live under `nodes/composite/` and are usable anywhere a standard `bias_spec` is accepted — in research, feature extraction, vault, and live paths.
+> **Composite nodes** (`DualSignalNode`, **`FilterGateNode`**, **`FilterGateEntryOnlyNode`**, **`FilterAndSignalNode`**) let you build **new features from existing bias nodes** without writing a new indicator from scratch. They live under `nodes/composite/` and are usable anywhere a standard `bias_spec` is accepted — in research, feature extraction, vault, and live paths.
 
 ## `DualSignalNode` — confirmation / AND gate
 
@@ -124,6 +124,43 @@ Continuous research/eval **`bias_spec`** dicts and **`InSampleDefaultsCatalog`**
 
 ---
 
+## `FilterGateEntryOnlyNode` — entry-only gate
+
+| | |
+|---|---|
+| **Module** | `nodes/composite/filter_gate_entry_only.py` |
+| **When to use** | Apply the filter **only at entries**: once the signal is active (non-zero), subsequent bars continue passing through **even if the filter closes**, until the signal returns to zero. New entries (signal transitions from 0 to non-zero) require the filter to be open. |
+
+This is the "ATR regime only for entry; do not force exit when ATR gate turns off" pattern.
+
+Rules per bar (after child warmups):
+
+| Signal | Previous gated output | Filter | Output |
+|--------|-----------------------|--------|--------|
+| `0` | any | any | `0` |
+| non-zero | non-zero | any | `sig` (hold through) |
+| non-zero | `0` | non-zero | `sig` (new entry allowed) |
+| non-zero | `0` | `0` | `0` (entry blocked) |
+
+### `bias_spec` usage
+
+```python
+bias_spec = {
+    "module_name": "filter_gate_entry_only",
+    "timeframes": [TimeFrame.D],
+    "params": {
+        "filter_module": "atr_percentile_filter",
+        "filter_params": {"lookback": 20},
+        "signal_module": "donchian_channel",
+        "signal_params": {"lookback": 20},
+    },
+}
+```
+
+Child params are merged into the wrapper's `params` with `f_` / `s_` prefixes. `front_bad = max(filter_child.front_bad, signal_child.front_bad)`.
+
+---
+
 ## `FilterAndSignalNode` — signed AND (filter ∧ signal)
 
 | | |
@@ -164,8 +201,9 @@ Warmup and column naming follow the same pattern as `FilterGateNode` (`f_` / `s_
 |----------|----------|
 | Do you want **two directional forecasts to confirm each other**? | Use `DualSignalNode` or equivalently `FilterAndSignalNode` (same math; pick the name that reads best in your spec). |
 | Do you want **raw signal only when a regime filter is on** (pass magnitude through)? | Use `FilterGateNode`. |
+| Do you want the filter to gate **entries only** (holds bypass the filter once in a position)? | Use `FilterGateEntryOnlyNode`. |
 | Do both inputs produce `{-1, 0, +1}` on the same scale? | Required for meaningful agreement on `DualSignalNode` / `FilterAndSignalNode`. |
-| Is the filter **boolean** (`0` off, non-zero on) while the signal may be continuous? | Use `FilterGateNode`. |
+| Is the filter **boolean** (`0` off, non-zero on) while the signal may be continuous? | Use `FilterGateNode` or `FilterGateEntryOnlyNode`. |
 
 ---
 
@@ -173,7 +211,6 @@ Warmup and column naming follow the same pattern as `FilterGateNode` (`f_` / `s_
 
 - [[bias_nodes/creating_nodes]] — base BiasNode contract and authoring checklist
 - [[bias_nodes/index]] — bias-node doc hub
-- [[Feature_selection/pipeline]] — EDA, permutation, walkforward after the feature column exists
 - [[Cache/user_guide]] — `use_cache` behaviour and cache scopes
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

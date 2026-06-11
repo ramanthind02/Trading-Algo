@@ -1,10 +1,10 @@
 """
-Unit tests for the 13 new bias nodes.
+Unit tests for bias nodes.
 
 Tests verify:
 1. Warmup period returns neutral values
 2. Output ranges are correct
-3. Specific node behaviors (e.g., volatility adaptation, signal transitions)
+3. Specific node behaviors (e.g., signal transitions)
 """
 
 import unittest
@@ -16,20 +16,15 @@ from uuid import uuid4
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.models import Candle
 
-# Import all new bias nodes
-from nodes.adaptive_rsi import AdaptiveRSI
 from nodes.percent_b import PercentB
 from nodes.casey_c import CaseyC
 from nodes.cyclical_rsi import CyclicalRSI
-from nodes.detrended_rsi import DetrendedRSI
 from nodes.double7s import Double7s
 from nodes.five_day_washout_mr import FiveDayWashoutMR
 from nodes.demark_rei import DemarkREI
-from nodes.rsi_percentile import RSIPercentile
 from nodes.cyclical_rsi_signal import CyclicalRSISignal
 from nodes.rsi_signal import RSISignal
 from nodes.williamsr_signal import WilliamsRSignal
-from nodes.stochastic_rsi import StochasticRSI
 from nodes.supertrend_cross import SuperTrendCross
 from nodes.tsi import TSI
 from nodes.zscore_rsi import ZScoreRSI
@@ -73,40 +68,6 @@ def generate_candles(n: int, start_price: float = 100.0,
         candles.append(candle)
 
     return candles
-
-
-class TestAdaptiveRSI(unittest.TestCase):
-    """Tests for Adaptive RSI node."""
-
-    def test_warmup_period(self):
-        """Verify neutral values during warmup."""
-        node = AdaptiveRSI(Ticker.ES, TimeFrame.D)
-        candles = generate_candles(node.front_bad + 10)
-
-        # During warmup, should return 50.0
-        for i in range(node.front_bad - 1):
-            result = node.add_candle(candles[i])
-            self.assertEqual(result[0], 50.0, f"Warmup failed at candle {i}")
-
-    def test_output_range(self):
-        """Verify output is always 0.0-100.0."""
-        node = AdaptiveRSI(Ticker.ES, TimeFrame.D)
-        candles = generate_candles(300)
-
-        for candle in candles:
-            result = node.add_candle(candle)
-            self.assertGreaterEqual(result[0], 0.0)
-            self.assertLessEqual(result[0], 100.0)
-
-    def test_column_naming(self):
-        """Verify standardized column naming."""
-        node = AdaptiveRSI(Ticker.ES, TimeFrame.D, min_period=3, max_period=10)
-        columns = node.get_column_names()
-
-        self.assertEqual(len(columns), 1)
-        self.assertIn('adaptiversi', columns[0])
-        self.assertIn('signal', columns[0])
-        self.assertIn('D', columns[0])
 
 
 class TestPercentB(unittest.TestCase):
@@ -194,29 +155,6 @@ class TestCyclicalRSI(unittest.TestCase):
             result = node.add_candle(candle)
             self.assertGreaterEqual(result[0], -50.0)
             self.assertLessEqual(result[0], 50.0)
-
-
-class TestDetrendedRSI(unittest.TestCase):
-    """Tests for Detrended RSI node."""
-
-    def test_warmup_period(self):
-        """Verify neutral values during warmup."""
-        node = DetrendedRSI(Ticker.ES, TimeFrame.D)
-        candles = generate_candles(node.front_bad + 10)
-
-        for i in range(node.front_bad - 1):
-            result = node.add_candle(candles[i])
-            self.assertEqual(result[0], 50.0)
-
-    def test_output_range(self):
-        """Verify output is 0-100."""
-        node = DetrendedRSI(Ticker.ES, TimeFrame.D)
-        candles = generate_candles(200)
-
-        for candle in candles:
-            result = node.add_candle(candle)
-            self.assertGreaterEqual(result[0], 0.0)
-            self.assertLessEqual(result[0], 100.0)
 
 
 def _washout_path_candles(
@@ -430,29 +368,6 @@ class TestDemarkREI(unittest.TestCase):
             self.assertLessEqual(result[0], 100.0)
 
 
-class TestRSIPercentile(unittest.TestCase):
-    """Tests for RSI Percentile node."""
-
-    def test_warmup_period(self):
-        """Verify neutral values during warmup."""
-        node = RSIPercentile(Ticker.ES, TimeFrame.D)
-        candles = generate_candles(node.front_bad + 10)
-
-        for i in range(node.front_bad - 1):
-            result = node.add_candle(candles[i])
-            self.assertEqual(result[0], 50.0)
-
-    def test_output_range(self):
-        """Verify output is 0-100."""
-        node = RSIPercentile(Ticker.ES, TimeFrame.D, percentile_period=50)
-        candles = generate_candles(200)
-
-        for candle in candles:
-            result = node.add_candle(candle)
-            self.assertGreaterEqual(result[0], 0.0)
-            self.assertLessEqual(result[0], 100.0)
-
-
 class TestRSISignal(unittest.TestCase):
     """Tests for RSI Signal node."""
 
@@ -659,29 +574,6 @@ class TestCyclicalRSISignal(unittest.TestCase):
             CyclicalRSISignal(Ticker.ES, TimeFrame.D, strategy_mode="invalid")
 
 
-class TestStochasticRSI(unittest.TestCase):
-    """Tests for Stochastic RSI node."""
-
-    def test_warmup_period(self):
-        """Verify neutral values during warmup."""
-        node = StochasticRSI(Ticker.ES, TimeFrame.D)
-        candles = generate_candles(node.front_bad + 10)
-
-        for i in range(node.front_bad - 1):
-            result = node.add_candle(candles[i])
-            self.assertEqual(result[0], 50.0)
-
-    def test_output_range(self):
-        """Verify output is 0-100."""
-        node = StochasticRSI(Ticker.ES, TimeFrame.D)
-        candles = generate_candles(200)
-
-        for candle in candles:
-            result = node.add_candle(candle)
-            self.assertGreaterEqual(result[0], 0.0)
-            self.assertLessEqual(result[0], 100.0)
-
-
 class TestSuperTrendCross(unittest.TestCase):
     """Tests for SuperTrend Cross node."""
 
@@ -815,17 +707,13 @@ class TestAllNodesModuleNaming(unittest.TestCase):
     def test_all_nodes_have_module_name(self):
         """Verify all nodes have module_name set."""
         nodes = [
-            AdaptiveRSI(Ticker.ES, TimeFrame.D),
             PercentB(Ticker.ES, TimeFrame.D),
             CaseyC(Ticker.ES, TimeFrame.D),
             CyclicalRSI(Ticker.ES, TimeFrame.D),
-            DetrendedRSI(Ticker.ES, TimeFrame.D),
             Double7s(Ticker.ES, TimeFrame.D),
             FiveDayWashoutMR(Ticker.ES, TimeFrame.D),
             DemarkREI(Ticker.ES, TimeFrame.D),
-            RSIPercentile(Ticker.ES, TimeFrame.D),
             RSISignal(Ticker.ES, TimeFrame.D),
-            StochasticRSI(Ticker.ES, TimeFrame.D),
             SuperTrendCross(Ticker.ES, TimeFrame.D),
             TSI(Ticker.ES, TimeFrame.D),
             ZScoreRSI(Ticker.ES, TimeFrame.D),
@@ -841,17 +729,13 @@ class TestAllNodesModuleNaming(unittest.TestCase):
     def test_all_nodes_have_columns(self):
         """Verify all nodes generate column names."""
         nodes = [
-            AdaptiveRSI(Ticker.ES, TimeFrame.D),
             PercentB(Ticker.ES, TimeFrame.D),
             CaseyC(Ticker.ES, TimeFrame.D),
             CyclicalRSI(Ticker.ES, TimeFrame.D),
-            DetrendedRSI(Ticker.ES, TimeFrame.D),
             Double7s(Ticker.ES, TimeFrame.D),
             FiveDayWashoutMR(Ticker.ES, TimeFrame.D),
             DemarkREI(Ticker.ES, TimeFrame.D),
-            RSIPercentile(Ticker.ES, TimeFrame.D),
             RSISignal(Ticker.ES, TimeFrame.D),
-            StochasticRSI(Ticker.ES, TimeFrame.D),
             SuperTrendCross(Ticker.ES, TimeFrame.D),
             TSI(Ticker.ES, TimeFrame.D),
             ZScoreRSI(Ticker.ES, TimeFrame.D),
@@ -869,7 +753,7 @@ class TestCaching(unittest.TestCase):
 
     def test_caching_prevents_duplicate_computation(self):
         """Verify same candle returns same result without recomputation."""
-        node = AdaptiveRSI(Ticker.ES, TimeFrame.D)
+        node = CyclicalRSI(Ticker.ES, TimeFrame.D)
         candles = generate_candles(50)
 
         # Process first 40 candles

@@ -26,8 +26,8 @@ from .portfolio_global_streams import (
     build_global_signals_df,
     normalize_global_signals_by_downside_vol,
 )
-from lib.cache.runtime.central_cache_errors import ArtifactMissingError
-from lib.cache.runtime.central_cache_models import ArtifactScope
+from cache.runtime.central_cache_errors import ArtifactMissingError
+from cache.runtime.central_cache_models import ArtifactScope
 from lib.core.enums import TimeFrame
 from .global_weight_layer_adapter import (
     _GLOBAL_WEIGHT_LAYER_TICKER,
@@ -564,7 +564,7 @@ def materialize_global_portfolio_predictions(
     ensemble_dirs: Optional[Iterable[str]] = None,
 ):
     """Materialize portfolio/base-model predictions into the dedicated cache tree."""
-    from lib.cache.runtime.portfolio_materialization import (
+    from cache.runtime.portfolio_materialization import (
         materialize_global_portfolio_predictions as _materialize_global_portfolio_predictions,
     )
 
@@ -588,7 +588,7 @@ def prune_inactive_base_model_materializations(
     cache_root: Optional[str] = None,
 ):
     """Delete base-model materializations whose identities are no longer active in the live vault."""
-    from lib.cache.runtime.portfolio_materialization import (
+    from cache.runtime.portfolio_materialization import (
         prune_inactive_base_model_materializations as _prune_inactive_base_model_materializations,
     )
 

@@ -215,4 +215,4 @@ plus a top-level `summary` (mean/min/max FDM, model and cluster counts) and the 
 
 **See also:** [Portfolio pipeline](portfolio.md), [Multi-timeframe](multi_timeframe.md), [Base model](base_model.md)
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

@@ -1,6 +1,6 @@
 # Vault User Guide
 
-**Vault roots:** default prop firm tree is `vault/`; personal trading defaults to `vault_personal/` at the repo root. Env vars and `vault_profile` / explicit paths are documented in [[Vault/vault]]. Examples below use the prop tree unless noted.
+**Vault roots:** default prop (futures) tree is `vault/`; personal trading defaults to `vault_personal/`; CFD prop defaults to `vault_cfd_prop/` — all at the repo root. Env vars, `vault_profile` values (`prop`, `futures_prop`, `personal`, `cfd_prop`), and explicit paths are documented in [[Vault/vault]]. Examples below use the prop tree unless noted.
 
 ## Short version
 
@@ -20,7 +20,7 @@ portfolio predictions (those live in the central cache — see
 ```python
 from ensemble.vault_manager import initialize_vault
 
-initialize_vault("vault")  # or None for prop default; use vault_personal / resolve_vault_personal() for personal
+initialize_vault("vault")  # or None for prop default; use vault_personal / resolve_vault_personal() for personal, vault_cfd_prop for CFD prop
 ```
 
 ### Create an ensemble directory
@@ -70,7 +70,7 @@ and materialize its outputs into the central cache under a `portfolio_id` you ch
 
 ```python
 from ensemble.portfolio import PortfolioWorld, materialize_global_portfolio_predictions
-from lib.cache import ArtifactScope
+from cache import ArtifactScope
 
 materialize_global_portfolio_predictions(
     portfolio=global_portfolio,
@@ -100,4 +100,4 @@ See [[Vault/portfolio_snapshot_usage]] for the full workflow.
 - [[Vault/portfolio_snapshot_usage]]
 - [[Deployment/live_cache_refresh]]
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

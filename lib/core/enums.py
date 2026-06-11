@@ -56,6 +56,7 @@ class Ticker(Enum):
     BP = 'GBPUSD'  # British Pound
     CD = 'CADUSD'  # Canadian Dollar
     SF = 'CHFUSD'  # Swiss Franc
+    AUDNZD = 'AUDNZD'  # AUD/NZD cross (Darwinex CFD feed only; member name == CFD symbol)
 
     
     # Agricultural (Food Grains)

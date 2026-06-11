@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools.research_workspace.models import CategoryGroup, PanelPolicy
-from tools.research_workspace.sections import build_phase_report_sections
+from research.workspace.models import CategoryGroup, PanelPolicy
+from research.workspace.sections import build_phase_report_sections
 
 
 def test_build_phase_report_sections_splits_primary_and_raw() -> None:

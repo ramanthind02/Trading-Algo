@@ -1,0 +1,7 @@
+param_combo_label,param_key,param_value,param_sort_order
+rsi_signal__rsi2,_bias_module,rsi_signal,0
+rsi_signal__rsi2,bias_composite_module,rsi_signal,1
+rsi_signal__rsi2,rsi_period,2,2
+rsi_signal__rsi3,_bias_module,rsi_signal,0
+rsi_signal__rsi3,bias_composite_module,rsi_signal,1
+rsi_signal__rsi3,rsi_period,3,2

@@ -27,7 +27,7 @@ On project creation:
 - **This boundary is locked once the first strategy training job is submitted**
 
 Zone model specification: `zone_manager.md`  
-UI: a dedicated research-workspace UI spec is planned but not yet present in `docs/`. The current local UI is the Flask app at `frontend/app.py` backed by `research/feature/ui` and `research/portfolio/ui` — see `ui_ux.md`.
+UI: a dedicated research-workspace UI spec is planned but not yet present in `docs/`. The current local UI is the React/Vite app under `frontend/web/` served by the FastAPI backend `frontend/api/server.py` (the older Flask app `frontend/app.py`, backed by `research/feature/ui` and `research/portfolio/ui`, is retained as legacy) — see `ui_ux.md`.
 
 ### Step 2: Configure strategy-level zones
 
@@ -285,7 +285,7 @@ shared-venv interpreter (see `CLAUDE.md`).
 | Prop-firm portfolio | `research/portfolio/run_portfolio_prop_firm.py` | Prop-firm-mode portfolio run. |
 | Weight-layer CV | `research/portfolio/weight_layer_cv.py` (`run_weight_layer_cv`) | IS walk-forward method leaderboard. |
 | Feature/vault correlation | `python -m research.portfolio.run_feature_vault_correlation` | Correlation CSV. |
-| Local UI | `frontend/app.py` (Flask) + `research/feature/ui`, `research/portfolio/ui` | Phase planning, job management, artifact previews, vault commit. |
+| Local UI | `frontend/web/` (React/Vite) served by `frontend/api/server.py` (FastAPI); legacy `frontend/app.py` (Flask) retained | Phase planning, job management, artifact previews, vault commit. |
 
 Validated features are written to the vault (`vault/` prop tree, `vault_personal/`
 for personal; see `docs/library/Vault/vault.md`) under

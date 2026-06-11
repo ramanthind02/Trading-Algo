@@ -1,0 +1,11 @@
+param_combo_label,param_key,param_value,param_sort_order
+linear_z_mr__cap4__lb150__scale1,_bias_module,linear_z_mr,0
+linear_z_mr__cap4__lb150__scale1,bias_composite_module,linear_z_mr,1
+linear_z_mr__cap4__lb150__scale1,cap,4,2
+linear_z_mr__cap4__lb150__scale1,lookback,150,3
+linear_z_mr__cap4__lb150__scale1,scale,1,4
+linear_z_mr__cap4__lb200__scale1,_bias_module,linear_z_mr,0
+linear_z_mr__cap4__lb200__scale1,bias_composite_module,linear_z_mr,1
+linear_z_mr__cap4__lb200__scale1,cap,4,2
+linear_z_mr__cap4__lb200__scale1,lookback,200,3
+linear_z_mr__cap4__lb200__scale1,scale,1,4

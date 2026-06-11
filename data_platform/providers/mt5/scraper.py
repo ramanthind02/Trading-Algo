@@ -36,6 +36,8 @@ import argparse
 import os
 import sys
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -53,12 +55,115 @@ _REPO_ROOT = next(
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import scripts._bootstrap  # noqa: F401
+from lib.core.runtime_bootstrap import bootstrap_runtime
+
+bootstrap_runtime(_REPO_ROOT)  # UTF-8 console + .env load (was: import scripts._bootstrap)
 
 import MetaTrader5 as mt5
 from lib.core.logger import get_logger
+from data_platform.storage.contracts import MT5_BARS_SCHEMA, MT5_TICKS_SCHEMA
+from data_platform.storage import write_mt5_bars, write_mt5_ticks
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Registry helpers (resilience: every write is try/except; scrape never fails
+# because metadata recording failed)
+# ---------------------------------------------------------------------------
+
+def _broker_time_anchor() -> Optional[str]:
+    """Return broker wall-clock as ISO string, or None on any error.
+
+    Uses deployment.live.runtime.rollover_market.broker_now() which reads
+    the EURUSD tick.time directly from the already-connected MT5 terminal.
+    Wrapped in try/except so failure (e.g. terminal not yet initialised) is
+    silent — the scrape must never abort because of this.
+    """
+    try:
+        from deployment.live.runtime.rollover_market import broker_now
+        bt = broker_now()
+        return bt.isoformat() if bt is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _record_symbol_blobs_safe(
+    reg_conn: "sqlite3.Connection | None",
+    symbol: str,
+    *,
+    fetch_ticks: bool,
+) -> None:
+    """Write (or refresh) blob_manifest rows for *symbol*'s M1 bars and ticks.
+
+    Resilience wrapper: any exception is logged as a warning and swallowed.
+    The scrape result must never be affected by registry failures.
+    """
+    if reg_conn is None:
+        return
+    try:
+        import sqlite3
+        import json as _json
+        from data_platform.registry import writer as _reg_writer, db as _reg_db
+        from data_platform.registry.rebuild import _extract_coverage, _mtime_iso
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        with _reg_db.transaction(reg_conn):
+            # ── bars_M1 ──────────────────────────────────────────────────────
+            m1_dir = MT5_DATA_DIR / symbol / "bars_M1"
+            if m1_dir.exists():
+                for year_dir in sorted(m1_dir.iterdir()):
+                    if not year_dir.is_dir() or not year_dir.name.startswith("year="):
+                        continue
+                    year = year_dir.name.split("=", 1)[1]
+                    for pq_file in sorted(year_dir.glob("*.parquet")):
+                        key = _json.dumps({"symbol": symbol, "year": year}, sort_keys=True)
+                        cov_start, cov_end, rows = _extract_coverage(pq_file, "time")
+                        _reg_writer.record_blob(
+                            reg_conn,
+                            _reg_writer.BlobRecord(
+                                store="mt5_m1",
+                                key_json=key,
+                                relative_path=str(pq_file.relative_to(_REPO_ROOT)),
+                                written_at=_mtime_iso(pq_file, now_iso),
+                                broker="darwinex",
+                                timezone="broker_eet_as_utc",
+                                engine="pyarrow",
+                                rows=rows,
+                                coverage_start=cov_start,
+                                coverage_end=cov_end,
+                            ),
+                        )
+
+            # ── ticks ─────────────────────────────────────────────────────────
+            if fetch_ticks:
+                ticks_dir = MT5_DATA_DIR / symbol / "ticks"
+                if ticks_dir.exists():
+                    for year_dir in sorted(ticks_dir.iterdir()):
+                        if not year_dir.is_dir() or not year_dir.name.startswith("year="):
+                            continue
+                        year = year_dir.name.split("=", 1)[1]
+                        for pq_file in sorted(year_dir.glob("*.parquet")):
+                            key = _json.dumps({"symbol": symbol, "year": year}, sort_keys=True)
+                            cov_start, cov_end, rows = _extract_coverage(pq_file, "time")
+                            _reg_writer.record_blob(
+                                reg_conn,
+                                _reg_writer.BlobRecord(
+                                    store="mt5_ticks",
+                                    key_json=key,
+                                    relative_path=str(pq_file.relative_to(_REPO_ROOT)),
+                                    written_at=_mtime_iso(pq_file, now_iso),
+                                    broker="darwinex",
+                                    timezone="broker_eet_as_utc",
+                                    engine="pyarrow",
+                                    rows=rows,
+                                    coverage_start=cov_start,
+                                    coverage_end=cov_end,
+                                ),
+                            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("registry: could not record blobs for %s: %s", symbol, exc)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -69,45 +174,95 @@ MT5_DATA_DIR = _REPO_ROOT / "data" / "mt5_data"
 # We target ~150k ticks/call to stay safely under the cap.
 # Chunk size is computed adaptively per symbol; this is the fallback.
 TICK_CAP          = 200_000
-TICK_TARGET       = 150_000   # aim for this many ticks per call
+TICK_TARGET       = 180_000   # aim for this many ticks per call (closer to cap = fewer broker round-trips)
 BARS_CHUNK_DAYS   = 30        # bars have no cap issue; 30-day windows are fine
 
-# pyarrow schemas
-_BARS_SCHEMA = pa.schema([
-    ("time",        pa.timestamp("s", tz="UTC")),
-    ("open",        pa.float32()),
-    ("high",        pa.float32()),
-    ("low",         pa.float32()),
-    ("close",       pa.float32()),
-    ("tick_volume", pa.int32()),
-    ("spread",      pa.int16()),
-    ("real_volume", pa.int64()),
-])
+# pyarrow schemas — aliases for the canonical contracts (data_platform.storage.contracts)
+_BARS_SCHEMA = MT5_BARS_SCHEMA
+_TICKS_SCHEMA = MT5_TICKS_SCHEMA
 
-_TICKS_SCHEMA = pa.schema([
-    ("time_msc", pa.int64()),
-    ("bid",      pa.float64()),
-    ("ask",      pa.float64()),
-    ("last",     pa.float64()),
-    ("volume",   pa.int64()),
-    ("time",     pa.timestamp("s", tz="UTC")),
-    ("flags",    pa.int32()),
-])
+# ADR-7: data/mt5_data is the Darwinex-only store; per-broker stores come later.
+# All connect() calls into this module must be bound to the Darwinex terminal.
+_EXPECTED_BROKER = "darwinex"
+
+# Per-file write lock: keyed by resolved path string.
+# MT5 read calls (copy_ticks_range etc.) are thread-safe; parquet writes are not.
+# Threads writing to different symbols never contend; same symbol same year do.
+_WRITE_LOCKS: dict[str, threading.Lock] = {}
+_WRITE_LOCKS_MUTEX = threading.Lock()
+
+
+def _file_lock(path: Path) -> threading.Lock:
+    key = str(path.resolve())
+    with _WRITE_LOCKS_MUTEX:
+        if key not in _WRITE_LOCKS:
+            _WRITE_LOCKS[key] = threading.Lock()
+        return _WRITE_LOCKS[key]
 
 
 # ---------------------------------------------------------------------------
 # MT5 connection
 # ---------------------------------------------------------------------------
 
+def _assert_terminal_broker(expected: str) -> None:
+    """Verify the already-initialised MT5 terminal belongs to ``expected``.
+
+    Calls mt5.shutdown() and raises RuntimeError if:
+    - account_info() returns None (terminal not logged in), or
+    - the server name does not contain ``expected`` (wrong broker).
+
+    This is the ADR-7 store-contamination guard: native symbol names collide
+    across brokers, so a scrape from the wrong terminal silently corrupts the
+    per-broker stores (data/mt5_data is the Darwinex one).
+    """
+    acct = mt5.account_info()
+    if acct is None:
+        mt5.shutdown()
+        raise RuntimeError(
+            "mt5.account_info() returned None after successful mt5.initialize() — "
+            f"the terminal may not be logged in. Ensure the {expected} terminal is "
+            "running and authenticated before scraping."
+        )
+    if expected.lower() not in acct.server.lower():
+        mt5.shutdown()
+        raise RuntimeError(
+            f"Wrong MT5 terminal: connected to server {acct.server!r} but "
+            f"expected the {expected!r} terminal (ADR-7 broker guard)."
+        )
+
+
+def _assert_darwinex_terminal() -> None:
+    """ADR-7 guard for writers into data/mt5_data (the Darwinex-only store)."""
+    _assert_terminal_broker(_EXPECTED_BROKER)
+
+
 def connect() -> bool:
-    """Attach to the already-running MT5 terminal (no args = no IPC conflict)."""
-    if not mt5.initialize():
-        logger.error("mt5.initialize() failed: %s", mt5.last_error())
+    """Bind to the MT5 terminal at $MT5_PATH (Darwinex).
+
+    MT5_PATH **must** be set (via .env or the environment). The no-arg
+    ``mt5.initialize()`` fallback has been removed: with several terminals
+    installed (Darwinex live + FTMO/FundedNext demos) it attaches
+    nondeterministically and would silently contaminate data/mt5_data with
+    the wrong broker's native symbols (ADR-7).
+
+    Raises RuntimeError if MT5_PATH is unset or the attached terminal is not
+    the Darwinex terminal. Returns False only if mt5.initialize() itself fails.
+    """
+    path = os.environ.get("MT5_PATH")
+    if not path:
+        raise RuntimeError(
+            "MT5_PATH is not set. Set it in .env or the environment to the "
+            "Darwinex terminal executable path before running the scraper. "
+            "data/mt5_data is the Darwinex-only store (ADR-7)."
+        )
+    if not mt5.initialize(path):
+        logger.error("mt5.initialize(%s) failed: %s", path, mt5.last_error())
         return False
+    _assert_darwinex_terminal()
     acct = mt5.account_info()
     info = mt5.terminal_info()
     logger.info("MT5 attached: build=%s login=%s server=%s",
-                info.build, acct.login if acct else "N/A", acct.server if acct else "N/A")
+                info.build, acct.login, acct.server)
     return True
 
 
@@ -204,28 +359,26 @@ def _write_ticks(symbol: str, raw: "np.ndarray") -> None:
             grp[["time_msc", "bid", "ask", "last", "volume", "time", "flags"]],
             schema=_TICKS_SCHEMA, preserve_index=False,
         )
-        if path.exists():
-            tbl_old = pq.read_table(path, schema=_TICKS_SCHEMA)
-            old_max = pc.max(tbl_old.column("time_msc")).as_py()
-            new_min = pc.min(tbl_new.column("time_msc")).as_py()
-            if old_max is not None and new_min is not None and new_min > old_max:
-                # Pure append: no cross-overlap, both sides already sorted/deduped.
-                combined = pa.concat_tables([tbl_old, tbl_new])
+        with _file_lock(path):
+            if path.exists():
+                tbl_old = pq.read_table(path, schema=_TICKS_SCHEMA)
+                old_max = pc.max(tbl_old.column("time_msc")).as_py()
+                new_min = pc.min(tbl_new.column("time_msc")).as_py()
+                if old_max is not None and new_min is not None and new_min > old_max:
+                    combined = pa.concat_tables([tbl_old, tbl_new])
+                else:
+                    pdf = (
+                        pa.concat_tables([tbl_old, tbl_new])
+                        .to_pandas()
+                        .drop_duplicates("time_msc")
+                        .sort_values("time_msc")
+                    )
+                    combined = pa.Table.from_pandas(
+                        pdf, schema=_TICKS_SCHEMA, preserve_index=False
+                    )
+                write_mt5_ticks(combined, path)
             else:
-                # Overlap/backfill (rare): re-scraping dates already on disk.
-                # Fall back to the pandas merge+dedup.
-                pdf = (
-                    pa.concat_tables([tbl_old, tbl_new])
-                    .to_pandas()
-                    .drop_duplicates("time_msc")
-                    .sort_values("time_msc")
-                )
-                combined = pa.Table.from_pandas(
-                    pdf, schema=_TICKS_SCHEMA, preserve_index=False
-                )
-            pq.write_table(combined, path, compression="zstd")
-        else:
-            pq.write_table(tbl_new, path, compression="zstd")
+                write_mt5_ticks(tbl_new, path)
 
 
 def _write_bars(symbol: str, raw: "np.ndarray") -> None:
@@ -243,12 +396,13 @@ def _write_bars(symbol: str, raw: "np.ndarray") -> None:
             grp[["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"]],
             schema=_BARS_SCHEMA, preserve_index=False,
         )
-        if path.exists():
-            tbl_old = pq.read_table(path, schema=_BARS_SCHEMA)
-            combined = pa.concat_tables([tbl_old, tbl_new]).to_pandas()
-            combined = combined.drop_duplicates("time").sort_values("time")
-            tbl_new = pa.Table.from_pandas(combined, schema=_BARS_SCHEMA, preserve_index=False)
-        pq.write_table(tbl_new, path, compression="zstd")
+        with _file_lock(path):
+            if path.exists():
+                tbl_old = pq.read_table(path, schema=_BARS_SCHEMA)
+                combined = pa.concat_tables([tbl_old, tbl_new]).to_pandas()
+                combined = combined.drop_duplicates("time").sort_values("time")
+                tbl_new = pa.Table.from_pandas(combined, schema=_BARS_SCHEMA, preserve_index=False)
+            write_mt5_bars(tbl_new, path)
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +534,10 @@ def _parse_args() -> argparse.Namespace:
                    help="Also fetch raw tick data (slow on first run)")
     p.add_argument("--to", dest="to_date", metavar="YYYY-MM-DD", default=None,
                    help="End date (default: now UTC)")
+    p.add_argument("--workers", type=int, default=1, metavar="N",
+                   help="Parallel threads for fetching multiple symbols simultaneously. "
+                        "MT5 read calls are thread-safe within one process. "
+                        "Recommended: 3–5 for overnight bootstrap runs. Default: 1 (sequential).")
     return p.parse_args()
 
 
@@ -395,30 +553,124 @@ def main() -> None:
         if args.from_date else to_dt - timedelta(days=365 * 2)
     )
 
-    logger.info("MT5 scrape start | to=%s | ticks=%s", to_dt.date(), args.ticks)
+    logger.info("MT5 scrape start | to=%s | ticks=%s | workers=%d",
+                to_dt.date(), args.ticks, args.workers)
 
     if not connect():
         logger.error("Could not connect to MT5 — aborting")
         sys.exit(1)
 
+    # ── Registry: start job_run ───────────────────────────────────────────────
+    import json as _json
+    _reg_conn = None
+    _job_run_id = None
+    try:
+        from data_platform.registry import db as _reg_db, writer as _reg_writer
+        _reg_conn = _reg_db.connect()
+        _args_json = _json.dumps({
+            "symbols": args.symbols,
+            "ticks": args.ticks,
+            "from_date": args.from_date,
+            "to_date": args.to_date,
+            "workers": args.workers,
+        })
+        with _reg_db.transaction(_reg_conn):
+            _job_run_id = _reg_writer.record_job_run(
+                _reg_conn,
+                _reg_writer.JobRun(
+                    job_name="mt5_scrape",
+                    started_at=datetime.now(timezone.utc).isoformat(),
+                    args_json=_args_json,
+                    broker_time_anchor=_broker_time_anchor(),
+                ),
+            )
+    except Exception as _exc:  # noqa: BLE001
+        logger.warning("registry: could not start job_run: %s", _exc)
+
+    results: list[dict] = []
+    _exit_code = 0
     try:
         symbols = args.symbols if args.symbols else [s.name for s in (mt5.symbols_get() or [])]
         if not symbols:
-            logger.error("No symbols found"); sys.exit(1)
+            logger.error("No symbols found")
+            _exit_code = 1
+            sys.exit(1)
 
-        logger.info("Symbols: %d", len(symbols))
+        logger.info("Symbols: %d  workers: %d", len(symbols), args.workers)
         MT5_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-        results = []
-        for sym in symbols:
-            r = update_symbol(sym, fetch_tick_data=args.ticks,
-                              default_from=default_from, to_dt=to_dt)
-            results.append(r)
-            status = "OK" if r["error"] is None else f"ERR({r['error'][:50]})"
-            logger.info("  %-20s bars=%-8d ticks=%-10d %s",
-                        sym, r["bars"], r["ticks"], status)
+        kwargs = dict(fetch_tick_data=args.ticks, default_from=default_from, to_dt=to_dt)
+
+        if args.workers <= 1:
+            # Sequential — original behaviour
+            for sym in symbols:
+                r = update_symbol(sym, **kwargs)
+                results.append(r)
+                status = "OK" if r["error"] is None else f"ERR({r['error'][:50]})"
+                logger.info("  %-20s bars=%-8d ticks=%-10d %s",
+                            sym, r["bars"], r["ticks"], status)
+                if r["error"] is None:
+                    _record_symbol_blobs_safe(_reg_conn, sym, fetch_ticks=args.ticks)
+        else:
+            # Parallel — one thread per symbol, all sharing the same MT5 IPC connection.
+            # MT5 copy_ticks_range / copy_rates_range are thread-safe for concurrent reads.
+            # Writes are serialised per output file via _file_lock().
+            with ThreadPoolExecutor(max_workers=args.workers) as pool:
+                future_to_sym = {
+                    pool.submit(update_symbol, sym, **kwargs): sym
+                    for sym in symbols
+                }
+                for fut in as_completed(future_to_sym):
+                    r = fut.result()
+                    results.append(r)
+                    status = "OK" if r["error"] is None else f"ERR({r['error'][:50]})"
+                    logger.info("  %-20s bars=%-8d ticks=%-10d %s",
+                                r["symbol"], r["bars"], r["ticks"], status)
+                    if r["error"] is None:
+                        _record_symbol_blobs_safe(
+                            _reg_conn, r["symbol"], fetch_ticks=args.ticks
+                        )
+    except Exception:
+        _exit_code = 1
+        raise
     finally:
         mt5.shutdown()
+        # ── Registry: finish job_run ──────────────────────────────────────────
+        if _reg_conn is not None and _job_run_id is not None:
+            try:
+                from data_platform.registry import db as _reg_db, writer as _reg_writer
+                _ok  = sum(1 for r in results if r["error"] is None)
+                _err = len(results) - _ok
+                _bars  = sum(r["bars"]  for r in results)
+                _ticks = sum(r["ticks"] for r in results)
+                _max_bar_time: str | None = None
+                for _r in results:
+                    if _r.get("error") is None:
+                        _last = _last_stored_ts(_r["symbol"], "bars_M1")
+                        if _last:
+                            _t = _last.isoformat()
+                            if _max_bar_time is None or _t > _max_bar_time:
+                                _max_bar_time = _t
+                _cov_json = _json.dumps({
+                    "symbols": len(results),
+                    "ok": _ok,
+                    "errors": _err,
+                    "max_bar_time": _max_bar_time,
+                })
+                with _reg_db.transaction(_reg_conn):
+                    _reg_writer.finish_job_run(
+                        _reg_conn, _job_run_id,
+                        exit_code=_exit_code,
+                        rows_written=_bars + _ticks,
+                        coverage_json=_cov_json,
+                        error_text=None,
+                    )
+            except Exception as _exc:  # noqa: BLE001
+                logger.warning("registry: could not finish job_run: %s", _exc)
+            try:
+                _reg_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     ok  = sum(1 for r in results if r["error"] is None)
     err = len(results) - ok

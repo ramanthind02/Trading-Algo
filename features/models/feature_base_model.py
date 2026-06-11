@@ -150,9 +150,9 @@ class BaseModel:
         window is shorter than the indicator's warmup period (e.g. SMA-252
         over a 91-day holdout window).
         """
-        from lib.cache.runtime.central_cache import CentralCacheStore
-        from lib.cache.runtime.central_cache_errors import ArtifactMissingError
-        from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
+        from cache.runtime.central_cache import CentralCacheStore
+        from cache.runtime.central_cache_errors import ArtifactMissingError
+        from cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
 
         spec = self.bias_node_spec
         module_name = str(spec["module_name"])
@@ -344,6 +344,9 @@ class BaseModel:
         self,
         ensemble_dir: Optional[str] = None,
         tickers: Optional[list[Ticker]] = None,
+        *,
+        producing_run_id: Optional[str] = None,
+        spec_hash: Optional[str] = None,
     ) -> str:
         from ensemble.vault_manager import add_feature_to_ensemble
 
@@ -362,6 +365,8 @@ class BaseModel:
             base_model=self,
             ensemble_dir=ensemble_dir,
             tickers=tickers or list(self.tickers),
+            producing_run_id=producing_run_id,
+            spec_hash=spec_hash,
         )
 
     def update_fitted_params_in_vault(

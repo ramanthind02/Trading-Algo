@@ -8,13 +8,19 @@ and returns the account's realized return series.
 
 Why this is additive (and never the parity baseline)
 -----------------------------------------------------
-A Nautilus bar's ``ts_init`` is its *close* (see ``data_platform/nautilus/
-ingest.py``). Filling at the *next* bar's open would be look-ahead, so this lane
-**cannot** reproduce the research default ``log_intraday`` (enter ``open[t+1]``,
-exit ``close[t+1]``) bit-for-bit. It therefore reconciles only against the
-close-to-close ``log`` kind (see ``returns_close_to_close`` parity check) and is
-selected solely by the opt-in ``pnl_engine="nautilus"`` config — it must never
-overwrite the vectorized baseline.
+This lane is slow (event-driven, one ``BacktestEngine`` per call), so it stays
+opt-in (``pnl_engine="nautilus"``) and never overwrites the fast vectorized
+baseline. It is, however, the correctness ORACLE the baseline is reconciled
+against: being event-driven, it cannot look ahead by construction. With the
+de-staled session open (the first tradeable price — the bar *close* this lane
+fills at, NOT a stale dead-zone open) and the no-lookahead holding shift (see
+:mod:`ensemble.portfolio_impl.backtest_conventions`), it reconciles with the
+vectorized ``log_intraday`` lane to corr ~0.999 (gate:
+``test_nautilus_vs_vectorized_varying_signal_reconciles``). The small residual is
+integer-contract sizing + log-vs-simple convexity + a one-bar equity-marking lag,
+not a structural look-ahead barrier. (Historically this lane reconciled only
+against close-to-close ``log`` — that was a symptom of the stale-open and
+one-day-lookahead bugs, both since fixed.)
 
 Execution policy defaults (the "simulate the research setup" recipe)
 --------------------------------------------------------------------
@@ -28,6 +34,9 @@ Position sizing reuses the live math in ``execution/position_sizer.py``.
 """
 from __future__ import annotations
 
+import logging
+import shutil
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, timezone
 from decimal import Decimal
@@ -40,7 +49,7 @@ from nautilus_trader.analysis.reporter import ReportProvider
 from nautilus_trader.backtest.engine import BacktestEngine, BacktestEngineConfig
 from nautilus_trader.backtest.models import BestPriceFillModel, FillModel
 from nautilus_trader.config import LoggingConfig
-from nautilus_trader.model.data import Bar, BarType
+from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.enums import AccountType, OmsType, OrderSide
 from nautilus_trader.model.identifiers import Venue
 from nautilus_trader.model.instruments import Instrument as NTInstrument
@@ -48,9 +57,49 @@ from nautilus_trader.model.objects import Currency, Money, Price, Quantity
 from nautilus_trader.trading.strategy import Strategy
 
 from data_platform.nautilus.catalog import get_catalog
-from data_platform.nautilus.ingest import _resolve_instrument, ingest_mt5_intraday
+from data_platform.nautilus.ingest import (
+    _resolve_instrument,
+    ingest_mt5_intraday,
+    ingest_mt5_synth_quotes_from_bars,
+)
 from data_platform.nautilus.instruments import to_nautilus_instrument
+from data_platform.providers.mt5.cfd_candles import cfd_symbol_for
+from ensemble.portfolio_impl.backtest_conventions import shift_positions_to_holding
 from execution.position_sizer import ContractSpec, PositionSizer, RoundingMethod
+
+# M1 bars are stamped ts_event = bar_open + 1 minute (bar close time).
+# The last bar of each session (open=23:59) therefore has ts_event=00:00 next day.
+# Subtract this offset to recover the bar-open time for calendar-date classification.
+_ONE_MINUTE_NS: int = 60 * 1_000_000_000
+
+_logger = logging.getLogger(__name__)
+
+
+def _persistent_catalog_covers(
+    catalog,
+    bar_type_str: str,
+    instrument_id_str: str,
+    needs_quotes: bool,
+) -> bool:
+    """Return True if *catalog* has Bar (and QuoteTick when *needs_quotes*) data.
+
+    Uses ``get_intervals`` — reads only parquet footers, not row data — so it is
+    fast even against the full 41 M-row persistent catalog.  Any exception
+    (Nautilus version skew, empty catalog dir, file-system error) is caught and
+    returns False so the caller falls back to the tempdir path.
+    """
+    try:
+        bar_intervals = catalog.get_intervals(Bar, identifier=bar_type_str)
+        if not bar_intervals:
+            return False
+        if needs_quotes:
+            qt_intervals = catalog.get_intervals(QuoteTick, identifier=instrument_id_str)
+            if not qt_intervals:
+                return False
+        return True
+    except Exception:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Policies
@@ -227,6 +276,8 @@ class TargetRebalanceStrategy(Strategy):
         subscribe_quotes: bool = False,
         rollover_minute: int | None = None,
         rollover_half_width: int = 20,
+        rollover_deadzone_min: int = 60,
+        rollover_reentry_window_min: int = 60,
     ) -> None:
         super().__init__()
         self._instrument = instrument
@@ -245,10 +296,13 @@ class TargetRebalanceStrategy(Strategy):
         self._tick_size = float(instrument.price_increment)
         self._improve_ticks = int(improve_ticks)
         self._cross_after = cross_after or CrossAfterPolicy()
-        # Rollover policy: daily minute-of-day (UTC) of the financing rollover and
-        # the ± window (minutes) in which the flatten/re-enter legs are worked.
+        # Rollover policy: daily minute-of-day (broker, == stored-UTC) of the
+        # financing rollover; the exit lead (T-N min before it); the broker dead
+        # zone after it (no quotes); and the re-entry window after the dead zone.
         self._rollover_minute = rollover_minute
         self._rollover_half = int(rollover_half_width)
+        self._rollover_deadzone_min = int(rollover_deadzone_min)
+        self._rollover_reentry_window_min = int(rollover_reentry_window_min)
         self._uses_limit = execution_policy in (
             ExecutionPolicy.LIMIT_AT_TOUCH,
             ExecutionPolicy.LIMIT_IMPROVE,
@@ -302,7 +356,9 @@ class TargetRebalanceStrategy(Strategy):
                 self.entry_rejects += 1
 
     def on_bar(self, bar: Bar) -> None:
-        bar_dt = pd.Timestamp(bar.ts_event, tz="UTC")
+        # Use bar-OPEN time for date classification: ts_event is bar-close (open+1min),
+        # so the 23:59 bar has ts_event=00:00 next day — subtract to get the right date.
+        bar_dt = pd.Timestamp(bar.ts_event - _ONE_MINUTE_NS, tz="UTC")
         session_date = bar_dt.date()
 
         if self._session.current_date is None:
@@ -321,8 +377,8 @@ class TargetRebalanceStrategy(Strategy):
         # flow; it still records equity + the position trace like the open path.
         if self._window_policy is ExecutionWindowPolicy.ROLLOVER_FLATTEN_REENTER:
             self._on_bar_rollover(bar, session_date)
-            self._record_equity(bar.ts_event)
-            self.position_trace.append((bar.ts_event, self._net_signed_qty()))
+            self._record_equity(bar.ts_event - _ONE_MINUTE_NS)
+            self.position_trace.append((bar.ts_event - _ONE_MINUTE_NS, self._net_signed_qty()))
             return
 
         is_intraday = (
@@ -342,9 +398,10 @@ class TargetRebalanceStrategy(Strategy):
         # target is reached (taker fallback).
         self._maybe_cross_after(bar.ts_event)
 
-        # Record equity at this bar close (mark-to-market reflects the close)
-        # BEFORE flattening, so the held position's intraday move is captured.
-        self._record_equity(bar.ts_event)
+        # Record equity at bar-OPEN time so the last bar of each session
+        # (23:59 EET, ts_event=00:00 next-day UTC) stays in the correct
+        # calendar-day bucket when daily returns are aggregated by normalize().
+        self._record_equity(bar.ts_event - _ONE_MINUTE_NS)
 
         # Intraday window: flatten on the last bar of the session so nothing is
         # carried overnight (the overnight gap is never realized).
@@ -352,7 +409,7 @@ class TargetRebalanceStrategy(Strategy):
             self._cancel_working_entry()
             self._flatten()
 
-        self.position_trace.append((bar.ts_event, self._net_signed_qty()))
+        self.position_trace.append((bar.ts_event - _ONE_MINUTE_NS, self._net_signed_qty()))
 
     def on_order_filled(self, event) -> None:  # type: ignore[no-untyped-def]
         """Capture per-fill execution diagnostics (realized price vs mid)."""
@@ -400,49 +457,59 @@ class TargetRebalanceStrategy(Strategy):
 
     # -- helpers ------------------------------------------------------------
 
-    def _target_contracts(self, session_date: date, price: float) -> int:
+    def _target_contracts(self, session_date: date, price: float) -> float:
         fraction = self._targets_by_date.get(session_date, 0.0)
         if fraction == 0.0:
-            return 0
+            return 0.0
         self._sizer.update_prices({self._ticker: price})
-        frame = pd.DataFrame(
-            [
-                {
-                    "ticker": self._ticker,
-                    "forecast_score": fraction,
-                    "position_fraction": fraction,
-                }
-            ]
-        )
-        sized = self._sizer.calculate_positions(frame)
-        return int(sized.iloc[0]["contracts"])
+        spec = self._sizer.contract_specs.get(self._ticker)
+        if spec is None or spec.contract_value <= 0:
+            return 0.0
+        raw = (fraction * self._sizer.capital) / spec.contract_value
+        step = float(self._instrument.size_increment)
+        precision = int(self._instrument.size_precision)
+        return round(round(raw / step) * step, precision)
 
     def _enter_for_session(self, session_date: date, price: float) -> None:
         """Open path: rebalance to the session's daily target at the open bar."""
         self._rebalance_to_target(self._target_contracts(session_date, price), price)
 
     def _on_bar_rollover(self, bar: Bar, session_date: date) -> None:
-        """Rollover policy: flatten to flat just *before* the financing rollover
-        and restore the daily target just *after* — both via the shared passive
-        limit anchoring (:meth:`_rebalance_to_target`).
+        """Swap-avoidance overlay (the live execution algo): flatten just *before*
+        the financing rollover and re-establish the target just *after* the
+        rollover's dead zone (the reopen).
 
-        A leg whose resting limit never fills (no in-window quote trades to the
-        touch) simply carries the position into the next leg/day — the realistic
-        "missed the fill / paid the swap" outcome, which the next rebalance sees
-        as the new delta.
+        The rollover is at ``rollover_minute`` minutes-of-day (00:00 broker by
+        default). Using a signed minute-of-day distance handles the **midnight
+        wrap**: the EXIT fires in the last ``rollover_half`` minutes *before* the
+        rollover (e.g. T-15 = 23:45), and the RE-ENTER fires at the reopen, after
+        the ~60-minute broker dead zone (00:00–01:00, no quotes), within a
+        re-entry window. Exit (day D, pre-midnight) and re-enter (day D+1, post
+        dead zone) land in different calendar sessions, which the per-session
+        ``exited_today`` / ``reentered_today`` flags handle independently. Orders
+        are MARKET (the study settled on market on both legs); a still-held leg's
+        re-entry delta is ``target − current`` so it is never doubled.
         """
         if self._rollover_minute is None:
             return
         mod = self._minute_of_day(bar.ts_event)
         ref = float(bar.close)
-        center, half = self._rollover_minute, self._rollover_half
-        # EXIT leg: flatten to flat in [center - half, center).
-        if (center - half) <= mod < center and not self._session.exited_today:
+        center = self._rollover_minute
+        exit_lead = self._rollover_half          # minutes before rollover to exit (T-N)
+        deadzone = self._rollover_deadzone_min   # broker dead zone after rollover
+        reentry_window = self._rollover_reentry_window_min
+        before = (center - mod) % 1440           # minutes until the rollover
+        after = (mod - center) % 1440            # minutes since the rollover
+        # EXIT leg: flatten to flat in the last `exit_lead` minutes before the rollover.
+        if 0 < before <= exit_lead and not self._session.exited_today:
             self._cancel_working_entry()
             self._rebalance_to_target(0, ref)
             self._session.exited_today = True
-        # RE-ENTER leg: restore the daily target in (center, center + half].
-        if center < mod <= (center + half) and not self._session.reentered_today:
+        # RE-ENTER leg: restore the daily target at the reopen, after the dead zone.
+        if (
+            deadzone <= after <= (deadzone + reentry_window)
+            and not self._session.reentered_today
+        ):
             self._cancel_working_entry()
             self._rebalance_to_target(self._target_contracts(session_date, ref), ref)
             self._session.reentered_today = True
@@ -452,7 +519,7 @@ class TargetRebalanceStrategy(Strategy):
         t = pd.Timestamp(ts_ns, tz="UTC")
         return t.hour * 60 + t.minute
 
-    def _rebalance_to_target(self, target: int, price: float) -> None:
+    def _rebalance_to_target(self, target: float, price: float) -> None:
         """Submit the order(s) to move the net position to ``target`` contracts.
 
         Shared by the open path and the rollover legs. Works a passive limit
@@ -465,7 +532,7 @@ class TargetRebalanceStrategy(Strategy):
         if delta == 0:
             return
         side = OrderSide.BUY if delta > 0 else OrderSide.SELL
-        qty = Quantity.from_int(abs(delta))
+        qty = Quantity(abs(delta), self._instrument.size_precision)
 
         if not self._uses_limit:
             order = self.order_factory.market(
@@ -567,7 +634,7 @@ class TargetRebalanceStrategy(Strategy):
         mkt = self.order_factory.market(
             instrument_id=self._instrument_id,
             order_side=side,
-            quantity=Quantity.from_int(abs(delta)),
+            quantity=Quantity(abs(delta), self._instrument.size_precision),
         )
         self._entry_order_ids.add(mkt.client_order_id)
         self.submit_order(mkt)
@@ -601,19 +668,19 @@ class TargetRebalanceStrategy(Strategy):
 
     def _flatten(self) -> None:
         net = self._net_signed_qty()
-        if net == 0:
+        if net == 0.0:
             return
         side = OrderSide.SELL if net > 0 else OrderSide.BUY
         order = self.order_factory.market(
             instrument_id=self._instrument_id,
             order_side=side,
-            quantity=Quantity.from_int(abs(net)),
+            quantity=Quantity(abs(net), self._instrument.size_precision),
         )
         self.submit_order(order)
 
-    def _net_signed_qty(self) -> int:
+    def _net_signed_qty(self) -> float:
         net = self.portfolio.net_position(self._instrument_id)
-        return int(net) if net is not None else 0
+        return float(net) if net is not None else 0.0
 
     def _record_equity(self, ts_event: int) -> None:
         account = self.portfolio.account(self._instrument_id.venue)
@@ -739,40 +806,97 @@ class NautilusPnLEngine:
         *,
         collect_diagnostics: bool = False,
     ) -> "LaneResult":
-        catalog = get_catalog(self.catalog_path)
-        dp_inst = _resolve_instrument(ticker)
+        # The positions frame carries the canonical (vault) ticker (ES/NQ/GC/...);
+        # the MT5 catalog + data store are keyed by the Darwinex CFD symbol
+        # (SP500/NDX/XAUUSD/XTIUSD/XAGUSD). Resolve once and use the CFD symbol.
+        symbol = cfd_symbol_for(ticker)
+        dp_inst = _resolve_instrument(symbol)
         nt_inst = to_nautilus_instrument(dp_inst)
         bar_type = BarType.from_str(f"{nt_inst.id}-1-MINUTE-LAST-EXTERNAL")
 
-        # Limit policies fill against quote ticks; make sure they are ingested.
-        ingest_ticks = self.max_ticks if not self._needs_quotes() else (
-            self.max_ticks if self.max_ticks not in (0, None) else None
+        # Window the replay to the positions' date span so we ingest and backtest
+        # only that slice, not ~18y of M1 per instrument. No pre-target warmup is
+        # added: targets are precomputed (no signal recompute in the strategy), so
+        # a buffer would only add pre-entry flat bars. ``win_start`` is the first
+        # target date's midnight (the session opens after it); ``win_end`` extends
+        # past the last target so its session — and next-bar fills — are included.
+        target_dates = sorted(targets_by_date)
+        win_start = pd.Timestamp(target_dates[0]) if target_dates else None
+        win_end = (
+            pd.Timestamp(target_dates[-1]) + pd.Timedelta(days=2) if target_dates else None
         )
 
-        bars = catalog.bars(bar_types=[str(bar_type)])
-        quotes = (
-            catalog.quote_ticks(instrument_ids=[str(nt_inst.id)])
-            if self._needs_quotes()
-            else []
-        )
-        if not bars or (self._needs_quotes() and not quotes):
-            ingest_mt5_intraday(ticker, catalog, max_ticks=ingest_ticks)
-            bars = catalog.bars(bar_types=[str(bar_type)])
-            quotes = (
-                catalog.quote_ticks(instrument_ids=[str(nt_inst.id)])
-                if self._needs_quotes()
-                else []
-            )
+        # Catalog setup: prefer the persistent catalog when it already covers this
+        # window; fall back to an ephemeral tempdir build otherwise (existing path,
+        # unchanged).  Never write to the persistent catalog from here — read-only.
+        _bar_type_str = str(bar_type)
+        _inst_id_str = str(nt_inst.id)
+        if self.catalog_path:
+            catalog = get_catalog(self.catalog_path)
+            tmp_catalog_dir: str | None = None
+            _skip_ingest = False
+        else:
+            _persistent = get_catalog()  # data/nautilus_catalog
+            if _persistent_catalog_covers(
+                _persistent, _bar_type_str, _inst_id_str, self._needs_quotes()
+            ):
+                catalog = _persistent
+                tmp_catalog_dir = None
+                _skip_ingest = True
+                _logger.debug(
+                    "NautilusPnLEngine: persistent catalog covers %s [%s..%s] — "
+                    "skipping ingest",
+                    symbol, win_start, win_end,
+                )
+            else:
+                tmp_catalog_dir = tempfile.mkdtemp(prefix="nautilus_lane_")
+                catalog = get_catalog(tmp_catalog_dir)
+                _skip_ingest = False
+                _logger.debug(
+                    "NautilusPnLEngine: no persistent coverage for %s — "
+                    "falling back to ephemeral tempdir catalog [%s..%s]",
+                    symbol, win_start, win_end,
+                )
+
+        # Bars are the spine; ingest windowed, bars only. We deliberately do NOT
+        # ingest the real tick store (NDX alone is tens of millions of ticks) —
+        # quotes are synthesized from the M1 ``spread`` field below (~1/min), which
+        # is far lighter and carries the real per-minute half-spread that MARKET
+        # fills pay. The true price increment comes from the probed rollover SPECS
+        # (the catalog increment can differ, e.g. NDX terminal 0.1 vs catalog 0.01).
+        if not _skip_ingest:
+            ingest_mt5_intraday(symbol, catalog, max_ticks=0, start=win_start, end=win_end)
+        if _skip_ingest:
+            bars = catalog.bars(bar_types=[_bar_type_str], start=win_start, end=win_end)
+        else:
+            bars = catalog.bars(bar_types=[_bar_type_str])
+        quotes: list = []
+        if self._needs_quotes():
+            from research.rollover_cost.config import SPECS
+
+            spec = SPECS.get(symbol)
+            point = spec.point if spec is not None else float(nt_inst.price_increment)
+            if not _skip_ingest:
+                ingest_mt5_synth_quotes_from_bars(
+                    symbol, catalog, point=point, start=win_start, end=win_end
+                )
+            if _skip_ingest:
+                quotes = catalog.quote_ticks(
+                    instrument_ids=[_inst_id_str], start=win_start, end=win_end
+                )
+            else:
+                quotes = catalog.quote_ticks(instrument_ids=[_inst_id_str])
+
         if not bars:
             raise FileNotFoundError(
-                f"No intraday bars available for {ticker!r} in the Nautilus "
-                f"catalog and none could be ingested from the MT5 provider."
+                f"No intraday bars for {ticker!r} (CFD {symbol!r}) in window "
+                f"{win_start}..{win_end}."
             )
         if self._needs_quotes() and not quotes:
             raise FileNotFoundError(
-                f"Execution policy {self.execution_policy.value!r} requires "
-                f"bid/ask QuoteTicks for {ticker!r}, but none are available in "
-                f"the catalog or MT5 provider."
+                f"Execution policy {self.execution_policy.value!r} requires bid/ask "
+                f"QuoteTicks for {ticker!r} (CFD {symbol!r}); none could be synthesized "
+                f"from the M1 spread."
             )
 
         session_close_ns = _session_close_ns(bars)
@@ -849,6 +973,8 @@ class NautilusPnLEngine:
                 positions_report = pd.DataFrame()
         finally:
             engine.dispose()
+            if tmp_catalog_dir is not None:
+                shutil.rmtree(tmp_catalog_dir, ignore_errors=True)
         return LaneResult(
             returns=_equity_to_log_returns(equity),
             fill_diagnostics=diagnostics,
@@ -856,6 +982,66 @@ class NautilusPnLEngine:
             positions_report=positions_report,
             entry_rejects=entry_rejects,
         )
+
+
+@dataclass(frozen=True)
+class MultiTickerNautilusPnLEngine:
+    """Portfolio realism lane: run the per-instrument Nautilus lane and combine.
+
+    ``NautilusPnLEngine`` handles one instrument per call (one ``BacktestEngine``);
+    the portfolio pipeline hands ``make_pnl_engine`` a multi-ticker
+    ``position_fraction`` frame. This wrapper runs each ticker through the base
+    engine and combines the per-instrument **account equity curves** into one
+    portfolio return.
+
+    Aggregation (exact, not a log-return-sum approximation): every sleeve is funded
+    with the same starting balance ``C`` and sized off ``position_fraction × C``
+    (``PositionSizer``), so sleeve ``i``'s P&L is ``position_fraction_i × C × r_i``
+    and the sleeve return is ``position_fraction_i × r_i``. The portfolio equity on
+    capital ``C`` is therefore ``Σ_i Eq_i − (N−1)·C`` (each ``Eq_i`` starts at ``C``),
+    whose log-returns equal the vectorized combine ``Σ_i position_fraction_i · r_i``
+    in the frictionless limit — so the reconciliation gate holds. With frictions,
+    each ``Eq_i`` already carries its instrument's realized spread cost.
+
+    Per-instrument equity is reconstructed from the base engine's per-bar log
+    returns (``Eq_i = C · exp(cumsum(logret_i))``); sleeves are reindexed to the
+    union of timestamps and forward-filled before summing.
+    """
+
+    base: NautilusPnLEngine = field(default_factory=NautilusPnLEngine)
+
+    def returns_from_positions(
+        self,
+        positions_df: pd.DataFrame,
+        candles_df: pd.DataFrame,
+    ) -> pd.Series:
+        if positions_df.empty:
+            return _empty_returns()
+        tickers = positions_df["ticker"].map(str).unique().tolist()
+        starting_balance = float(self.base.starting_balance)
+
+        equity_curves: list[pd.Series] = []
+        for ticker in tickers:
+            sub = positions_df[positions_df["ticker"].map(str) == ticker]
+            logret = self.base.returns_from_positions(sub, candles_df)
+            if logret.empty:
+                continue
+            equity = starting_balance * np.exp(logret.cumsum())
+            equity_curves.append(equity)
+
+        if not equity_curves:
+            return _empty_returns()
+
+        union_index = pd.DatetimeIndex(
+            sorted(set().union(*[set(e.index) for e in equity_curves])),
+            name="datetime",
+        )
+        aligned = [
+            e.reindex(union_index).ffill().fillna(starting_balance)
+            for e in equity_curves
+        ]
+        portfolio_equity = sum(aligned) - (len(aligned) - 1) * starting_balance
+        return _equity_to_log_returns(portfolio_equity)
 
 
 # ---------------------------------------------------------------------------
@@ -872,7 +1058,7 @@ def _session_close_ns(bars: list[Bar]) -> frozenset[int]:
     """
     last_by_date: dict[date, int] = {}
     for bar in bars:
-        d = pd.Timestamp(bar.ts_event, tz="UTC").date()
+        d = pd.Timestamp(bar.ts_event - _ONE_MINUTE_NS, tz="UTC").date()
         ts = bar.ts_event
         if ts > last_by_date.get(d, -1):
             last_by_date[d] = ts
@@ -883,7 +1069,7 @@ def _session_open_ns(bars: list[Bar]) -> frozenset[int]:
     """Nanosecond ts of the first bar of each session (UTC calendar date)."""
     first_by_date: dict[date, int] = {}
     for bar in bars:
-        d = pd.Timestamp(bar.ts_event, tz="UTC").date()
+        d = pd.Timestamp(bar.ts_event - _ONE_MINUTE_NS, tz="UTC").date()
         ts = bar.ts_event
         if ts < first_by_date.get(d, 1 << 62):
             first_by_date[d] = ts
@@ -905,17 +1091,25 @@ def _empty_returns() -> pd.Series:
 def _targets_by_session_date(
     positions_df: pd.DataFrame, ticker: str
 ) -> dict[date, float]:
-    """Reduce the positions frame to one ``position_fraction`` per session date.
+    """Reduce the positions frame to one *held* ``position_fraction`` per session.
 
     Takes the last position per (session-date) so an intraday-stamped positions
-    frame collapses to a single daily target. Datetimes are interpreted in UTC.
+    frame collapses to a single daily target, then applies the canonical
+    no-lookahead holding shift (:func:`shift_positions_to_holding`, convention #1
+    in :mod:`ensemble.portfolio_impl.backtest_conventions`): a position decided on
+    day ``t`` is HELD on day ``t+1``. This is the SAME shift the vectorized lane
+    applies via its candle-grid ``next_datetime`` merge; without it the Nautilus
+    lane holds each target a day early (one-day lookahead) and diverges from the
+    vectorized lane (corr ~0.90, vol ratio ~0.79). Datetimes are interpreted in
+    UTC; the first session is dropped (no prior position to hold).
     """
     sub = positions_df[positions_df["ticker"].map(str) == ticker].copy()
     sub["datetime"] = pd.to_datetime(sub["datetime"], utc=True)
     sub = sub.sort_values("datetime")
     sub["session_date"] = sub["datetime"].dt.date
     last = sub.groupby("session_date")["position_fraction"].last()
-    return {d: float(v) for d, v in last.items()}
+    held = shift_positions_to_holding(last)
+    return {d: float(v) for d, v in held.items()}
 
 
 def _equity_curve_series(curve: list[tuple[int, float]]) -> pd.Series:

@@ -1,0 +1,23 @@
+# Exclude docs, images, and data files so graphify runs code-only (no API key needed)
+docs/
+*.md
+*.html
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.gif
+*.csv
+*.yaml
+*.yml
+*.json
+*.txt
+*.rst
+*.qmd
+*.mdx
+!pyproject.toml
+data/
+graphify-out/
+.venv/
+venv/

@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 
 import features.extraction.feature_extractor as feature_extractor
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope
 from lib.core.enums import Ticker, TimeFrame
 
 

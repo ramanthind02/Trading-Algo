@@ -28,10 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 
-from ._constants import PARQUET_COMPRESSION, PARQUET_COMPRESSION_LEVEL, TICKER_TO_CCB
+from data_platform.storage import write_norgate_bars
+from ._constants import TICKER_TO_CCB
 from ._paths import ohlc_ticker_dir, working_adjusted_dir, working_unadjusted_dir
 
 
@@ -98,13 +97,7 @@ def _aggregate(daily: pd.DataFrame, freq: str) -> pd.DataFrame:
 
 
 def _write(df: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(
-        pa.Table.from_pandas(df, preserve_index=True),
-        path,
-        compression=PARQUET_COMPRESSION,
-        compression_level=PARQUET_COMPRESSION_LEVEL,
-    )
+    write_norgate_bars(df, path, store="ohlc_data")
 
 
 # ── per-ticker migration ──────────────────────────────────────────────────

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from lib.cache.runtime.ib_candle_ratio_align import prepare_ib_rows_for_central_cache_append
+from cache.runtime.ib_candle_ratio_align import prepare_ib_rows_for_central_cache_append
 
 
 def _row(

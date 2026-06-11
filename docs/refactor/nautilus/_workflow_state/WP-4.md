@@ -24,8 +24,8 @@ WP-8 ("consolidate flat top-level") did **NOT** move `execution/` or `deployment
 - **`deployment/`** (6 modules, top-level): `_bootstrap.py`, `forecast_live_inputs.py`,
   `forecast_prediction_runtime.py`, `forecast_server.py`, `mt5_data_connector.py`,
   `telegram_notifier.py`.
-- **`scripts/enigma_*.py`** (6) and **`deploy/*.bat`** (4) are also unmoved — the scripts/ reorg
-  was **deliberately HELD** because `deploy/*.bat` cron entries call `scripts\enigma_*` by path.
+- **`scripts/enigma_*.py`** (6) and **`deployment/ops/*.bat`** (4) are also unmoved — the scripts/ reorg
+  was **deliberately HELD** because `deployment/ops/*.bat` cron entries call `scripts\enigma_*` by path.
 
 No drift between the 04 doc's module list and the live index, with two corrections (see §6):
 the doc says `execution/run_mt5_execution.py` orchestrates MT5; the live entrypoint function is
@@ -103,9 +103,9 @@ Two independent broker paths exist today. They are wired by **profile** inside
 Trace (cron → forecast → position_fraction → executor → broker):
 
 ```
-deploy\run_prop_forecast.bat:24      → python scripts\enigma_prop_forecast.py --port 7497
-deploy\run_personal_forecast.bat:27  → python scripts\enigma_personal_forecast.py --port 7497
-(cfd_prop has no .bat in deploy/; scripts\enigma_cfd_prop_forecast.py is the entry)
+deployment\ops\run_prop_forecast.bat:24      → python scripts\enigma_prop_forecast.py --port 7497
+deployment\ops\run_personal_forecast.bat:27  → python scripts\enigma_personal_forecast.py --port 7497
+(cfd_prop has no .bat in deployment/ops/; scripts\enigma_cfd_prop_forecast.py is the entry)
         │  (each enigma_*_forecast.py is a THIN wrapper: injects --profile and calls
         │   scripts.enigma_live_forecast.main — see enigma_cfd_prop_forecast.py:40-48)
         ▼
@@ -142,7 +142,7 @@ Deployment supporting modules (forecast server lane — **STAYS, do not change**
    and `run_cfd_prop_execution(args, config, forecasts_df)` signatures.
 4. The execute gating flags (`--execute`, `--dry-run-execute`, `--approve-via-telegram`, `--live`,
    `--allow-rerun`) and their semantics (`enigma_live_forecast.py:1242-1268`).
-5. `deploy/*.bat` calling `scripts\enigma_*` **by path** — the scripts/ reorg is HELD for exactly
+5. `deployment/ops/*.bat` calling `scripts\enigma_*` **by path** — the scripts/ reorg is HELD for exactly
    this. Moving/renaming these scripts breaks the scheduled tasks.
 
 ---
@@ -194,7 +194,7 @@ Deployment supporting modules (forecast server lane — **STAYS, do not change**
   Nautilus netting/OMS differs from MT5 hedging tickets — a naive NETTING OMS would not reproduce
   per-ticket closes. **Must reconcile semantics in shadow mode before any demo→funded step.**
 - **Deployment forecast path breaking** (I3 violation) — see §2 list. Any change to the
-  enigma→predict→position_fraction→dispatch chain or the `deploy/*.bat` paths is a release blocker.
+  enigma→predict→position_fraction→dispatch chain or the `deployment/ops/*.bat` paths is a release blocker.
 - **Silent live cutover before the paper gate** — the highest-severity trap. `--execute` + `--live`
   + port 7496 (IB) or a funded MT5 login arms real orders. A new TradingNode must NOT be wired into
   the funded path until rungs 1–4 pass. Keep the legacy executor as the live default until WP-5.
@@ -240,10 +240,10 @@ acceptance: "Governance (approval/audit/Telegram) verified equivalent").
 | doc: "rebalancer/`plan_symbol_actions`, partial-close, `_quantize`" | `mt5_rebalancer.py:187/:148/:77` | ✓ accurate |
 | doc implies `run_mt5_execution` orchestrates | top entry is `run_cfd_prop_execution` (calls `_build_account_plan:194`, `_execute_account:479`); IB path is `run_auto_execution:62` | ⚠ name nuance only |
 | `scripts/enigma_*_forecast.py` "live-order portions" | thin wrappers → `scripts/enigma_live_forecast.py:main:1221`, Step-12 dispatch `:1634` | ✓ accurate |
-| `deploy/*.bat` cron entries | `run_prop_forecast.bat:24`, `run_personal_forecast.bat:27` call `scripts\enigma_*` by path; `run_mt5_scrape.bat` (data, unrelated) | ✓ — scripts/ reorg HELD for this reason |
+| `deployment/ops/*.bat` cron entries | `run_prop_forecast.bat:24`, `run_personal_forecast.bat:27` call `scripts\enigma_*` by path; `run_mt5_scrape.bat` (data, unrelated) | ✓ — scripts/ reorg HELD for this reason |
 
 **Confirmed:** `execution/` (15 files) and `deployment/` (6 files) are **unmoved** at top level.
-`scripts/enigma_*` are deployment entrypoints referenced by `deploy/*.bat`; the scripts/ reorg was
+`scripts/enigma_*` are deployment entrypoints referenced by `deployment/ops/*.bat`; the scripts/ reorg was
 deliberately held. No stale paths require correction for WP-4 beyond the orchestrator-name nuance.
 
 ---
