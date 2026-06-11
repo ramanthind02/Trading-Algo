@@ -1,6 +1,6 @@
 # Spread vs Market — NDX 2026 realism lane
 
-- Window: `2026-02-24T00:00:00+00:00` .. `2026-03-03T00:00:00+00:00` (UTC)
+- Window: `2026-04-06T00:00:00+00:00` .. `2026-04-27T00:00:00+00:00` (UTC)
 - Lane: `NautilusPnLEngine`, `INTRADAY_OPEN_TO_CLOSE`, constant +1 long target
 - Limit policies measured **pure-passive** (no CROSS_AFTER) to isolate
   maker spread capture vs fill risk.
@@ -10,10 +10,10 @@
 
 | Policy | Sessions | Entry fills | Rejects | Fill rate | MAKER | TAKER | Avg spread (px) | Avg spread (bps) | Total log-ret | Δ vs MARKET |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| MARKET_ON_OPEN | 5 | 5 | 0 | 100.00% | 0 | 5 | -1.1200 | -0.450 | +0.019146 | +0.000000 |
-| LIMIT_AT_TOUCH | 5 | 5 | 0 | 100.00% | 5 | 0 | +0.8200 | +0.329 | +0.024470 | +0.005324 |
-| LIMIT_IMPROVE(1) | 5 | 5 | 0 | 100.00% | 5 | 0 | +0.8200 | +0.329 | +0.024470 | +0.005324 |
-| LIMIT_IMPROVE(2) | 5 | 5 | 0 | 100.00% | 5 | 0 | +0.8200 | +0.329 | +0.024470 | +0.005324 |
+| MARKET_ON_OPEN | 15 | 15 | 0 | 100.00% | 0 | 15 | -1.2033 | -0.476 | +0.148569 | +0.000000 |
+| LIMIT_AT_TOUCH | 15 | 13 | 0 | 86.67% | 13 | 0 | +1.5000 | +0.603 | +0.125430 | -0.023139 |
+| LIMIT_IMPROVE(1) | 15 | 13 | 0 | 86.67% | 13 | 0 | +1.5000 | +0.603 | +0.125430 | -0.023139 |
+| LIMIT_IMPROVE(2) | 15 | 13 | 0 | 86.67% | 13 | 0 | +1.5000 | +0.603 | +0.125430 | -0.023139 |
 
 ## Reading the table
 

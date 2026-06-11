@@ -85,6 +85,7 @@ from nautilus_trader.model.identifiers import (
 )
 from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.model.currencies import USD
+from nautilus_trader.core.uuid import UUID4
 
 from mt5connect.constants import MT5_MAGIC_NUMBER, MT5_VENUE, FILLING_MODE
 from mt5connect.errors import MT5ConnectionError, MT5OrderError
@@ -361,63 +362,60 @@ class MT5LiveExecutionClient(LiveExecutionClient):
             stoplimit_price = price
             price = float(order.trigger_price) if order.trigger_price else 0.0
 
-        # Market order: use current ask/bid
+        # ── Submit ─────────────────────────────────────────────────────────
         if order.order_type == OrderType.MARKET:
-            price = tick.ask if order.side == OrderSide.BUY else tick.bid
-            action    = mt5.TRADE_ACTION_DEAL
-            mt5_order_type = _nautilus_side_to_mt5_market(order.side)
+            # Hedging-safe netting: on a HEDGING MT5 account a bare opposing DEAL
+            # opens a NEW ticket (a hedge). To honour the no-hedge rule we REDUCE
+            # existing opposing magic-tagged tickets per-ticket (position=ticket,
+            # oldest first) up to the order volume, and open a residual only if the
+            # order exceeds all closable opposing lots (a reversal). A pure open
+            # (no opposing tickets) falls straight through to the residual open.
+            # Mirrors _cancel_order / vault_strategy._flatten_all / manual_trade.
+            ticket = self._submit_market_netting(order, symbol)
+            if ticket is None:
+                return  # rejection already emitted by the helper
         else:
-            action    = mt5.TRADE_ACTION_PENDING
             mt5_order_type = _nautilus_order_to_mt5_pending(order.order_type, order.side)
+            request = {
+                "action":       mt5.TRADE_ACTION_PENDING,
+                "symbol":       symbol,
+                "volume":       float(order.quantity),
+                "type":         mt5_order_type,
+                "price":        price,
+                "sl":           0.0,      # set below if order has sl
+                "tp":           0.0,      # set below if order has tp
+                "deviation":    20,       # max price deviation (points)
+                "magic":        self._config.magic_number,
+                "comment":      str(order.client_order_id),
+                "type_filling": FILLING_MODE,
+                "type_time":    _time_in_force_to_mt5(order.time_in_force),
+            }
+            if stoplimit_price:
+                request["stoplimit"] = stoplimit_price
+            # Attach SL/TP if the order carries them
+            if hasattr(order, "sl_trigger_price") and order.sl_trigger_price:
+                request["sl"] = float(order.sl_trigger_price)
+            if hasattr(order, "tp_price") and order.tp_price:
+                request["tp"] = float(order.tp_price)
 
-        # Build request dict
-        request = {
-            "action":       action,
-            "symbol":       symbol,
-            "volume":       float(order.quantity),
-            "type":         mt5_order_type,
-            "price":        price,
-            "sl":           0.0,      # set below if order has sl
-            "tp":           0.0,      # set below if order has tp
-            "deviation":    20,       # max price deviation (points) for market orders
-            "magic":        self._config.magic_number,
-            "comment":      str(order.client_order_id),
-            "type_filling": FILLING_MODE,
-            "type_time":    _time_in_force_to_mt5(order.time_in_force),
-        }
-
-        if stoplimit_price:
-            request["stoplimit"] = stoplimit_price
-
-        # Attach SL/TP if the order carries them
-        if hasattr(order, "sl_trigger_price") and order.sl_trigger_price:
-            request["sl"] = float(order.sl_trigger_price)
-        if hasattr(order, "tp_price") and order.tp_price:
-            request["tp"] = float(order.tp_price)
-
-        # ── Send to MT5 ───────────────────────────────────────────────────
-
-        result = mt5.order_send(request)
-
-        if result is None:
-            code, msg = mt5.last_error()
-            self._generate_order_rejected(
-                order, f"mt5.order_send() returned None — error {code}: {msg}"
-            )
-            return
-
-        if result.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED,
-                                   mt5.TRADE_RETCODE_DONE_PARTIAL, 10008):
-            reason = _mt5_retcode_to_str(result.retcode)
-            self._generate_order_rejected(
-                order,
-                f"MT5 rejected order: {reason} (retcode={result.retcode})"
-            )
-            return
+            result = mt5.order_send(request)
+            self._append_submit_result_log(str(order.client_order_id), result)
+            if result is None:
+                code, msg = mt5.last_error()
+                self._generate_order_rejected(
+                    order, f"mt5.order_send() returned None — error {code}: {msg}"
+                )
+                return
+            if result.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED,
+                                       mt5.TRADE_RETCODE_DONE_PARTIAL, 10008):
+                reason = _mt5_retcode_to_str(result.retcode)
+                self._generate_order_rejected(
+                    order, f"MT5 rejected order: {reason} (retcode={result.retcode})"
+                )
+                return
+            ticket = result.order
 
         # ── Success — record the ticket ───────────────────────────────────
-
-        ticket = result.order
         client_order_id_str = str(order.client_order_id)
         self._client_order_id_to_ticket[client_order_id_str] = ticket
         self._ticket_to_client_order_id[ticket] = client_order_id_str
@@ -431,6 +429,122 @@ class MT5LiveExecutionClient(LiveExecutionClient):
         # NautilusTrader will receive fill reports from the polling loop.
         # For now just emit OrderAccepted.
         self._generate_order_accepted(order, VenueOrderId(str(ticket)))
+
+    def _submit_market_netting(self, order, symbol: str) -> int | None:
+        """Hedging-safe market submit: REDUCE opposing magic tickets, then open a residual.
+
+        On a HEDGING MT5 account a plain opposing market DEAL opens a NEW ticket (a
+        hedge) instead of reducing the existing position. To honour the no-hedge rule
+        we close opposing magic-tagged tickets per-ticket (``position=ticket``, oldest
+        first) up to ``order.quantity``, then open a new position only for any residual
+        volume beyond all closable opposing lots (a reversal). A pure open (no opposing
+        tickets) falls straight through to the residual open.
+
+        Each sub-deal's resulting order id is mapped to this order's client_order_id so
+        the poll loop attributes every fill back to this NautilusTrader order (the
+        per-ticket deals sum to ``order.quantity``). Returns the LAST broker ticket
+        affected, or ``None`` after emitting a rejection.
+        """
+        mt5_type = _nautilus_side_to_mt5_market(order.side)
+        coid = str(order.client_order_id)
+        # A SELL reduces existing LONGs; a BUY reduces existing SHORTs.
+        opposing_type = (
+            mt5.POSITION_TYPE_BUY if order.side == OrderSide.SELL else mt5.POSITION_TYPE_SELL
+        )
+        existing = sorted(
+            (
+                p for p in (mt5.positions_get(symbol=symbol) or ())
+                if p.magic == self._config.magic_number and p.type == opposing_type
+            ),
+            key=lambda p: p.ticket,  # FIFO: close the oldest ticket first
+        )
+
+        remaining = round(float(order.quantity), 8)
+        last_ticket: int | None = None
+
+        for pos in existing:
+            if remaining <= 1e-9:
+                break
+            close_vol = round(min(float(pos.volume), remaining), 8)
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                self._generate_order_rejected(order, f"no price for '{symbol}' during hedging close")
+                return None
+            close_price = tick.bid if order.side == OrderSide.SELL else tick.ask
+            res = mt5.order_send({
+                "action":       mt5.TRADE_ACTION_DEAL,
+                "symbol":       symbol,
+                "volume":       close_vol,
+                "type":         mt5_type,
+                "position":     pos.ticket,   # <-- hedging-safe: REDUCE this ticket
+                "price":        close_price,
+                "deviation":    20,
+                "magic":        self._config.magic_number,
+                "comment":      coid,
+                "type_filling": FILLING_MODE,
+                "type_time":    _time_in_force_to_mt5(order.time_in_force),
+            })
+            self._append_submit_result_log(coid, res)
+            if res is None or res.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL):
+                code = res.retcode if res is not None else -1
+                self._generate_order_rejected(
+                    order, f"hedging close rejected (ticket={pos.ticket}): "
+                           f"{_mt5_retcode_to_str(code)} (retcode={code})"
+                )
+                return None
+            last_ticket = res.order
+            self._ticket_to_client_order_id[res.order] = coid
+            remaining = round(remaining - close_vol, 8)
+            self._log.info(
+                f"MT5LiveExecutionClient: reduced ticket={pos.ticket} vol={close_vol} "
+                f"({order.side.name} close) order={coid}"
+            )
+
+        if remaining > 1e-9:
+            # Residual / pure open: open a new position for the unconsumed volume.
+            tick = mt5.symbol_info_tick(symbol)
+            if tick is None:
+                self._generate_order_rejected(order, f"no price for '{symbol}'")
+                return None
+            open_price = tick.ask if order.side == OrderSide.BUY else tick.bid
+            request = {
+                "action":       mt5.TRADE_ACTION_DEAL,
+                "symbol":       symbol,
+                "volume":       remaining,
+                "type":         mt5_type,
+                "price":        open_price,
+                "sl":           0.0,
+                "tp":           0.0,
+                "deviation":    20,
+                "magic":        self._config.magic_number,
+                "comment":      coid,
+                "type_filling": FILLING_MODE,
+                "type_time":    _time_in_force_to_mt5(order.time_in_force),
+            }
+            if hasattr(order, "sl_trigger_price") and order.sl_trigger_price:
+                request["sl"] = float(order.sl_trigger_price)
+            if hasattr(order, "tp_price") and order.tp_price:
+                request["tp"] = float(order.tp_price)
+            res = mt5.order_send(request)
+            self._append_submit_result_log(coid, res)
+            if res is None or res.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_DONE_PARTIAL):
+                code = res.retcode if res is not None else -1
+                self._generate_order_rejected(
+                    order, f"residual open rejected: {_mt5_retcode_to_str(code)} (retcode={code})"
+                )
+                return None
+            last_ticket = res.order
+            self._ticket_to_client_order_id[res.order] = coid
+            self._log.info(
+                f"MT5LiveExecutionClient: opened residual vol={remaining} "
+                f"({order.side.name}) order={coid}"
+            )
+
+        if last_ticket is None:
+            # order.quantity rounded to ~0 and no opposing positions — nothing to do.
+            self._generate_order_rejected(order, "zero effective volume (no opposing positions, no residual)")
+            return None
+        return last_ticket
 
     async def _cancel_order(self, command: CancelOrder) -> None:
         """
@@ -715,9 +829,20 @@ class MT5LiveExecutionClient(LiveExecutionClient):
                 self._log.warning(f"MT5LiveExecutionClient: connection lost — {exc}")
                 ok = await self._conn.reconnect_async()
                 if not ok:
+                    # Reconnect exhausted: do NOT keep running blind (orders/fills
+                    # would stop being tracked silently). Page the operator and
+                    # degrade the client so the node/supervisor surfaces it, then
+                    # stop the loop.
                     self._log.error(
-                        "MT5LiveExecutionClient: reconnect failed — stopping exec loop"
+                        "MT5LiveExecutionClient: reconnect FAILED after retries — "
+                        "degrading exec client and stopping the poll loop; the node "
+                        "is no longer tracking fills/positions and must be restarted."
                     )
+                    self._alert_exec_loop_failure(exc)
+                    try:
+                        self.degrade()
+                    except Exception:  # pragma: no cover - best-effort, never crash teardown
+                        pass
                     break
                 self._log.info("MT5LiveExecutionClient: reconnected")
 
@@ -728,6 +853,24 @@ class MT5LiveExecutionClient(LiveExecutionClient):
                 await asyncio.sleep(1.0)
 
         self._log.info("MT5LiveExecutionClient: exec poll loop stopped")
+
+    def _alert_exec_loop_failure(self, exc: object) -> None:
+        """Best-effort operator alert when the exec poll loop dies (reconnect lost).
+
+        Optional dependency: the Telegram notifier lives in the project tree, which
+        is on ``sys.path`` in the live runtime. Guarded so the vendored adapter (and
+        its standalone tests) never hard-depend on it and alerting can never crash.
+        """
+        try:
+            from lib.core.notify import TelegramNotifier
+
+            TelegramNotifier().send_error_notification(
+                f"reconnect failed ({exc}); exec loop stopped — node not tracking "
+                f"fills/positions for account {self._config.account}. Restart required.",
+                component="MT5LiveExecutionClient",
+            )
+        except Exception:  # pragma: no cover - never let alerting crash teardown
+            pass
 
     async def _poll_exec_once(self) -> None:
         """
@@ -782,6 +925,11 @@ class MT5LiveExecutionClient(LiveExecutionClient):
                     f"price={deal.price} profit={deal.profit}"
                 )
 
+                # Durable capture BEFORE any type filtering: the JSONL is the
+                # complete ledger of magic-tagged deals (incl. swap/fee/profit
+                # the Nautilus fill event drops). Never raises into the loop.
+                self._append_deal_log(deal)
+
                 # Emit fill into NautilusTrader execution engine
                 await self._emit_fill(deal)
 
@@ -808,6 +956,75 @@ class MT5LiveExecutionClient(LiveExecutionClient):
             )
 
         self._known_position_tickets = current_pos_tickets
+
+    # ── Durable deal capture ─────────────────────────────────────────────────
+
+    def _append_deal_log(self, deal) -> None:
+        """Append the FULL MT5 deal record to ``config.deals_log_path`` (JSONL).
+
+        The Nautilus ``OrderFilled`` event drops ``swap``/``fee``/``profit``/
+        ``entry``/``position_id`` — for a CFD book where swap is a dominant
+        cost, the MT5 deal is the ground truth, so it is persisted verbatim
+        here and ingested by ``registry ingest live``. Capture must never
+        raise into the poll loop; disabled when ``deals_log_path`` is None.
+        """
+        path_str = getattr(self._config, "deals_log_path", None)
+        if not path_str:
+            return
+        try:
+            import json
+            from pathlib import Path
+
+            fields = (
+                "ticket", "order", "time", "time_msc", "type", "entry", "magic",
+                "position_id", "reason", "volume", "price", "commission", "swap",
+                "fee", "profit", "symbol", "comment", "external_id",
+            )
+            record = {name: getattr(deal, name, None) for name in fields}
+            record["captured_at"] = datetime.now(timezone.utc).isoformat()
+            path = Path(path_str)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, default=str) + "\n")
+        except Exception as exc:  # noqa: BLE001 - capture must never break trading
+            self._log.warning(f"MT5LiveExecutionClient: deal-log append failed: {exc}")
+
+    # ── Submit-result capture ────────────────────────────────────────────────
+
+    def _append_submit_result_log(self, client_order_id: str, result) -> None:
+        """Append the order_send response to ``config.submit_results_log_path`` (JSONL).
+
+        Called after EVERY ``mt5.order_send()`` — success or rejection — so the full
+        broker response (retcode, deal, order, volume, price, bid, ask) is durably
+        recorded. Mirrors ``_append_deal_log``: must never raise into the submit path;
+        disabled when ``submit_results_log_path`` is None.
+        """
+        path_str = getattr(self._config, "submit_results_log_path", None)
+        if not path_str:
+            return
+        try:
+            import json
+            from pathlib import Path
+
+            rec = {
+                "client_order_id": str(client_order_id),
+                "retcode": getattr(result, "retcode", None),
+                "deal":    getattr(result, "deal",    None),
+                "order":   getattr(result, "order",   None),
+                "volume":  getattr(result, "volume",  None),
+                "price":   getattr(result, "price",   None),
+                "bid":     getattr(result, "bid",     None),
+                "ask":     getattr(result, "ask",     None),
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+            }
+            path = Path(path_str)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, default=str) + "\n")
+        except Exception as exc:  # noqa: BLE001 - capture must never break trading
+            self._log.warning(
+                f"MT5LiveExecutionClient: submit-result log append failed: {exc}"
+            )
 
     # ── Fill emission ─────────────────────────────────────────────────────────
 
@@ -874,23 +1091,39 @@ class MT5LiveExecutionClient(LiveExecutionClient):
             commission = Money(0.0, USD)
 
         ts_event = int(deal.time) * 1_000_000_000   # seconds → nanoseconds
-        ts_init  = self._clock.timestamp_ns()
+
+        # Recover the originating strategy from the cached NautilusTrader order.
+        # A deal whose order we did not place this session (cross-session / external,
+        # or an intermediate sub-deal of a multi-ticket close whose ticket we never
+        # mapped) has no cached order — skip the live emit and let startup/continuous
+        # reconciliation account for it. Emitting with a guessed strategy_id would
+        # mis-attribute the fill (and its P&L) to the wrong strategy.
+        cached_order = self._cache.order(client_order_id)
+        if cached_order is None:
+            self._log.debug(
+                f"MT5LiveExecutionClient: no cached order for {client_order_id} "
+                f"(deal {deal.ticket}); skipping live fill emit — reconciliation will handle"
+            )
+            return
 
         try:
+            # Nautilus 1.227 signature: strategy_id + venue_position_id are required,
+            # and there is NO ts_init parameter (the engine stamps it internally).
             self.generate_order_filled(
-                instrument_id   = InstrumentId(Symbol(symbol), MT5_VENUE),
-                client_order_id = client_order_id,
-                venue_order_id  = venue_order_id,
-                trade_id        = trade_id,
-                order_side      = order_side,
-                order_type      = OrderType.MARKET,
-                last_qty        = Quantity(deal.volume, sp),
-                last_px         = Price(deal.price, pp),
-                quote_currency  = instrument.quote_currency,
-                commission      = commission,
-                liquidity_side  = LiquiditySide.TAKER,
-                ts_event        = ts_event,
-                ts_init         = ts_init,
+                strategy_id       = cached_order.strategy_id,
+                instrument_id     = InstrumentId(Symbol(symbol), MT5_VENUE),
+                client_order_id   = client_order_id,
+                venue_order_id    = venue_order_id,
+                venue_position_id = None,   # NETTING OMS: Nautilus assigns the net position id
+                trade_id          = trade_id,
+                order_side        = order_side,
+                order_type        = OrderType.MARKET,
+                last_qty          = Quantity(deal.volume, sp),
+                last_px           = Price(deal.price, pp),
+                quote_currency    = instrument.quote_currency,
+                commission        = commission,
+                liquidity_side    = LiquiditySide.TAKER,
+                ts_event          = ts_event,
             )
             self._log.info(
                 f"MT5LiveExecutionClient: fill emitted — "
@@ -962,7 +1195,7 @@ class MT5LiveExecutionClient(LiveExecutionClient):
             order = orders[0]
             return _build_order_status_report(
                 order, instrument_id, client_order_id, venue_order_id,
-                self._clock.timestamp_ns(),
+                self._clock.timestamp_ns(), self.account_id,
             )
 
         return None
@@ -992,7 +1225,7 @@ class MT5LiveExecutionClient(LiveExecutionClient):
             iid = instrument_id or InstrumentId(Symbol(order.symbol), MT5_VENUE)
             report = _build_order_status_report(
                 order, iid, client_order_id, venue_order_id,
-                self._clock.timestamp_ns(),
+                self._clock.timestamp_ns(), self.account_id,
             )
             reports.append(report)
 
@@ -1037,7 +1270,20 @@ class MT5LiveExecutionClient(LiveExecutionClient):
 
             pp = instrument.price_precision
 
+            # MT5 TradeDeal has no `.currency`; commission is in the account/deposit
+            # currency. Guard exactly like the live-fill path (above) so a missing
+            # attr can never crash mass-status generation and abort reconciliation.
+            try:
+                commission = Money(
+                    abs(deal.commission or 0.0),
+                    _parse_account_currency(getattr(deal, "currency", None) or "USD"),
+                )
+            except Exception:
+                commission = Money(0.0, USD)
+
             report = FillReport(
+                account_id=self.account_id,
+                report_id=UUID4(),
                 client_order_id=client_order_id,
                 venue_order_id=VenueOrderId(str(deal.order)),
                 trade_id=TradeId(str(deal.ticket)),
@@ -1045,7 +1291,7 @@ class MT5LiveExecutionClient(LiveExecutionClient):
                 order_side=OrderSide.BUY if deal.type == mt5.DEAL_TYPE_BUY else OrderSide.SELL,
                 last_qty=Quantity(deal.volume, instrument.size_precision),
                 last_px=Price(deal.price, pp),
-                commission=Money(abs(deal.commission), _parse_account_currency(deal.currency)),
+                commission=commission,
                 liquidity_side=LiquiditySide.TAKER,
                 ts_event=int(deal.time) * 1_000_000_000,
                 ts_init=self._clock.timestamp_ns(),
@@ -1089,7 +1335,7 @@ class MT5LiveExecutionClient(LiveExecutionClient):
                 position_side=_order_side_to_position_side(side),
                 quantity=Quantity(pos.volume, instrument.size_precision),
                 ts_last=int(pos.time) * 1_000_000_000,
-                report_id=None,
+                report_id=UUID4(),
                 ts_init=self._clock.timestamp_ns(),
             )
             reports.append(report)
@@ -1221,6 +1467,7 @@ def _build_order_status_report(
     client_order_id: ClientOrderId | None,
     venue_order_id: VenueOrderId | None,
     ts_init: int,
+    account_id: AccountId,
 ) -> OrderStatusReport:
     """Build an OrderStatusReport from a raw MT5 order namedtuple."""
     from nautilus_trader.execution.reports import OrderStatusReport
@@ -1240,7 +1487,9 @@ def _build_order_status_report(
         order_type = OrderType.MARKET
 
     return OrderStatusReport(
-        account_id=AccountId(f"MT5-{mt5_order.magic}"),
+        # Account id is the trading account, NOT the order's magic number; using the
+        # magic broke order reconciliation matching against the engine's account.
+        account_id=account_id,
         instrument_id=instrument_id,
         client_order_id=client_order_id,
         venue_order_id=venue_order_id or VenueOrderId(str(mt5_order.ticket)),
@@ -1259,8 +1508,8 @@ def _build_order_status_report(
         avg_px=None,
         post_only=False,
         reduce_only=False,
-        reject_reason=None,
-        report_id=None,
+        cancel_reason=None,
+        report_id=UUID4(),
         ts_accepted=int(mt5_order.time_setup) * 1_000_000_000,
         ts_last=int(mt5_order.time_setup) * 1_000_000_000,
         ts_init=ts_init,

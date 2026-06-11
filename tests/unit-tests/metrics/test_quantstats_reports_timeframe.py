@@ -6,8 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from lib.plotting.graphing import quantstats_reports
-from lib.plotting.graphing.quantstats_reports import (
+from analysis.plotting.graphing import quantstats_reports
+from analysis.plotting.graphing.quantstats_reports import (
     _resample_to_daily_if_needed,
     compute_performance_report,
     generate_tearsheet,

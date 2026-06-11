@@ -28,7 +28,7 @@ from nodes.pairs.rebalancing_flow import (
 )
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.models import Candle
-from utils.data.cross_ticker_store import CrossTickerDataStore
+from cache.runtime.cross_ticker_store import CrossTickerDataStore
 
 
 # ---------------------------------------------------------------------------

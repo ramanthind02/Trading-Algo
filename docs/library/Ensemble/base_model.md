@@ -22,9 +22,10 @@
 | `strategy` | A `Direction` value (e.g. `long` / `short`); aligns the signed signal |
 | `bias_node_spec` | Native node spec (validated by `validate_signed_signal_bias_node_spec`) |
 
-`SIGNED_SIGNAL_FEATURE_TYPE = "signed_signal"` is the shared constant used by the
-feature-research pipelines and the vault feature-file validators
-(`ensemble/vault/feature_files.py`).
+`SIGNED_SIGNAL_FEATURE_TYPE = "signed_signal"` is defined in the feature-research
+pipelines (`research/feature/pipelines/_shared.py`); the vault feature-file
+validators (`ensemble/vault/feature_files.py`) check the same `"signed_signal"`
+feature-type string inline.
 
 ## Legacy binning is removed
 
@@ -49,9 +50,8 @@ The base-model layer gives [`DiversifiedEnsemble`](../../../ensemble/diversified
 
 ## Related
 
-- [Feature base feature](../Feature_selection/Features/base_feature.md)
 - [Vault architecture](../Vault/architecture.md)
 - [Weight layer](weight_layer.md)
 - [Portfolio pipeline](portfolio.md)
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

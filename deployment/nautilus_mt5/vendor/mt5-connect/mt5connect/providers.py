@@ -262,11 +262,14 @@ class MT5InstrumentProvider(InstrumentProvider):
         Parameters
         ----------
         symbol : str
-            Symbol name (e.g. "EURUSD"). Case-insensitive.
+            Exact broker symbol name (e.g. "EURUSD", "US500.cash"). CASE-SENSITIVE:
+            instruments are stored under their exact ``mt5.symbol_info().name`` and
+            ``Symbol.__eq__`` is a C strcmp, so 'US500.cash' must NOT be upper-cased
+            (that lookup miss silently dropped every FTMO .cash CFD fill).
         """
         from mt5connect.constants import MT5_VENUE
         instrument_id = InstrumentId(
-            Symbol(symbol.upper().strip()),
+            Symbol(symbol.strip()),
             MT5_VENUE,
         )
         return self.find(instrument_id)

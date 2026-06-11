@@ -1,0 +1,59 @@
+{
+  "spec_version": "1.0",
+  "name": "AUDNZD linear z MR",
+  "hypothesis": "AUD/NZD mean-reverts (both commodity currencies, same region). Hold a position negatively proportional to the moving z-score of price (lookback ~ half-life of mean reversion), optionally flattening when the rolling mean changes too fast (regime filter). Replicates Longmore/Chan, Robot Wealth 2015.",
+  "author": "raman",
+  "created": "2026-06-08T00:00:00+00:00",
+  "tickers": [
+    "AUDNZD"
+  ],
+  "data_feed": "darwinex_cfd",
+  "mode": "daily",
+  "timeframe": "D",
+  "windows": null,
+  "signal": {
+    "module_name": "linear_z_mr",
+    "param_grid": {
+      "lookback": [
+        50,
+        100,
+        150,
+        200
+      ],
+      "scale": [
+        1.0
+      ],
+      "cap": [
+        2.0
+      ],
+      "roc_threshold": [
+        null,
+        0.0004
+      ]
+    }
+  },
+  "direction": "long_short",
+  "vol_scaling": "long_only",
+  "vol_scaling_model": "inherit_daily",
+  "risk": {
+    "target_vol": 0.15,
+    "forecast_cap": 2.0,
+    "max_position_pct": 3.5,
+    "buffer_fraction": 0.0
+  },
+  "account": {
+    "capital": 50000.0,
+    "prop_constraints": null
+  },
+  "execution": {
+    "entry_policy": "market_on_open",
+    "exit_policy": "market_on_open",
+    "unfilled_limit": "cross_after",
+    "holding": "overnight",
+    "fill_feed": "derived"
+  },
+  "vault": {
+    "weight_hierarchy_group": "mean_reversion_forex",
+    "ensemble_name": "audnzd_linear_z_mr"
+  }
+}

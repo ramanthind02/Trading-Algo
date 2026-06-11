@@ -15,6 +15,15 @@ complete — this avoids look-ahead in WP-3/WP-4 execution). We therefore set
 both ``ts_event`` and ``ts_init`` to ``time + 1 minute`` (the bar close) for
 the 1-minute bars. Ticks carry their own ``time`` (already an event time) so
 ``ts_event == ts_init == time``.
+
+**Timezone convention (IMPORTANT).** MT5 ``time``/``time_msc`` — for both bars and
+ticks — is **broker server time (EET/EEST), mislabelled UTC** (see
+``docs/library/Data/mt5_timezones.md``). This module preserves that convention:
+bars and quotes are ingested on the same broker clock, so they align with *each
+other* (the matching engine fills correctly), but a Nautilus timestamp here is
+broker time, not real UTC. Any wall-clock window (e.g. the financing rollover)
+must therefore be expressed in **broker time** — the daily rollover is at
+**00:00 broker** (= 17:00 New York), NOT a New-York or real-UTC hour.
 """
 from __future__ import annotations
 
@@ -33,8 +42,8 @@ from data_platform.core.catalog import load_catalog
 from data_platform.core.instruments import Instrument
 
 _ONE_MINUTE_NS = 60 * 1_000_000_000
-_SIZE_PRECISION = 0
-_QUOTE_SIZE_PRECISION = 0
+_SIZE_PRECISION = 2   # must match CFD instrument size_precision (0.01 lot steps)
+_QUOTE_SIZE_PRECISION = 2
 
 
 def _repo_root() -> Path:
@@ -125,11 +134,33 @@ def _build_quotes(
     return quotes
 
 
+def _filter_by_time(df: pd.DataFrame, start, end) -> pd.DataFrame:
+    """Filter a frame with a ``time`` column to [start, end] (tz-aware UTC compare)."""
+    if df.empty or (start is None and end is None) or "time" not in df.columns:
+        return df
+    t = pd.to_datetime(df["time"], utc=True)
+    mask = pd.Series(True, index=df.index)
+    if start is not None:
+        mask &= t >= pd.Timestamp(start, tz="UTC")
+    if end is not None:
+        mask &= t <= pd.Timestamp(end, tz="UTC")
+    return df[mask.values]
+
+
+# Public names — callers may use either the plain or leading-underscore form.
+# The private names are kept as aliases so existing imports remain valid.
+read_partitions = _read_partitions
+filter_by_time = _filter_by_time
+resolve_instrument = _resolve_instrument
+
+
 def ingest_mt5_intraday(
     symbol: str,
     catalog: ParquetDataCatalog,
     *,
     max_ticks: int | None = None,
+    start=None,
+    end=None,
 ) -> IngestResult:
     """Ingest M1 bars + bid/ask ticks for *symbol* into *catalog*.
 
@@ -138,7 +169,9 @@ def ingest_mt5_intraday(
     bar close; quotes carry bid/ask at the tick event time.
 
     ``max_ticks`` caps the number of quote ticks ingested (the raw MT5 tick
-    history can be tens of millions of rows); ``None`` ingests every tick.
+    history can be tens of millions of rows); ``None`` ingests every tick,
+    ``0`` ingests none (bars only). ``start``/``end`` (tz-aware/naive datetimes)
+    window both bars and ticks so a backtest ingests only the span it replays.
     """
     inst = _resolve_instrument(symbol)
     instrument_id = NTInstrumentId.from_str(str(inst.id))
@@ -146,10 +179,17 @@ def ingest_mt5_intraday(
     bar_type = BarType.from_str(f"{inst.id}-1-MINUTE-LAST-EXTERNAL")
 
     sym_root = mt5_data_root() / symbol
-    bars_df = _read_partitions(sym_root / "bars_M1")
-    ticks_df = _read_partitions(sym_root / "ticks")
-    if max_ticks is not None and not ticks_df.empty:
-        ticks_df = ticks_df.head(max_ticks)
+    bars_df = _filter_by_time(_read_partitions(sym_root / "bars_M1"), start, end)
+    # ``max_ticks == 0`` means bars only — do NOT read the tick store at all. The raw
+    # tick history can be tens of millions of rows (e.g. NDX ~46M); reading it just to
+    # discard it OOMs. The realism lane synthesizes quotes from the M1 ``spread`` field
+    # instead, so it always passes max_ticks=0 here.
+    if max_ticks == 0:
+        ticks_df = pd.DataFrame()
+    else:
+        ticks_df = _filter_by_time(_read_partitions(sym_root / "ticks"), start, end)
+        if max_ticks is not None and not ticks_df.empty:
+            ticks_df = ticks_df.head(max_ticks)
 
     bars = _build_bars(bars_df, bar_type, price_precision) if not bars_df.empty else []
     quotes = (
@@ -171,15 +211,78 @@ def ingest_mt5_intraday(
     )
 
 
+def ingest_mt5_synth_quotes_from_bars(
+    symbol: str,
+    catalog: ParquetDataCatalog,
+    *,
+    point: float,
+    max_bars: int | None = None,
+    start=None,
+    end=None,
+) -> IngestResult:
+    """Synthesize ``QuoteTick`` bid/ask from the M1 bars' ``spread`` field.
+
+    For Darwinex symbols whose full tick store has not been scraped (only NDX has
+    ticks), the M1 bars still carry a per-minute integer ``spread`` (in the
+    symbol's points). We reconstruct a quote at each bar close as
+    ``bid = close − spread·point/2`` and ``ask = close + spread·point/2`` so the
+    matching engine charges the *real* per-minute half-spread on MARKET fills
+    without a bulk tick scrape. ``point`` is the symbol's true price increment
+    (probed from the live terminal — e.g. NDX/SP500 = 0.1, XAUUSD = 0.01), NOT the
+    catalog ``price_increment`` (which can differ). The rollover study already
+    trusts this M1 ``spread`` field.
+
+    Quotes carry ``ts_event == ts_init == bar_close`` (open + 1 minute), matching
+    the bar timestamp convention in :func:`ingest_mt5_intraday`.
+    """
+    inst = _resolve_instrument(symbol)
+    instrument_id = NTInstrumentId.from_str(str(inst.id))
+    price_precision = inst.price_precision
+
+    bars_df = _filter_by_time(
+        _read_partitions(mt5_data_root() / symbol / "bars_M1"), start, end
+    )
+    if "spread" not in bars_df.columns or bars_df.empty:
+        return IngestResult(symbol, str(inst.id), 0, 0)
+    if max_bars is not None:
+        bars_df = bars_df.head(max_bars)
+
+    half = bars_df["spread"].to_numpy().astype("float64") * float(point) / 2.0
+    close = bars_df["close"].to_numpy().astype("float64")
+    times = bars_df["time"].to_numpy()
+    zero = Quantity(0, _QUOTE_SIZE_PRECISION)
+    quotes: list[QuoteTick] = []
+    for i in range(len(bars_df)):
+        close_ns = _ns_from_ts(pd.Timestamp(times[i])) + _ONE_MINUTE_NS
+        quotes.append(
+            QuoteTick(
+                instrument_id=instrument_id,
+                bid_price=Price(float(close[i] - half[i]), price_precision),
+                ask_price=Price(float(close[i] + half[i]), price_precision),
+                bid_size=zero,
+                ask_size=zero,
+                ts_event=close_ns,
+                ts_init=close_ns,
+            )
+        )
+    if quotes:
+        catalog.write_data(quotes)
+    return IngestResult(symbol, str(inst.id), 0, len(quotes))
+
+
 def _daily_window_mask(
     times_utc: pd.Series, center: _dt.time, half_width_minutes: int, tz: str
 ) -> pd.Series:
     """Boolean mask: tick times within ±``half_width_minutes`` of ``center`` daily.
 
-    ``center`` is a wall-clock time-of-day in timezone ``tz`` (e.g. 17:00
-    ``America/New_York`` for the FX/CFD financing rollover). ``times_utc`` is a
-    tz-aware UTC datetime Series. The comparison is done on minute-of-day with a
-    signed modular distance so a window that straddles midnight still works.
+    ``center`` is a wall-clock time-of-day in timezone ``tz``. **For MT5 data the
+    stored times are broker time mislabelled UTC**, so the financing rollover is
+    ``center=datetime.time(0, 0)`` with ``tz="UTC"`` (00:00 broker) — NOT
+    ``time(17, 0)`` / ``America/New_York`` (that would tz-convert the broker
+    timestamps and land 7h off; see docs/library/Data/mt5_timezones.md).
+    ``times_utc`` is a tz-aware (broker-as-UTC) datetime Series. The comparison is
+    on minute-of-day with a signed modular distance so a window straddling
+    midnight (as the 00:00 rollover does) still works.
     """
     local = times_utc.dt.tz_convert(tz)
     minute_of_day = local.dt.hour * 60 + local.dt.minute
@@ -209,11 +312,15 @@ def ingest_mt5_intraday_windowed(
     Parameters
     ----------
     rollover : datetime.time
-        Wall-clock time-of-day of the financing rollover, in ``tz``.
+        Wall-clock time-of-day of the financing rollover, in ``tz``. **For MT5
+        data pass ``datetime.time(0, 0)`` with ``tz="UTC"``** — the rollover is at
+        00:00 broker time (= 17:00 NY); the stored timestamps are broker time
+        mislabelled UTC (docs/library/Data/mt5_timezones.md).
     half_width_minutes : int
         Δ — keep ticks within this many minutes either side of ``rollover``.
     tz : str
-        Timezone of ``rollover`` (default ``"UTC"``; e.g. ``"America/New_York"``).
+        Timezone of ``rollover`` (default ``"UTC"`` = the broker clock of the
+        stored timestamps). Do NOT pass ``"America/New_York"`` for MT5 data.
     """
     inst = _resolve_instrument(symbol)
     instrument_id = NTInstrumentId.from_str(str(inst.id))
@@ -244,5 +351,48 @@ def ingest_mt5_intraday_windowed(
         symbol=symbol,
         instrument_id=str(inst.id),
         bars_written=len(bars),
+        quotes_written=len(quotes),
+    )
+
+
+def ingest_mt5_quotes_window(
+    symbol: str,
+    catalog: ParquetDataCatalog,
+    start,
+    end,
+) -> IngestResult:
+    """Demand-driven quote ingest: fetch bid/ask ticks for [start, end) via the
+    on-demand cache and write them as ``QuoteTick`` records to *catalog*.
+
+    This is the on-demand counterpart to :func:`ingest_mt5_intraday_windowed`.
+    Where the latter filters a *pre-scraped* full-tick store down to a window,
+    this one fetches *only* the requested window from MT5 (caching it), so no
+    bulk tick scrape is needed: the backtest ingests exactly the execution
+    windows its orders touch, and re-runs read the warm cache.
+
+    No bars are written here (use :func:`ingest_mt5_intraday` for the M1 spine);
+    this only lands the quote stream for realistic in-window fills.
+    """
+    # Lazy import: keeps this module importable without MetaTrader5 for the
+    # bar-only path (e.g. CI / non-Windows). Only quote ingest needs MT5.
+    from data_platform.providers.mt5.tick_cache import ensure_ticks
+
+    inst = _resolve_instrument(symbol)
+    instrument_id = NTInstrumentId.from_str(str(inst.id))
+    price_precision = inst.price_precision
+
+    ticks_df = ensure_ticks(symbol, start, end)
+    quotes = (
+        _build_quotes(ticks_df, instrument_id, price_precision)
+        if not ticks_df.empty
+        else []
+    )
+    if quotes:
+        catalog.write_data(quotes)
+
+    return IngestResult(
+        symbol=symbol,
+        instrument_id=str(inst.id),
+        bars_written=0,
         quotes_written=len(quotes),
     )

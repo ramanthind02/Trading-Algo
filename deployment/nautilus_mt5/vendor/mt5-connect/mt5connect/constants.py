@@ -69,6 +69,7 @@ FILLING_MODE = mt5.ORDER_FILLING_IOC
 # Known suffixes to strip for classification purposes only.
 # Lowercase — comparison is done after lowercasing the suffix portion.
 BROKER_SYMBOL_SUFFIXES: tuple[str, ...] = (
+    ".cash", # FTMO index/energy CFDs (US500.cash, US100.cash, USOIL.cash, NATGAS.cash) — match BEFORE "."
     "m",     # Exness standard accounts (EURUSDm)
     "c",     # Some brokers (EURUSDc)
     "_sb",   # Spread betting variants

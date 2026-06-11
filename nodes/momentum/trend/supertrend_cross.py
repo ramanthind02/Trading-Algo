@@ -108,12 +108,17 @@ class SuperTrendCross(BiasNode):
         curr_high = candle.high
         curr_low = candle.low
 
+        # Capture the PRIOR bar's close before we overwrite state. Both the True
+        # Range and the SuperTrend final-band carry rules below require the previous
+        # bar's close (the classic formula's "Prev Close"), not the current bar's.
+        prev_close = self.prev_close
+
         # Calculate True Range
-        if self.prev_close is not None:
+        if prev_close is not None:
             tr = max(
                 curr_high - curr_low,
-                abs(curr_high - self.prev_close),
-                abs(curr_low - self.prev_close)
+                abs(curr_high - prev_close),
+                abs(curr_low - prev_close)
             )
         else:
             tr = curr_high - curr_low
@@ -145,10 +150,10 @@ class SuperTrendCross(BiasNode):
             self.fast_supertrend = 1 if curr_close > mid else -1
         else:
             # Final Upper Band
-            if fast_basic_upper < self.fast_final_upper or self.prev_close > self.fast_final_upper:
+            if fast_basic_upper < self.fast_final_upper or prev_close > self.fast_final_upper:
                 self.fast_final_upper = fast_basic_upper
             # Final Lower Band
-            if fast_basic_lower > self.fast_final_lower or self.prev_close < self.fast_final_lower:
+            if fast_basic_lower > self.fast_final_lower or prev_close < self.fast_final_lower:
                 self.fast_final_lower = fast_basic_lower
 
             # Determine trend
@@ -166,10 +171,10 @@ class SuperTrendCross(BiasNode):
             self.slow_supertrend = 1 if curr_close > mid else -1
         else:
             # Final Upper Band
-            if slow_basic_upper < self.slow_final_upper or self.prev_close > self.slow_final_upper:
+            if slow_basic_upper < self.slow_final_upper or prev_close > self.slow_final_upper:
                 self.slow_final_upper = slow_basic_upper
             # Final Lower Band
-            if slow_basic_lower > self.slow_final_lower or self.prev_close < self.slow_final_lower:
+            if slow_basic_lower > self.slow_final_lower or prev_close < self.slow_final_lower:
                 self.slow_final_lower = slow_basic_lower
 
             # Determine trend

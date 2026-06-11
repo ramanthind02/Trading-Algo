@@ -2,7 +2,7 @@
 
 Incremental MT5 data scraper for the Darwinex terminal. Writes partitioned parquet to
 `data/mt5_data/`. CFD data is a **separate parallel store** — it is not merged into the
-futures `data/ohlc_data/` (see [[multi_source_update_architecture]] §11.4).
+futures `data/ohlc_data/` (see [[futures_research_data]] §11.4).
 
 ## Layout
 
@@ -48,7 +48,7 @@ stays in `scripts/mt5_data_fetch.py` — it is part of the live forecast path
 
 ## Scheduled task
 
-The Windows task `\TradingAlgo\MT5DataScrape` runs `deploy/run_mt5_scrape.bat` daily at
+The Windows task `\TradingAlgo\MT5DataScrape` runs `deployment/ops/run_mt5_scrape.bat` daily at
 5 PM PT. The `.bat` now invokes `python -m data_platform.providers.mt5.scraper`.
 
 **No task re-registration needed** — the task targets the `.bat` file path (unchanged);
@@ -109,3 +109,5 @@ broker-scoped helper; both paths are readable in the meantime.
 - Use `copy_rates_range` (not `copy_rates_from`) — only that call triggers a broker download.
 
 See the full operational reference: [[mt5_data_scraper]].
+
+> _Verified against the working tree on 2026-06-10._

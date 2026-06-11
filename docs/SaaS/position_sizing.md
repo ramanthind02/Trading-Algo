@@ -121,7 +121,9 @@ $$\text{contracts} = \text{round}\!\left(\frac{\text{target\_dollars}}{\text{con
 
 **Rounding methods:** `ROUND` (standard, default), `FLOOR` (conservative — never over-allocate), `CEILING` (aggressive). For a small account where one contract is a significant fraction of capital, rounding error can be large — this is a minimum account size consideration, not a platform bug.
 
-**Granularity consideration:** Micro futures contracts (e.g. MES = $5/point vs ES = $50/point) reduce the minimum position increment tenfold. For accounts below ~$50,000 trading standard ES, micro contracts significantly reduce rounding error. The canonical micro/mini dollar-per-point table lives in `utils/futures_micro_specs.py` (`canonical_listed_micro_futures()`); `micro_contract_fractional_and_whole(...)` is the shared sizing helper used by `research/portfolio/futures_sim.py` and the live prop forecast path, and `PositionSizer.from_listed_micro(...)` exposes it for live sizing.
+**Granularity consideration:** Micro futures contracts (e.g. MES = $5/point vs ES = $50/point) reduce the minimum position increment tenfold. For accounts below ~$50,000 trading standard ES, micro contracts significantly reduce rounding error. The canonical micro/mini dollar-per-point table lives in `lib/core/futures_micro_specs.py` (`canonical_listed_micro_futures()`); `micro_contract_fractional_and_whole(...)` is the shared sizing helper used by `research/portfolio/futures_sim.py` and the live prop forecast path, and `PositionSizer.from_listed_micro(...)` exposes it for live sizing.
+
+> _Verified against the working tree on 2026-06-10._
 
 ---
 

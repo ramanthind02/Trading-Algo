@@ -16,7 +16,7 @@ Usage::
 
     python scripts/replay_prop_forecast_window.py --trading-days 10
     python scripts/replay_prop_forecast_window.py --trading-days 10 --as-of 2026-05-13
-    python scripts/replay_prop_forecast_window.py --trading-days 10 --output deploy/prop_replay.csv
+    python scripts/replay_prop_forecast_window.py --trading-days 10 --output logs/prop_replay.csv
 
 ``--as-of`` sets the **last** calendar day of the strip (normalized); the first day
 is ``as_of`` minus ``trading_days - 1`` **business** days, clipped to the cache
@@ -53,7 +53,7 @@ if str(_REPO_ROOT) not in sys.path:
 from ensemble.portfolio import GlobalPortfolio, PortfolioCacheQuery
 from ensemble.portfolio_impl.portfolio_cache import _query_candles_from_cache
 from scripts import enigma_live_forecast as _elf
-from scripts.demo_ib_data_fetch import IBDataClient, IBConfig
+from execution.ib_data_client import IBDataClient, IBConfig
 from lib.core.enums import TimeFrame
 from lib.core.futures_micro_specs import listed_micro_futures_row, micro_contract_fractional_and_whole
 from lib.core.vault_paths import resolve_vault_root
@@ -145,7 +145,7 @@ def _replay_window_bounds(
 
 def _print_daily_coverage_banner(required: Set[str], title: str) -> None:
     """Print min daily ``coverage.end`` across required tickers (sets portfolio query end)."""
-    from lib.cache.runtime.central_cache import CentralCacheStore
+    from cache.runtime.central_cache import CentralCacheStore
     from lib.core.enums import Ticker
 
     store = CentralCacheStore.get_instance()

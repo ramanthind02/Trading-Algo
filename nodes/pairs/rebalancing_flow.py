@@ -32,7 +32,7 @@ timing:
 
 Example
 -------
->>> from utils.data.cross_ticker_store import CrossTickerDataStore
+>>> from cache.runtime.cross_ticker_store import CrossTickerDataStore
 >>> store = CrossTickerDataStore.get_instance()
 >>> store.load(Ticker.TLT, TimeFrame.D)
 >>>
@@ -47,10 +47,10 @@ from enum import Enum
 from typing import List, Optional, Tuple, Union
 
 from nodes import BiasNode
-from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+from cache.runtime.central_cache_errors import ArtifactMissingError
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.models import Candle
-from utils.data.cross_ticker_store import CrossTickerDataStore
+from cache.runtime.cross_ticker_store import CrossTickerDataStore
 
 
 class RebalancingFlow(Enum):

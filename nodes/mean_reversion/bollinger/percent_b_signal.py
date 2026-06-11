@@ -6,6 +6,15 @@
 Long mean reversion:
 - Enter on cross below ``lower_threshold`` (default 0 = lower band).
 - Exit on cross above ``upper_threshold`` (default 1 = upper band).
+
+Long/short mode — independent exit thresholds (optional):
+- ``long_exit_threshold``: if set, long exits when %B crosses above this level (e.g. 0.5 = mean)
+  before the short entry at ``upper_threshold``.  Omit → original flip-at-upper behavior.
+- ``short_exit_threshold``: if set, short exits when %B crosses below this level (e.g. 0.5 = mean)
+  before the long entry at ``lower_threshold``.  Omit → original flip-at-lower behavior.
+
+Example — symmetric mean-reversion with flat zone at middle:
+  lower_threshold=0, upper_threshold=1, long_exit_threshold=0.5, short_exit_threshold=0.5
 """
 
 from __future__ import annotations
@@ -24,6 +33,9 @@ class PercentBSignal(BiasNode):
     """Discrete -1/0/1 from Bollinger %B threshold crosses (RSI-signal semantics)."""
 
     lookback_param_names: ClassVar[frozenset[str]] = frozenset({"period"})
+    param_choices: ClassVar[dict[str, list[str]]] = {
+        "exit_policy": ["threshold", "threshold_or_bars"],
+    }
 
     def __init__(
         self,
@@ -33,9 +45,12 @@ class PercentBSignal(BiasNode):
         std_dev: float = 2.0,
         lower_threshold: float = 0.0,
         upper_threshold: float = 1.0,
+        band_extension: float = 0.0,
         strategy_mode: DirectionInput = "long",
         exit_policy: str = "threshold",
         exit_bars: int = 5,
+        long_exit_threshold: float = 1.0,
+        short_exit_threshold: float = 0.0,
     ) -> None:
         super().__init__(ticker, tf)
 
@@ -43,13 +58,28 @@ class PercentBSignal(BiasNode):
             raise ValueError("period must be >= 2")
         if std_dev <= 0:
             raise ValueError("std_dev must be > 0")
-        if lower_threshold >= upper_threshold:
-            raise ValueError("lower_threshold must be < upper_threshold")
+        if band_extension < 0:
+            raise ValueError("band_extension must be >= 0")
+
+        # Apply band extension: widen the entry zone beyond the standard band.
+        # band_extension=0.1 → enter long at %B < -0.1, short at %B > 1.1.
+        effective_lower = lower_threshold - band_extension
+        effective_upper = upper_threshold + band_extension
+        if effective_lower >= effective_upper:
+            raise ValueError("lower_threshold must be < upper_threshold after applying band_extension")
+
+        if long_exit_threshold > effective_upper:
+            raise ValueError("long_exit_threshold must be <= upper_threshold")
+        if short_exit_threshold < effective_lower:
+            raise ValueError("short_exit_threshold must be >= lower_threshold")
 
         self.period = period
         self.std_dev = std_dev
-        self.lower_threshold = lower_threshold
-        self.upper_threshold = upper_threshold
+        self.lower_threshold = effective_lower
+        self.upper_threshold = effective_upper
+        self.band_extension = band_extension
+        self._long_exit_threshold = long_exit_threshold
+        self._short_exit_threshold = short_exit_threshold
         self.strategy_mode = self._normalize_strategy_mode(strategy_mode)
         self.exit_policy = exit_policy.lower().strip()
         if self.exit_policy not in {"threshold", "threshold_or_bars"}:
@@ -65,9 +95,12 @@ class PercentBSignal(BiasNode):
             "stdDev": std_dev,
             "lowerThreshold": lower_threshold,
             "upperThreshold": upper_threshold,
+            "bandExtension": band_extension,
             "strategyMode": self.strategy_mode,
             "exitPolicy": self.exit_policy,
             "exitBars": exit_bars,
+            "longExitThreshold": long_exit_threshold,
+            "shortExitThreshold": short_exit_threshold,
         }
 
         self.front_bad = period
@@ -101,6 +134,12 @@ class PercentBSignal(BiasNode):
     def _crossed_above(self, prev_b: float, percent_b: float) -> bool:
         return prev_b < self.upper_threshold and percent_b >= self.upper_threshold
 
+    def _crossed_long_exit(self, prev_b: float, percent_b: float) -> bool:
+        return prev_b < self._long_exit_threshold and percent_b >= self._long_exit_threshold
+
+    def _crossed_short_exit(self, prev_b: float, percent_b: float) -> bool:
+        return prev_b > self._short_exit_threshold and percent_b <= self._short_exit_threshold
+
     def _apply_position_rules(self, percent_b: float) -> int:
         if self.prev_percent_b is None:
             return 0
@@ -119,11 +158,20 @@ class PercentBSignal(BiasNode):
                 next_position = -1
             elif self.position == -1 and crossed_below:
                 next_position = 0
-        else:
-            if crossed_below:
-                next_position = 1
-            elif crossed_above:
-                next_position = -1
+        else:  # long_short
+            if self.position == 1:
+                if self._crossed_long_exit(self.prev_percent_b, percent_b):
+                    # Flip to short if short entry also fires on this bar (always-in), else go flat.
+                    next_position = -1 if crossed_above else 0
+            elif self.position == -1:
+                if self._crossed_short_exit(self.prev_percent_b, percent_b):
+                    # Flip to long if long entry also fires on this bar (always-in), else go flat.
+                    next_position = 1 if crossed_below else 0
+            else:  # flat — standard entry
+                if crossed_below:
+                    next_position = 1
+                elif crossed_above:
+                    next_position = -1
 
         if next_position == self.position and next_position != 0:
             self.bars_in_position += 1

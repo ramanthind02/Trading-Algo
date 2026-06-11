@@ -527,8 +527,15 @@ def _vol_scaled_forecast(
     Falls back to *target_volatility* for any bar where EWSD cannot be resolved.
     """
     import numpy as np
-    from lib.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
+    from lib.compute.daily_ewsd_volatility import DailyEWSDVolatilityService, is_vol_scaling_off
     from ensemble.ensemble_utils import normalize_ticker_key
+
+    if is_vol_scaling_off():
+        return pd.Series(
+            signal.to_numpy(dtype=float),
+            index=signal.index,
+            name="forecast_score",
+        )
 
     svc = DailyEWSDVolatilityService()
     daily_vol_df = svc.compute_daily_series(eval_candles)

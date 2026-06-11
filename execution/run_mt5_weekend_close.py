@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from deployment.telegram_notifier import TelegramNotifier
+from lib.core.notify import TelegramNotifier
 from execution.approval_flow import (
     APPROVED_DECISIONS,
     ApprovalDecision,

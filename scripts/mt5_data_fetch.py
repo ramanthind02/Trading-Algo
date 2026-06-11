@@ -187,8 +187,8 @@ def _sanity_check_price_scale(
     if new_candles.empty:
         return
     try:
-        from lib.cache.runtime.central_cache import CentralCacheStore
-        from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+        from cache.runtime.central_cache import CentralCacheStore
+        from cache.runtime.central_cache_errors import ArtifactMissingError
     except ImportError:
         return
 
@@ -246,7 +246,7 @@ def upsert_mt5_candles(
     IB-specific (continuous-futures rollover handling) and inappropriate for
     CFDs which have no contract rollover.
     """
-    from lib.cache.runtime.central_cache import CentralCacheStore
+    from cache.runtime.central_cache import CentralCacheStore
 
     store = CentralCacheStore.get_instance()
 
@@ -314,7 +314,7 @@ def sync_mt5_dailies_into_central_cache(
         - If any required ticker with a configured ``mt5_symbol`` returns no
           data (fail-fast — see rubber-duck critique).
     """
-    from utils.data.cross_ticker_store import CrossTickerDataStore
+    from cache.runtime.cross_ticker_store import CrossTickerDataStore
 
     mt5 = _require_mt5()
 

@@ -3,7 +3,7 @@
 Every on-disk ``InstrumentCatalog`` row maps to a valid Nautilus instrument,
 writes to a temp ``ParquetDataCatalog``, and reads back with counts + ids
 reconciling. The class distribution is asserted against the known catalog
-state (67 rows: FuturesContract 23, Equity 30, CurrencyPair 7, Cfd 7).
+state (69 rows: FuturesContract 23, Equity 30, CurrencyPair 7, Cfd 9).
 """
 from __future__ import annotations
 
@@ -22,16 +22,16 @@ from data_platform.nautilus.instruments import (
     write_instruments_to_catalog,
 )
 
-# Expected mapped class distribution for the 67-row on-disk catalog.
+# Expected mapped class distribution for the 69-row on-disk catalog.
 # FUTURE(23)->FuturesContract; SPOT+EQUITY(26) + WARRANT(4) -> Equity(30);
-# SPOT+FX(7)->CurrencyPair; CFD(7)->Cfd.
+# SPOT+FX(7)->CurrencyPair; CFD(9)->Cfd (added XNGUSD + XTIUSD).
 _EXPECTED_DISTRIBUTION = {
     "FuturesContract": 23,
     "Equity": 30,
     "CurrencyPair": 7,
-    "Cfd": 7,
+    "Cfd": 9,
 }
-_EXPECTED_TOTAL = 67
+_EXPECTED_TOTAL = 69
 
 
 def test_all_rows_map_with_no_skips() -> None:

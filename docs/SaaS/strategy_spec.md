@@ -9,7 +9,7 @@
 > each emitting a feature column), consumed by `features/models/`
 > and the ensemble stack — not a user-supplied `compute()` function. The caching
 > that exists today is the bias-node cache (`cache/`,
-> `lib/cache/runtime/bias_node_cache.py`, `lib/cache/runtime/cache_manager.py`), which is
+> `cache/runtime/bias_node_cache.py`, `cache/runtime/cache_manager.py`), which is
 > unrelated to the strategy/research cache tiers in §6. Treat this whole document
 > as the target contract for the hosted product.
 

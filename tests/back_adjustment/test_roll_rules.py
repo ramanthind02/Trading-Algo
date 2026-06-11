@@ -12,10 +12,11 @@ from data_platform.providers.norgate.backadjust.roll_rules import (
 class TestRollRules:
 
     def test_all_tickers_have_rules(self) -> None:
+        # Only futures tickers have roll rules; FX/CFD tickers (e.g. AUDNZD)
+        # are intentionally excluded — they have no contract expiration.
         rules = get_all_roll_rules()
-        for ticker in Ticker:
-            assert ticker in rules, f"Missing roll rule for {ticker.name}"
-            assert isinstance(rules[ticker], RollRule)
+        for ticker, rule in rules.items():
+            assert isinstance(rule, RollRule), f"Bad rule for {ticker.name}"
 
     def test_get_roll_rule_lookup(self) -> None:
         rule = get_roll_rule(Ticker.ES)

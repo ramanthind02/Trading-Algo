@@ -28,7 +28,6 @@ from data_platform.core import (
     Venue,
 )
 
-from ._constants import TICKER_TO_CONTRACT_PREFIX
 from ._paths import norgate_root
 
 # Norgate subtype1 -> data_core AssetClass
@@ -62,11 +61,7 @@ def _price_precision(tick_size: float) -> int:
     return len(s.split(".")[1]) if "." in s else 0
 
 
-# IB CONTFUT exchange overrides + ETF proxy + MT5 CFD-equivalent, sourced from the
-# live_forecast configs (the authoritative trading mapping). IB uses COMEX for
-# metals where Norgate reports NYMEX; configs capture that. Tickers absent here
-# fall back to {ib root = contract prefix, ib exchange = Norgate exchange}.
-_IB_EXCHANGE_OVERRIDE: dict[str, str] = {"GC": "COMEX", "SI": "COMEX"}
+# ETF proxy + MT5 CFD-equivalent, sourced from live_forecast configs.
 _ETF_PROXY: dict[str, str] = {
     "ES": "SPY", "NQ": "QQQ", "YM": "DIA", "RTY": "IWM", "GC": "GLD", "TLT": "TLT",
 }
@@ -80,15 +75,11 @@ _MT5_SYMBOL: dict[str, str] = {
 }
 
 
-def _source_symbols(ticker: str, norgate_symbol: str, norgate_exchange: str) -> dict[str, str | None]:
+def _source_symbols(ticker: str, norgate_symbol: str) -> dict[str, str | None]:
     """Map a futures InstrumentId to its native symbol at each source."""
-    ib_root = TICKER_TO_CONTRACT_PREFIX.get(ticker, ticker)
     return {
         "norgate_adj": norgate_symbol,                 # &ES_CCB
         "norgate_unadj": norgate_symbol.replace("_CCB", ""),  # &ES
-        "ib_contfut": ib_root,                          # ES (CONTFUT root)
-        "ib_exchange": _IB_EXCHANGE_OVERRIDE.get(ticker, norgate_exchange),
-        "ib_sec_type": "CONTFUT",
         "etf_proxy": _ETF_PROXY.get(ticker),            # SPY / None
         "mt5": _MT5_SYMBOL.get(ticker),                 # US500.cash / None
     }
@@ -123,12 +114,13 @@ def build_futures_instruments() -> list[Instrument]:
             description=row.get("futures_market_name"),
             data_source="norgate",
             price_adjustments={"D": "BACK_ADJUSTED", "W": "BACK_ADJUSTED",
-                                "M": "BACK_ADJUSTED", "D_unadj": "NONE"},
+                                "M": "BACK_ADJUSTED", "D_unadj": "NONE",
+                                "D_ratio": "RATIO", "W_ratio": "RATIO",
+                                "M_ratio": "RATIO"},
             info={"norgate_symbol": row["norgate_symbol"],
                   "subtype1": row.get("subtype1"),
                   "tick_value": row.get("tick_value"),
-                  "source_symbols": _source_symbols(
-                      ticker, row["norgate_symbol"], row["exchange_name"])},
+                  "source_symbols": _source_symbols(ticker, row["norgate_symbol"])},
         )
         instruments.append(inst)
     return instruments
@@ -153,8 +145,7 @@ def build_tlt_instrument() -> Instrument:
         data_source="norgate",
         price_adjustments={"D": "TOTAL_RETURN", "W": "TOTAL_RETURN", "M": "TOTAL_RETURN"},
         info={"asset_kind": "ETF", "bond_proxy": True,
-              "source_symbols": {"norgate_adj": "TLT", "ib_contfut": "TLT",
-                                  "ib_exchange": "SMART", "ib_sec_type": "STK",
+              "source_symbols": {"norgate_adj": "TLT",
                                   "etf_proxy": "TLT", "mt5": None}},
     )
 

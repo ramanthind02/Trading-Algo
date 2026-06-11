@@ -3,11 +3,11 @@
 Demonstrates the cross-ticker bias-node pattern: the primary ticker's
 candles are streamed via the normal ``add_candle()`` path, while the
 secondary ticker's data is fetched from the
-:class:`~utils.data.cross_ticker_store.CrossTickerDataStore` singleton.
+:class:`~cache.runtime.cross_ticker_store.CrossTickerDataStore` singleton.
 
 Example
 -------
->>> from utils.data.cross_ticker_store import CrossTickerDataStore
+>>> from cache.runtime.cross_ticker_store import CrossTickerDataStore
 >>> store = CrossTickerDataStore.get_instance()
 >>> store.load(Ticker.NQ, TimeFrame.D)
 >>>
@@ -23,10 +23,10 @@ from typing import ClassVar, List
 import numpy as np
 
 from nodes import BiasNode
-from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+from cache.runtime.central_cache_errors import ArtifactMissingError
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.models import Candle
-from utils.data.cross_ticker_store import CrossTickerDataStore
+from cache.runtime.cross_ticker_store import CrossTickerDataStore
 
 
 class SpreadNode(BiasNode):

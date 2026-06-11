@@ -5,7 +5,7 @@ symbol over full history. Stored to:
 
     data/mt5_data/{SYMBOL}/bars_D1/part.parquet
 
-Schema (zstd): time (UTC date), open/high/low/close (float32), tick_volume (int32),
+Schema (zstd): time (UTC date), open/high/low/close (float32), tick_volume (int64),
 spread (int16), real_volume (int64). Incremental: appends only sessions newer than
 the last stored bar; dedupes on ``time``.
 
@@ -20,6 +20,7 @@ Run (TWS/Darwinex MT5 terminal must be running + logged in):
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -37,8 +38,15 @@ _REPO_ROOT = next(
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from lib.core.runtime_bootstrap import bootstrap_runtime  # noqa: E402
+
+bootstrap_runtime(_REPO_ROOT)  # UTF-8 console + .env load (provides MT5_PATH)
+
 import MetaTrader5 as mt5  # noqa: E402
 from lib.core.logger import get_logger  # noqa: E402
+from data_platform.storage.contracts import MT5_D1_BARS_SCHEMA  # noqa: E402
+from data_platform.storage import write_mt5_d1_bars  # noqa: E402
+from data_platform.providers.mt5.scraper import _assert_darwinex_terminal  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -46,23 +54,33 @@ MT5_DATA_DIR = _REPO_ROOT / "data" / "mt5_data"
 # Darwinex daily history reaches back to the 2000s for FX; 1970 lower bound is safe.
 HISTORY_START = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-_D1_SCHEMA = pa.schema([
-    ("time",        pa.timestamp("s", tz="UTC")),
-    ("open",        pa.float32()),
-    ("high",        pa.float32()),
-    ("low",         pa.float32()),
-    ("close",       pa.float32()),
-    ("tick_volume", pa.int64()),
-    ("spread",      pa.int32()),
-    ("real_volume", pa.int64()),
-])
+# D1-specific schema (amended ADR-6): int64 tick_volume / int16 spread — see contracts.py.
+_D1_SCHEMA = MT5_D1_BARS_SCHEMA
 _COLS = ["time", "open", "high", "low", "close", "tick_volume", "spread", "real_volume"]
 
 
 def connect() -> bool:
-    if not mt5.initialize():
-        logger.error("mt5.initialize() failed: %s", mt5.last_error())
+    """Bind to the MT5 terminal at $MT5_PATH (Darwinex) — ADR-7 broker guard.
+
+    MT5_PATH **must** be set (via .env or the environment).  The no-arg
+    ``mt5.initialize()`` fallback has been removed: with several terminals
+    installed it attaches nondeterministically and would silently contaminate
+    data/mt5_data with the wrong broker's native symbols.
+
+    Raises RuntimeError if MT5_PATH is unset or the attached terminal is not
+    the Darwinex terminal.  Returns False only if mt5.initialize() itself fails.
+    """
+    path = os.environ.get("MT5_PATH")
+    if not path:
+        raise RuntimeError(
+            "MT5_PATH is not set. Set it in .env or the environment to the "
+            "Darwinex terminal executable path before running the daily scraper. "
+            "data/mt5_data is the Darwinex-only store (ADR-7)."
+        )
+    if not mt5.initialize(path):
+        logger.error("mt5.initialize(%s) failed: %s", path, mt5.last_error())
         return False
+    _assert_darwinex_terminal()
     info = mt5.terminal_info()
     acct = mt5.account_info()
     logger.info("MT5 attached: build=%s login=%s server=%s",
@@ -97,16 +115,14 @@ def _write_daily(symbol: str, df: pd.DataFrame) -> int:
         return 0
     path = _daily_path(symbol)
     path.parent.mkdir(parents=True, exist_ok=True)
-    df = df[_COLS].copy()
+    tbl_new = pa.Table.from_pandas(df[_COLS], schema=_D1_SCHEMA, preserve_index=False)
     if path.exists():
-        existing = pd.read_parquet(path)
-        df = pd.concat([existing, df], ignore_index=True)
-    df = df.drop_duplicates(subset=["time"], keep="last").sort_values("time").reset_index(drop=True)
-    pq.write_table(
-        pa.Table.from_pandas(df, schema=_D1_SCHEMA, preserve_index=False),
-        path, compression="zstd", compression_level=3,
-    )
-    return len(df)
+        tbl_old = pq.read_table(path, schema=_D1_SCHEMA)
+        combined = pa.concat_tables([tbl_old, tbl_new]).to_pandas()
+        combined = combined.drop_duplicates(subset=["time"], keep="last").sort_values("time")
+        tbl_new = pa.Table.from_pandas(combined, schema=_D1_SCHEMA, preserve_index=False)
+    write_mt5_d1_bars(tbl_new, path)
+    return tbl_new.num_rows
 
 
 def scrape_symbol(symbol: str, to_dt: datetime) -> dict:

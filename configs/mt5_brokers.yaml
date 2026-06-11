@@ -46,6 +46,7 @@ brokers:
       SI:   XAGUSD      # Silver
       CL:   XTIUSD      # WTI Crude
       NG:   XNGUSD      # Natural Gas
+      TLT:  TLT         # iShares 20+yr Treasury ETF CFD (es_tlt rebalancing sleeve)
       # FX pairs are 1:1 (canonical == broker symbol on Darwinex)
       EURUSD: EURUSD
       GBPUSD: GBPUSD
@@ -54,6 +55,42 @@ brokers:
       USDCHF: USDCHF
       AUDNZD: AUDNZD
       EURCHF: EURCHF
+    # Live tick-scraper terminal — DO NOT DISTURB (real account 4000093084).
+    terminal_path: 'C:\Program Files\Darwinex MetaTrader 5\terminal64.exe'
+    timezone: "EET"                 # broker server tz (EET winter / EEST summer)
+    asset_classes:                  # canonical -> fx|index|metal|energy|crypto
+      ES: index
+      NQ: index
+      YM: index
+      DAX: index
+      FTSE: index
+      GC: metal
+      SI: metal
+      CL: energy
+      NG: energy
+      EURUSD: fx
+      GBPUSD: fx
+      USDJPY: fx
+      AUDUSD: fx
+      USDCHF: fx
+      AUDNZD: fx
+      EURCHF: fx
+    sessions:                       # per asset-class, times in broker tz; intraday bounds APPROX
+      fx:     {weekdays: "0-4", open: "00:00", close: "24:00", daily_break: "23:58-00:02"}
+      index:  {weekdays: "0-4", open: "01:00", close: "23:00"}                              # APPROX
+      metal:  {weekdays: "0-4", open: "01:00", close: "24:00", daily_break: "23:58-01:01"}  # APPROX
+      energy: {weekdays: "0-4", open: "01:00", close: "23:00"}                              # APPROX
+      crypto: {weekdays: "0-6", open: "00:00", close: "24:00"}                              # 24/7 (if offered)
+    rules:
+      execution:
+        account_mode: hedging       # APPROX — confirm on terminal
+        filling_mode: IOC           # IOC|FOK|RETURN
+        max_deviation_points: 20
+        default_lot_min: 0.01
+        default_lot_step: 0.01
+        weekend_holding: true       # live retail — holding over the weekend is allowed
+        magic_number: 510
+      risk: null                    # live retail account — no prop-firm limits
 
   # -------------------------------------------------------------------------
   # FTMO — prop-firm broker. Mappings CONFIRMED 2026-06-05 by enumerating
@@ -96,3 +133,115 @@ brokers:
       SI:   [XAGUSD, SILVER]
       CL:   [USOIL, XTIUSD, WTI, CL]
       NG:   [XNGUSD, NATGAS, NGAS]
+    # Separate FTMO MT5 install (NOT the Darwinex terminal); feeds MT5Config.path.
+    terminal_path: 'C:\Program Files\FTMO Global Markets MT5 Terminal\terminal64.exe'
+    timezone: "EET"                 # broker server tz (EET winter / EEST summer)
+    asset_classes:                  # canonical -> fx|index|metal|energy|crypto (native also resolves)
+      ES: index
+      NQ: index
+      YM: index
+      DAX: index
+      FTSE: index
+      GC: metal
+      SI: metal
+      CL: energy
+      NG: energy
+      EURUSD: fx
+      GBPUSD: fx
+      USDJPY: fx
+      AUDUSD: fx
+      USDCHF: fx
+      AUDNZD: fx
+      EURCHF: fx
+    sessions:                       # per asset-class, times in broker tz; intraday bounds APPROX
+      fx:     {weekdays: "0-4", open: "00:00", close: "24:00", daily_break: "23:58-00:02"}
+      index:  {weekdays: "0-4", open: "01:00", close: "23:15"}                              # APPROX
+      metal:  {weekdays: "0-4", open: "01:00", close: "24:00", daily_break: "23:58-01:01"}  # APPROX
+      energy: {weekdays: "0-4", open: "01:00", close: "23:15"}                              # APPROX
+      crypto: {weekdays: "0-6", open: "00:00", close: "24:00"}                              # 24/7
+    rules:
+      execution:
+        account_mode: hedging       # FTMO demo is hedging
+        filling_mode: IOC           # matches the adapter's FILLING_MODE
+        max_deviation_points: 20
+        default_lot_min: 0.01
+        default_lot_step: 0.01
+        weekend_holding: false      # FTMO: flat for the weekend (program-dependent)
+        magic_number: 510
+      risk:                         # standard FTMO Challenge defaults — vary by program/phase
+        max_daily_loss_pct: 5.0
+        max_total_loss_pct: 10.0
+        profit_target_pct: 10.0
+        min_trading_days: 4
+        max_leverage: 30
+        news_trading_restricted: true
+
+  # -------------------------------------------------------------------------
+  # FundedNext — prop-firm broker. Symbols NOT yet confirmed (needs its OWN
+  # terminal install + discover_symbols against it). server FundedNext-Server3;
+  # demo creds in .env (FUNDEDNEXT_DEMO_*, login 34024500). Everything below is
+  # a PLACEHOLDER until confirmed on that terminal — resolve() raises on UNKNOWN.
+  # -------------------------------------------------------------------------
+  fundednext:
+    display_name: "FundedNext"
+    server: "FundedNext-Server 3"   # verified 2026-06-06 from terminal bases\ + auth log (NOTE the space)
+    terminal_path: 'C:\Program Files\FundedNext MT5 Terminal\terminal64.exe'  # own install (data folder 89FE…DF1C)
+    confirmed: true                 # symbols verified on terminal 2026-06-06 (67-symbol book); risk rules still placeholder (need program page)
+    confirmed_on: "2026-06-06"
+    timezone: "EET"                 # assumed EET (prop firm); confirm server tz when needed
+    symbols:                        # confirmed: each canonical matched exactly one native (no guessing)
+      ES:   SPX500
+      NQ:   NDX100
+      YM:   US30
+      DAX:  GER30          # FundedNext labels the German index GER30 (40-constituent DAX)
+      FTSE: UK100
+      GC:   XAUUSD
+      SI:   XAGUSD
+      CL:   USOUSD         # WTI (Brent = UKOUSD)
+      NG:   UNKNOWN        # NOT offered by FundedNext (no natural-gas symbol in the 67-symbol book)
+      EURUSD: EURUSD
+      GBPUSD: GBPUSD
+      USDJPY: USDJPY
+      AUDUSD: AUDUSD
+      USDCHF: USDCHF
+      AUDNZD: AUDNZD
+      EURCHF: EURCHF
+    asset_classes:
+      ES: index
+      NQ: index
+      YM: index
+      DAX: index
+      FTSE: index
+      GC: metal
+      SI: metal
+      CL: energy
+      NG: energy
+      EURUSD: fx
+      GBPUSD: fx
+      USDJPY: fx
+      AUDUSD: fx
+      USDCHF: fx
+      AUDNZD: fx
+      EURCHF: fx
+    sessions:                       # PLACEHOLDER — confirm per asset class on terminal
+      fx:     {weekdays: "0-4", open: "00:00", close: "24:00", daily_break: "23:58-00:02"}
+      index:  {weekdays: "0-4", open: "01:00", close: "23:15"}
+      metal:  {weekdays: "0-4", open: "01:00", close: "24:00", daily_break: "23:58-01:01"}
+      energy: {weekdays: "0-4", open: "01:00", close: "23:15"}
+      crypto: {weekdays: "0-6", open: "00:00", close: "24:00"}
+    rules:
+      execution:
+        account_mode: hedging       # confirmed: account margin_mode=2 (RETAIL_HEDGING)
+        filling_mode: IOC           # confirmed: all symbols support FOK+IOC
+        max_deviation_points: 20
+        default_lot_min: 0.01       # confirmed: volume_min/step = 0.01 across the book
+        default_lot_step: 0.01
+        weekend_holding: false
+        magic_number: 510
+      risk:                         # PLACEHOLDER — confirm against the FundedNext program page
+        max_daily_loss_pct: 5.0     # placeholder
+        max_total_loss_pct: 10.0    # placeholder
+        profit_target_pct: 10.0     # placeholder
+        min_trading_days: 5         # placeholder
+        max_leverage: 100           # confirmed from account (leverage 1:100)
+        news_trading_restricted: true

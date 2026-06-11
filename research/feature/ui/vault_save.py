@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -26,6 +27,11 @@ from lib.core.helpers import build_feature_column_name
 from lib.core.enums import Ticker, TimeFrame, coerce_direction
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
+
+_log = logging.getLogger(__name__)
+
+# Registry DB path override (None → canonical data/registry.db).  Tests monkeypatch this.
+_REGISTRY_DB_PATH: Path | None = None
 
 
 class VaultGateStatus(str, Enum):
@@ -63,15 +69,59 @@ def portfolio_addition_report_path(config: ResearchConfig) -> Path:
     )
 
 
-def load_portfolio_gate_status(config: ResearchConfig) -> VaultGateStatus:
-    """Return portfolio gate status from persisted validation artifacts."""
+def load_portfolio_gate_status(
+    config: ResearchConfig,
+    *,
+    spec_hash: str | None = None,
+) -> VaultGateStatus:
+    """Return portfolio gate status from persisted validation artifacts.
 
+    Primary path (when spec_hash is provided): resolve the gate report from
+    the specific run's per-run dir via the registry (newest completed validation
+    run whose spec_hash matches).  Falls back to the canonical shared-folder
+    manifest match when the registry path is unavailable.  Both paths log which
+    report was used at DEBUG level.
+    """
+    # -- Primary path: registry-resolved, run-specific gate report ------------
+    if spec_hash is not None:
+        try:
+            from data_platform.registry import db as _db, reader as _reader
+
+            db_path = _REGISTRY_DB_PATH or _db.registry_path()
+            conn = _db.connect_readonly(db_path)
+            try:
+                rows = _reader.runs_for_spec_hash(conn, spec_hash, kind="validation")
+                completed = [r for r in rows if r["status"] == "completed"]
+            finally:
+                conn.close()
+
+            for row in completed:
+                viz_dir = row["viz_dir"]
+                if viz_dir:
+                    report = _REPO_ROOT / viz_dir / "portfolio_addition_report.json"
+                    if report.is_file():
+                        payload = json.loads(report.read_text(encoding="utf-8"))
+                        _log.debug(
+                            "load_portfolio_gate_status: run-dir report %s", report
+                        )
+                        if payload.get("skipped"):
+                            return VaultGateStatus.SKIPPED
+                        if payload.get("passed"):
+                            return VaultGateStatus.PASSED
+                        return VaultGateStatus.FAILED
+        except Exception:
+            pass  # fall through to legacy
+
+    # -- Legacy fallback: canonical shared-folder manifest match --------------
     if not validation_artifacts_current(config):
         return VaultGateStatus.MISSING
     report_path = portfolio_addition_report_path(config)
     if not report_path.is_file():
         return VaultGateStatus.MISSING
     payload = json.loads(report_path.read_text(encoding="utf-8"))
+    _log.debug(
+        "load_portfolio_gate_status: legacy shared-folder report %s", report_path
+    )
     if payload.get("skipped"):
         return VaultGateStatus.SKIPPED
     if payload.get("passed"):
@@ -126,7 +176,11 @@ def _vault_save_target_dict(vault_save: VaultSaveConfig) -> dict[str, object]:
     }
 
 
-def assess_vault_save_eligibility(config: ResearchConfig) -> dict[str, object]:
+def assess_vault_save_eligibility(
+    config: ResearchConfig,
+    *,
+    spec_hash: str | None = None,
+) -> dict[str, object]:
     """Return whether the workspace can commit the frozen eval combo to the vault."""
 
     blockers: list[str] = []
@@ -136,12 +190,12 @@ def assess_vault_save_eligibility(config: ResearchConfig) -> dict[str, object]:
         return {
             "configured": False,
             "ready": False,
-            "gate_status": load_portfolio_gate_status(config).value,
+            "gate_status": load_portfolio_gate_status(config, spec_hash=spec_hash).value,
             "blockers": blockers,
             "target": None,
         }
 
-    gate_status = load_portfolio_gate_status(config)
+    gate_status = load_portfolio_gate_status(config, spec_hash=spec_hash)
     if gate_status is VaultGateStatus.MISSING:
         blockers.append("Run Validation to produce the portfolio addition gate report.")
     elif gate_status is VaultGateStatus.FAILED:
@@ -196,6 +250,8 @@ def execute_vault_save(
     config: ResearchConfig,
     *,
     dry_run: bool,
+    producing_run_id: str | None = None,
+    spec_hash: str | None = None,
 ) -> VaultSaveExecution:
     """Preview or write the frozen eval combo to the configured vault target."""
 
@@ -205,7 +261,7 @@ def execute_vault_save(
             "Set vault_save=VaultSaveConfig(...) on ResearchConfig in feature_research/config.py."
         )
 
-    eligibility = assess_vault_save_eligibility(config)
+    eligibility = assess_vault_save_eligibility(config, spec_hash=spec_hash)
     if not eligibility["ready"] and not dry_run:
         blockers = eligibility.get("blockers", [])
         message = blockers[0] if blockers else "Vault save is not ready."
@@ -242,7 +298,12 @@ def execute_vault_save(
             "strategy": direction,
         }
         model = BaseModel(feature_config, tickers=tickers)
-        saved_model_id = model.save_to_vault(ensemble_dir, tickers=tickers)
+        saved_model_id = model.save_to_vault(
+            ensemble_dir,
+            tickers=tickers,
+            producing_run_id=producing_run_id,
+            spec_hash=spec_hash,
+        )
         if vault_save.weight_hierarchy_group:
             _inject_weight_hierarchy_group_into_features(
                 ensemble_dir,

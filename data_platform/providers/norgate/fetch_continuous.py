@@ -13,12 +13,14 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import norgatedata
+try:
+    import norgatedata
+except ImportError:
+    norgatedata = None  # type: ignore[assignment]
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 
-from ._constants import PARQUET_COMPRESSION, PARQUET_COMPRESSION_LEVEL, TICKER_TO_CCB, TICKER_TO_RAW
+from data_platform.storage import write_norgate_bars
+from ._constants import TICKER_TO_CCB, TICKER_TO_RAW
 from ._paths import working_adjusted_dir, working_unadjusted_dir
 
 
@@ -75,13 +77,7 @@ def _normalize(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _write(df: pd.DataFrame, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    table = pa.Table.from_pandas(df, preserve_index=True)
-    pq.write_table(
-        table, path,
-        compression=PARQUET_COMPRESSION,
-        compression_level=PARQUET_COMPRESSION_LEVEL,
-    )
+    write_norgate_bars(df, path, store="norgate_continuous")
 
 
 def fetch_one(

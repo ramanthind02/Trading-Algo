@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 from quantfoundry_core.portfolio_gate import compute_portfolio_addition_gate
 
-from research.feature.config import load_config
+from research.feature.config import load_config, resolve_portfolio_gate_n_jobs
 from lib.core.enums import Ticker
 from research.feature.config import PortfolioAdditionGateConfig
 from research.feature.portfolio_addition.gate_runner import (
@@ -31,6 +31,25 @@ from research.feature.portfolio_addition.gate_runner import (
 )
 from research.portfolio.config import PortfolioResearchConfig
 from research.portfolio.pipelines.portfolio_test import PhaseResult
+
+
+def test_canonical_portfolio_gate_defaults_to_serial() -> None:
+    """C1 regression: the portfolio-addition gate must default to n_jobs=1.
+
+    loky workers do NOT inherit the process-global research feed / EWSD blend, so a
+    parallel gate silently fits ensembles under the default "futures" feed while the
+    eval ran under the configured feed (e.g. cfd) -> corrupts dSR / pass-fail. The
+    canonical/CLI path (load_config) must therefore resolve the gate to serial.
+    """
+    config = load_config()
+    assert config.portfolio_addition_gate.n_jobs is None  # inherit -> resolver decides
+    assert resolve_portfolio_gate_n_jobs(config) == 1
+    # An explicit override is still honoured (opt-in; caller owns the feed caveat).
+    parallel = replace(
+        config,
+        portfolio_addition_gate=replace(config.portfolio_addition_gate, n_jobs=4),
+    )
+    assert resolve_portfolio_gate_n_jobs(parallel) == 4
 
 
 def _synthetic_inputs(*, n: int = 260, seed: int = 11) -> PortfolioGateInputs:

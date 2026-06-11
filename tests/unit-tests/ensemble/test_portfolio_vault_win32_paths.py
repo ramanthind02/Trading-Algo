@@ -9,7 +9,7 @@ pytestmark = pytest.mark.skipif(os.name != "nt", reason="Win32 extended paths on
 
 
 def test_win32_extended_path_prefixes_drive_path(tmp_path: Path) -> None:
-    from lib.cache.runtime.cache_paths import win32_extended_path
+    from cache.runtime.cache_paths import win32_extended_path
 
     f = tmp_path / "sample.txt"
     f.write_text("x", encoding="utf-8")
@@ -19,7 +19,7 @@ def test_win32_extended_path_prefixes_drive_path(tmp_path: Path) -> None:
 
 
 def test_win32_extended_path_idempotent(tmp_path: Path) -> None:
-    from lib.cache.runtime.cache_paths import win32_extended_path
+    from cache.runtime.cache_paths import win32_extended_path
 
     f = tmp_path / "a.txt"
     f.write_text("a", encoding="utf-8")
@@ -39,7 +39,7 @@ def test_feature_file_exists_round_trip(tmp_path: Path) -> None:
 
 def test_read_utf8_text_materialization_helper(tmp_path: Path) -> None:
     """portfolio_materialization reads vault JSON via extended path on Windows."""
-    from lib.cache.runtime.portfolio_materialization import _read_utf8_text
+    from cache.runtime.portfolio_materialization import _read_utf8_text
 
     f = tmp_path / "feature.json"
     f.write_text('{"base_models": []}', encoding="utf-8")

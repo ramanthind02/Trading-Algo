@@ -1,0 +1,3 @@
+param_sensitivity_by_ticker_key,param_combo_label,feature_name,ticker,n_observations,n_nonzero_signal,sharpe,t_stat,sortino
+double7s__ma200__sp10__ES,double7s__ma200__sp10,double7s_signal_D_maPeriod_200_shortPeriod_10,ES,4783,1299,0.620195860845632,2.701959179318653,0.8670258161259502
+double7s__ma200__sp10__NQ,double7s__ma200__sp10,double7s_signal_D_maPeriod_200_shortPeriod_10,NQ,4783,1288,0.6429845021666152,2.8012406845474613,0.9258721171517662

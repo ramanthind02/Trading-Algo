@@ -70,7 +70,7 @@
   - Any test using handcrafted fixtures to mimic model state is **unit**, never integration.
 - **Integration tests must use persisted pipeline data**:
   - Load data from repository-backed sources (for example `data/ohlc_data`) and run through real extraction/model paths.
-  - Prefer cache-backed execution (`USE_CACHE=True`); if cache is missing, populate via `CacheManager.populate_cache(...)` or skip with a clear reason.
+  - Prefer cache-backed execution (`USE_CACHE=True`); if cache is missing, populate via `bootstrap_source_candles(...)` + `CacheManager.ensure_bias_cache_coverage(...)` (or `extract_features_for_bias_node(..., populate_on_miss=True)`) or skip with a clear reason.
   - Integration dataset/date range/tickers/specs are user-driven and must be explicitly declared in the test.
 - Run targeted tests for changed modules first (for example `pytest tests/test_ensemble_base_models.py -v`).
 - Run relevant integration tests when cross-layer behavior changes.

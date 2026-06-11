@@ -62,7 +62,25 @@ def execute_exploration_phase(
     config: ResearchConfig,
     output_dir: Path,
 ) -> ExplorationPhaseResult:
-    """Run exploration in canonical order: sweep/EDA, robustness, perturbation, permutation."""
+    """Run exploration in canonical order: sweep/EDA, robustness, perturbation, permutation.
+
+    Exploration is a **pure vectorized loop** (``signal × target`` P&L only). It never
+    constructs or routes through a realistic Nautilus ``PnLEngine`` — that lane lives
+    exclusively behind ``_select_phase_pnl_engine`` in ``pipelines/_shared.py``, which is
+    called only from the validation / OOS evaluation pipeline. The guard below makes that
+    invariant explicit so exploration can never silently switch to a realistic engine
+    (Issue 3): the realistic-lane selector must not be reachable from this module.
+    """
+
+    # Issue 3 guard (cheap, import-namespace check): the realistic Nautilus lane selector
+    # is intentionally absent from this module. If a future edit imports it here, fail
+    # loudly rather than let exploration silently run friction-laden fills.
+    import research.feature.exploration.orchestrate as _self
+
+    assert not hasattr(_self, "_select_phase_pnl_engine"), (
+        "Exploration is vectorized-only: _select_phase_pnl_engine (the realistic "
+        "Nautilus P&L lane) must not be imported into the exploration orchestrator."
+    )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 

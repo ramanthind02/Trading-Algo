@@ -18,7 +18,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from lib.cache import (
+from cache import (
     ArtifactDescriptor,
     ArtifactScope,
     CacheRequest,
@@ -55,11 +55,11 @@ Notes:
 
 ### IBKR `CONTFUT` vs Norgate `&*_CCB` (live append)
 
-Repository dailies in `data/ohlc_data/` are built from **Norgate continuous back-adjusted** futures symbols (e.g. `&ES_CCB`); see [[Data/norgate]]. The TWS live path fetches **Interactive Brokers continuous futures** (`secType=CONTFUT` in `scripts/enigma_live_forecast.py`), which use **IB’s own roll and adjustment rules** — they will not match Norgate levels bar-for-bar on the same calendar date.
+Repository dailies in `data/ohlc_data/` are built from **Norgate continuous back-adjusted** futures symbols (e.g. `&ES_CCB`); see [[Data/futures_research_data]]. The TWS live path fetches **Interactive Brokers continuous futures** (`secType=CONTFUT` in `scripts/enigma_live_forecast.py`), which use **IB’s own roll and adjustment rules** — they will not match Norgate levels bar-for-bar on the same calendar date.
 
 When `upsert_tws_candles` writes IB dailies into `CentralCacheStore`:
 
-1. **Append-only:** only sessions **strictly after** the current cache’s last daily timestamp are kept, so a long IB lookback does not bulk-overwrite Norgate-backed overlap (see `prepare_ib_rows_for_central_cache_append` in `lib/cache/runtime/ib_candle_ratio_align.py`).
+1. **Append-only:** only sessions **strictly after** the current cache’s last daily timestamp are kept, so a long IB lookback does not bulk-overwrite Norgate-backed overlap (see `prepare_ib_rows_for_central_cache_append` in `cache/runtime/ib_candle_ratio_align.py`).
 2. **Junction ratio:** the appended block's `open/high/low/close` are multiplied by a single factor `last_close_cache / first_new_ib_close` so the first new close lines up with the last pre-existing close; relative moves within the block are unchanged. Ratio alignment is applied for every IB append batch.
 
 `upsert_candles` itself remains a generic merge-by-timestamp; the IB-specific policy lives in the TWS upsert helper above.
@@ -80,10 +80,10 @@ summary = bootstrap_source_candles(
 )
 ```
 
-CLI equivalent (the runnable module is under `runtime/`; there is no top-level `lib/cache/bootstrap_source_candles.py`):
+CLI equivalent (the runnable module is under `runtime/`; there is no top-level `cache/bootstrap_source_candles.py`):
 
 ```bash
-python -m lib.cache.runtime.bootstrap_source_candles --tickers ES NQ --timeframes D W --start 2020-01-01 --end 2024-12-31
+python -m cache.runtime.bootstrap_source_candles --tickers ES NQ --timeframes D W --start 2020-01-01 --end 2024-12-31
 ```
 
 `bootstrap_source_candles(...)` is the only bootstrap entrypoint; there is no
@@ -104,7 +104,7 @@ This path is inference only. It does not refit models and it does not create new
 Manual recovery:
 
 ```python
-from lib.cache import run_live_cache_refresh_now
+from cache import run_live_cache_refresh_now
 
 summary = run_live_cache_refresh_now(
     manifest_path="deployment/config/live_cache_refresh.json",
@@ -220,7 +220,7 @@ as_of_row = cache.read_artifact(
 The cache contract is fail-fast. Expect typed exceptions.
 
 ```python
-from lib.cache import ArtifactMissingError, CacheCoverageError
+from cache import ArtifactMissingError, CacheCoverageError
 
 try:
     feature_df = cache.read_artifact(descriptor, request=CacheRequest(start=start, end=end))
@@ -446,7 +446,7 @@ Why this order matters:
 Use this when live candles simply gained new rows or a bar was corrected.
 
 ```bash
-python -m lib.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M
+python -m cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M
 python research/portfolio/run_portfolio_test.py
 ```
 
@@ -462,7 +462,7 @@ Notes:
 Use this when you replaced or corrected the source OHLC files and want to refresh the runtime candle cache from the repository dataset.
 
 ```bash
-python -m lib.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M --reset-existing
+python -m cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D M --reset-existing
 python research/portfolio/run_portfolio_test.py
 ```
 
@@ -503,7 +503,7 @@ This is the right tool when:
 Use this when the runtime cache is empty.
 
 ```bash
-python -m lib.cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D W M
+python -m cache.runtime.bootstrap_source_candles --tickers ES TLT --timeframes D W M
 python research/portfolio/run_portfolio_test.py
 ```
 
@@ -593,7 +593,7 @@ The live loop is “new OHLC → consistent derived features → next forecast,�
 - [[Vault/user_guide]] — vault-side practical usage guide
 - [[Deployment/live_cache_refresh]] — manifest contract and automatic live refresh semantics
 - [[portfolio]] — portfolio layer behavior
-- [[pipeline]] — feature extraction workflow
+- [[SaaS/robustness_tests/index]] — feature research and robustness workflow
 - [[live_multi_timeframe]] — live orchestration flow
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

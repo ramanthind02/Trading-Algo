@@ -225,4 +225,4 @@ Alert tiers:
 - [[Ensemble/base_model]] — `BaseModel` (signed-signal node adapter)
 - [[Vault/portfolio_snapshots_and_predictions]] — `world`-tagged portfolio prediction store
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

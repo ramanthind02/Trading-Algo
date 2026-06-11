@@ -29,7 +29,7 @@ import lib.core.helpers as helpers
 from deployment.forecast_live_inputs import ForecastLiveInputs
 from deployment.forecast_prediction_runtime import ForecastPredictionRuntime
 from deployment.mt5_data_connector import ForecastMT5DataConnector
-from deployment.telegram_notifier import TelegramNotifier
+from lib.core.notify import TelegramNotifier
 from lib.compute.daily_ewsd_volatility import DailyEWSDVolatilityService
 
 logger = get_logger(__name__)
@@ -166,6 +166,21 @@ class ForecastServer:
         Each MLManager gets the bias nodes required by the ensemble for that ticker/timeframe.
         """
         logger.info("Setting up MLManagers...")
+
+        # The legacy DataFrame-X forecast path (ForecastServer + per-ticker MLManager
+        # feature matrices + DiversifiedEnsemble.predict(X, ...)) was retired in the
+        # package reorg: helpers.create_ml_manager no longer exists. Previously the call
+        # below raised AttributeError, which the per-ticker `except Exception` swallowed,
+        # so the server came up "healthy" with ZERO MLManagers and silently emitted no
+        # forecasts. Fail fast and loud, and point at the supported live path.
+        if not hasattr(helpers, "create_ml_manager"):
+            raise RuntimeError(
+                "ForecastServer's legacy MLManager feature path is retired: "
+                "helpers.create_ml_manager was removed in the reorg, and "
+                "DiversifiedEnsemble.predict(X, ...) is the dead DataFrame-X subsystem. "
+                "Use the Nautilus live runtime for forecasts instead "
+                "(python -m deployment.live.run_vault_sandbox; see deployment/live/README.md)."
+            )
         
         # Create MLManager for each ticker/timeframe combination
         for ticker in self.tickers:

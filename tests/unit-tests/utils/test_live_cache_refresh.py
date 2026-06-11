@@ -7,11 +7,11 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import lib.cache.runtime.live_cache_refresh as live_refresh
-from lib.cache.runtime.bootstrap_source_candles import bootstrap_source_candles
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_models import ArtifactScope
-from lib.cache.runtime.cache_manager import CacheManager
+import cache.runtime.live_cache_refresh as live_refresh
+from cache.runtime.bootstrap_source_candles import bootstrap_source_candles
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_models import ArtifactScope
+from cache.runtime.cache_manager import CacheManager
 from lib.core.enums import Ticker, TimeFrame
 
 
@@ -237,7 +237,7 @@ def test_bootstrap_source_candles_emits_one_coalesced_refresh(
         ticker_dir.mkdir(parents=True, exist_ok=True)
         _source_frame(ticker, TimeFrame.D).to_parquet(ticker_dir / f"{TimeFrame.D.name}_{ticker.name}.parquet")
 
-    import lib.cache.runtime.bootstrap_source_candles as bootstrap_module
+    import cache.runtime.bootstrap_source_candles as bootstrap_module
 
     monkeypatch.setattr(
         bootstrap_module,

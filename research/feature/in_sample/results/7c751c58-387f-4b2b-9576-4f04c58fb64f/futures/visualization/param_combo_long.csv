@@ -1,0 +1,5 @@
+param_combo_label,param_key,param_value,param_sort_order
+double7s__ma200__sp10,_bias_module,double7s,0
+double7s__ma200__sp10,bias_composite_module,double7s,1
+double7s__ma200__sp10,ma_period,200,2
+double7s__ma200__sp10,short_period,10,3

@@ -60,7 +60,7 @@ def _vault_commit_view(config: ResearchConfig, request) -> dict[str, object]:
 def load_artifact_preview(relative_path: str) -> dict[str, object]:
     """Return a lightweight preview payload for one workspace artifact."""
 
-    from tools.research_workspace.preview import load_artifact_preview as _load_preview
+    from research.workspace.preview import load_artifact_preview as _load_preview
 
     return _load_preview(_REPO_ROOT, relative_path)
 
@@ -68,7 +68,7 @@ def load_artifact_preview(relative_path: str) -> dict[str, object]:
 def resolve_workspace_artifact_path(relative_path: str) -> Path:
     """Resolve a repo-relative artifact path and keep access inside the repo."""
 
-    from tools.research_workspace.preview import resolve_artifact_path
+    from research.workspace.preview import resolve_artifact_path
 
     return resolve_artifact_path(_REPO_ROOT, relative_path)
 

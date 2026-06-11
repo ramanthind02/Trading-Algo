@@ -22,7 +22,7 @@ from research.feature.ui.workspace_manifest import (
 )
 from research.feature.visualization.matplotlib_reports import generate_detected_matplotlib_plots
 from lib.core.repo_bootstrap import require_repo_root, resolve_repo_path
-from tools.research_workspace.constants import (
+from research.workspace.constants import (
     PANEL_KIND_PRIMARY,
     PANEL_KIND_RAW,
     RAW_DATA_SECTION_ID,
@@ -39,12 +39,12 @@ __all__ = [
     "ensure_phase_visualization_reports",
     "group_artifact_records",
 ]
-from tools.research_workspace.discovery import discover_artifact_records as _discover_records
-from tools.research_workspace.discovery import group_artifact_records as _group_records
-from tools.research_workspace.models import CategoryGroup, PanelPolicy
-from tools.research_workspace.sections import build_phase_report_sections as _build_sections
+from research.workspace.discovery import discover_artifact_records as _discover_records
+from research.workspace.discovery import group_artifact_records as _group_records
+from research.workspace.models import CategoryGroup, PanelPolicy
+from research.workspace.sections import build_phase_report_sections as _build_sections
 from research.feature.inclusion_gates import gate_tearsheet_panel_title
-from tools.research_workspace.panels import default_friendly_panel_title
+from research.workspace.panels import default_friendly_panel_title
 
 _FEATURE_REPO_ROOT = require_repo_root(Path(__file__))
 

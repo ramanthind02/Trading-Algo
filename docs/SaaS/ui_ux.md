@@ -9,10 +9,14 @@
 
 ## Current local UI (what exists today)
 
-The repo ships a local research UI as a small **Flask** app, not a React/Vercel
-frontend. Entry point: `frontend/app.py`. It serves two static HTML pages and a
+> **Updated (Nautilus refactor):** the repo now ships a **React + Vite + Mantine**
+> app under `frontend/web/`, served by a **FastAPI** backend (`frontend/api/server.py`,
+> default port 5057). That React app is the current primary local UI. The **Flask**
+> app described below (`frontend/app.py`) is retained as legacy and may be removed.
+
+The legacy Flask app serves two static HTML pages and a
 JSON API backed by the `research/feature/ui` and `research/portfolio/ui`
-packages.
+packages. Entry point: `frontend/app.py`.
 
 ### Pages
 

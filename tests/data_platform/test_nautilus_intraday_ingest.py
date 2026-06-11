@@ -62,8 +62,8 @@ def test_ndx_bars_ingest_ts_init_is_close(tmp_path) -> None:
         assert float(bar.high) > 0
         assert float(bar.low) > 0
         assert float(bar.close) > 0
-        # NDX precision is 2.
-        assert bar.close.precision == 2
+        # NDX price_precision is 1 (price_increment=0.1, live-probed POINT=0.1).
+        assert bar.close.precision == 1
 
 
 def test_ndx_quote_ticks_ingest(tmp_path) -> None:

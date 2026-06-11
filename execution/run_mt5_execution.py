@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from deployment.telegram_notifier import TelegramNotifier
+from lib.core.notify import TelegramNotifier
 from execution.approval_flow import (
     APPROVED_DECISIONS,
     ApprovalDecision,

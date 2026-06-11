@@ -101,7 +101,7 @@ class ForecastLiveInputs:
 
         self.candle_buffers[key].append(candle)
         try:
-            from lib.cache.runtime.central_cache import CentralCacheStore
+            from cache.runtime.central_cache import CentralCacheStore
 
             cache = CentralCacheStore.get_instance()
             cache.upsert_candles(
@@ -164,7 +164,7 @@ class ForecastLiveInputs:
 
     def get_cross_tickers(self) -> set[tuple[Ticker, TimeFrame]]:
         """Discover cross-tickers referenced in ensemble bias node params."""
-        from utils.data.cross_ticker_store import extract_cross_ticker_names
+        from cache.runtime.cross_ticker_store import extract_cross_ticker_names
 
         cross: set[tuple[Ticker, TimeFrame]] = set()
         for (_, timeframe), ensemble in self.ensembles.items():
@@ -186,7 +186,7 @@ class ForecastLiveInputs:
         if not cross:
             return
 
-        from lib.cache.runtime.central_cache import CentralCacheStore
+        from cache.runtime.central_cache import CentralCacheStore
 
         ct_store = CentralCacheStore.get_instance()
         for ct_ticker, timeframe in cross:
@@ -235,8 +235,8 @@ class ForecastLiveInputs:
 
     def upsert_cross_ticker_candle(self, ticker: Ticker, timeframe: TimeFrame, candle: Candle) -> None:
         """Insert or replace the latest candle for a cross-ticker in the cache."""
-        from lib.cache.runtime.central_cache import CentralCacheStore
-        from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+        from cache.runtime.central_cache import CentralCacheStore
+        from cache.runtime.central_cache_errors import ArtifactMissingError
 
         ct_store = CentralCacheStore.get_instance()
         try:

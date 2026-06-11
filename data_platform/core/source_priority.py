@@ -1,8 +1,7 @@
 """Config-driven source priority for multi-source reconciliation.
 
-Resolves which source (norgate / ib / mt5 / derived_from_daily) wins for a given
-(instrument_class, resolution), evaluated per-instrument at ingestion. The single
-``norgate_active`` flag flips the Norgate->IB futures handover with no code change.
+Resolves which source (norgate / mt5 / derived_from_daily) wins for a given
+(instrument_class, resolution), evaluated per-instrument at ingestion.
 
 See docs/library/Data/multi_source_update_architecture.md §3.
 """
@@ -24,7 +23,7 @@ _RESOLUTION_CODE_TO_AGG: dict[str, BarAggregation] = {
 
 @dataclass(frozen=True)
 class SourceRule:
-    source: str       # "norgate" | "ib" | "mt5" | "derived_from_daily"
+    source: str       # "norgate" | "mt5" | "derived_from_daily"
     condition: str    # "always" | "norgate_active == True" | "norgate_active == False"
 
 
@@ -71,22 +70,20 @@ class SourcePriorityConfig:
     # ── persistence ──────────────────────────────────────────────────────
     @classmethod
     def default(cls) -> "SourcePriorityConfig":
-        """The repo's default priority: Norgate-while-subscribed then IB for
-        futures + equities; MT5 for CFDs; W/M derived from daily."""
+        """The repo's default priority: Norgate for futures + equities;
+        MT5 for CFDs; W/M derived from daily."""
         D = (BarAggregation.DAY,)
         WM = (BarAggregation.WEEK, BarAggregation.MONTH)
         return cls(
             rules=[
                 PriorityRule(InstrumentClass.FUTURE, D, (
                     SourceRule("norgate", "norgate_active == True"),
-                    SourceRule("ib", "always"),
                 )),
                 PriorityRule(InstrumentClass.FUTURE, WM, (
                     SourceRule("derived_from_daily", "always"),
                 )),
                 PriorityRule(InstrumentClass.SPOT, D, (
                     SourceRule("norgate", "norgate_active == True"),
-                    SourceRule("ib", "always"),
                 )),
                 PriorityRule(InstrumentClass.CFD, (), (
                     SourceRule("mt5", "always"),
@@ -106,7 +103,6 @@ class SourcePriorityConfig:
                 resolution: D            # or [W, M]
                 priority:
                   - {source: norgate, condition: "norgate_active == True"}
-                  - {source: ib, condition: "always"}
         """
         path = path or _default_config_path()
         if not path.exists():

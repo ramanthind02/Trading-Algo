@@ -27,10 +27,11 @@ def test_default_priority_routes_futures_to_norgate_when_active() -> None:
     assert cfg.active_source(InstrumentClass.FUTURE, BarAggregation.DAY) == "norgate"
 
 
-def test_handover_flip_routes_futures_to_ib() -> None:
+def test_handover_flip_returns_no_source() -> None:
+    """IB data pipeline retired — no fallback source configured after Norgate."""
     cfg = SourcePriorityConfig.default()
     cfg.norgate_active = False
-    assert cfg.active_source(InstrumentClass.FUTURE, BarAggregation.DAY) == "ib"
+    assert cfg.active_source(InstrumentClass.FUTURE, BarAggregation.DAY) is None
 
 
 def test_cfd_routes_to_mt5_regardless_of_norgate_flag() -> None:
@@ -57,26 +58,20 @@ def catalog() -> InstrumentCatalog:
     return cat
 
 
-def test_ib_handover_splice_is_level_continuous(catalog: InstrumentCatalog) -> None:
-    """After the Norgate->IB flip, the first IB bar's close matches the anchor."""
+def test_ib_batch_skipped_when_no_ib_rule(catalog: InstrumentCatalog) -> None:
+    """IB source retired — passing an 'ib' batch when no rule is configured returns a skip."""
     cfg = SourcePriorityConfig.default()
-    cfg.norgate_active = False  # route futures daily to IB
+    cfg.norgate_active = False  # no fallback source configured
     rec = SourcePriorityReconciler(cfg, catalog)
 
-    norgate = _daily_frame("2026-01-01", 10, base=5000.0)   # anchor ends ~5009
-    anchor_close = float(norgate["close"].iloc[-1])
-    # IB starts the next session at a different level (e.g. 4500) -> ratio splices it up
+    norgate = _daily_frame("2026-01-01", 10, base=5000.0)
     ib = _daily_frame("2026-01-16", 5, base=4500.0)
 
     result = rec.reconcile_daily_batch("ES.XCME", norgate, {"ib": ib}, resolution="D")
 
-    assert result.active_source == "ib"
-    assert result.provenance[0].ratio_applied is True
-    # First appended IB close should equal the Norgate anchor close after the ratio.
-    appended = result.merged.loc[result.merged.index > norgate.index[-1]]
-    assert not appended.empty
-    first_ib_close = float(appended["close"].iloc[0])
-    assert first_ib_close == pytest.approx(anchor_close, rel=1e-6)
+    assert result.active_source is None
+    assert result.skip_reason == "no_active_source_batch"
+    assert result.merged is norgate  # existing frame returned unchanged
 
 
 def test_norgate_active_passthrough_no_ratio(catalog: InstrumentCatalog) -> None:
@@ -96,15 +91,14 @@ def test_norgate_active_passthrough_no_ratio(catalog: InstrumentCatalog) -> None
 
 
 def test_conflict_detected_on_overlap_deviation(catalog: InstrumentCatalog) -> None:
-    cfg = SourcePriorityConfig.default()
-    cfg.norgate_active = False
+    cfg = SourcePriorityConfig.default()  # norgate_active=True -> routes FUTURE/D to norgate
     rec = SourcePriorityReconciler(cfg, catalog, conflict_threshold=0.005)
 
     existing = _daily_frame("2026-01-01", 5, base=5000.0)
     # incoming overlaps the same dates but with a >0.5% deviation
     overlap = existing.copy()
     overlap["close"] = overlap["close"] * 1.02  # +2%
-    result = rec.reconcile_daily_batch("ES.XCME", existing, {"ib": overlap}, resolution="D")
+    result = rec.reconcile_daily_batch("ES.XCME", existing, {"norgate": overlap}, resolution="D")
     assert len(result.conflicts) > 0
     assert result.conflicts[0].deviation > 0.005
 
@@ -115,19 +109,18 @@ def test_provenance_write_read_roundtrip(tmp_path, monkeypatch, catalog: Instrum
     import data_platform.core.provenance as prov
     monkeypatch.setattr(prov, "provenance_dir", lambda: tmp_path)
 
-    cfg = SourcePriorityConfig.default()
-    cfg.norgate_active = False
+    cfg = SourcePriorityConfig.default()  # norgate_active=True -> norgate source
     rec = SourcePriorityReconciler(cfg, catalog)
-    norgate = _daily_frame("2026-01-01", 10, base=5000.0)
-    ib = _daily_frame("2026-01-16", 5, base=4500.0)
-    result = rec.reconcile_daily_batch("ES.XCME", norgate, {"ib": ib}, resolution="D")
+    existing = _daily_frame("2026-01-01", 10, base=5000.0)
+    new_bars = _daily_frame("2026-01-16", 5, base=5010.0)
+    result = rec.reconcile_daily_batch("ES.XCME", existing, {"norgate": new_bars}, resolution="D")
 
     prov.write_provenance(result.provenance, resolution="D")
     out = tmp_path / "ES_XCME" / "D_provenance.parquet"
     assert out.is_file()
     df = pd.read_parquet(out)
-    assert df.iloc[0]["source"] == "ib"
-    assert bool(df.iloc[0]["ratio_applied"]) is True
+    assert df.iloc[0]["source"] == "norgate"
+    assert bool(df.iloc[0]["ratio_applied"]) is False
 
 
 def test_log_conflicts_fail_fast_raises(catalog: InstrumentCatalog) -> None:

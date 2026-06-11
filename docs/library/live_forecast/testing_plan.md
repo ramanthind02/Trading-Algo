@@ -1,6 +1,6 @@
 # Live Forecast — Complete Testing Plan
 
-> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+> **Status:** This testing plan covers `scripts/enigma_live_forecast.py` (IB/TWS path: futures-prop + personal ETF profiles). For the MT5/Nautilus live path, see `deployment/live/README.md` and `deployment/nautilus_mt5/CONNECTION_TEST.md`.
 
 End-to-end checkout for the prop-firm forecast, personal forecast (with
 intraday daily-candle synthesis), and personal IB auto-execution. Run
@@ -35,7 +35,7 @@ in parentheses.
 **Code state:**
 ```bash
 # Branch
-git status                                    # clean, on abhi/ib-auto-execution
+git status                                    # clean, on the feature branch
 
 # Unit tests all green
 .venv/Scripts/python.exe -m pytest tests/unit-tests/execution/ -q
@@ -53,11 +53,11 @@ Verifies the pipeline runs end-to-end. Works any time of day.
 ### 1a. Prop dry-run
 
 ```bash
-.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --dry-run --port 7497
+.venv/Scripts/python.exe -m scripts.enigma_futures_prop_forecast --dry-run --port 7497
 ```
 
 **Verify in console output:**
-- `Profile: prop`, `Vault: vault`, `Capital: $50,000.00`, `Port: 7497 (Paper)`
+- `Profile: futures_prop`, `Vault: vault`, `Capital: $50,000.00`, `Port: 7497 (Paper)`
 - `Required tickers:` includes `ES, GC, NQ` (others fine but those three are required).
 - `Successfully fetched data for: ES, NQ, GC, RTY, TLT` (no `Failed`).
 - A "Telegram message would be:" preview at the end with whole+fractional contracts.
@@ -87,7 +87,7 @@ Most common cause is TWS not running, port mismatch, or API permissions.
 Anytime. Prop pulls daily bars only.
 
 ```bash
-.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --port 7497
+.venv/Scripts/python.exe -m scripts.enigma_futures_prop_forecast --port 7497
 ```
 
 **Verify on Telegram (Enigma Signals - Prop Firms channel):**
@@ -118,12 +118,14 @@ check but won't exercise live-data behavior.
 
 ### 3a. Register both tasks (run once, as Administrator)
 
-In **elevated** Command Prompt:
+In **elevated** Command Prompt or PowerShell:
 
 ```cmd
 cd C:\Users\raman\Documents\repos\Trading-Algo
-deploy\setup_scheduled_task.bat
+deployment\ops\setup_scheduled_task.ps1
 ```
+
+(or use `deployment\ops\setup_scheduled_task.bat` if you prefer the batch version — both files live under `deployment\ops\`)
 
 Verify the two tasks now exist:
 
@@ -145,7 +147,7 @@ schtasks /run /tn "TradingAlgo\PropForecast"
 In another terminal, watch the log:
 
 ```bash
-tail -f deploy/forecast.log
+tail -f logs/forecast.log
 ```
 
 You should see the same end-to-end run as Stage 2a (real Telegram sent).
@@ -165,7 +167,7 @@ in Stage 1/2.
 - Leave machine on, TWS logged in, no manual intervention.
 - At 12:45 PM PT and 3:00 PM PT respectively, the tasks fire on their own.
 - Verify Telegram messages arrive in both channels at the expected times.
-- Tail `deploy/forecast.log` afterward to confirm clean exit.
+- Tail `logs/forecast.log` afterward to confirm clean exit.
 
 ---
 
@@ -284,17 +286,21 @@ exits cleanly, audit shows `approval (decision: timed_out)`, no lock.
 
 | Goal | Command |
 |------|---------|
-| Smoke prop | `.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --dry-run --port 7497` |
+| Smoke prop | `.venv/Scripts/python.exe -m scripts.enigma_futures_prop_forecast --dry-run --port 7497` |
 | Smoke personal | `.venv/Scripts/python.exe -m scripts.enigma_personal_forecast --dry-run --port 7497` |
-| Real Telegram (prop) | `.venv/Scripts/python.exe -m scripts.enigma_prop_forecast --port 7497` |
+| Real Telegram (prop) | `.venv/Scripts/python.exe -m scripts.enigma_futures_prop_forecast --port 7497` |
 | Real Telegram (personal) | `.venv/Scripts/python.exe -m scripts.enigma_personal_forecast --port 7497` |
 | Trigger scheduled task | `schtasks /run /tn "TradingAlgo\PropForecast"` |
 | Auto-execute dry-run | `... enigma_personal_forecast --port 7497 --execute --dry-run-execute` |
 | Auto-execute live (paper) | `... enigma_personal_forecast --port 7497 --execute --approve-via-telegram` |
 | Force-rerun today | append `--allow-rerun` |
 | Test sizing on $10K | append `--capital 10000` |
-| Watch logs | `tail -f deploy/forecast.log` |
+| Watch logs | `tail -f logs/forecast.log` |
 | View today's audit | `ls logs/execution/$(date +%Y-%m-%d)*` |
+
+---
+
+> **MT5/Nautilus live path:** For the Nautilus vault runtime (MT5/CFD, FTMO/Darwinex), see `deployment/live/README.md` (run commands + exec tiers) and `deployment/nautilus_mt5/CONNECTION_TEST.md` (terminal setup, broker symbol mappings, live pytest suite).
 
 ---
 
@@ -314,4 +320,4 @@ system in one session, run in this order:
 
 That's ~25 minutes of active testing.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._

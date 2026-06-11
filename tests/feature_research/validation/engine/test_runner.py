@@ -991,7 +991,7 @@ def test_run_portfolio_simulation_forwards_timeframe_to_tearsheets(
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "analysis.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
@@ -1089,7 +1089,7 @@ def test_run_portfolio_simulation_generates_per_fold_ticker_tearsheets_when_enab
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "analysis.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
@@ -1208,7 +1208,7 @@ def test_run_portfolio_simulation_generates_aggregate_ticker_tearsheets_when_ena
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "analysis.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(
@@ -1318,7 +1318,7 @@ def test_run_portfolio_simulation_skips_ticker_tearsheets_when_disabled(
         _fake_evaluate,
     )
     monkeypatch.setattr(
-        "lib.plotting.graphing.quantstats_reports.generate_tearsheet",
+        "analysis.plotting.graphing.quantstats_reports.generate_tearsheet",
         _fake_generate_tearsheet,
     )
     monkeypatch.setattr(

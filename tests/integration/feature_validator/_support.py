@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lib.cache.runtime.central_cache_errors import ArtifactMissingError
+from cache.runtime.central_cache_errors import ArtifactMissingError
 
 
 def project_root() -> Path:

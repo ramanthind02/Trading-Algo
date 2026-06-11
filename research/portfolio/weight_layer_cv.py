@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from ensemble.sr_adjustment import annualized_sharpe
-from lib.metrics.drawdown import max_drawdown
+from analysis.metrics.drawdown import max_drawdown
 from research.portfolio.config import PortfolioResearchConfig, load_config, with_rebuilt_weight_layer
 from research.portfolio.holdout.rolling_eval import _load_grouped_ensembles
 from research.portfolio.pipelines.portfolio_test import (

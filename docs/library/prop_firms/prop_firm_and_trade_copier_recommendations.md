@@ -95,7 +95,7 @@ Cheapest monthly. Longest track record ($1.1B+ paid). Tighter drawdown and lower
 - **Local/Cloud:** Local desktop app (Tradovate only, no IB support). Runs on Raman's machine 24/7.
 - **Trustpilot:** 4.7/5 (195 reviews)
 - **Why chosen:** Cheapest for unlimited accounts ($40-60 flat vs $50/login for PickMyTrade). Local execution avoids potential prop firm bans for cloud-based copiers. Supports all major platforms.
-- **Limitation:** No webhook/API. Tradovate only (no IB). Requires a Tradovate demo/sim as leader that our Python script trades on via Tradovate REST API.
+- **Limitation:** No webhook/API. Tradovate only (no IB). Requires a Tradovate demo/sim as leader; trades on the leader account are entered manually or via Tradovate API.
 
 ### Alternatives (if needed later)
 
@@ -108,9 +108,11 @@ Cheapest monthly. Longest track record ($1.1B+ paid). Tighter drawdown and lower
 ## Recommended Architecture
 
 ```
-Python pipeline (`scripts/enigma_live_forecast.py`)
-    ↓ places orders via Tradovate REST API
-Tradovate demo/sim account (leader)
+Python pipeline (`scripts/enigma_cfd_prop_forecast.py`)
+    ↓ signals posted via Telegram (prop-firm channel)
+Human trader (or Tradecopia copy-trader) reads signal
+    ↓
+Tradovate demo/sim account (leader, manual or API entry)
     ↓ Tradecopia watches leader
 Tradecopia desktop app (runs 24/7 on Raman's machine)
     ├─→ Apex account (Tradovate follower)
@@ -122,7 +124,7 @@ Tradecopia desktop app (runs 24/7 on Raman's machine)
 
 For firms requiring daily close: the pipeline flattens all positions at 3:00 PM CT on the Tradovate leader, Tradecopia mirrors the flatten to all followers, then re-enters positions the next morning.
 
-**Note:** IB TWS is still used for data fetching (OHLC candles). Only order execution moves to the Tradovate REST API for Tradecopia compatibility.
+**Note:** Market data is sourced via MT5 (Darwinex CFD feed). The futures prop-firm flow currently sends a Telegram signal; the trader (or a Tradovate-based copier) handles actual order entry on prop firm accounts.
 
 **Cost:** $40-60/mo total for unlimited prop firm accounts.
 
@@ -140,8 +142,8 @@ Monte Carlo backtest across all 5 firms (20 runs, Sharpe 1.5, 10% annual vol):
 | Lucid | 65% | 1.1 | $728 | 35% |
 | Apex | 5% | 0.3 | $510 | 95% |
 
-Simulators: `prop_firms/{apex,lucid,mffu,topstep,tradeday}/`
+Simulators: `quantfoundry_core.prop_firm` (presets: apex, lucid, mffu, topstep, tradeday, fundednext)
 
 MFFU leads with 85% pass rate thanks to the generous 1:1 target-to-drawdown ratio ($3K/$3K). TradeDay has solid payouts despite tighter drawdown. Apex's 95% breach rate is due to the 30-day evaluation expiry -- a 10% vol strategy can't reliably hit $3K in 30 days.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._

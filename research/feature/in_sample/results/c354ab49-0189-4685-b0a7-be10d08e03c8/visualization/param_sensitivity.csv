@@ -1,0 +1,2 @@
+param_combo_label,feature_name,n_observations,n_nonzero_signal,sharpe,t_stat,sortino
+double7s__ma200__sp10,double7s_signal_D_maPeriod_200_shortPeriod_10,9064,2444,0.5983251717496464,3.5883678105617847,0.8578123948357858

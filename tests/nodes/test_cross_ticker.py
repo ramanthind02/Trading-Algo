@@ -21,12 +21,12 @@ import pandas as pd
 import pytest
 
 from nodes import BiasNode
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_errors import ArtifactMissingError
-from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, LookupMode
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_errors import ArtifactMissingError
+from cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, LookupMode
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.models import Candle
-from utils.data.cross_ticker_store import (
+from cache.runtime.cross_ticker_store import (
     CrossTickerDataStore,
     extract_cross_ticker_names,
 )

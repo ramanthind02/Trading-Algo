@@ -1,10 +1,8 @@
 # Production Testing
 
-> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
-
 > [!summary] Purpose
-> Verify the `ForecastServer` works correctly before deployment, without waiting for the live schedule (daily 00:00 EST / weekly Sunday 18:00 EST).
-> Bias nodes need historical candle buffers — `TestForecastServer` handles this explicitly.
+> Verify the `ForecastServer` (`deployment/forecast_server.py`) works correctly before deployment, without waiting for the live schedule (daily 00:00 EST / weekly Sunday 18:00 EST). `ForecastServer` connects to MT5 via `deployment/mt5_data_connector.py` and uses `TelegramNotifier` from `lib/core/notify.py`.
+> Bias nodes need historical candle buffers — `ForecastServer.load_historical_data()` handles this on startup.
 
 ---
 
@@ -59,7 +57,7 @@ This path is inference only. It does not refit models and it does not create new
 | `No historical data for EU D` | MT5 terminal not running | Start MT5 and log in |
 | `forecasts['D']['count'] == 0` | Buffers not loaded | Check `len(server.candle_buffers)` == 8, `len(server.ml_managers)` == 8 |
 | `RSI requires 14 candles, only 5 available` | Lookback too short | Set `server.lookback_candles = 150` then `server.load_historical_data()` |
-| Live materialized forecasts stopped updating | Live refresh cycle failed after candle ingest | Inspect `.cache/trading_algo/central_cache/live_refresh/last_run.json`, fix the underlying issue, then run `run_live_cache_refresh_now(...)` |
+| Live materialized forecasts stopped updating | Live refresh cycle failed after candle ingest | Inspect `data/broker_cache/{broker}/central_cache/live_refresh/last_run.json` for the Nautilus path or `.cache/trading_algo/central_cache/live_refresh/last_run.json` for the legacy path, fix the underlying issue, then run `run_live_cache_refresh_now(...)` |
 
 ---
 
@@ -76,5 +74,6 @@ This path is inference only. It does not refit models and it does not create new
 - [[portfolio]] — ensemble and position logic called by ForecastServer
 - [[vault]] — how models are loaded at startup
 - [[Deployment/live_cache_refresh]] — manifest contract and automatic refresh behavior after LIVE candle writes
+- `deployment/live/README.md` — Nautilus vault live runtime (MT5/CFD path: `run_vault_sandbox.py`, exec tiers sandbox/demo/live)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._

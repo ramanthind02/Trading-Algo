@@ -66,6 +66,15 @@ class MT5Config:
         Give up after this many reconnect attempts. Default: 20.
     timeout_s : float
         Seconds to wait for MT5 terminal response. Default: 10.0s.
+    path : str | None
+        Absolute path to the broker's ``terminal64.exe`` to bind to.
+        On machines running MULTIPLE MT5 terminal installs (e.g. a live
+        Darwinex terminal scraping data alongside a demo FTMO terminal),
+        a bare ``mt5.initialize()`` attaches non-deterministically to
+        whichever terminal is registered. Setting ``path`` makes the
+        connection bind to exactly that terminal, so the adapter cannot
+        accidentally drive the wrong broker. Leave ``None`` (default) on
+        single-terminal machines to attach to the only running terminal.
 
     Examples
     --------
@@ -108,6 +117,16 @@ class MT5Config:
     reconnect_max_delay_s: float  = RECONNECT_MAX_DELAY_S
     reconnect_max_attempts: int   = RECONNECT_MAX_ATTEMPTS
     timeout_s: float              = 10.0
+    path: str | None              = None
+    # Append-only JSONL where the exec client durably records EVERY new deal
+    # it observes (all MT5 deal fields incl. swap/fee/profit/entry/position_id
+    # — richer than the Nautilus fill event). None disables capture.
+    deals_log_path: str | None    = None
+    # Append-only JSONL where the exec client records each order_send response
+    # (retcode, deal, order, volume, price, bid, ask) — covers both successes and
+    # rejections so slippage analysis can confirm the broker's quoted fill price.
+    # None disables capture.
+    submit_results_log_path: str | None = None
 
     def __post_init__(self) -> None:
         if not self.account or self.account <= 0:

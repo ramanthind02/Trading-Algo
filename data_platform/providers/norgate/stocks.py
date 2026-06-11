@@ -66,11 +66,15 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-import norgatedata
+try:
+    import norgatedata
+except ImportError:
+    norgatedata = None  # type: ignore[assignment]
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from data_platform.storage import write_norgate_bars
 from ._constants import PARQUET_COMPRESSION, PARQUET_COMPRESSION_LEVEL
 from .fetch_continuous import ensure_norgate_running
 
@@ -100,11 +104,15 @@ class StockAdjustment(Enum):
     UNADJUSTED = "UNADJ"
 
 
-_ADJ_TO_NORGATE = {
-    StockAdjustment.TOTAL_RETURN: norgatedata.StockPriceAdjustmentType.TOTALRETURN,
-    StockAdjustment.CAPITAL: norgatedata.StockPriceAdjustmentType.CAPITAL,
-    StockAdjustment.UNADJUSTED: norgatedata.StockPriceAdjustmentType.NONE,
-}
+_ADJ_TO_NORGATE = (
+    {
+        StockAdjustment.TOTAL_RETURN: norgatedata.StockPriceAdjustmentType.TOTALRETURN,
+        StockAdjustment.CAPITAL: norgatedata.StockPriceAdjustmentType.CAPITAL,
+        StockAdjustment.UNADJUSTED: norgatedata.StockPriceAdjustmentType.NONE,
+    }
+    if norgatedata is not None
+    else {}
+)
 
 # Indices captured as per-stock membership timeseries. Column names are
 # filesystem/identifier-safe slugs of the watchlist name.
@@ -352,12 +360,13 @@ def fetch_symbol(symbol: str, *, overwrite: bool = False) -> StockFetchResult | 
         StockAdjustment.UNADJUSTED: daily_unadj,
     }
 
+    _meta = {_RAW_SYMBOL_META_KEY: symbol.encode("utf-8")}
     for adjustment, daily in series_by_adj.items():
         if daily is None or daily.empty:
             continue
-        _write(daily, price_path(symbol, "D", adjustment), raw_symbol=symbol)
-        _write(_aggregate(daily, "W-SUN"), price_path(symbol, "W", adjustment), raw_symbol=symbol)
-        _write(_aggregate(daily, "ME"), price_path(symbol, "M", adjustment), raw_symbol=symbol)
+        write_norgate_bars(daily, price_path(symbol, "D", adjustment), store="stock_data", extra_metadata=_meta)
+        write_norgate_bars(_aggregate(daily, "W-SUN"), price_path(symbol, "W", adjustment), store="stock_data", extra_metadata=_meta)
+        write_norgate_bars(_aggregate(daily, "ME"), price_path(symbol, "M", adjustment), store="stock_data", extra_metadata=_meta)
 
     membership = _fetch_membership(symbol, daily_tr.index)
     n_indices = int(membership.shape[1])

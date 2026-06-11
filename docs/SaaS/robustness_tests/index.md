@@ -200,4 +200,4 @@ Vector shuffle pass (Mode 1)
 Diagnostics throughout: full-grid null percentile, Sharpe CI (flag discord with DSR)
 ```
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint). Module paths re-verified via CodeGraph on 2026-06-07: `research/feature/exploration/orchestrate.py`, `research/feature/validation/robustness_runner.py`, `research/feature/portfolio_addition/gate_runner.py` all current._

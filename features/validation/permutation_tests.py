@@ -278,7 +278,7 @@ def _update_cross_ticker_store_from_shuffled_candles(
             return
 
         from lib.core.enums import Ticker, TimeFrame
-        from utils.data.cross_ticker_store import CrossTickerDataStore
+        from cache.runtime.cross_ticker_store import CrossTickerDataStore
 
         store = CrossTickerDataStore.get_instance()
         if timeframes is not None:

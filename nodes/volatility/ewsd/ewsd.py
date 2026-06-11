@@ -37,14 +37,25 @@ except ImportError:
 
 
 def _load_unadj_close_series(ticker: Ticker) -> pd.Series | None:
-    """Load the unadjusted continuous close series for a ticker.
+    """Load the %-faithful continuous close series used as the σ denominator.
 
-    Returns a Series indexed by normalized date (tz-naive), or None if the
-    file does not exist (non-futures instruments, or pre-migration state).
+    Prefers the proportional (RATIO) back-adjusted series
+    (``D_{T}_ratio.parquet``) because it preserves %-returns exactly within each
+    contract and never goes negative — the correct denominator for volatility.
+    Falls back to the unadjusted series (``D_{T}_unadj.parquet``) when the ratio
+    file is missing (pre-regeneration state), and returns ``None`` when neither
+    exists (non-futures instruments). Both have the same anchor (true price on
+    the most-recent segment), so the recent-window σ is unchanged; only deep
+    history sees the additive-distortion correction.
+
+    Returns a Series indexed by normalized date (tz-naive), or None.
     """
-    from lib.cache.runtime.cache_paths import project_root as _project_root
+    from cache.runtime.cache_paths import project_root as _project_root
     project_root = _project_root()
-    path = project_root / "data" / "ohlc_data" / ticker.name / f"D_{ticker.name}_unadj.parquet"
+    ticker_dir = project_root / "data" / "ohlc_data" / ticker.name
+    ratio_path = ticker_dir / f"D_{ticker.name}_ratio.parquet"
+    unadj_path = ticker_dir / f"D_{ticker.name}_unadj.parquet"
+    path = ratio_path if ratio_path.exists() else unadj_path
     if not path.exists():
         return None
     df = pd.read_parquet(path, engine="fastparquet")
@@ -132,12 +143,13 @@ class EWSDNode(BiasNode):
         self.sigma_long: float = 0.01  # 1% daily prior, replaced as soon as returns arrive
         self.initial_variance_sq: float = self.sigma_long ** 2
 
-        # Unadjusted close series for percentage-faithful return computation.
-        # Additive back-adjustment inflates the historical price level so
-        # r = ΔP / P_adj underestimates true % returns by k = P_true/P_adj.
-        # When available, we use P_unadj as the denominator so the return
-        # history fed into σ reflects real percentage moves.
-        # Falls back to back-adjusted close (current behaviour) when absent.
+        # %-faithful close series for the return denominator. Additive
+        # back-adjustment inflates the historical price level so r = ΔP / P_adj
+        # underestimates true % returns by k = P_true/P_adj. We use the RATIO
+        # (proportional) back-adjusted close when available (preserves %-returns
+        # within each contract and never goes negative), falling back to the
+        # unadjusted close, then to the back-adjusted close (current behaviour)
+        # when neither series exists. See _load_unadj_close_series.
         self._unadj_close: Optional[pd.Series] = _load_unadj_close_series(ticker) if tf == TimeFrame.D else None
 
         # Define output columns

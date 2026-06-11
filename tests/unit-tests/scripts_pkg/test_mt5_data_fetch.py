@@ -299,7 +299,7 @@ class TestSyncMt5DailiesIntoCentralCache:
 
         fake_store = FakeStore()
 
-        import lib.cache.runtime.central_cache as central_cache_mod
+        import cache.runtime.central_cache as central_cache_mod
         monkeypatch.setattr(
             central_cache_mod.CentralCacheStore, "get_instance",
             classmethod(lambda cls: fake_store),
@@ -318,7 +318,7 @@ class TestSyncMt5DailiesIntoCentralCache:
 
         fake_ct = FakeCTStore()
 
-        import utils.data.cross_ticker_store as cts_mod
+        import cache.runtime.cross_ticker_store as cts_mod
         monkeypatch.setattr(
             cts_mod.CrossTickerDataStore, "get_instance",
             classmethod(lambda cls: fake_ct),

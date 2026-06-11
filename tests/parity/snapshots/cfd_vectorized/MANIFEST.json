@@ -1,0 +1,46 @@
+{
+  "feed": "cfd",
+  "phases": {
+    "test": {
+      "combined": {
+        "baseline.calmar": 1.038841137236161,
+        "baseline.max_drawdown": -0.19368383646467657,
+        "baseline.mean_return": 0.0007705850159543216,
+        "baseline.n_obs": 868.0,
+        "baseline.sharpe": 1.3182737952361991,
+        "baseline.sortino": 1.96343362107017,
+        "baseline.std_return": 0.00927929990089463,
+        "baseline.total_return": 0.8803511003368674,
+        "strategy.calmar": 1.397126816708672,
+        "strategy.max_drawdown": -0.038032555268737916,
+        "strategy.mean_return": 0.00020717427231848877,
+        "strategy.n_obs": 868.0,
+        "strategy.sharpe": 1.7796683970151146,
+        "strategy.sortino": 2.6349532396415656,
+        "strategy.std_return": 0.0018479788825541716,
+        "strategy.total_return": 0.19521737895055782
+      },
+      "ensembles": {
+        "algomatic_momentum_signal_long_defaults_long": 0.3290242198804507,
+        "buy_hold_long": 7.413002017427349,
+        "calendar_ensemble_long": 0.46599546767848765,
+        "double7s_long": 0.785909463121379,
+        "mr_indices_long": 0.4829283080592644,
+        "mr_indices_long_long": 1.2287305870679344,
+        "rebalancing_es_tlt_long": 1.0509383590901136,
+        "rebalancing_es_tlt_long_short": 0.6612577552353025,
+        "regime_lrsi_signal_long_short": 0.7881663270491307,
+        "robust_trend_breakout_cl_long_short": 0.36731941451574407,
+        "robust_trend_breakout_gc_long": 1.7846133116060796,
+        "sma_regime_long_short_long_short": 0.9681193565258158
+      }
+    }
+  },
+  "pnl_engine": "vectorized",
+  "tickers": [
+    "ES",
+    "NQ",
+    "GC",
+    "CL"
+  ]
+}

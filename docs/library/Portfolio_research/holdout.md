@@ -50,25 +50,22 @@ Edit `research/portfolio/config.py`:
 
 ## UI
 
-```text
-frontend/app.py  →  /portfolio-research
+The primary UI is the **React/Vite frontend** (`frontend/web/`) served by the FastAPI backend
+(`frontend/api/server.py`). Navigate to the **Portfolio research** section (`/portfolio` route)
+in the running dev server (port 5173) or the built app. Phase tabs (Research / Validation /
+Holdout) mirror the docs workflow: Portfolio Test → Strategy Holdout → Portfolio Holdout.
+
+```bash
+# backend
+.\.venv\Scripts\python.exe -m uvicorn frontend.api.server:app --reload --port 5057
+# frontend dev server
+cd frontend\web && npm run dev   # proxies /api → 5057, served at localhost:5173
 ```
 
-Phases mirror the docs workflow: Portfolio Test → Strategy Holdout → Portfolio Holdout.
+Artifact panels are organized by the React frontend under the Portfolio research page; typical
+sections include tearsheets, robustness summaries, weight-layer weights, and return matrices.
 
-The workspace dashboard (shared with feature research via `frontend/static/research_workspace.js`) organizes artifacts into sections:
+> **Note:** A legacy Flask workspace (`frontend/app.py` → `/portfolio-research`) also exists but
+> is superseded by the React/Vite app above for new work.
 
-| Section | Typical artifacts |
-|---------|-------------------|
-| QuantStats Tearsheets | `*tearsheet*.html` under `holdout/validation` and `holdout/test` |
-| Matplotlib Reports | `**/matplotlib/*.png` |
-| Robustness Summaries | `holdout_robustness_report.json`, related CSV/MD per strategy |
-| Portfolio Analytics | `portfolio_holdout_report.json`, correlation/contribution CSVs |
-| Weight Layer | `weight_layer_weights*.csv` |
-| Returns | `holdout/returns/*.csv` |
-| Fold Manifest | `fold_manifest.json` |
-| Raw data | CSV/JSON exports not shown as primary panels |
-
-Use phase tabs and section navigation to preview tearsheets (embed), summary JSON panels, and tables without hunting filenames in a flat list.
-
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

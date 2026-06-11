@@ -32,8 +32,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_models import ArtifactScope
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_models import ArtifactScope
 from lib.core.enums import TimeFrame, Ticker
 
 _DEFAULT_TICKERS: tuple[str, ...] = ("ES", "NQ", "YM", "RTY", "GC", "TLT")

@@ -6,7 +6,7 @@ A **bias node** is a stateful, streaming component that processes one candle at 
 
 | Attribute         | Purpose                                   | Example                           |
 | -------------------| -------------------------------------------| -----------------------------------|
-| `module_name`     | Lowercase, no underscores                 | `'rsi'`, `'ewmac'`                |
+| `module_name`     | Lowercase, underscore-separated words     | `'rsi'`, `'ewmac'`, `'filter_gate'` |
 | `output_features` | List of feature names                     | `['signal']`, `['atr', 'atrPct']` |
 | `params`          | All constructor params (except ticker/tf) | `{'lookback': 14}`                |
 | `front_bad`       | Warmup candles before valid output        | `14`                              |
@@ -53,7 +53,8 @@ Example: `rsi_signal_D_lookback_14`
 3. Set `module_name`, `output_features`, `params`
 4. Set `front_bad`
 5. Initialize computation state (buffers, counters)
-6. `self.ensure_standardized_columns()` — must be last
+6. `self.ensure_standardized_columns()`
+7. `self._init_cache_after_params()` — must be last (activates the bias-node cache once `module_name` and `params` are set)
 
 ## `_compute_candle` Steps (in order)
 
@@ -68,7 +69,7 @@ Example: `rsi_signal_D_lookback_14`
 
 | Type | Output | Next step | Use when |
 |---|---|---|---|
-| **Native discrete** | `-1`, `0`, `1` | Go straight to feature research ([[Feature_selection/pipeline]]) | Clear entry/exit rules (breakout, crossover) |
+| **Native discrete** | `-1`, `0`, `1` | Go straight to feature research (vault pipeline) | Clear entry/exit rules (breakout, crossover) |
 | **Continuous** | Real-valued float | Research only: inspect distributions, parameter stability, and cross-asset normalization in the feature-research pipeline | Signal strength matters (RSI, momentum, ratios) |
 
 > [!warning] Production contract
@@ -109,6 +110,7 @@ class MyNode(BiasNode):
         self.buffer = np.zeros(lookback, dtype=np.float64)
         self.buf_idx = 0
         self.ensure_standardized_columns()
+        self._init_cache_after_params()
 
     def _compute_candle(self, candle: Candle) -> List:
         self.buffer[self.buf_idx] = candle.close
@@ -140,7 +142,7 @@ The primary streaming API is still **`add_candle(candle)`** for one `(ticker, ti
 
 ### Multi-ticker nodes (supported today)
 
-Use [lib/cache/runtime/cross_ticker_store.py](../../../lib/cache/runtime/cross_ticker_store.py) — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**. The older `utils/data/cross_ticker_store.py` path remains only as a compatibility shim.
+Use `cache/runtime/cross_ticker_store.py` — `CrossTickerDataStore` — for lookups of **another ticker at the same timeframe and bar time**.
 
 #### Params contract (required)
 
@@ -153,7 +155,7 @@ Use [lib/cache/runtime/cross_ticker_store.py](../../../lib/cache/runtime/cross_t
 2. In `_compute_candle`, fetch the secondary ticker candle by **exact** datetime alignment:
 
 ```python
-from lib.cache.runtime.cross_ticker_store import CrossTickerDataStore
+from cache.runtime.cross_ticker_store import CrossTickerDataStore
 
 self._store = CrossTickerDataStore.get_instance()
 other = self._store.get_candle(Ticker.NQ, candle.tf, candle.datetime)
@@ -246,11 +248,9 @@ Full reference: [[bias_nodes/composed_nodes]].
 ## Related
 
 - [[bias_nodes/index]] — bias-node doc hub
-- [[Feature_selection/pipeline]] — exploration, validation, and portfolio-addition flow after the feature is discrete
-- [[Feature_selection/exploration]] — exploration-stage EDA detail
 - [[Ensemble/base_model]] — historical ensemble “member” wording (schema may still say base model; conceptually frozen discrete bindings)
 - [[Ensemble/multi_timeframe]] — portfolio orchestration and lookback across timeframes
 - [[Deployment/live_multi_timeframe]] — live fetch schedule and rebalance loop
 - [[Cache/architecture]] — central candle/bias cache design and datetime-driven portfolio API
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

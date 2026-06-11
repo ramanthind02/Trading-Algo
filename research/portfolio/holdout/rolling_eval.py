@@ -262,7 +262,7 @@ def run_rolling_holdout_evaluation(
     )
 
     if emit_tearsheets and not portfolio_holdout.empty:
-        from lib.plotting.graphing.quantstats_reports import generate_tearsheet
+        from analysis.plotting.graphing.quantstats_reports import generate_tearsheet
         from research.portfolio.pipelines.portfolio_test import (
             _benchmark_tearsheet_title,
         )

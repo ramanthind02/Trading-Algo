@@ -978,7 +978,7 @@ class ResearchConfig:
     binning_params: BinningAnalysisConfig
     in_sample_defaults: InSampleDefaultsCatalog
     timeframe: TimeFrame = TimeFrame.D
-    feature_type: FeatureType = FeatureType.CONTINUOUS
+    feature_type: FeatureType = FeatureType.SIGNED_SIGNAL
     evaluation_defaults: EvaluationDefaultsCatalog | None = None
     param_sensitivity: ParamSensitivityConfig = field(default_factory=ParamSensitivityConfig)
     research_window: ResearchWindowConfig | None = None
@@ -1012,6 +1012,52 @@ class ResearchConfig:
     exploration_filter_gates: ExplorationFilterGatesConfig = field(
         default_factory=ExplorationFilterGatesConfig
     )
+    # ── CFD + realistic-cost lane (Phase 3) ──────────────────────────────
+    # Research price feed (alpha + costs). Default "cfd" — research models what we
+    # actually trade (Darwinex CFDs). "futures" restores the Norgate path (and is
+    # what the parity harness pins for its byte-identical gate). Applied at each
+    # feature entrypoint via lib.core.research_feed.set_research_feed.
+    data_feed: Literal["cfd", "futures"] = "cfd"
+    # Phases whose scored returns route through the realistic Nautilus fill lane
+    # (spread + T-15 rollover overlay, MARKET orders); all other phases use the
+    # fast vectorized lane. Default: realistic on validation + portfolio-addition
+    # (OOS); exploration (in-sample) always stays frictionless/vectorized.
+    # The parity harness pins this to () so the OOS snapshot stays vectorized.
+    realistic_phases: tuple[str, ...] = ("validation", "oos")
+    # Rollover swap-avoidance overlay (the live execution algo): flatten just before
+    # the 00:00-broker financing rollover and re-enter just after, MARKET orders.
+    # rollover_minute=0 == 00:00 broker time (MT5 timestamps are broker mislabelled-UTC).
+    rollover_minute: int = 0
+    rollover_half_width_min: int = 15
+    # ── Realistic-lane execution policy (spec-driven; defaults == today's hard-coded
+    # validation behavior so any config built WITHOUT these — parity harness,
+    # run_is.py, ui/runner.py — is byte-identical to before). Read via getattr in
+    # _select_phase_pnl_engine. Set by research.spec.adapter.to_feature_config from
+    # the StrategySpec's ExecutionSpec; the canonical configs leave them at default.
+    #   execution_entry_policy: how the entry order is worked — "market_on_open" (the
+    #     proven default, taker cross), "limit_at_touch", or "limit_improve".
+    #   execution_unfilled_limit: "cross_after" (work the limit then cross with MARKET
+    #     past the session cutoff — the default) or "carry" (pure passive, never cross:
+    #     session_fraction=1.0). Only meaningful for the limit entry policies.
+    #   execution_holding: "overnight" (the proven default → the rollover
+    #     flatten-/-reenter swap-avoidance overlay) or "intraday" (flat overnight →
+    #     INTRADAY_OPEN_TO_CLOSE; drops the rollover overlay). NOTE: overnight maps to
+    #     ROLLOVER_FLATTEN_REENTER, NOT CLOSE_TO_CLOSE — keeping the swap-avoidance
+    #     overlay that the validation defaults depend on.
+    execution_entry_policy: str = "market_on_open"
+    execution_unfilled_limit: str = "cross_after"
+    execution_holding: str = "overnight"
+    # Exploration index-history exception: these canonical tickers are forced onto
+    # the longer FUTURES feed during exploration only (set_research_feed
+    # futures_tickers=…). Validation/portfolio-addition always use plain CFD.
+    exploration_futures_index_tickers: tuple[Ticker, ...] = ()
+    # Per-run output isolation (spec-driven run manager only): when set, the in-sample +
+    # validation/OOS visualization CSV writers emit under ``<dir>/visualization[/<phase>]``
+    # instead of the single shared canonical folders, so one run's artifacts are isolated and
+    # can be deleted independently. ``None`` (the default for run_is.py / ui/runner.py) keeps
+    # the canonical shared-folder behavior byte-for-byte. Read via getattr by the writers, so an
+    # absent attribute is harmless; the field must exist to set it on this frozen dataclass.
+    visualization_parent_dir: Path | None = None
 
     def __post_init__(self) -> None:
         if self.feature_type is not FeatureType.SIGNED_SIGNAL:
@@ -1094,7 +1140,14 @@ def resolve_portfolio_gate_n_jobs(config: ResearchConfig) -> int:
     gate_jobs = config.portfolio_addition_gate.n_jobs
     if gate_jobs is not None:
         return max(1, int(gate_jobs))
-    return max(1, int(config.n_jobs))
+    # Default to serial. The gate fits baseline + with-candidate ensembles, and loky
+    # workers do NOT inherit the process-global research feed / EWSD blend, so a
+    # parallel gate silently fits under the default "futures" feed while the eval ran
+    # under the configured feed (e.g. CFD) — corrupting ΔSR / risk-impact / pass-fail.
+    # The spec-driven path (frontend/api/runs.py) already forces n_jobs=1 for this
+    # reason; make the canonical/CLI path safe by default too. An explicit n_jobs > 1
+    # is an opt-in and still requires per-worker set_research_feed() to be correct.
+    return 1
 
 
 def resolve_validation_rank_scatter_n_jobs(config: ResearchConfig) -> int:

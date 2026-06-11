@@ -48,6 +48,72 @@ def _default_rolling_window(feature: pd.Series) -> int:
     return max(20, min(252, len(feature) // 4))
 
 
+def _run_eda_for_single_combo(
+    label: str,
+    signal: "pd.Series",
+    target: "pd.Series",
+    feature_col: str,
+    combo: dict,
+    output_dir: "Path",
+    timeframe: "TimeFrame",
+    feature_type: "FeatureType",
+    ticker: "Ticker",
+) -> "tuple[str, Path, str]":
+    """Run EDA analysis for one combo and return (label, saved_path, print_line).
+
+    Module-level so joblib loky can pickle it.
+    """
+    rolling_window = _default_rolling_window(signal)
+    metadata = EDAMetadata(
+        feature_name=feature_col,
+        param_combo=combo,
+        timeframe=timeframe,
+        ticker=ticker,
+        timestamp=datetime.now(),
+    )
+    eda_config = EDAConfig(rolling_window=rolling_window, bootstrap_iterations=500)
+    report = (
+        run_eda_for_continuous_feature(signal, target, pd.DatetimeIndex(signal.index), metadata, eda_config)
+        if feature_type == FeatureType.CONTINUOUS
+        else run_eda_for_signed_signal_feature(signal, target, pd.DatetimeIndex(signal.index), metadata, eda_config)
+    )
+    combo_output_dir = _combo_eda_parent_dir(output_dir, label, feature_col)
+    combo_output_dir.mkdir(parents=True, exist_ok=True)
+    if combo_output_dir.name != label:
+        (combo_output_dir / "eda_param_combo_label.txt").write_text(f"{label}\n", encoding="utf-8")
+    saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
+    if feature_type == FeatureType.SIGNED_SIGNAL:
+        _write_cumsum_summary(
+            returns=signal.mul(target),
+            output_path=saved_path / "in_sample_cumsum.csv",
+            title=f"In-sample cumulative sum ({label})",
+        )
+
+    if feature_type == FeatureType.SIGNED_SIGNAL:
+        stats_by_level = report.rule_stats.per_level_stats.stats_by_level
+        level_keys = sorted(stats_by_level.keys())
+        level_parts = "  ".join(
+            f"L[{level}]: sharpe={stats_by_level[level].sharpe:+.2f}"
+            if level in stats_by_level
+            else f"L[{level}]: n/a"
+            for level in level_keys
+        )
+        viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
+        print_line = (
+            f"  [{label}] n={len(signal):,}  {level_parts}  {viable}  "
+            f"warnings={len(report.diagnostics.warnings)}"
+        )
+    else:
+        trend = report.continuous_stats.decile_analysis.overall_trend
+        viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
+        print_line = (
+            f"  [{label}] n={len(signal):,}  trend={trend}  {viable}  "
+            f"warnings={len(report.diagnostics.warnings)}"
+        )
+
+    return label, saved_path, print_line
+
+
 _PARAM_COMBO_HASH_FOLDER_LEN = 8
 
 
@@ -310,15 +376,23 @@ def run_eda_pipeline(
         ]
     )
     if config.feature_type == FeatureType.SIGNED_SIGNAL:
+        # Per-run isolation: when the run manager sets ``config.visualization_parent_dir``
+        # (a frozen-dataclass field added downstream; absent on canonical configs), the
+        # in-sample writers emit under ``<dir>/visualization`` instead of the single shared
+        # ``canonical_in_sample_visualization_dir()`` folder. ``None`` (the default for
+        # run_is.py / ui/runner.py) preserves the canonical shared-folder behavior.
+        visualization_parent_dir = getattr(config, "visualization_parent_dir", None)
         visualization_paths = write_param_sensitivity_tables(
             sensitivity_rows,
             label_param_pairs,
             sensitivity_by_ticker_rows=sensitivity_by_ticker_rows,
+            visualization_parent_dir=visualization_parent_dir,
         )
         if filter_exploration:
             filter_paths = write_filter_exploration_tables(
                 sensitivity_rows,
                 combo_store,
+                visualization_parent_dir=visualization_parent_dir,
             )
             visualization_paths = {**visualization_paths, **filter_paths}
         try:
@@ -327,6 +401,7 @@ def run_eda_pipeline(
             _is_candles = None
         equity_csv = write_in_sample_equity_curve_csv(
             combo_store,
+            visualization_parent_dir=visualization_parent_dir,
             portfolio_candles=_is_candles,
             timeframe=timeframe,
             target_volatility=config.tearsheet_target_annual_volatility or 0.15,
@@ -406,67 +481,44 @@ def run_eda_pipeline(
     else:
         selected_labels = set(combo_store.keys())
 
+    n_jobs = getattr(config, "n_jobs", 1)
     print(
         f"\nRunning EDA for {len(selected_labels)}/{len(combo_store)} combos"
         + (f" (limit={max_eda_combos})" if should_preselect else "")
+        + (f" [n_jobs={n_jobs}]" if n_jobs > 1 else "")
         + "..."
     )
-    for single_spec in expanded:
-        combo = single_spec["params"]
-        label = expanded_spec_combo_label(single_spec)
-        if label not in combo_store or label not in selected_labels:
-            continue
 
-        signal, target, feature_col, _ticker_s, _combo_params = combo_store[label]
-        timestamps = pd.DatetimeIndex(signal.index)
-        rolling_window = _default_rolling_window(signal)
-        metadata = EDAMetadata(
-            feature_name=feature_col,
-            param_combo=combo,
-            timeframe=timeframe,
-            ticker=cast(Ticker, config.tickers[0]),
-            timestamp=datetime.now(),
+    # Collect the combos that need EDA in deterministic order.
+    eda_tasks = [
+        (expanded_spec_combo_label(spec), spec["params"], *combo_store[expanded_spec_combo_label(spec)][:3])
+        for spec in expanded
+        if expanded_spec_combo_label(spec) in combo_store
+        and expanded_spec_combo_label(spec) in selected_labels
+    ]
+
+    primary_ticker = cast(Ticker, config.tickers[0])
+    if n_jobs > 1 and len(eda_tasks) > 1:
+        from joblib import Parallel, delayed
+
+        eda_outputs = Parallel(n_jobs=min(n_jobs, len(eda_tasks)), backend="loky")(
+            delayed(_run_eda_for_single_combo)(
+                label, signal, target, feature_col, combo,
+                output_dir, timeframe, config.feature_type, primary_ticker,
+            )
+            for label, combo, signal, target, feature_col in eda_tasks
         )
-        eda_config = EDAConfig(rolling_window=rolling_window, bootstrap_iterations=500)
-        # CONTINUOUS research uses quantile-binned ±1/0 from load_features_for_combo (same as permutation).
-        report = (
-            run_eda_for_continuous_feature(signal, target, timestamps, metadata, eda_config)
-            if config.feature_type == FeatureType.CONTINUOUS
-            else run_eda_for_signed_signal_feature(signal, target, timestamps, metadata, eda_config)
-        )
+    else:
+        eda_outputs = [
+            _run_eda_for_single_combo(
+                label, signal, target, feature_col, combo,
+                output_dir, timeframe, config.feature_type, primary_ticker,
+            )
+            for label, combo, signal, target, feature_col in eda_tasks
+        ]
 
-        combo_output_dir = _combo_eda_parent_dir(output_dir, label, feature_col)
-        combo_output_dir.mkdir(parents=True, exist_ok=True)
-        if combo_output_dir.name != label:
-            (combo_output_dir / "eda_param_combo_label.txt").write_text(f"{label}\n", encoding="utf-8")
-        saved_path = save_eda_report(report=report, output_dir=combo_output_dir, overwrite=True)
-        if config.feature_type == FeatureType.SIGNED_SIGNAL:
-            _write_cumsum_summary(
-                returns=signal.mul(target),
-                output_path=saved_path / "in_sample_cumsum.csv",
-                title=f"In-sample cumulative sum ({label})",
-            )
-        results[label] = saved_path
-
-        viable = "VIABLE" if report.diagnostics.is_viable else f"FLAGS({len(report.diagnostics.red_flags)})"
-        if config.feature_type == FeatureType.SIGNED_SIGNAL:
-            stats_by_level = report.rule_stats.per_level_stats.stats_by_level
-            level_keys = sorted(stats_by_level.keys())
-            level_parts = "  ".join(
-                f"L[{level}]: sharpe={stats_by_level[level].sharpe:+.2f}"
-                if level in stats_by_level
-                else f"L[{level}]: n/a"
-                for level in level_keys
-            )
-            print(
-                f"  [{label}] n={len(signal):,}  {level_parts}  {viable}  "
-                f"warnings={len(report.diagnostics.warnings)}"
-            )
-        else:
-            trend = report.continuous_stats.decile_analysis.overall_trend
-            print(
-                f"  [{label}] n={len(signal):,}  trend={trend}  {viable}  "
-                f"warnings={len(report.diagnostics.warnings)}"
-            )
+    for lbl, saved_path, print_line in eda_outputs:
+        results[lbl] = saved_path
+        print(print_line)
 
     return results

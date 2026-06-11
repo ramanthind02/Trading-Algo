@@ -36,7 +36,7 @@ its own broker's server list**. Consequences:
 
 | Broker | `terminal64.exe` | Data folder | Account |
 |---|---|---|---|
-| Darwinex (live) | `C:\Program Files\MetaTrader 5\terminal64.exe` | `…\Terminal\D0E8…075` (base `Darwinex-Live`) | `4000093084` (REAL — do not disturb) |
+| Darwinex (live) | `C:\Program Files\Darwinex MetaTrader 5\terminal64.exe` | `…\Terminal\D0E8…075` (base `Darwinex-Live`) | `4000093084` (REAL — do not disturb) |
 | FTMO (demo) | `C:\Program Files\FTMO Global Markets MT5 Terminal\terminal64.exe` | `…\Terminal\81A933…3850` (base `FTMO-Demo`) | `1513568029` (DEMO) |
 
 > To find a terminal's exe from its data-folder GUID, read `<data-folder>\origin.txt`
@@ -91,6 +91,49 @@ Driver: [`scripts/dev/mt5_adapter_test.py`](../../scripts/dev/mt5_adapter_test.p
 | 7–8 | `MT5DataClient` + `MT5LiveExecutionClient` construct against real NT msgbus/cache |
 | 9 | round-trip **open → confirm position → close → flat**, using the adapter's exact `order_send` request shape; fills verified from `history_deals_get` |
 
+## Automated live pytest suite — `tests/live_mt5/`
+
+The one-shot driver above is a print-based smoke test. The repeatable, assertion-backed
+version is the pytest suite at [`tests/live_mt5/`](../../tests/live_mt5/), which drives the
+**real adapter classes** (`MT5Connection`, `MT5InstrumentProvider`, `MT5DataClient`,
+`MT5LiveExecutionClient`) and a real `nautilus_trader` `TradingNode` against the FTMO demo.
+
+**Safety (enforced in `tests/live_mt5/conftest.py`):**
+- One terminal per process — every fixture binds via `config.path` to the FTMO terminal, so
+  the suite runs in **its own process, in parallel with the Darwinex tick-scraper**, never
+  touching it.
+- **Hard guard:** the session aborts (`pytest.exit`) unless the bound account is the FTMO
+  demo login, on the FTMO server, with `trade_mode == DEMO`.
+- Order tiers tag everything with **`TEST_MAGIC = 990510`** (≠ the adapter's production 510)
+  and flatten that magic on teardown. They self-skip when the market is closed (tick-freshness
+  gate — `order_check` is unreliable on weekends).
+- **Opt-in:** skipped unless `MT5_LIVE_TESTS=1`; order tiers also need `MT5_LIVE_ORDERS=1`.
+  A plain `pytest tests/` skips the whole directory.
+
+| File | Tier | What it covers |
+|---|---|---|
+| `test_connection_live.py` | 1 (read-only) | real `MT5Connection.connect()` → CONNECTED via `path`, account snapshot, terminal info, DEMO guard |
+| `test_instruments_live.py` | 1 | `MT5InstrumentProvider` parses real FTMO symbols (EURUSD→CurrencyPair, US100.cash→Cfd); filtered `load_all_async` |
+| `test_data_live.py` | 1 | live tick + H1 bar parsing on real data; `MT5DataClient` construction |
+| `test_execution_live.py` | 2 (orders) | EURUSD round-trip through `_submit_order`/`_poll_exec_once`/`_cancel_order`; live reject path |
+| `test_node_live.py` | 3 (node) | full `TradingNode` build/run/stop via `build_mt5_node_config` + factories; gated node order |
+
+**Run it** (or use [`deployment/ops/run_mt5_ftmo_tests.bat`](../../deployment/ops/run_mt5_ftmo_tests.bat)):
+
+```powershell
+# Read-only tiers (no orders)
+$env:MT5_LIVE_TESTS = "1"
+.\.venv\Scripts\python.exe -m pytest tests\live_mt5 -v -rs
+
+# Also place guarded demo orders (round-trip + node order; needs an OPEN market)
+$env:MT5_LIVE_ORDERS = "1"
+.\.venv\Scripts\python.exe -m pytest tests\live_mt5 -v -rs
+```
+
+> First green run: **FTMO-Demo, 2026-06-06** — Tier 1 + the live reject path + the full
+> `TradingNode` connectivity test all PASSED; the order round-trip + node-order tiers SKIPPED
+> (weekend, FX closed) and run automatically during market hours. Account left flat.
+
 ### Reference result (FTMO-Demo, 2026-06-05)
 
 ```
@@ -119,20 +162,24 @@ If a test ever leaves a position open, flatten it: query `positions_get()` filte
 `magic == 510` (the adapter's `MT5_MAGIC_NUMBER`) and send an opposite-side
 `TRADE_ACTION_DEAL` with `position=<ticket>`.
 
+> _Verified against current code via CodeGraph on 2026-06-07._
+
 ---
 
-## Known adapter gap — `MT5Config` has no `path`
+## Adapter path binding — RESOLVED (2026-06-06)
 
-`mt5connect.config.MT5Config` exposes no terminal-`path` field, and
-`MT5Connection._initialize()` calls bare `mt5.initialize()`. On a machine with **multiple
-terminal installs** that binds **non-deterministically** (whichever terminal is registered).
+`mt5connect.config.MT5Config` now has a `path: str | None = None` field, and
+`MT5Connection._initialize()` calls `mt5.initialize(path=…)` when it is set (bare
+`mt5.initialize()` when it is `None`, so single-terminal machines and the unit-test mock
+are unaffected). On a machine with **multiple terminal installs** the adapter now binds
+**deterministically** to the terminal you name — it can no longer attach to the wrong broker.
 
-- **Workaround (what the driver does):** call `mt5.initialize(path=…, login, server, password)`
-  **before** `MT5Connection.connect()`. A subsequent bare `mt5.initialize()` then attaches to
-  that same already-bound terminal.
-- **Planned fix (WP-4 edit unit 1, when vendoring):** add a `path: str | None` field to
-  `MT5Config` and thread it into `_initialize()`. Track in `deployment/nautilus_mt5/README.md`
-  audit notes.
+- The smoke driver's pre-`initialize(path=…)` workaround is therefore no longer required for
+  correctness; `MT5Connection.connect()`, the factories, and a full `TradingNode` all bind
+  via `config.path`.
+- Unit coverage: `tests/test_connection.py::TestTerminalPath` (the `path` kwarg is forwarded
+  iff set). Live coverage: the whole `tests/live_mt5` suite (below) binds the real adapter to
+  the FTMO terminal through `config.path`.
 
 ---
 
@@ -140,7 +187,20 @@ terminal installs** that binds **non-deterministically** (whichever terminal is 
 
 Native symbol names differ per broker and are the single source of truth in
 [`configs/mt5_brokers.yaml`](../../configs/mt5_brokers.yaml) (resolve via
-`data_platform.providers.mt5.brokers.resolve(broker, canonical)`). FTMO was confirmed by
+`data_platform.providers.mt5.brokers.resolve(broker, canonical)`).
+
+> **Per-broker rules & sessions (2026-06-06).** `configs/mt5_brokers.yaml` now also carries, per
+> broker: `timezone` (EET/EEST), `asset_classes` (canonical → fx/index/metal/energy/crypto),
+> `sessions` (per-asset-class market hours incl. weekend closure + the daily rollover break), and
+> `rules` (execution: filling mode, hedging/netting, lot step, magic, weekend-holding; risk: prop-firm
+> daily/total-loss + profit-target). Typed, terminal-free accessors live in `brokers.py`:
+> `asset_class`, `session`, `is_market_open`, `execution_rules`, `risk_rules`, `terminal_path`
+> (feeds `MT5Config.path`). Darwinex `risk` is `null` (live retail); FTMO carries the standard
+> Challenge limits; FundedNext is a `confirmed: false` placeholder. Validate + summarize with
+> `python -m data_platform.providers.mt5.brokers`. `is_market_open` is a *schedule* check — a live
+> tick-freshness probe stays the ground truth for actual tradeability.
+
+FTMO was confirmed by
 enumerating all 166 symbols (each canonical matched exactly one native symbol — **no guessing**):
 
 | Canonical | FTMO (`.cash` = index/energy CFD) | Darwinex |

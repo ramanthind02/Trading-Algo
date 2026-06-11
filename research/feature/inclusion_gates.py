@@ -29,7 +29,7 @@ from features.validation.objective_metrics import (
     metric_sharpe,
     metric_sortino,
 )
-from lib.plotting.graphing.quantstats_reports import generate_tearsheet
+from analysis.plotting.graphing.quantstats_reports import generate_tearsheet
 from research.portfolio.config import (
     PortfolioResearchConfig,
     scoped_tickers_for_ensemble_dirs,
@@ -83,7 +83,7 @@ def _inject_weight_hierarchy_group_into_features(
     relative to project vault; the field must be present in the JSON.
     """
     from ensemble.vault.feature_files import validate_signed_signal_feature_config
-    from lib.cache.runtime.cache_paths import win32_extended_path
+    from cache.runtime.cache_paths import win32_extended_path
 
     features_dir = Path(ensemble_dir) / "features"
     for fp in sorted(features_dir.glob("*.json")):

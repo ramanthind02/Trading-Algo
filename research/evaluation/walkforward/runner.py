@@ -8,9 +8,12 @@ from datetime import datetime, timedelta
 import inspect
 from pathlib import Path
 import warnings
-from typing import Any, Callable, Mapping, Protocol, Sequence, cast
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence, cast
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from research.portfolio.pnl.pnl_engine import PnLEngine
 
 from ensemble.weight_layer import WeightLayerConfig
 from research.feature.config import BinningAnalysisConfig, FeatureType
@@ -154,6 +157,7 @@ def run_portfolio_simulation(
     research_config: object,
     feature_data_by_combo: Mapping[tuple[tuple[str, object], ...], pd.DataFrame] | None = None,
     tearsheets_dir: Path | None = None,
+    pnl_engine: "PnLEngine | None" = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series | None]:
     from research.evaluation.walkforward.portfolio_evaluator import (
         ensure_portfolio_candle_columns,
@@ -211,7 +215,7 @@ def run_portfolio_simulation(
     if tearsheets_dir is not None:
         try:
             from ensemble.portfolio_impl.portfolio_tester import calculate_baseline_returns
-            from lib.plotting.graphing.quantstats_reports import generate_tearsheet
+            from analysis.plotting.graphing.quantstats_reports import generate_tearsheet
             _tearsheet_available = True
         except ImportError as e:
             warnings.warn(
@@ -306,6 +310,7 @@ def run_portfolio_simulation(
                 feature_data_by_combo=feature_data_by_combo,
                 feature_type=feature_type,
                 instrument_return_kind=_instrument_return_kind,
+                pnl_engine=pnl_engine,
             )
 
             rows.append(
@@ -969,6 +974,7 @@ def run_walkforward_research(
     output_dir: Path | None = None,
     fold_rows_override: list[dict[str, object]] | None = None,
     phase_label: str | None = None,
+    pnl_engine: "PnLEngine | None" = None,
 ) -> WalkforwardRunReport:
     if not isinstance(feature_type, str) or not feature_type.strip():
         raise ValueError("feature_type must be a non-empty string")
@@ -1083,6 +1089,7 @@ def run_walkforward_research(
                 research_config=research_config,
                 feature_data_by_combo=feature_data_by_combo,
                 tearsheets_dir=tearsheets_dir,
+                pnl_engine=pnl_engine,
             )
         except Exception as exc:  # pragma: no cover - defensive catch
             warnings.warn(

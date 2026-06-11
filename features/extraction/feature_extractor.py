@@ -50,17 +50,17 @@ import numpy as np
 import pandas as pd
 
 import lib.core.helpers as helpers
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_errors import (
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_errors import (
     ArtifactMissingError,
     CacheCoverageError,
 )
-from lib.cache.runtime.central_cache_models import (
+from cache.runtime.central_cache_models import (
     ArtifactDescriptor,
     ArtifactScope,
     CacheRequest,
 )
-from lib.cache.runtime.feature_pipeline_support import (
+from cache.runtime.feature_pipeline_support import (
     assign_cached_feature_values as _assign_cached_feature_values,
     build_bias_node_descriptor as _build_bias_node_descriptor,
     ensure_utc_datetime_index as _ensure_utc_datetime_index,
@@ -797,7 +797,7 @@ def extract_features_with_forward_returns(
         for forward-return computation instead of loading candles internally.
         Required columns: ``datetime``, ``open``, ``high``, ``low``, ``close``, ``ticker``.
         Primary key is (datetime, ticker); datetime is bar time (no offset).
-        
+
     Returns
     -------
     Tuple[pd.DataFrame, pd.DataFrame]
@@ -1167,7 +1167,7 @@ def extract_features_for_bias_node(
     candles_override : pd.DataFrame | None, default=None
         Optional candle dataframe override used by
         ``extract_features_with_forward_returns``.
-        
+
     Returns
     -------
     Tuple[pd.DataFrame, pd.DataFrame]

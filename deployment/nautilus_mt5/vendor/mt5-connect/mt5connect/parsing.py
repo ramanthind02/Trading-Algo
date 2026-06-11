@@ -414,9 +414,15 @@ def _parse_crypto(
 # TICK PARSER  (used by MT5DataClient polling loop)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def parse_quote_tick(symbol_info_tick, instrument: InstrumentAny) -> QuoteTick:
+def parse_quote_tick(symbol_info_tick, instrument: InstrumentAny, *, utc_offset_s: int = 0) -> QuoteTick:
     """
     Convert an MT5 tick into a NautilusTrader QuoteTick.
+
+    ``utc_offset_s`` corrects the broker-server timezone: MT5 ``tick.time`` is in
+    the broker's server tz, not UTC, so the live data client computes the offset
+    from a fresh reference tick and passes it here. Without it every QuoteTick
+    carries a ``ts_event`` hours away from the Nautilus UTC clock and the strategy
+    defers every order as "stale".
 
     Handles two sources:
     - mt5.symbol_info_tick(symbol)   → namedtuple  (live polling)
@@ -439,6 +445,10 @@ def parse_quote_tick(symbol_info_tick, instrument: InstrumentAny) -> QuoteTick:
     QuoteTick
     """
     pp = instrument.price_precision
+    # Nautilus requires the tick's size precision to match the instrument's
+    # size_precision (e.g. FTMO/Darwinex CFDs are 2 for a 0.01 volume_step); a
+    # hardcoded precision-0 size raises RuntimeError on the first live tick.
+    sp = instrument.size_precision
 
     # numpy structured array rows (from copy_ticks_range) are numpy.void type
     # namedtuples and MagicMocks use attribute access
@@ -457,9 +467,9 @@ def parse_quote_tick(symbol_info_tick, instrument: InstrumentAny) -> QuoteTick:
         instrument_id=instrument.id,
         bid_price=Price(bid, pp),
         ask_price=Price(ask, pp),
-        bid_size=Quantity(1_000_000, 0),   # MT5 doesn't expose depth
-        ask_size=Quantity(1_000_000, 0),
-        ts_event=ts_s * 1_000_000_000,     # seconds → nanoseconds
+        bid_size=Quantity(1_000_000, sp),   # MT5 doesn't expose depth; match instrument size precision
+        ask_size=Quantity(1_000_000, sp),
+        ts_event=(ts_s + utc_offset_s) * 1_000_000_000,  # broker-tz seconds → UTC nanoseconds
         ts_init=time.time_ns(),
     )
 

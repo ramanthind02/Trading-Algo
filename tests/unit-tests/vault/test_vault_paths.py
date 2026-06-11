@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lib.cache.runtime.cache_paths import project_root
+from cache.runtime.cache_paths import project_root
 from lib.core.vault_paths import (
     default_vault_discovery_dirnames,
     default_vault_root,

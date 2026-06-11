@@ -5,7 +5,7 @@ This module provides optimized implementations of node computation functions.
 It automatically uses Cython if available, otherwise falls back to pure Python.
 
 Usage:
-    from utils.compute.fast_nodes import compute_atr_fast, compute_ema_fast
+    from lib.compute.fast_nodes import compute_atr_fast, compute_ema_fast
     
     # These will use Cython if compiled, otherwise pure Python
     atr, atr_pct, idx, n = compute_atr_fast(high, low, close, prev_close, ...)

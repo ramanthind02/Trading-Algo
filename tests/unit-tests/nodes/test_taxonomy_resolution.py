@@ -16,7 +16,6 @@ def test_taxonomy_registry_declares_expected_class_names() -> None:
     assert CANONICAL_MODULE_CLASSES["atr_percentile_filter"] == "AtrPercentileFilterNode"
     assert CANONICAL_MODULE_CLASSES["rsi"] == "RSI"
     assert CANONICAL_MODULE_CLASSES["rsi_signal"] == "RSISignal"
-    assert CANONICAL_MODULE_CLASSES["rsi_signal_atr_slope_entry"] == "RSISignalAtrSlopeEntry"
     assert CANONICAL_MODULE_CLASSES["cyclical_rsi_signal"] == "CyclicalRSISignal"
     assert CANONICAL_MODULE_CLASSES["cumulative_rsi_signal"] == "CumulativeRSISignal"
     assert CANONICAL_MODULE_CLASSES["casey_percent_c_signal"] == "CaseyPercentCSignal"

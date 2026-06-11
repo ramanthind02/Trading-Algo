@@ -300,11 +300,23 @@ class MT5Connection:
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _initialize(self) -> None:
-        """Boot the IPC channel to the MT5 terminal process."""
-        logger.debug("MT5Connection: calling mt5.initialize()")
+        """Boot the IPC channel to the MT5 terminal process.
+
+        When ``config.path`` is set we pass it to ``mt5.initialize(path=...)``
+        so the bridge binds to THAT specific terminal install. This is what
+        makes multi-terminal machines deterministic — without it a bare
+        ``mt5.initialize()`` attaches to whichever terminal is registered,
+        which on a machine running both a live and a demo terminal could be
+        the wrong broker. With no path we keep the bare call (single-terminal
+        machines, and the test mock, are unaffected).
+        """
+        # `getattr` keeps us compatible with any older MT5Config built before
+        # the `path` field existed.
+        path = getattr(self._config, "path", None)
+        logger.debug(f"MT5Connection: calling mt5.initialize(path={path!r})")
         self._state = ConnectionState.INITIALIZING
 
-        ok = mt5.initialize()
+        ok = mt5.initialize(path=path) if path else mt5.initialize()
         if not ok:
             code, msg = mt5.last_error()
             self._state = ConnectionState.DISCONNECTED

@@ -37,7 +37,7 @@ from ensemble.vault.feature_files import (
 )
 from features.models.feature_base_model import BaseModel
 
-from lib.cache.runtime.cache_paths import project_root, win32_extended_path
+from cache.runtime.cache_paths import project_root, win32_extended_path
 from lib.core.enums import Direction, DirectionInput, TimeFrame, Ticker, coerce_direction
 from lib.core.vault_paths import resolve_vault_personal, resolve_vault_prop, resolve_vault_root
 
@@ -880,9 +880,11 @@ def _build_feature_control_payload(
     ticker_names: List[str],
     serializable_bias_spec: Dict[str, Any],
     strategy: str,
+    producing_run_id: Optional[str] = None,
+    spec_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     timestamp = datetime.now(timezone.utc).isoformat()
-    return {
+    payload: Dict[str, Any] = {
         "feature_name": feature_name,
         "created_at": timestamp,
         "updated_at": timestamp,
@@ -899,6 +901,11 @@ def _build_feature_control_payload(
             }
         ],
     }
+    if producing_run_id is not None:
+        payload["producing_run_id"] = producing_run_id
+    if spec_hash is not None:
+        payload["spec_hash"] = spec_hash
+    return payload
 
 
 def _validate_existing_feature_file(
@@ -935,6 +942,8 @@ def add_feature_to_ensemble(
     base_model: Optional[BaseModel] = None,
     ensemble_dir: Optional[str] = None,
     tickers: Optional[List[Ticker]] = None,
+    producing_run_id: Optional[str] = None,
+    spec_hash: Optional[str] = None,
     **legacy_kwargs: Any,
 ) -> str:
     if feature_name is None and "feature_column" in legacy_kwargs:
@@ -982,6 +991,8 @@ def add_feature_to_ensemble(
         ticker_names=ticker_names,
         serializable_bias_spec=serializable_bias_spec,
         strategy=base_model.strategy.value,
+        producing_run_id=producing_run_id,
+        spec_hash=spec_hash,
     )
     validate_signed_signal_feature_config(feature_config, feature_file=feature_file)
 
@@ -1182,7 +1193,7 @@ def ensure_vault_cache_coverage(
     This wrapper stays intentionally thin: it resolves ensemble paths, migrates
     legacy feature files, and delegates the refresh to ``CacheManager``.
     """
-    from lib.cache.runtime.cache_manager import CacheManager
+    from cache.runtime.cache_manager import CacheManager
 
     resolved_dirs = list(
         dict.fromkeys(

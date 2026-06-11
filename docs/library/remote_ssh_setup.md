@@ -76,11 +76,11 @@ Edit or create **`~/.ssh/config`** on the **other desktop** (Windows: `C:\Users\
 Host trading-dev
     HostName 192.168.1.71
     User raman
-    IdentityFile ~/.ssh/id_rsa
+    IdentityFile ~/.ssh/id_ed25519
 ```
 
 - Use **192.168.1.71** unless this dev server’s IP changed (see Part A step 3).
-- MacBook uses `id_rsa`; if your key has a different path, set `IdentityFile` to that path.
+- The key path above matches the `ed25519` key generated in step 2; if you used a different key type or path, set `IdentityFile` accordingly (e.g. `~/.ssh/id_rsa` for an older RSA key).
 - Save and run: `chmod 600 ~/.ssh/config` (Linux/macOS).
 
 ### 4. Connect in Cursor
@@ -112,4 +112,4 @@ cursor --folder-uri "vscode-remote://ssh-remote+trading-dev/home/raman/repos/Tra
 - **Venv on dev server:** `source /home/raman/repos/Trading-Algo/venv/bin/activate`
 - **Security:** Only use this over a trusted network (or VPN). Prefer key-based login; avoid password auth in production.
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._

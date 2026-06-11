@@ -43,6 +43,9 @@ from pathlib import Path
 
 from data_platform.providers.mt5 import brokers
 
+# Re-export the general per-broker credentials/tier model for convenience.
+from deployment.live.credentials import BrokerCredentials, ExecTier  # noqa: F401
+
 # Canonical tickers to run in the sandbox (NDX first — feed already available).
 # These are the repo-internal canonical names; they are resolved to the broker's
 # native symbol via brokers.resolve(broker, canonical) below.

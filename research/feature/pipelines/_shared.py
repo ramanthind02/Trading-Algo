@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
 from research.feature.config import ResearchWindowConfig
+from research.feature.shared.visualization_paths import VISUALIZATION_SUBDIR_NAME
 from research.feature._internal.core_helpers import (
     build_runtime_walkforward_config,
     normalize_timeframe_from_bias_spec,
@@ -56,6 +58,108 @@ def _require_research_window(config: "ResearchConfig") -> ResearchWindowConfig:
     return window
 
 
+def _select_phase_pnl_engine(
+    phase: Literal["oos", "validation"],
+    config: "ResearchConfig",
+):
+    """Pick the P&L lane for this evaluation phase.
+
+    Returns ``None`` for the frozen vectorized lane (frictionless — exploration
+    parity preserved); the multi-ticker realistic Nautilus lane (spread + the
+    T-15 rollover overlay, MARKET orders, synth quotes from M1 spread) when the
+    phase is listed in ``config.realistic_phases``. ``pnl_engine="nautilus"`` (if
+    present on the config) forces realism on every phase. Built lazily so the
+    default vectorized path never pays the Nautilus import cost.
+
+    The realistic lane honours the spec's ``ExecutionSpec`` via three config
+    fields (set by ``research.spec.adapter.to_feature_config``), whose DEFAULTS
+    reproduce today's hard-coded validation behavior so canonical configs (parity
+    harness, run_is.py, ui/runner.py) stay byte-identical:
+
+    * ``execution_holding`` — ``"overnight"`` (default) keeps the
+      ``ROLLOVER_FLATTEN_REENTER`` swap-avoidance overlay; ``"intraday"`` flattens
+      each session via ``INTRADAY_OPEN_TO_CLOSE`` (no overnight, no rollover legs).
+    * ``execution_entry_policy`` — ``"market_on_open"`` (default), ``"limit_at_touch"``,
+      or ``"limit_improve"``; selects the ``ExecutionPolicy``.
+    * ``execution_unfilled_limit`` — ``"cross_after"`` (default cutoff cross) or
+      ``"carry"`` (pure passive, ``session_fraction=1.0``, never cross).
+
+    ``multi_ticker``, ``measure_spread`` and the rollover minute/half-width stay
+    exactly as before regardless of the spec.
+    """
+    realistic_phases = {
+        p.strip().lower() for p in getattr(config, "realistic_phases", ())
+    }
+    force_nautilus = getattr(config, "pnl_engine", "vectorized") == "nautilus"
+    if not (force_nautilus or phase in realistic_phases):
+        return None
+
+    from research.portfolio.pnl import make_pnl_engine
+    from research.portfolio.pnl.nautilus_engine import (
+        CrossAfterPolicy,
+        ExecutionPolicy,
+        ExecutionWindowPolicy,
+    )
+
+    holding = str(getattr(config, "execution_holding", "overnight")).strip().lower()
+    entry_policy = str(
+        getattr(config, "execution_entry_policy", "market_on_open")
+    ).strip().lower()
+    unfilled_limit = str(
+        getattr(config, "execution_unfilled_limit", "cross_after")
+    ).strip().lower()
+
+    # overnight KEEPS the proven rollover swap-avoidance overlay (NOT close-to-close);
+    # intraday flattens each session (flat overnight, no rollover legs).
+    window_policy = (
+        ExecutionWindowPolicy.INTRADAY_OPEN_TO_CLOSE
+        if holding == "intraday"
+        else ExecutionWindowPolicy.ROLLOVER_FLATTEN_REENTER
+    )
+    execution_policy = ExecutionPolicy(entry_policy)
+    # carry → pure passive (never cross); cross_after → engine default cutoff.
+    cross_after = (
+        CrossAfterPolicy(session_fraction=1.0)
+        if unfilled_limit == "carry"
+        else CrossAfterPolicy()
+    )
+
+    print(
+        f"[{phase}] P&L lane: nautilus (realistic fills, spread + rollover overlay; "
+        f"holding={holding}, entry={entry_policy}, unfilled={unfilled_limit})"
+    )
+    return make_pnl_engine(
+        "nautilus",
+        multi_ticker=True,
+        window_policy=window_policy,
+        execution_policy=execution_policy,
+        cross_after=cross_after,
+        rollover_minute=int(getattr(config, "rollover_minute", 0)),
+        rollover_half_width_min=int(getattr(config, "rollover_half_width_min", 15)),
+        measure_spread=True,
+    )
+
+
+def _phase_visualization_dir(
+    config: "ResearchConfig",
+    phase_subdir: Literal["validation", "oos"],
+) -> Path:
+    """Walkforward visualization folder for this evaluation phase.
+
+    Default (canonical run_is.py / ui/runner.py path): the shared folder
+    ``config.output_root/visualization/<phase>``. When the run manager sets the optional
+    frozen-dataclass field ``config.visualization_parent_dir`` (absent on canonical
+    configs), the folder is nested under that per-run directory instead —
+    ``<visualization_parent_dir>/visualization/<phase>`` — mirroring the in-sample writers
+    so a single run's exploration + validation CSVs land under one per-run root. Leaving
+    the attribute unset keeps today's behavior byte-for-byte identical.
+    """
+    visualization_parent_dir = getattr(config, "visualization_parent_dir", None)
+    if visualization_parent_dir is not None:
+        return Path(visualization_parent_dir) / VISUALIZATION_SUBDIR_NAME / phase_subdir
+    return walkforward_visualization_csv_dir(config.output_root, phase_subdir)
+
+
 def _run_evaluation_pipeline(
     phase: Literal["oos", "validation"],
     config: "ResearchConfig",
@@ -70,6 +174,13 @@ def _run_evaluation_pipeline(
         phase_subdir = "validation"
     else:
         raise ValueError(f"Unknown phase: {phase}")
+
+    # Select the research price feed (alpha + costs). Validation / portfolio-addition
+    # use the plain CFD feed (no index-history futures override — that exception is
+    # exploration-only). The parity harness pins data_feed="futures".
+    from lib.core.research_feed import set_research_feed
+
+    set_research_feed(getattr(config, "data_feed", "cfd"))
 
     data_start = min(config.start, window.train_start)
     data_end = max(config.end, window.val_end)
@@ -124,8 +235,6 @@ def _run_evaluation_pipeline(
             output_subdir=phase_subdir,
         )
     else:
-        from pathlib import Path
-
         output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
 
@@ -172,6 +281,7 @@ def _run_evaluation_pipeline(
         raise ValueError(f"{phase_label} fold has insufficient samples. Check date range and data.")
 
     evaluator = build_signed_signal_walkforward_evaluator(data.combo_signal_target)
+    pnl_engine = _select_phase_pnl_engine(phase, config)
     report = run_walkforward_research(
         candles_df=reference_candles,
         target=reference_target,
@@ -186,12 +296,13 @@ def _run_evaluation_pipeline(
         output_dir=output_dir_path,
         fold_rows_override=fold_rows,
         phase_label=phase_label,
+        pnl_engine=pnl_engine,
     )
     eval_tf = normalize_timeframe_from_bias_spec(
         config.eval_bias_spec,
         fallback=config.timeframe,
     )
-    visualization_dir = walkforward_visualization_csv_dir(config.output_root, phase_subdir)
+    visualization_dir = _phase_visualization_dir(config, phase_subdir)
     oos_correlation_bundle: OosCorrelationBundle | None = None
     if phase == "oos":
         oos_correlation_bundle = OosCorrelationBundle(

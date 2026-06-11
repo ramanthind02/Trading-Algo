@@ -6,9 +6,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from lib.cache.runtime.central_cache import CentralCacheStore
-from lib.cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
-from lib.cache.runtime.feature_pipeline_support import expand_param_grid, read_aligned_feature_artifact
+from cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache_models import ArtifactDescriptor, ArtifactScope, CacheRequest
+from cache.runtime.feature_pipeline_support import expand_param_grid, read_aligned_feature_artifact
 from lib.core.enums import Ticker, TimeFrame
 
 

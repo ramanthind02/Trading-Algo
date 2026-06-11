@@ -5,25 +5,26 @@
 
 ## Prop vs personal roots
 
-The repo supports **two default vault roots** (same on-disk layout under each):
+The repo supports **three default vault roots** (same on-disk layout under each):
 
 | Profile | Default directory (under repo root) | Environment variable |
 |--------|----------------------------------------|-------------------------|
-| **Prop** (firm) | `vault/` | `TRADING_ALGO_VAULT_PROP`, or legacy `TRADING_ALGO_VAULT_ROOT` if `VAULT_PROP` is unset |
+| **Prop** (futures firm) | `vault/` | `TRADING_ALGO_VAULT_PROP`, or legacy `TRADING_ALGO_VAULT_ROOT` if `VAULT_PROP` is unset |
 | **Personal** | `vault_personal/` | `TRADING_ALGO_VAULT_PERSONAL` |
+| **CFD Prop** | `vault_cfd_prop/` | `TRADING_ALGO_VAULT_CFD_PROP` |
 
 - Any API that takes an explicit `vault_root` path still wins over profile defaults.
-- Repo-relative paths (for example in `PortfolioResearchConfig.ensemble_dirs`, `VaultSaveConfig.existing_ensemble_dir`, and hierarchy helpers) must use the correct **top-level folder** (`vault/...` vs `vault_personal/...`).
-- Feature research: set `VaultSaveConfig.vault_profile` to `"personal"` when `vault_root` is omitted, or run `python -m research.feature.save_feature_to_vault --vault-profile personal`.
-- Portfolio discovery scans each existing root returned by `default_vault_discovery_dirnames()` (prop and personal defaults). If the same ensemble **leaf** name exists in both trees, the first root in that discovery order keeps the entry.
-- Feature-research portfolio admission (`PortfolioSourceConfig`) discovers from **one** vault via `vault_profile` (`prop` → `vault/`, `personal` → `vault_personal/`) or an explicit `vault_root`. `research.portfolio.config.load_config()` defaults to the prop vault only.
+- Repo-relative paths (for example in `PortfolioResearchConfig.ensemble_dirs`, `VaultSaveConfig.existing_ensemble_dir`, and hierarchy helpers) must use the correct **top-level folder** (`vault/...` vs `vault_personal/...` vs `vault_cfd_prop/...`).
+- Feature research: set `VaultSaveConfig.vault_profile` to `"personal"` or `"cfd_prop"` when `vault_root` is omitted, or run `python -m research.feature.save_feature_to_vault --vault-profile <profile>`.
+- Portfolio discovery scans each existing root returned by `default_vault_discovery_dirnames()` (prop, personal, and cfd_prop defaults). If the same ensemble **leaf** name exists in multiple trees, the first root in that discovery order keeps the entry.
+- Feature-research portfolio admission (`PortfolioSourceConfig`) discovers from **one** vault via `vault_profile` (`prop`/`futures_prop` → `vault/`, `personal` → `vault_personal/`, `cfd_prop` → `vault_cfd_prop/`) or an explicit `vault_root`. `research.portfolio.config.load_config()` defaults to the prop vault only.
 
 ## What lives here
 
 - **Working ensembles** under the timeframe folders `<vault_root>/D/`, `<vault_root>/W/`, and `<vault_root>/M/` (for example `vault/D/` for the prop tree).
 - **Nested layout (current):** `<vault_root>/<TF>/<weight_hierarchy_group>/<ensemble_leaf>/`
   - `<ensemble_leaf>` is the usual `{ensemble_name}_{direction}` directory (for example `buy_hold_long`).
-  - `<weight_hierarchy_group>` is one of the manual global-weight-layer buckets. Folder names must be members of `VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES` in `ensemble/vault/constants.py` and must match `weight_hierarchy_group` in each feature JSON. The current registry is:
+  - `<weight_hierarchy_group>` is one of the manual global-weight-layer buckets. Folder names must be members of `VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES` in `ensemble/vault/constants.py` and must match `weight_hierarchy_group` in each feature JSON. The current built-in registry is:
     - `mean_reversion_indices`
     - `buy_hold`
     - `es_tlt`
@@ -37,7 +38,7 @@ The repo supports **two default vault roots** (same on-disk layout under each):
     - `breakout`
     - `silver_mr`
     - `silver_trend`
-  - This set grows over time; treat `VAULT_WEIGHT_HIERARCHY_GROUP_DIR_NAMES` as the source of truth, not this list.
+  - This built-in set is a `frozenset`; user-defined sleeves are additive and persisted to `ensemble/vault/custom_sleeves.json` via `add_custom_sleeve(name)`. Call `valid_weight_hierarchy_groups()` at runtime to get the full set (built-ins + custom). Treat both as the source of truth, not this list.
 - **Legacy flat layout (still supported):** `<vault_root>/<TF>/<ensemble_leaf>/` — discovery and cache preflight resolve both shapes.
 - `features/*.json` control files (each tagged with `weight_hierarchy_group` for the weight hierarchy).
 
@@ -69,4 +70,4 @@ Model IDs are generated from the signed-signal bias-node spec so semantic duplic
 - [[Ensemble/weight_layer]]
 - [[Cache/architecture]]
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against current code via CodeGraph on 2026-06-07._

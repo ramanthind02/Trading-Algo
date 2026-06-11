@@ -13,14 +13,22 @@ from lib.core.logger import get_logger
 
 logger = get_logger(__name__)
 
-# OHLC loaders moved to data_platform.loaders; re-exported here so existing
-# ``from utils.core.helpers import load_data`` imports keep working.
-from data_platform.loaders import (  # noqa: E402,F401
-    _LOAD_DATA_CACHE,
-    _load_data_cache_key,
-    load_data,
-    load_data_multi_ticker,
+# Back-compat: ``load_data`` / ``load_data_multi_ticker`` (and the private load cache)
+# canonically live in ``data_platform.loaders``; many callers still reach them as
+# ``helpers.load_data(...)``. Exposed via a lazy module ``__getattr__`` (PEP 562) so the
+# attribute access keeps working WITHOUT a module-level ``data_platform`` import — that
+# keeps ``lib.core`` free of an import-time dependency on the data layer (no
+# ``lib`` <-> ``data_platform`` cycle). New code should import from ``data_platform.loaders``.
+_DATA_PLATFORM_REEXPORTS = frozenset(
+    {"load_data", "load_data_multi_ticker", "_LOAD_DATA_CACHE", "_load_data_cache_key"}
 )
+
+
+def __getattr__(name: str) -> Any:
+    if name in _DATA_PLATFORM_REEXPORTS:
+        import data_platform.loaders as _loaders
+        return getattr(_loaders, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def is_dst(dt: datetime) -> bool:
@@ -322,7 +330,7 @@ def _get_functime_function(function_name: str):
     """
     Get a functime feature extraction function by name.
     
-    This function first tries to import from utils.core.functime (the local functime module),
+    This function first tries to import from lib.core.functime (the local functime module),
     then falls back to other possible locations. Users can also import functime
     functions and pass them directly as function objects.
     
@@ -338,7 +346,7 @@ def _get_functime_function(function_name: str):
     import importlib
     import sys
     
-    # First try utils.core.functime (the local functime module)
+    # First try lib.core.functime (the local functime module)
     # Handle import errors gracefully - functime might have optional dependencies
     try:
         from lib.core import functime
@@ -355,7 +363,7 @@ def _get_functime_function(function_name: str):
         # Other errors - log but continue trying other methods
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"Error importing utils.core.functime: {e}")
+        logger.debug(f"Error importing lib.core.functime: {e}")
     
     # Try importing from functime package or user-provided module
     # Check common locations and also look in sys.modules for already-imported modules
@@ -384,7 +392,7 @@ def _get_functime_function(function_name: str):
     # If not found, raise error with helpful message
     raise ValueError(
         f"Could not find functime function '{function_name}'. "
-        f"Available functions in utils.core.functime include: mean_abs_change, mean_change, "
+        f"Available functions in lib.core.functime include: mean_abs_change, mean_change, "
         f"autocorrelation, number_crossings, linear_trend, and many more. "
         f"Please ensure the function name is correct, or import the function and pass it "
         f"directly as a function object. "

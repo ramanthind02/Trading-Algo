@@ -8,7 +8,7 @@
 | Doc | Purpose |
 |-----|---------|
 | [[bias_nodes/creating_nodes]] | Required attributes, templates, Cython, multi-ticker side channels, lookback metadata, checklists |
-| [[bias_nodes/composed_nodes]] | Confirmation gates (`DualSignalNode`) — two signals must agree |
+| [[bias_nodes/composed_nodes]] | Composite gates: `DualSignalNode`, `FilterGateNode`, `FilterGateEntryOnlyNode`, `FilterAndSignalNode` |
 | [[bias_nodes/bias_node_arch]] | Redirect stub → use [[bias_nodes/creating_nodes]] |
 
 ## Where this sits in the stack
@@ -23,9 +23,7 @@ OHLCV → Bias node(s) → (optional composition) → Research → Native discre
 
 ## Related (outside this folder)
 
-- [[Feature_selection/pipeline]] — selection phases after the feature exists as a discrete bias-node column
 - [[Cache/user_guide]] — central cache for candles and bias artifacts
 - [[Vault/user_guide]] — persisting frozen feature definitions
-- [[Data/norgate]] — OHLCV sourcing (data layer, not a bias node doc)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._

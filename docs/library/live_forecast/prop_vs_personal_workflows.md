@@ -1,6 +1,6 @@
 # Prop vs Personal Forecast Workflows
 
-> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
+> **Status:** These workflows use `scripts/enigma_live_forecast.py` (TWS/IB-connected daily rebalance). They remain the production path for micro-futures prop and personal ETF accounts. The MT5/CFD live path (Darwinex/FTMO) is the Nautilus vault runtime in `deployment/live/` — see [deployment/live/README.md](../../../deployment/live/README.md).
 
 Two scripts run daily, both on top of the same pipeline
 (`scripts/enigma_live_forecast.py`). They differ in vault, instrument type,
@@ -12,8 +12,8 @@ timing, and Telegram channel. Pick the workflow you care about below.
 
 |                          | Prop firm                                  | Personal account                                     |
 | ------------------------ | ------------------------------------------ | ---------------------------------------------------- |
-| Entrypoint               | `scripts/enigma_prop_forecast.py`          | `scripts/enigma_personal_forecast.py`                |
-| Batch script             | `deploy/run_prop_forecast.bat`             | `deploy/run_personal_forecast.bat`                   |
+| Entrypoint               | `scripts/enigma_futures_prop_forecast.py` (legacy shim: `enigma_prop_forecast.py`) | `scripts/enigma_personal_forecast.py`  |
+| Batch script             | `deployment/ops/run_prop_forecast.bat`             | `deployment/ops/run_personal_forecast.bat`                   |
 | Config                   | `configs/live_forecast_config_prop.json`   | `configs/live_forecast_config_personal.json`         |
 | Vault                    | `vault/`                                   | `vault_personal/`                                    |
 | Instruments              | Micro futures (MES, MNQ, MGC, M2K, MYM, ZN for TLT) | ETFs (SPY, QQQ, GLD, IWM, DIA, TLT)         |
@@ -83,7 +83,7 @@ immediately after.
 
 **Steps (daily):**
 
-1. `run_prop_forecast.bat` runs (Windows Task Scheduler: `TradingAlgo\PropForecast`).
+1. `run_prop_forecast.bat` runs (Windows Task Scheduler: `TradingAlgo\PropForecast`; calls `enigma_futures_prop_forecast.py`).
 2. Script connects to TWS, fetches daily bars to fill any gap since last run.
 3. Upserts **completed** daily bars into the central cache; refreshes any stale bias artifacts.
 4. Builds a `GlobalPortfolio` from every ensemble under `vault/`.
@@ -98,10 +98,10 @@ immediately after.
 **Manual test run:**
 ```bash
 # Dry run -- prints the Telegram message instead of sending
-python scripts/enigma_prop_forecast.py --dry-run --port 7497
+python scripts/enigma_futures_prop_forecast.py --dry-run --port 7497
 
 # Production -- actually sends
-python scripts/enigma_prop_forecast.py --port 7497
+python scripts/enigma_futures_prop_forecast.py --port 7497
 ```
 
 ---
@@ -152,14 +152,14 @@ python scripts/enigma_personal_forecast.py --port 7497
 
 ### Register the Windows scheduled tasks (one-time, as Administrator)
 ```bat
-deploy\setup_scheduled_task.bat
+deployment\ops\setup_scheduled_task.bat
 ```
 This creates two daily tasks under `TradingAlgo\`:
 - `TradingAlgo\PropForecast`     -- 3:00 PM PT (= 6:00 PM ET)
 - `TradingAlgo\PersonalForecast` -- 12:45 PM PT (= 3:45 PM ET)
 
 If you're in a timezone other than Pacific, edit the `/st` values in
-`deploy/setup_scheduled_task.bat` before running.
+`deployment/ops/setup_scheduled_task.bat` before running.
 
 ### Useful commands
 ```bat
@@ -174,7 +174,7 @@ REM Delete a task
 schtasks /delete /tn "TradingAlgo\PropForecast" /f
 ```
 
-Output from scheduled runs appends to `deploy/forecast.log`.
+Output from scheduled runs appends to `logs/forecast.log`.
 
 ---
 
@@ -182,8 +182,8 @@ Output from scheduled runs appends to `deploy/forecast.log`.
 
 ### Windows
 
-1. One-time: run `deploy\setup_scheduled_task.bat` **as Administrator** (or prefer `deploy\setup_scheduled_task.ps1` — it avoids some `schtasks` timezone quirks). Edit the script first so paths match this repo and your venv (repo convention: `.\.venv\Scripts\python.exe` from the repo root).
-2. The tasks call `deploy\run_prop_forecast.bat` and `deploy\run_personal_forecast.bat`, which `cd` to the repo and run the wrappers. Update the hard-coded `cd` path inside those `.bat` files if needed.
+1. One-time: run `deployment\ops\setup_scheduled_task.ps1` **as Administrator** (preferred — avoids some `schtasks` timezone quirks; `deployment\ops\setup_scheduled_task.bat` also works). Edit the script first so paths match this repo and your venv (repo convention: `.\.venv\Scripts\python.exe` from the repo root).
+2. The tasks call `deployment\ops\run_prop_forecast.bat` and `deployment\ops\run_personal_forecast.bat` (both in `deployment/ops/`), which `cd` to the repo and run the wrappers. Update the hard-coded `cd` path inside those `.bat` files if needed.
 3. Verify: `schtasks /query /tn "TradingAlgo\PropForecast"` and `schtasks /run /tn "TradingAlgo\PropForecast"` for a dry test.
 
 ### Linux (cron)
@@ -195,10 +195,10 @@ There is no installer script; use the system crontab or a user unit timer.
 
 ```cron
 # Personal: Mon–Fri 3:45 PM America/New_York
-45 15 * * 1-5 cd /path/to/Trading-Algo && TZ=America/New_York /path/to/Trading-Algo/.venv/bin/python scripts/enigma_personal_forecast.py >> /path/to/Trading-Algo/deploy/forecast.log 2>&1
+45 15 * * 1-5 cd /path/to/Trading-Algo && TZ=America/New_York /path/to/Trading-Algo/.venv/bin/python scripts/enigma_personal_forecast.py >> /path/to/Trading-Algo/logs/forecast.log 2>&1
 
 # Prop: Mon–Fri 6:00 PM America/New_York
-0 18 * * 1-5 cd /path/to/Trading-Algo && TZ=America/New_York /path/to/Trading-Algo/.venv/bin/python scripts/enigma_prop_forecast.py >> /path/to/Trading-Algo/deploy/forecast.log 2>&1
+0 18 * * 1-5 cd /path/to/Trading-Algo && TZ=America/New_York /path/to/Trading-Algo/.venv/bin/python scripts/enigma_prop_forecast.py >> /path/to/Trading-Algo/logs/forecast.log 2>&1
 ```
 
 Cron’s `TZ=` affects the process environment; ensure TWS/Gateway is reachable from that host. Prefer a small wrapper shell script if you need `source`-style env vars.
@@ -210,7 +210,7 @@ Cron’s `TZ=` affects the process environment; ensure TWS/Gateway is reachable 
 To tabulate **forecast_score** and **position_fraction** for the last *N* **business** days using the same vault + central cache as production (no TWS, no Telegram), run::
 
     python scripts/replay_prop_forecast_window.py --trading-days 10
-    python scripts/replay_prop_forecast_window.py --trading-days 10 --output deploy/prop_forecast_replay.csv
+    python scripts/replay_prop_forecast_window.py --trading-days 10 --output logs/prop_forecast_replay.csv
 
 This fits once like ``enigma_prop_forecast``, runs ``predict_from_cache`` on the full overlap, then **filters** rows to the replay window. It is **not** a causal walk-forward (the global weight layer is not re-fit per day). For strict as-of research, use ``research.portfolio`` walk-forward tooling instead.
 
@@ -225,8 +225,8 @@ This fits once like ``enigma_prop_forecast``, runs ``predict_from_cache`` on the
 | Which tickers the prop firm can trade      | `configs/live_forecast_config_prop.json` → `tradeable_tickers`   |
 | ETF mapping for personal                   | `configs/live_forecast_config_personal.json` → `instruments[T].etf` |
 | Paper vs live port                         | `*.json` → `connection.port` (7497 paper / 7496 live)            |
-| Schedule time                              | `deploy/setup_scheduled_task.bat` → `/st HH:MM`                  |
+| Schedule time                              | `deployment/ops/setup_scheduled_task.ps1` (or `.bat`) → time parameter   |
 | Live daily lookback for fit/predict        | `configs/live_forecast_config_*.json` → `data.prediction_daily_max_bars` (default **500**; `0` = unlimited) |
-| Telegram bot / channel                     | `deployment/telegram_notifier.py` → `_PROP_*` / `_PERSONAL_*`    |
+| Telegram bot / channel                     | `lib/core/notify.py` (`TelegramNotifier`) → `_PROP_*` / `_PERSONAL_*`    |
 
-> _Verified against commit a07b6bf->197221e on 2026-06-04 (docs Phase A; WP-8 restructure repoint)._
+> _Verified against the working tree on 2026-06-10._

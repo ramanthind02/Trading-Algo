@@ -8,11 +8,11 @@ from research.portfolio.config import PortfolioResearchConfig
 from research.portfolio.shared.phase import PortfolioResearchPhase
 from research.portfolio.shared.visualization_paths import holdout_root
 from lib.core.repo_bootstrap import require_repo_root, resolve_repo_path
-from tools.research_workspace.discovery import discover_artifact_records as _discover_records
-from tools.research_workspace.discovery import group_artifact_records as _group_records
-from tools.research_workspace.models import CategoryGroup, PanelPolicy
-from tools.research_workspace.panels import default_friendly_panel_title
-from tools.research_workspace.sections import build_phase_report_sections as _build_sections
+from research.workspace.discovery import discover_artifact_records as _discover_records
+from research.workspace.discovery import group_artifact_records as _group_records
+from research.workspace.models import CategoryGroup, PanelPolicy
+from research.workspace.panels import default_friendly_panel_title
+from research.workspace.sections import build_phase_report_sections as _build_sections
 
 _PORTFOLIO_REPO_ROOT = require_repo_root(Path(__file__))
 _REPO_ROOT = Path(__file__).resolve().parents[3]

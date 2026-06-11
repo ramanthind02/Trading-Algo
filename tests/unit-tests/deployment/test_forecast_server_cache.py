@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 import pandas as pd
 import pytest
 
-from lib.cache.runtime.central_cache import CentralCacheStore
+from cache.runtime.central_cache import CentralCacheStore
 from lib.core.enums import Ticker, TimeFrame
 from lib.core.models import Candle
 

@@ -12,7 +12,7 @@ from typing import Any, Iterator
 MAX_FEATURE_FILE_STEM_CHARS = 120
 
 import lib.core.helpers as helpers
-from lib.cache.runtime.cache_paths import win32_extended_path
+from cache.runtime.cache_paths import win32_extended_path
 
 
 LEGACY_MODEL_KEYS = frozenset(

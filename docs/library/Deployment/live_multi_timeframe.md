@@ -1,7 +1,5 @@
 # Live Trading — Multi-Timeframe Operation
 
-> ⚠️ Slated for rewrite under the NautilusTrader migration (WP-4 live execution). See docs/refactor/nautilus/.
-
 > **Scope:** Practical guide for running `GlobalPortfolio` in live/paper trading across multiple timeframes, including the candle fetch schedule, lookback strategy, and rebalance loop.
 
 ---
@@ -134,7 +132,7 @@ On restart after a crash, the same startup sequence runs. Because prediction is 
 |---------|--------|----------|
 | Candle fetch fails for one TF | That TF's cached forecast goes stale | Carry forward last known forecast; alert operator; retry on next trigger |
 | Candle fetch fails for all TFs | No rebalance possible | Hold existing positions; alert operator |
-| Auto refresh fails after candle write | Candle cache is updated but downstream live inference is stale | Inspect `.cache/trading_algo/central_cache/live_refresh/last_run.json`, fix the error, then run `run_live_cache_refresh_now(...)` or wait for the next tracked write |
+| Auto refresh fails after candle write | Candle cache is updated but downstream live inference is stale | Inspect the broker-specific `data/broker_cache/{broker}/central_cache/live_refresh/last_run.json` (Nautilus path) or `.cache/trading_algo/central_cache/live_refresh/last_run.json` (legacy path), fix the error, then run `run_live_cache_refresh_now(...)` or wait for the next tracked write |
 | Bias node error for one model | One base model missing from ensemble | Ensemble falls back to remaining models; `WeightLayer` handles missing model gracefully |
 | Volatility data unavailable | Cannot scale forecasts | Block rebalance; alert operator (volatility is required) |
 
@@ -154,6 +152,6 @@ The prediction logic is **identical** in both paths. The only difference is how 
 
 ---
 
-**See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[Cache/architecture]], [[Cache/user_guide]], [[Deployment/live_cache_refresh]]
+**See also:** [[multi_timeframe]], [[portfolio]], [[production]], [[Cache/architecture]], [[Cache/user_guide]], [[Deployment/live_cache_refresh]], `deployment/live/README.md` (Nautilus vault runtime)
 
-> _Verified against commit a07b6bf on 2026-06-04 (docs Phase A)._
+> _Verified against current code via CodeGraph on 2026-06-07._
